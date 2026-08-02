@@ -15,7 +15,7 @@
   </tr></thead>
   <tbody>
     {% for row in rows %}
-    <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
+    <tr>{% for cell in row %}<td{% if cell is mapping and cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}" style="cursor: help"{% endif %}>{% if cell is mapping %}{{ cell.text }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>{% endfor %}</tr>
     {% endfor %}
   </tbody>
 </table>

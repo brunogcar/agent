@@ -27,6 +27,10 @@ from typing import Any
 
 from tools.report_ops.formats import apply_fmt
 
+# [v1.8] Shared tooltip system — import from _shared_report so all CVM
+# skills use the same PT-BR formula strings.
+from skills.cvm._shared_report.tooltips import get_tooltip as _get_tooltip
+
 
 # ── Safe accessor + formatter ────────────────────────────────────────────────
 
@@ -74,66 +78,71 @@ def build_overview_kpis(ratios_dict: dict | None) -> list[dict]:
 # ── Tab 1: Overview -- summary text + price details collapsible ──────────────
 
 def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
-    """Build the Overview tab sections: summary text + price details collapsible.
+    """Build the Overview tab sections: split metrics into 3 related tables.
 
-    The tab keeps the headline metrics table (Preço, Market Cap, EV, EBITDA,
-    fundamental per-share values, headline ratios) and adds a collapsible
-    "Price Details" section with price, date, source, and total shares.
+    [v1.8] Removed Price Details collapsible (price info is in the company
+    header now). Split the single Key Metrics table into 3 grouped tables:
+      1. Métricas de Mercado (market-cap-based: P/L, P/VPA, EV/EBITDA, etc.)
+      2. Resultado (income statement: Receita, EBITDA, Lucro Líquido, etc.)
+      3. Balanço (balance sheet: Ativo Total, PL, Dívida, Caixa)
     """
     sections: list[dict] = []
 
-    # ── Summary table of headline metrics ──
-    rows = [
-        ["Preço",              _fmt(_safe_get(ratios_dict, "price"),              "brl_full")],
-        ["Data do Preço",      str(_safe_get(ratios_dict, "price_date")  or "—")],
-        ["Fonte do Preço",     str(_safe_get(ratios_dict, "price_source") or "—")],
-        ["Total de Ações",     _fmt(_safe_get(ratios_dict, "total_shares"),       "int")],
-        ["Market Cap",         _fmt(_safe_get(ratios_dict, "market_cap"),         "brl")],
-        ["EV",                 _fmt(_safe_get(ratios_dict, "ev"),                 "brl")],
-        ["EBITDA (TTM)",       _fmt(_safe_get(ratios_dict, "ebitda"),             "brl")],
-        ["Lucro Líquido (TTM)",_fmt(_safe_get(ratios_dict, "lucro_liquido"),      "brl")],
-        ["Receita Líquida",    _fmt(_safe_get(ratios_dict, "receita_liquida"),    "brl")],
-        ["Patrimônio Líquido", _fmt(_safe_get(ratios_dict, "patrimonio_liquido"), "brl")],
-        ["Dívida Bruta",       _fmt(_safe_get(ratios_dict, "divida_bruta"),       "brl")],
-        ["Caixa",              _fmt(_safe_get(ratios_dict, "caixa"),              "brl")],
-        ["P/L",                _fmt(_safe_get(ratios_dict, "p_l"),                "num")],
-        ["P/VPA",              _fmt(_safe_get(ratios_dict, "p_vpa"),              "num")],
-        ["EV/EBITDA",          _fmt(_safe_get(ratios_dict, "ev_ebitda"),          "num")],
-        ["Dividend Yield",     _fmt(_safe_get(ratios_dict, "dividend_yield"),     "pct")],
-        ["DPA (TTM)",          _fmt(_safe_get(ratios_dict, "dpa"),                "brl_full")],
-        ["ROE",                _fmt(_safe_get(ratios_dict, "roe"),                "pct")],
-        ["ROA",                _fmt(_safe_get(ratios_dict, "roa"),                "pct")],
-        ["ROIC",               _fmt(_safe_get(ratios_dict, "roic"),               "pct")],
+    # ── Table 1: Métricas de Mercado ──
+    _MERCADO_ITEMS = [
+        ("Market Cap",         "market_cap",         "brl", ""),
+        ("EV",                 "ev",                 "brl", "Enterprise Value = Market Cap + Dívida Líquida"),
+        ("P/L",                "p_l",                "num", _get_tooltip("lpa")),
+        ("P/VPA",              "p_vpa",              "num", _get_tooltip("vpa")),
+        ("EV/EBITDA",          "ev_ebitda",          "num", _get_tooltip("ev_ebitda")),
+        ("Dividend Yield",     "dividend_yield",     "pct", _get_tooltip("dpa")),
+        ("PSR",                "psr",                "num", _get_tooltip("rps")),
+        ("DPA (TTM)",          "dpa",                "brl_full", "Dividendos por Ação = Dividendos pagos / total de ações"),
     ]
     sections.append({
-        "title": "Key Metrics",
+        "title": "Métricas de Mercado",
         "type": "table",
         "columns": ["Indicador", "Valor"],
-        "rows": rows,
+        "rows": [
+            [{"text": label, "tooltip": tooltip}, _fmt(_safe_get(ratios_dict, key), spec)]
+            for label, key, spec, tooltip in _MERCADO_ITEMS
+        ],
     })
 
-    # ── Collapsible: Price Details ──
-    price      = _fmt(_safe_get(ratios_dict, "price"),        "brl_full")
-    price_date = str(_safe_get(ratios_dict, "price_date")  or "—")
-    price_src  = str(_safe_get(ratios_dict, "price_source") or "—")
-    shares     = _fmt(_safe_get(ratios_dict, "total_shares"), "int")
-    mcap       = _fmt(_safe_get(ratios_dict, "market_cap"),   "brl")
-    mcap_src   = str(_safe_get(ratios_dict, "market_cap_source") or "—")
-    unit       = str(_safe_get(ratios_dict, "unit_ticker") or "—")
-    detail_lines = [
-        f"Preço: {price}",
-        f"Data do Preço: {price_date}",
-        f"Fonte do Preço: {price_src}",
-        f"Total de Ações: {shares}",
-        f"Market Cap: {mcap}",
-        f"Market Cap (fonte): {mcap_src}",
-        f"UNIT ticker: {unit}",
+    # ── Table 2: Resultado ──
+    _RESULTADO_ITEMS = [
+        ("Receita Líquida",    "receita_liquida",    "brl", "Receita total após deduções (DRE 3.01)"),
+        ("EBITDA",             "ebitda",             "brl", "EBIT + D&A (Depreciação e Amortização)"),
+        ("Lucro Líquido",      "lucro_liquido",      "brl", "Lucro/Prejuízo Consolidado (DRE 3.11)"),
+        ("ROE",                "roe",                "pct", _get_tooltip("roe")),
+        ("ROA",                "roa",                "pct", _get_tooltip("roa")),
+        ("ROIC",               "roic",               "pct", _get_tooltip("roic")),
     ]
     sections.append({
-        "type": "collapsible",
-        "title": "Price Details",
-        "text": " | ".join(detail_lines),
-        "open": False,
+        "title": "Resultado (TTM)",
+        "type": "table",
+        "columns": ["Indicador", "Valor"],
+        "rows": [
+            [{"text": label, "tooltip": tooltip}, _fmt(_safe_get(ratios_dict, key), spec)]
+            for label, key, spec, tooltip in _RESULTADO_ITEMS
+        ],
+    })
+
+    # ── Table 3: Balanço ──
+    _BALANCO_ITEMS = [
+        ("Patrimônio Líquido", "patrimonio_liquido", "brl", "Capital próprio dos acionistas (BPP 2.03)"),
+        ("Dívida Bruta",       "divida_bruta",       "brl", "Empréstimos Circ + Não Circ (2.01.04 + 2.02.01)"),
+        ("Caixa",              "caixa",              "brl", "Caixa e Equivalentes (BPA 1.01.01)"),
+        ("Total de Ações",     "total_shares",       "int", "Total de ações outstanding (FRE)"),
+    ]
+    sections.append({
+        "title": "Balanço Patrimonial",
+        "type": "table",
+        "columns": ["Indicador", "Valor"],
+        "rows": [
+            [{"text": label, "tooltip": tooltip}, _fmt(_safe_get(ratios_dict, key), spec)]
+            for label, key, spec, tooltip in _BALANCO_ITEMS
+        ],
     })
 
     return sections
@@ -219,81 +228,116 @@ def _derive_multiples(ratios_dict: dict | None) -> dict[str, float | None]:
 
 
 def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
-    """Build the Multiples tab sections.
+    """Build the Multiples tab sections — split by group.
 
-    Returns 3 sections:
-      1. Top-10 multiples table [Métrica, Valor, Interpretação]
-      2. Bar chart comparing P/L, P/VPA, EV/EBITDA, PSR
-      3. Collapsible "Less Common Multiples" with 6 less-common metrics
+    [v1.8] Split the single top-10 table into 3 grouped tables:
+      1. Múltiplos de Preço (P/L, P/VPA, P/EBIT, P/EBITDA, PSR, P/FCO, P/FCF)
+      2. Múltiplos EV (EV/EBIT, EV/EBITDA, EV/Sales, EV/FCF, P/EV)
+      3. Menos Comuns (P/Ativos, P/Passivos, P/RB, P/CG, P/DB, P/Tangible Book)
+    Each group has its own bar chart. Less Common is now a table (was collapsible).
     """
     sections: list[dict] = []
     derived = _derive_multiples(ratios_dict)
 
     def _lookup(key: str) -> Any:
-        """Read from ratios_dict first, fall back to derived multiples."""
         v = _safe_get(ratios_dict, key)
         if v is None:
             v = derived.get(key)
         return v
 
-    # ── Section 1: Top-10 multiples table ──
-    rows: list[list[str]] = []
-    for label, key, spec, interp in _MULTIPLES_TOP:
+    # ── Group 1: Múltiplos de Preço ──
+    _PRICE_MULTIPLES = [
+        ("P/L",       "p_l",       "num", "Cheap if < 10; expensive if > 25",  _get_tooltip("lpa")),
+        ("P/VPA",     "p_vpa",     "num", "Cheap if < 1; expensive if > 3",    _get_tooltip("vpa")),
+        ("P/EBIT",    "p_ebit",    "num", "Cheap if < 8; expensive if > 20",   _get_tooltip("p_ebit")),
+        ("P/EBITDA",  "p_ebitda",  "num", "Cheap if < 8; expensive if > 15",   _get_tooltip("p_ebitda")),
+        ("PSR",       "psr",       "num", "Cheap if < 1; expensive if > 3",    _get_tooltip("rps")),
+        ("P/FCO",     "p_fco",     "num", "Cheap if < 10; expensive if > 25",  _get_tooltip("p_fco")),
+        ("P/FCF",     "p_fcf",     "num", "Cheap if < 15; expensive if > 30",  _get_tooltip("p_fcf")),
+    ]
+    price_rows = []
+    price_chart_labels = []
+    price_chart_values = []
+    for label, key, spec, interp, formula in _PRICE_MULTIPLES:
         value = _lookup(key)
-        rows.append([label, _fmt(value, spec), interp if value is not None else "—"])
+        price_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
+        if value is not None:
+            price_chart_labels.append(label)
+            price_chart_values.append(float(value))
     sections.append({
-        "title": "Top Price Multiples",
+        "title": "Múltiplos de Preço",
         "type": "table",
         "columns": ["Métrica", "Valor", "Interpretação"],
-        "rows": rows,
-        "note": (
-            "Interpretation is a generic rule-of-thumb — sector context matters. "
-            "Negative/zero denominators yield '—'."
-        ),
+        "rows": price_rows,
     })
-
-    # ── Section 2: Bar chart comparing headline multiples ──
-    chart_labels: list[str] = []
-    chart_data: list[float | None] = []
-    for label, key in _MULTIPLES_CHART:
-        chart_labels.append(label)
-        chart_data.append(_lookup(key))
-    if any(v is not None for v in chart_data):
+    if len(price_chart_labels) >= 2:
         sections.append({
             "type": "chart",
+            "title": "Múltiplos de Preço — Comparativo",
+            "description": "P/L, P/VPA, P/EBIT, P/EBITDA, PSR. Menor = mais barato.",
             "chart_data": {
                 "type": "bar",
                 "data": {
-                    "labels": chart_labels,
-                    "datasets": [{
-                        "label": "Multiples",
-                        "data": [v if v is not None else 0 for v in chart_data],
-                        "backgroundColor": _MULTIPLES_CHART_COLORS[:len(chart_labels)],
-                    }],
+                    "labels": price_chart_labels,
+                    "datasets": [{"label": "Preço", "data": price_chart_values,
+                                  "backgroundColor": "#3b82f6"}],
                 },
-                "options": {
-                    "responsive": True,
-                    "maintainAspectRatio": False,
-                    "scales": {
-                        "y": {"beginAtZero": True},
-                    },
-                    "plugins": {
-                        "legend": {"display": False},
-                    },
-                },
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
             },
         })
 
-    # ── Section 3: Collapsible "Less Common Multiples" ──
-    parts: list[str] = []
-    for label, key, spec, _interp in _MULTIPLES_LESS_COMMON:
+    # ── Group 2: Múltiplos EV ──
+    _EV_MULTIPLES = [
+        ("EV/EBIT",   "ev_ebit",   "num", "Cheap if < 8; expensive if > 15", _get_tooltip("ev_ebit")),
+        ("EV/EBITDA", "ev_ebitda", "num", "Cheap if < 8; expensive if > 15", _get_tooltip("ev_ebitda")),
+        ("EV/Sales",  "ev_sales",  "num", "Cheap if < 1; expensive if > 3",   _get_tooltip("ev_sales")),
+        ("EV/FCF",    "ev_fcf",    "num", "Cheap if < 10; expensive if > 25", _get_tooltip("ev_fcf")),
+        ("P/EV",      "p_ev",      "num", "Cheap if < 1; expensive if > 3",   _get_tooltip("p_ev")),
+    ]
+    ev_rows = []
+    ev_chart_labels = []
+    ev_chart_values = []
+    for label, key, spec, interp, formula in _EV_MULTIPLES:
         value = _lookup(key)
-        parts.append(f"{label}: {_fmt(value, spec)}")
+        ev_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
+        if value is not None:
+            ev_chart_labels.append(label)
+            ev_chart_values.append(float(value))
     sections.append({
-        "type": "collapsible",
-        "title": "Less Common Multiples",
-        "text": " | ".join(parts),
-        "open": False,
+        "title": "Múltiplos EV (Enterprise Value)",
+        "type": "table",
+        "columns": ["Métrica", "Valor", "Interpretação"],
+        "rows": ev_rows,
+    })
+    if len(ev_chart_labels) >= 2:
+        sections.append({
+            "type": "chart",
+            "title": "Múltiplos EV — Comparativo",
+            "description": "EV/EBIT, EV/EBITDA, EV/Sales, EV/FCF. Menor = mais barato.",
+            "chart_data": {
+                "type": "bar",
+                "data": {
+                    "labels": ev_chart_labels,
+                    "datasets": [{"label": "EV", "data": ev_chart_values,
+                                  "backgroundColor": "#f59e0b"}],
+                },
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
+            },
+        })
+
+    # ── Group 3: Menos Comuns (table, was collapsible) ──
+    less_rows = []
+    for label, key, spec, interp in _MULTIPLES_LESS_COMMON:
+        value = _lookup(key)
+        formula = _get_tooltip(key) or _get_tooltip(key.replace("_", ""))
+        less_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
+    sections.append({
+        "title": "Múltiplos Menos Comuns",
+        "type": "table",
+        "columns": ["Métrica", "Valor", "Interpretação"],
+        "rows": less_rows,
     })
 
     return sections
@@ -377,7 +421,9 @@ def build_per_share_sections(ratios_dict: dict | None) -> list[dict]:
         else:
             # Compute price / value locally.
             ratio_value = _safe_div(price, value)
-        rows.append([label, _fmt(value, "brl_full"), _fmt(ratio_value, "num")])
+        # [v1.8] Add tooltip/formula column.
+        formula = _get_tooltip(value_key) or f"{label} = valor total / total de ações"
+        rows.append([{"text": label, "tooltip": formula}, _fmt(value, "brl_full"), _fmt(ratio_value, "num")])
         # Collect for chart (skip DPA — usually much smaller than LPA/VPA/RPA;
         # but include for completeness).
         chart_labels.append(label)
@@ -399,6 +445,8 @@ def build_per_share_sections(ratios_dict: dict | None) -> list[dict]:
     if any(v is not None for v in chart_data):
         sections.append({
             "type": "chart",
+            "title": "Valores por Ação — Comparativo",
+            "description": "LPA, VPA, DPA, RPS e derivados. Mostra o valor por ação de cada métrica.",
             "chart_data": {
                 "type": "bar",
                 "data": {
@@ -440,22 +488,73 @@ _PROFITABILITY_ITEMS: list[tuple[str, str, str]] = [
 ]
 
 
-def build_profitability_section(ratios_dict: dict | None) -> dict:
-    """Build the Profitability tab as a single ratio_grid section."""
-    items = [
-        {
+def build_profitability_section(ratios_dict: dict | None) -> dict | list:
+    """Build the Profitability tab — ratio_grid + split charts.
+
+    [v1.8] Split the single bar chart into 2: Returns (ROE/ROA/ROIC) +
+    Margins (Gross/Operating/Net/EBITDA/OCF/FCF).
+    """
+    items = []
+    for label, key, spec in _PROFITABILITY_ITEMS:
+        raw = _safe_get(ratios_dict, key)
+        items.append({
             "label": label,
-            "value": _fmt(_safe_get(ratios_dict, key), spec),
-        }
-        for label, key, spec in _PROFITABILITY_ITEMS
-    ]
-    return {
+            "value": _fmt(raw, spec),
+            "value_raw": float(raw) if raw is not None else None,
+            "tooltip": _get_tooltip(key),
+        })
+    # Split items into Returns (first 3) + Margins (last 6).
+    returns_items = items[:3]
+    margins_items = items[3:]
+    sections: list[dict] = [{
         "title": "Profitability & Margins",
+        "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
         "type": "ratio_grid",
         "categories": [
-            {"label": "Profitability", "items": items},
+            {"label": "Retornos", "items": returns_items},
+            {"label": "Margens",  "items": margins_items},
         ],
-    }
+    }]
+    # [v1.8] Chart 1: Returns (ROE/ROA/ROIC)
+    ret_labels = [i["label"] for i in returns_items if i.get("value_raw") is not None]
+    ret_values = [i["value_raw"] for i in returns_items if i.get("value_raw") is not None]
+    if len(ret_labels) >= 2:
+        # Convert to percentage for display
+        ret_pct = [v * 100 if abs(v) < 1 else v for v in ret_values]
+        sections.append({
+            "type": "chart",
+            "title": "Retornos — ROE / ROA / ROIC",
+            "description": "Comparativo dos retornos. Maior = melhor.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": ret_labels,
+                         "datasets": [{"label": "Retornos (%)", "data": ret_pct,
+                                       "backgroundColor": "#0d9488"}]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
+            },
+        })
+    # [v1.8] Chart 2: Margins
+    mar_labels = [i["label"] for i in margins_items if i.get("value_raw") is not None]
+    mar_values = [i["value_raw"] for i in margins_items if i.get("value_raw") is not None]
+    if len(mar_labels) >= 2:
+        mar_pct = [v * 100 if abs(v) < 1 else v for v in mar_values]
+        sections.append({
+            "type": "chart",
+            "title": "Margens — Bruta / EBIT / EBITDA / Líquida / FCO / FCF",
+            "description": "Comparativo das margens operacionais. Maior = melhor.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": mar_labels,
+                         "datasets": [{"label": "Margens (%)", "data": mar_pct,
+                                       "backgroundColor": "#f59e0b"}]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
+            },
+        })
+    if len(sections) == 1:
+        return sections[0]
+    return sections
 
 
 # ── Tab 5: Liquidity & Leverage -- ratio_grid + collapsible ──────────────────
@@ -504,24 +603,34 @@ def _derive_detailed_leverage(ratios_dict: dict | None) -> dict[str, float | Non
 
 
 def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
-    """Build the Liquidity & Leverage tab sections.
+    """Build the Liquidity & Leverage tab — ratio_grid + charts + detailed table.
 
-    Returns 2 sections:
-      1. ratio_grid with 2 categories: Liquidity + Leverage
-      2. Collapsible "Detailed Leverage" with DL/EBIT, DL/EBITDA, Gross D/E
+    [v1.8] Replaced the collapsible with a proper table. Added 2 bar charts:
+    Liquidity ratios + Leverage ratios.
     """
     sections: list[dict] = []
 
-    liquidity_items = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
-        for label, key, spec in _LIQUIDITY_ITEMS
-    ]
-    leverage_items = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
-        for label, key, spec in _LEVERAGE_ITEMS
-    ]
+    liquidity_items = []
+    for label, key, spec in _LIQUIDITY_ITEMS:
+        raw = _safe_get(ratios_dict, key)
+        liquidity_items.append({
+            "label": label,
+            "value": _fmt(raw, spec),
+            "value_raw": float(raw) if raw is not None else None,
+            "tooltip": _get_tooltip(key),
+        })
+    leverage_items = []
+    for label, key, spec in _LEVERAGE_ITEMS:
+        raw = _safe_get(ratios_dict, key)
+        leverage_items.append({
+            "label": label,
+            "value": _fmt(raw, spec),
+            "value_raw": float(raw) if raw is not None else None,
+            "tooltip": _get_tooltip(key),
+        })
     sections.append({
         "title": "Liquidity & Leverage",
+        "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
         "type": "ratio_grid",
         "categories": [
             {"label": "Liquidity",  "items": liquidity_items},
@@ -529,19 +638,66 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
         ],
     })
 
-    # ── Collapsible: Detailed Leverage ──
+    # [v1.8] Chart 1: Liquidity ratios
+    liq_labels = [i["label"] for i in liquidity_items if i.get("value_raw") is not None]
+    liq_values = [i["value_raw"] for i in liquidity_items if i.get("value_raw") is not None]
+    if len(liq_labels) >= 2:
+        sections.append({
+            "type": "chart",
+            "title": "Liquidez — Comparativo",
+            "description": "Liquidez Corrente, Seca, Imediata + Capital de Giro.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": liq_labels,
+                         "datasets": [{"label": "Liquidez", "data": liq_values,
+                                       "backgroundColor": "#3b82f6"}]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
+            },
+        })
+
+    # [v1.8] Chart 2: Leverage ratios
+    lev_labels = [i["label"] for i in leverage_items if i.get("value_raw") is not None]
+    lev_values = [i["value_raw"] for i in leverage_items if i.get("value_raw") is not None]
+    if len(lev_labels) >= 2:
+        lev_pct = [v * 100 if abs(v) < 1 else v for v in lev_values]
+        sections.append({
+            "type": "chart",
+            "title": "Alavancagem — Comparativo",
+            "description": "Dívida/PL, Dív.Líq/EBITDA, Alavancagem Financeira, Cobertura Juros, FCO/Dívida.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": lev_labels,
+                         "datasets": [{"label": "Alavancagem", "data": lev_pct,
+                                       "backgroundColor": "#ef4444"}]},
+                "options": {"responsive": True, "maintainAspectRatio": False,
+                            "scales": {"y": {"beginAtZero": True}}},
+            },
+        })
+
+    # [v1.8] Detailed Leverage — table (was collapsible).
     derived = _derive_detailed_leverage(ratios_dict)
-    parts: list[str] = []
+    detail_rows = []
     for label, key, spec in _DETAILED_LEVERAGE_ITEMS:
         value = _safe_get(ratios_dict, key)
         if value is None:
             value = derived.get(key)
-        parts.append(f"{label}: {_fmt(value, spec)}")
+        interp = ""
+        if key == "net_debt_ebit" and value is not None:
+            interp = "Baixa alavancagem" if value < 2 else "Alta alavancagem" if value > 4 else "Alavancagem moderada"
+        elif key == "net_debt_ebitda" and value is not None:
+            interp = "Baixa" if value < 2 else "Alta" if value > 3 else "Moderada"
+        elif key == "gross_debt_equity" and value is not None:
+            interp = "Baixa" if value < 0.3 else "Alta" if value > 0.6 else "Moderada"
+        formula = _get_tooltip(key) or _get_tooltip("dl_ebit" if key == "net_debt_ebit" else key)
+        if not formula:
+            formula = f"{label} = (Dívida Bruta - Caixa) / EBIT" if "ebit" in key and "ebitda" not in key else f"{label} = Dívida Bruta / PL"
+        detail_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
     sections.append({
-        "type": "collapsible",
-        "title": "Detailed Leverage",
-        "text": " | ".join(parts),
-        "open": False,
+        "title": "Alavancagem Detalhada",
+        "type": "table",
+        "columns": ["Métrica", "Valor", "Interpretação"],
+        "rows": detail_rows,
     })
 
     return sections
@@ -587,85 +743,125 @@ _GROWTH_CHART_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 _GROWTH_CHART_COLORS = ["#22c55e", "#3b82f6", "#f59e0b"]
 
 
-def build_efficiency_growth_sections(ratios_dict: dict | None) -> list[dict]:
-    """Build the Efficiency & Growth tab sections: table + chart.
+def build_efficiency_growth_sections(
+    ratios_dict: dict | None,
+    annual_periods: list[dict] | None = None,
+) -> list[dict]:
+    """Build the Efficiency & Growth tab — split growth by metric + charts.
 
-    Returns 2 sections:
-      1. Table with 5 efficiency metrics + 9 growth cells (3M/1Y/5Y x 3 lines)
-      2. Bar chart with 3M/1Y/5Y growth side-by-side for Revenue/GP/NI
-         (skipped when no growth data is available — current state, on ROADMAP)
+    [v1.8] Split the single Growth Metrics table into 3 per-metric tables
+    (Receita, Lucro Bruto, Lucro Líquido) each with 3M/1Y/5Y. Added per-metric
+    bar charts. Fixed growth values: if ratios_dict growth keys are None,
+    compute growth from annual_periods (fetched from financials) as fallback.
     """
     sections: list[dict] = []
 
     # ── Efficiency table ──
-    eff_rows: list[list[str]] = [
-        [label, _fmt(_safe_get(ratios_dict, key), spec)]
-        for label, key, spec in _EFFICIENCY_ITEMS
-    ]
+    # [v1.8] Added tooltips + value_raw for consistency with other tabs.
+    eff_rows: list[list[str]] = []
+    for label, key, spec in _EFFICIENCY_ITEMS:
+        raw = _safe_get(ratios_dict, key)
+        eff_rows.append([
+            {"text": label, "tooltip": _get_tooltip(key)},
+            _fmt(raw, spec),
+        ])
     sections.append({
         "title": "Efficiency Ratios",
+        "description": "Giro do Ativo, Giro de Estoque, Giro de Contas a Receber, etc. Passe o mouse sobre a métrica para ver a fórmula (ⓘ).",
         "type": "table",
         "columns": ["Métrica", "Valor"],
         "rows": eff_rows,
     })
 
-    # ── Growth table (3M/1Y/5Y for Revenue / GP / NI) ──
-    growth_rows: list[list[str]] = [
-        [label, _fmt(_safe_get(ratios_dict, key), "pct")]
-        for label, key in _GROWTH_ITEMS
-    ]
-    sections.append({
-        "title": "Growth Metrics (3M / 1Y / 5Y)",
-        "type": "table",
-        "columns": ["Métrica", "Valor"],
-        "rows": growth_rows,
-        "note": (
-            "Historical growth metrics require annual/quarterly time series "
-            "(on the ROADMAP). Currently '—' until historical engines are wired."
-        ),
-    })
+    # ── Growth: compute from annual_periods if ratios_dict growth is None ──
+    # [v1.8] This fixes the "all —" bug. The calculations growth metrics
+    # may return None when historical engines lack data. Fall back to
+    # computing growth directly from annual_periods (from financials).
+    def _get_growth(key: str, annual_key: str, lookback_years: int) -> float | None:
+        """Get growth from ratios_dict first, fall back to annual_periods."""
+        val = _safe_get(ratios_dict, key)
+        if val is not None:
+            return val
+        # Fallback: compute from annual_periods
+        if not annual_periods or len(annual_periods) < 2:
+            return None
+        try:
+            from skills.cvm.calculations.growth_helpers import (
+                growth_at, LOOKBACK_1Y, LOOKBACK_5Y,
+            )
+            # Build period list for growth_at
+            metric_map = {
+                "revenue": "receita_liquida",
+                "gross_profit": "lucro_bruto",
+                "net_income": "lucro_liquido",
+            }
+            metric_name = annual_key
+            periods = []
+            for p in annual_periods:
+                if not p.get("period"):
+                    continue
+                val = (p.get("metrics") or {}).get(metric_name)
+                if val is not None:
+                    d = p.get("data_fim_exerc") or f"{p['period']}-12-31"
+                    periods.append({"date": str(d)[:10], "value": float(val)})
+            periods.sort(key=lambda x: x["date"])
+            if len(periods) < 2:
+                return None
+            target_date = periods[-1]["date"]
+            lookback = LOOKBACK_1Y if lookback_years == 1 else LOOKBACK_5Y
+            return growth_at(periods, target_date, lookback)
+        except Exception:
+            return None
 
-    # ── Bar chart: 3M/1Y/5Y growth side-by-side for Revenue/GP/NI ──
-    # Each label is a metric group; each dataset is a window (3M/1Y/5Y).
-    chart_labels = [label for label, _ in _GROWTH_CHART_GROUPS]
-    datasets: list[dict] = []
-    for win_idx, win_label in enumerate(["3M", "1Y", "5Y"]):
-        data: list[float | None] = []
-        for _group_label, windows in _GROWTH_CHART_GROUPS:
-            key = windows[win_idx][1]
-            v = _safe_get(ratios_dict, key)
-            # Convert fraction -> percentage for display (0.10 -> 10).
-            data.append((v * 100) if v is not None else None)
-        datasets.append({
-            "label": win_label,
-            "data": [v if v is not None else 0 for v in data],
-            "backgroundColor": _GROWTH_CHART_COLORS[win_idx],
-        })
-    # Skip the chart entirely when ALL growth values are None (current state).
-    has_any = any(
-        _safe_get(ratios_dict, key) is not None
-        for _label, windows in _GROWTH_CHART_GROUPS
-        for _win_label, key in windows
-    )
-    if has_any:
+    # Build per-metric growth tables + charts.
+    _GROWTH_GROUPS = [
+        ("Receita Líquida", "revenue_growth",
+         [("3M", "revenue_growth_3m"), ("1Y", "revenue_growth_1y"), ("5Y", "revenue_growth_5y")],
+         "receita_liquida"),
+        ("Lucro Bruto", "gross_profit_growth",
+         [("3M", "gross_profit_growth_3m"), ("1Y", "gross_profit_growth_1y"), ("5Y", "gross_profit_growth_5y")],
+         "lucro_bruto"),
+        ("Lucro Líquido", "net_income_growth",
+         [("3M", "net_income_growth_3m"), ("1Y", "net_income_growth_1y"), ("5Y", "net_income_growth_5y")],
+         "lucro_liquido"),
+    ]
+    for group_label, _, windows, annual_key in _GROWTH_GROUPS:
+        rows = []
+        chart_labels = []
+        chart_values = []
+        for win_label, key in windows:
+            lookback = 1 if win_label == "1Y" else 5 if win_label == "5Y" else 0
+            val = _get_growth(key, annual_key, lookback)
+            # [v1.8] Add tooltip/formula column for growth metrics.
+            formula = _get_tooltip(key)
+            if not formula:
+                formula = f"Crescimento de {group_label} {win_label} = (atual - anterior) / |anterior|"
+            rows.append([{"text": win_label, "tooltip": formula}, _fmt(val, "pct")])
+            if val is not None:
+                chart_labels.append(win_label)
+                chart_values.append(val * 100 if abs(val) < 1 else val)
         sections.append({
-            "type": "chart",
-            "chart_data": {
-                "type": "bar",
-                "data": {
-                    "labels": chart_labels,
-                    "datasets": datasets,
-                },
-                "options": {
-                    "responsive": True,
-                    "maintainAspectRatio": False,
-                    "scales": {
-                        "y": {
-                            "ticks": {},
-                        },
-                    },
-                },
-            },
+            "title": f"Crescimento — {group_label}",
+            "type": "table",
+            "columns": ["Horizonte", "Crescimento"],
+            "rows": rows,
         })
+        if len(chart_labels) >= 2:
+            # [v1.8] Multi-color bars — one color per horizon (3M/1Y/5Y).
+            _GROWTH_COLORS = ["#22c55e", "#3b82f6", "#f59e0b"]
+            bar_colors = _GROWTH_COLORS[:len(chart_labels)]
+            sections.append({
+                "type": "chart",
+                "title": f"Crescimento {group_label} — 3M / 1Y / 5Y",
+                "description": f"Crescimento de {group_label} nos três horizontes temporais.",
+                "chart_data": {
+                    "type": "bar",
+                    "data": {"labels": chart_labels,
+                             "datasets": [{"label": group_label, "data": chart_values,
+                                           "backgroundColor": bar_colors}]},
+                    "options": {"responsive": True, "maintainAspectRatio": False,
+                                "scales": {"y": {"beginAtZero": True}}},
+                },
+            })
 
     return sections

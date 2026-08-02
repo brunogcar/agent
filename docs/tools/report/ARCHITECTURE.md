@@ -23,7 +23,7 @@
 | `tools/report_ops/timeline.py` | SVG Gantt chart builder |
 | `tools/report_ops/scorecard.py` | RAG status + radar chart builder |
 | `tools/report_ops/table.py` | Tabular statement builder (v1.2) |
-| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.9, 76 adapters across 26 modules) |
+| `tools/report_ops/adapters/` | Skill JSON → table/chart/report data adapters (v1.10, 76 adapters across 26 modules) |
 | `tools/report_ops/actions/*.py` | Atomic action wrappers (12 files) |
 | `tools/report_ops/templates/*.html` | Jinja2 templates (11 files) |
 | `tests/tools/report/` | 21 test files + conftest.py |

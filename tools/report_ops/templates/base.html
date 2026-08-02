@@ -212,7 +212,8 @@
     /* [v1.18] Custom CSS tooltip for ratio items — native title= tooltips
        are unreliable on non-link elements in modern browsers. This ::after
        pseudo-element shows the data-tooltip content on hover. */
-    .ratio-item[data-tooltip]:hover::after {
+    .ratio-item[data-tooltip]:hover::after,
+    td[data-tooltip]:hover::after {
       content: attr(data-tooltip);
       position: absolute;
       bottom: calc(100% + 6px);
@@ -237,6 +238,10 @@
       max-width: 280px;
       text-align: center;
     }
+    /* [v1.8] td needs position: relative for the absolutely-positioned
+       tooltip ::after to anchor correctly. */
+    td[data-tooltip] { position: relative; }
+    td[data-tooltip]:hover .ratio-info { opacity: 1; color: var(--brand); }
     .ratio-value.pos { color: #22c55e; }
     .ratio-value.neg { color: #ef4444; }
     .ratio-value.neu { color: var(--text-sec); }

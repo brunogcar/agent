@@ -328,6 +328,11 @@ def build_dashboard(
         "accent": config.get("accent", "#0d9488"),
         "data": loaded,
         "trace_id": trace_id,
+        # [v1.8] Forward company_header + freshness_footer from adapter
+        # output to the template context so dashboard.html can render the
+        # company info card + compact freshness footer.
+        "company_header": loaded.get("company_header", {}) if isinstance(loaded, dict) else {},
+        "freshness_footer": loaded.get("freshness_footer", "") if isinstance(loaded, dict) else "",
     }
     render_template("dashboard.html", ctx, html_path)
 

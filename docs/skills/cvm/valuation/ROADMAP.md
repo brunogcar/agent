@@ -7,15 +7,22 @@
 | Priority | Item | Description |
 |----------|------|-------------|
 | P2 | D1 — Per-statement adapters | BPA/BPP/DRE/DFC/DVA adapters for Per-share tab |
-| P2 | D2 — Additional metrics | ROI, COE/CAPM, CAGR, Earnings Yield, P/Ativos, P/Passivos, P/RB |
+| P2 | D2 — Additional metrics | ROI, COE/CAPM, CAGR (remaining — Earnings Yield done v1.8, _derive_multiples promoted to registry v1.8) |
 | P2 | D3 — Cash flow metrics | FCT, FCL, Saldo Inicial/Final |
 | P3 | D4 — New data sources | B3 index, Beta, options, volatility, BCB macro, FX rates |
-| P2 | D5 — Dashboard enhancements | Sub-tabs, price trend, margin trend, peer comparison |
+| P2 | D5 — Dashboard enhancements | Sub-tabs, price trend, margin trend, peer comparison (most done v1.8 — see below) |
 | P2 | D6 — Report adapters | valuation_bpa/bpp/dre/dfc/dva/macro |
 | P3 | D7 — Performance & quality | Per-call cache done (F7); materialized done (F8); TypedDict + telemetry remaining |
-| Next | Backtest/Historical/Investsite dashboard reorg | Apply v1.12 dashboard pattern to 3 more skills |
+| P2 | Peer comparison mode | Compare multiples vs sector (uses screener data) |
+| P2 | Graham Number vs Price overlay chart | Price chart with Graham Number horizontal line |
+| P2 | ROE/ROA/ROIC comparison bar chart in Profitability | 5Y trend comparison |
+| P3 | BCB SGS integration | Selic/CDI for cost of equity (shared with calculations) |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.7) | `ensure_fresh()` + HEAD check + current-year force sync |
+| Done | Dashboard overhaul + v2 split (v1.8) | Company header, price chart, sidebar groups, tooltips, chart titles, freshness footer, engine_cache_scope, profitability bar chart, Per-share merged into Multiples |
+| Done | Historical valuation mode (v1.8) | New `historical_valuation` mode — 5Y daily history for 9 metrics |
+| Done | Earnings Yield metric (v1.8) | EPS / price = 1 / P/L. New `earnings_yield.py` metric file. |
+| Done | _derive_multiples promoted (v1.8) | p_ebitda, ev_ebit, p_ev, p_cg, p_db already registered — valuation now uses via compute_all_ratios() |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -143,4 +150,4 @@ These are entirely new data sources — not yet wired into any engine.
 
 ---
 
-*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-02 (v1.8). See [CHANGELOG.md](CHANGELOG.md) for version history.*

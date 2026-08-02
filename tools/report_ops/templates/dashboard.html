@@ -133,6 +133,12 @@
   {% endfor %}
 </div>
 {% endfor %}
+
+{% if freshness_footer %}
+<div style="margin-top: 24px; padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-sec); text-align: center;">
+  {{ freshness_footer }}
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

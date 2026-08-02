@@ -1,45 +1,25 @@
-"""Mode: dashboard -- 6-tab valuation dashboard (thin composition mode).
+"""Mode: dashboard -- valuation dashboard with sidebar groups (thin composition).
 
-[v1.5] Reorganized from 5 tabs to 6 tabs with sub-tabs + charts + collapsibles:
+[v1.8] Dashboard v2: split tables by related items, add charts per group,
+fix growth metrics via annual periods from financials, better print output.
 
-  1. Overview              — KPI cards (P/L, P/VPA, EV/EBITDA, Div Yield,
-                             Market Cap, ROE) + Key Metrics table + Price
-                             Details collapsible
-  2. Multiples             — Top-10 multiples table [Métrica, Valor,
-                             Interpretação] + bar chart (P/L, P/VPA,
-                             EV/EBITDA, PSR) + "Less Common Multiples"
-                             collapsible (6 less-common metrics)
-  3. Per-share             — Per-share values table [Métrica, Valor (R$),
-                             Preço/Valor] + bar chart (per-share side-by-side)
-  4. Profitability         — ratio_grid with 1 category (ROE/ROA/ROIC +
-                             6 margins)
-  5. Liquidity & Leverage  — ratio_grid with 2 categories (Liquidity +
-                             Leverage) + "Detailed Leverage" collapsible
-                             (DL/EBIT, DL/EBITDA, Gross D/E)
-  6. Efficiency & Growth   — Efficiency table + Growth table (3M/1Y/5Y) +
-                             bar chart (3M/1Y/5Y growth side-by-side for
-                             Revenue/GP/NI — on ROADMAP until historical
-                             engines are wired)
+5 tabs grouped into 3 sidebar sections:
+  RESUMO:
+    - Overview (company header + price chart + split metrics tables)
+    - Multiples (split by Price/EV/Less-common groups + per-share table + charts)
+  FUNDAMENTOS:
+    - Profitability (ratio_grid + split charts: Returns + Margins)
+    - Liquidity & Leverage (ratio_grid + charts + detailed table)
+  CRESCIMENTO:
+    - Efficiency & Growth (efficiency table + split growth tables + charts)
 
-This mode does NOT fetch new data -- it calls ``ratios()`` ONCE and passes
-the resulting ratios dict to every tab builder. If ``ratios()`` itself
-fails (e.g. price unavailable), the outer status propagates and each tab
-degrades to all-None values; the dashboard payload still builds
-successfully.
-
-Each tab builder is independently try/except-wrapped so a failure in one
-tab (e.g. a builder raising an unexpected error) degrades to an error
-section, not a crash of the whole dashboard.
-
-The section-building helpers live in skills.cvm.valuation.report (so they
-can be reused by other modes / tests). This module is the orchestrator:
-gather data -> call report.* builders -> assemble tabs.
-
-Registered as "dashboard" in skills.cvm.valuation._registry.MODES via the
-@register_mode decorator. Auto-discovered by __init__.py.
+Registered as "dashboard" in skills.cvm.valuation._registry.MODES.
 """
 from __future__ import annotations
 
+from skills._base import engine_cache_scope
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.valuation._registry import register_mode
 from skills.cvm.valuation.modes.ratios import ratios
 from skills.cvm.valuation.report import (
@@ -53,18 +33,11 @@ from skills.cvm.valuation.report import (
 )
 
 
-def _safe_build(fn, ratios_dict):
-    """Call a section builder, returning an error-section list on failure.
-
-    Each builder in report.py is supposed to tolerate None values + missing
-    keys gracefully, but we wrap it defensively so an unexpected exception
-    in one builder doesn't crash the whole dashboard. On failure, the tab
-    degrades to a single text section with the error message.
-    """
+def _safe_build(fn, *args):
+    """Call a section builder, returning an error-section list on failure."""
     try:
-        sections = fn(ratios_dict)
+        sections = fn(*args)
         if not isinstance(sections, list):
-            # Single-section builders return a dict — wrap in a list.
             if isinstance(sections, dict):
                 return [sections]
             return [{"type": "text",
@@ -72,126 +45,141 @@ def _safe_build(fn, ratios_dict):
                              f"{type(sections).__name__}"}]
         return sections
     except Exception as e:
-        return [{
-            "type": "text",
-            "text": f"Section unavailable: {e}",
-        }]
+        return [{"type": "text", "text": f"Section unavailable: {e}"}]
 
 
 @register_mode(
     "dashboard",
     description=(
-        "Multi-tab valuation dashboard (thin composition of ratios()). "
-        "6 tabs: Overview (KPI cards + Key Metrics + Price Details "
-        "collapsible), Multiples (top-10 table + bar chart + less-common "
-        "collapsible), Per-share (table + bar chart), Profitability "
-        "(ratio_grid), Liquidity & Leverage (ratio_grid + Detailed "
-        "Leverage collapsible), Efficiency & Growth (table + 3M/1Y/5Y "
-        "growth chart). Calls ratios() once + passes the result to every "
-        "tab builder. Optimized for the report tool's dashboard action."
+        "Multi-tab valuation dashboard with sidebar groups. 5 tabs in "
+        "3 groups: Resumo (Overview, Multiples), Fundamentos "
+        "(Profitability, Liquidity & Leverage), Crescimento "
+        "(Efficiency & Growth). Company header + historical price chart "
+        "at top of Overview. Tooltips on all ratio_grid items. Split "
+        "tables + charts per group. Freshness footer."
     ),
-    params={
-        "company": "str. B3 ticker (PETR4). Required.",
-    },
+    params={"company": "str. B3 ticker (PETR4). Required."},
     include_in_all=False,
     examples=[
         'skill(domain="cvm", sub_domain="valuation", mode="dashboard", params=\'{"company":"PETR4"}\')',
     ],
 )
 def dashboard(company: str = "") -> dict:
-    """6-tab valuation dashboard (thin composition of ratios()).
-
-    Returns a structured payload with tabs optimized for the report tool's
-    dashboard action:
-      1. Overview              — KPI cards + Key Metrics + Price Details
-      2. Multiples             — Top-10 table + chart + collapsible
-      3. Per-share             — Per-share table + chart
-      4. Profitability         — ratio_grid (1 category)
-      5. Liquidity & Leverage  — ratio_grid (2 categories) + collapsible
-      6. Efficiency & Growth   — Efficiency table + Growth table + chart
-
-    This mode does NOT fetch new data -- it calls ``ratios()`` ONCE and
-    passes the ratios dict to every tab builder. If ``ratios()`` itself
-    fails (e.g. price unavailable), the outer status propagates and each
-    tab degrades to all-None values; the dashboard payload still builds.
-
-    Each tab builder is independently try/except-wrapped so an unexpected
-    failure in one builder degrades to an error section in that tab, not
-    a crash of the whole dashboard.
-
-    Args:
-        company: B3 ticker (PETR4). Required.
-
-    Returns:
-        Dict shaped as ``{"status": "ok", "company": ..., "tabs": [...],
-        "kpis": [...]}`` where each tab is ``{"name": str, "sections":
-        [...]}``. The Overview tab additionally carries a ``kpis`` list at
-        the top level. On empty company, returns ``{"status": "error",
-        "error": "company is required"}``.
-    """
+    """5-tab valuation dashboard with sidebar groups."""
     if not company:
         return {"status": "error", "error": "company is required"}
 
     print(f"[valuation] Starting dashboard for {company}...", flush=True)
 
-    # ── Gather underlying data (ratios() wrapped defensively) ──────────────
-    # ratios() can return status="ok" with ratios={"status": "error", ...}
-    # when the price source fails. In that case we still build the dashboard
-    # payload, but every ratio value will be None.
-    print(f"[valuation] Fetching ratios (via compute_all_ratios)...", flush=True)
-    try:
-        ratios_payload = ratios(company=company)
-    except Exception as e:
-        ratios_payload = {"status": "error", "error": str(e)}
+    with engine_cache_scope():
+        # ── Fetch ratios ─────────────────────────────────────────────
+        print(f"[valuation] Fetching ratios (via compute_all_ratios)...", flush=True)
+        try:
+            ratios_payload = ratios(company=company)
+        except Exception as e:
+            ratios_payload = {"status": "error", "error": str(e)}
 
-    # The actual ratios dict lives under ratios_payload["ratios"]. When
-    # ratios() short-circuited (no company / invalid ticker), this key
-    # may be missing or be a {"status": "error", ...} dict -- the report.*
-    # builders handle both via _safe_get().
-    ratios_dict = (
-        ratios_payload.get("ratios")
-        if isinstance(ratios_payload, dict) else None
-    )
-    _n_metrics = (
-        len([k for k in ratios_dict
-             if k not in ("status", "error", "date")])
-        if isinstance(ratios_dict, dict) else 0
-    )
-    print(f"[valuation] Ratios computed: {_n_metrics} metrics.", flush=True)
+        ratios_dict = (
+            ratios_payload.get("ratios")
+            if isinstance(ratios_payload, dict) else None
+        )
+        _n_metrics = (
+            len([k for k in ratios_dict
+                 if k not in ("status", "error", "date")])
+            if isinstance(ratios_dict, dict) else 0
+        )
+        print(f"[valuation] Ratios computed: {_n_metrics} metrics.", flush=True)
 
-    # ── Tab 1: Overview -- KPI cards (top-level) + Key Metrics + Price Details ──
-    # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
-    # renders them above all tabs via the kpi-grid div.
+        # ── Fetch annual periods for growth metrics ──────────────────
+        # [v1.8] Growth metrics from compute_all_ratios() may return None
+        # if the calculations engines don't have enough historical data.
+        # Fetch annual periods from financials (like the financials dashboard
+        # does) and pass them to the growth builder as a fallback.
+        print(f"[valuation] Fetching annual periods (for growth)...", flush=True)
+        annual_periods: list[dict] = []
+        try:
+            from skills.cvm.financials.modes.annual import annual
+            annual_payload = annual(company=company, periods=6, consolidado=1)
+            if annual_payload.get("status") == "ok":
+                annual_periods = annual_payload.get("periods") or []
+                print(f"[valuation] Annual periods: {len(annual_periods)} years.", flush=True)
+            else:
+                print(f"[valuation] Annual periods: unavailable ({annual_payload.get('error', '?')}).", flush=True)
+        except Exception as e:
+            print(f"[valuation] Annual periods: error ({e}).", flush=True)
+
+        # ── Company header + price chart ─────────────────────────────
+        print(f"[valuation] Building company header + price chart...", flush=True)
+        company_header = build_company_header(company)
+        price_chart = build_price_chart(company)
+
+    # ── Build sections ──────────────────────────────────────────────────
     print(f"[valuation] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(ratios_dict)
     overview_sections = _safe_build(build_overview_sections, ratios_dict)
 
-    # ── Tab 2: Multiples -- top-10 table + chart + less-common collapsible ──
+    if company_header.get("name"):
+        overview_sections.insert(0, {
+            "type": "company_info",
+            "company_header": company_header,
+        })
+    if price_chart:
+        overview_sections.insert(1, price_chart)
+
+    # [v1.8] Multiples: split by group + per-share merged in.
+    print(f"[valuation]   Multiples tab...", flush=True)
     multiples_sections = _safe_build(build_multiples_sections, ratios_dict)
-
-    # ── Tab 3: Per-share -- table + bar chart ──
     per_share_sections = _safe_build(build_per_share_sections, ratios_dict)
+    multiples_sections.extend(per_share_sections)
 
-    # ── Tab 4: Profitability -- ratio_grid ──
-    profitability_sections = _safe_build(
-        build_profitability_section, ratios_dict)
+    # [v1.8] Profitability: split charts (Returns + Margins).
+    print(f"[valuation]   Profitability tab...", flush=True)
+    profitability_sections = _safe_build(build_profitability_section, ratios_dict)
 
-    # ── Tab 5: Liquidity & Leverage -- ratio_grid + collapsible ──
+    # [v1.8] Liquidity & Leverage: charts + detailed table (was collapsible).
+    print(f"[valuation]   Liquidity & Leverage tab...", flush=True)
     liquidity_leverage_sections = _safe_build(
         build_liquidity_leverage_sections, ratios_dict)
 
-    # ── Tab 6: Efficiency & Growth -- table + chart ──
+    # [v1.8] Efficiency & Growth: split growth + charts + annual periods fallback.
+    print(f"[valuation]   Efficiency & Growth tab...", flush=True)
     efficiency_growth_sections = _safe_build(
-        build_efficiency_growth_sections, ratios_dict)
+        build_efficiency_growth_sections, ratios_dict, annual_periods)
 
-    # ── Assemble the dashboard payload ─────────────────────────────────────
+    # ── Freshness footer ────────────────────────────────────────────────
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        fre_sync = fresh.get("fre", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'} • "
+            f"FRE: {fre_sync[:10] if fre_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     tabs = [
-        {"name": "Overview",              "sections": overview_sections},
-        {"name": "Multiples",             "sections": multiples_sections},
-        {"name": "Per-share",             "sections": per_share_sections},
-        {"name": "Profitability",         "sections": profitability_sections},
-        {"name": "Liquidity & Leverage",  "sections": liquidity_leverage_sections},
-        {"name": "Efficiency & Growth",   "sections": efficiency_growth_sections},
+        {"name": "Overview",              "group": "Resumo",       "sections": overview_sections},
+        {"name": "Multiples",             "group": "Resumo",       "sections": multiples_sections},
+        {"name": "Profitability",         "group": "Fundamentos",  "sections": profitability_sections},
+        {"name": "Liquidity & Leverage",  "group": "Fundamentos",  "sections": liquidity_leverage_sections},
+        {"name": "Efficiency & Growth",   "group": "Crescimento",  "sections": efficiency_growth_sections},
     ]
     print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
-    return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}
+    return {
+        "status": "ok",
+        "company": company,
+        "company_header": company_header,
+        "tabs": tabs,
+        "kpis": kpis,
+        "freshness_footer": freshness_footer,
+    }

@@ -27,16 +27,17 @@ class TestValuationRoute:
         assert result["status"] == "error"
         assert "Unknown mode" in result["error"]
 
-    def test_route_registers_all_three_modes(self):
-        """[v1.6-valuation-split] MANIFEST['modes'] has ratios + summary + dashboard."""
+    def test_route_registers_all_four_modes(self):
+        """[v1.8] MANIFEST['modes'] has ratios + summary + dashboard + historical_valuation."""
         from skills.cvm.valuation import MANIFEST
         modes = MANIFEST["modes"]
-        assert set(modes.keys()) == {"ratios", "summary", "dashboard"}
+        assert set(modes.keys()) == {"ratios", "summary", "dashboard", "historical_valuation"}
         # ratios is the default (include_in_all=True)
         assert modes["ratios"]["include_in_all"] is True
-        # summary + dashboard are NOT in "all"
+        # summary + dashboard + historical_valuation are NOT in "all"
         assert modes["summary"]["include_in_all"] is False
         assert modes["dashboard"]["include_in_all"] is False
+        assert modes["historical_valuation"]["include_in_all"] is False
 
     def test_route_dispatches_to_ratios(self, valuation_env):
         """route(mode='ratios', company='PETR4') returns status=ok."""
@@ -45,9 +46,9 @@ class TestValuationRoute:
         assert result["status"] == "ok"
 
     def test_route_dispatches_to_dashboard(self, valuation_env):
-        """[v1.5] route(mode='dashboard', company='PETR4') returns status=ok with 6 tabs."""
+        """[v1.8] route(mode='dashboard', company='PETR4') returns status=ok with 5 tabs."""
         from skills.cvm.valuation import route
         result = route(mode="dashboard", company="PETR4")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 6
+        assert len(result["tabs"]) == 5
