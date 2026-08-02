@@ -64,13 +64,14 @@
     /* ── Nav items ── */
     .nav-section-label {
       font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 2px;
-      text-transform: uppercase; color: var(--text-sec); padding: 12px 16px 4px;
+      text-transform: uppercase; color: var(--text-sec); padding: 10px 16px 2px;
     }
     .nav-item {
-      display: flex; align-items: center; gap: 8px; padding: 8px 14px;
-      margin: 0 8px; border-radius: 6px; font-size: 13px; color: var(--text-sec);
+      display: flex; align-items: center; gap: 8px; padding: 6px 14px;
+      margin: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-sec);
       cursor: pointer; transition: all 0.15s; border: none; background: none;
-      width: calc(100% - 16px); text-align: left;
+      width: calc(100% - 16px); text-align: left; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
     }
     .nav-item:hover { background: var(--hover-bg); color: var(--text); }
     .nav-item.active { background: var(--brand-dim); color: var(--brand); font-weight: 600; }

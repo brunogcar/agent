@@ -286,7 +286,7 @@ tool stays domain-agnostic. Set `config["adapter"]` on `table` or `export(xlsx)`
 | `screener_dashboard` (v1.8) | `cvm/screener` dashboard | **Dashboard adapter** — multi-tab (Overview KPIs + Peers + Comparison). Thin pass-through of `screener.dashboard()` tab payload |
 | `shareholders_dashboard` (v1.8) | `cvm/shareholders` dashboard | **Dashboard adapter** — multi-tab (Overview + Top Shareholders + Free Float + Equity Structure). Thin pass-through of `shareholders.dashboard()` tab payload |
 | `insider_dashboard` (v1.8) | `cvm/insider` dashboard | **Dashboard adapter** — multi-tab (Overview + Recent Transactions + By Role + Monthly Net). Thin pass-through of `insider.dashboard()` tab payload |
-| `investsite_dashboard` (v1.8) | `investsite` dashboard | **Dashboard adapter** — multi-tab (Overview + Key Indicators + Latest Events). Thin pass-through of `investsite.dashboard()` tab payload |
+| `investsite_dashboard` (v1.1; v2.0 group + header passthrough) | `investsite` dashboard | **Dashboard adapter** — 12 tabs in 4 sidebar groups (Resumo / Indicadores / Demonstrações / Corporativo). Preserves `tab["group"]` field. Passes `company_header` + `freshness_footer` through. |
 
 Error / not_synced skill results render as a small status table (never crash).
 
