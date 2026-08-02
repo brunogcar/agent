@@ -232,6 +232,22 @@ def _fetch_quarterly_cumulative(
     """Fetch cumulative quarterly data from ITR or annual from DFP.
 
     Returns: {year: {meses: {codigo: valor}}} for the given source.
+
+    [v1.16 3T2025-bugfix] The old LIMIT ``years_needed * len(codes) * 4``
+    did NOT account for multiple empresa_ids (consolidated subsidiaries).
+    When a company had 2+ empresa_ids, each (year, meses, codigo) row was
+    duplicated per empresa_id, and the LIMIT cut off before reaching the
+    oldest requested quarter. This caused 3T2025 to silently disappear
+    from TTM output even though the data was present in the ITR DB
+    (669k rows for 2025-09-30).
+
+    Fix: scale the LIMIT by ``max(len(empresa_ids), 1)`` and bump the
+    per-year multiplier from 4 to 5 (buffer for non-calendar filers
+    whose data_fim_exerc falls outside standard quarter-end dates).
+    The ``ORDER BY data_fim_exerc DESC`` + LIMIT still returns only the
+    most recent N rows, which is exactly what we want — we don't need a
+    separate year filter (and a year filter would break test fixtures
+    that use fixed older years like 2023).
     """
     codes = list(SUMMARY_CODES.keys())
     emp_ph = ",".join("?" * len(empresa_ids))
@@ -244,6 +260,13 @@ def _fetch_quarterly_cumulative(
         conn = connect_dfp(read_only=True)
         meses_filter = "AND meses = 12"
 
+    # Safety-net LIMIT: per (year, meses, empresa_id, codigo) row.
+    # `* 5` instead of `* 4` gives a buffer for non-calendar filers.
+    # `* n_emp` ensures we don't cut off older quarters when the company
+    # has multiple consolidated empresa_ids.
+    n_emp = max(len(empresa_ids), 1)
+    safety_limit = years_needed * len(codes) * n_emp * 5
+
     try:
         rows = conn.execute(
             f"""SELECT codigo, descricao, grupo, data_fim_exerc, meses, valor, escala
@@ -254,7 +277,7 @@ def _fetch_quarterly_cumulative(
                 {meses_filter}
                 ORDER BY data_fim_exerc DESC
                 LIMIT ?""",
-            (*empresa_ids, *codes, consolidado, years_needed * len(codes) * 4),
+            (*empresa_ids, *codes, consolidado, safety_limit),
         ).fetchall()
     except FileNotFoundError:
         return {}
@@ -262,6 +285,9 @@ def _fetch_quarterly_cumulative(
         conn.close()
 
     # Organize: {year: {meses: {codigo: valor}}}
+    # When multiple empresa_ids return rows for the same (year, meses,
+    # codigo), the last one seen wins (DESC order means the most recent
+    # empresa_id — typically the consolidated parent — wins).
     result: dict = {}
     for r in rows:
         year = int(r["data_fim_exerc"][:4])

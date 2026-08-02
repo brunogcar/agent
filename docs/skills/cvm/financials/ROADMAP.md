@@ -12,11 +12,13 @@
 | P2 | F4 — Period selector | TTM toggle plumbing (annual/TTM/quarterly dropdown) |
 | P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
 | P2 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
+| P2 | F7 — Company header | FCA/CAD info (name, CNPJ, ISIN, sector) + COTAHIST price chart with time-range selector (all/5Y/1Y/1M) |
 | Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
 | Done | Review-fix sprint (v1.13) | Subtab charts, PL zero-value trap, growth gap tolerance, Indicadores subtabs, DVA % |
 | Done | Dashboard reorg (v1.12) | 5→7 tabs, 5 standalone statement modes, charts, subtabs, ratio_grid |
 | Done | TTM + YoY Quarterly (v1.15) | 2 new period-view modes: rolling TTM series + same-quarter YoY comparison. Dashboard 7→9 tabs |
+| Done | Dashboard v3 bugfix sprint (v1.16) | 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts (6→10 total). Dashboard 9→11 tabs |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -132,4 +134,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16). See [CHANGELOG.md](CHANGELOG.md) for version history.*

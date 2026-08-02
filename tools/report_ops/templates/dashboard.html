@@ -6,8 +6,13 @@
   <div class="sidebar-brand-tag">{{ subtitle | default('Dashboard') }}</div>
   <div class="sidebar-brand-title">{{ title | default('Dashboard') }}</div>
 </div>
-<div class="nav-section-label">Dashboard</div>
+{% set ns = namespace(current_group='') %}
 {% for tab in tabs %}
+  {% set tab_group = tab.group | default('') %}
+  {% if tab_group != ns.current_group %}
+    {% set ns.current_group = tab_group %}
+    <div class="nav-section-label">{{ tab_group if tab_group else 'Dashboard' }}</div>
+  {% endif %}
 <button class="nav-item {% if loop.first %}ok active{% endif %}" data-target="tab-{{ loop.index }}" onclick="showTab(this, 'tab-{{ loop.index }}')">
   <span class="nav-dot"></span>{{ tab.name | default('Tab ' + loop.index|string) }}
 </button>
@@ -16,6 +21,12 @@
 
 {% block content %}
 
+{# ── KPI boxes (top-level header — common to all dashboards) ───────────────
+   [v1.18] The KPI grid is the universal header. The company info card +
+   historical price chart below belong to the Overview tab's top section
+   (NOT the header) so they're scoped to the first tab. Other skills
+   (valuation, historical, etc.) will reuse this pattern: KPI header +
+   tab-specific content. #}
 <div class="kpi-grid">
 {% for k in kpis %}
   {{ m.kpi_card(k.label, k.value, k.get('delta')) }}
@@ -27,8 +38,47 @@
   <h2>{{ tab.name | default('Panel') }}</h2>
   {% set outer_loop = loop %}
   {% for sec in tab.sections %}
+  {# [v1.18] price_range_selector sections are rendered inline (not skipped)
+     because they now live inside the Overview tab, not the header. #}
   <div class="section">
+    {% if sec.type == 'company_info' and sec.company_header %}
+    {# [v1.18] Company info card — top of Overview tab. This pattern will be
+       reused by valuation/historical/governance dashboards. The KPI boxes
+       in the universal header stay separate. #}
+    {% set ch = sec.company_header %}
+    <div class="company-header" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+        <div style="flex: 1; min-width: 300px;">
+          <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 2px; text-transform: uppercase; color: var(--brand); margin-bottom: 4px;">{{ ch.ticker }}</div>
+          <div style="font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 4px;">{{ ch.name }}</div>
+          {% if ch.trade_name and ch.trade_name != ch.name %}
+          <div style="font-size: 13px; color: var(--text-sec);">{{ ch.trade_name }}</div>
+          {% endif %}
+        </div>
+        {% if ch.last_close %}
+        <div style="text-align: right;">
+          <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--text-sec);">Último Fechamento</div>
+          <div style="font-size: 22px; font-weight: 700; color: var(--brand);">R$ {{ ch.last_close }}</div>
+        </div>
+        {% endif %}
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px 20px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+        {% if ch.cnpj %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">CNPJ:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.cnpj }}</span></div>{% endif %}
+        {% if ch.cd_cvm %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">CD CVM:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.cd_cvm }}</span></div>{% endif %}
+        {% if ch.isin %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">ISIN:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.isin }}</span></div>{% endif %}
+        {% if ch.sector %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Setor:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.sector }}</span></div>{% endif %}
+        {% if ch.listing_segment %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Segmento:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.listing_segment }}</span></div>{% endif %}
+        {% if ch.control_type %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Controle:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.control_type }}</span></div>{% endif %}
+        {% if ch.uf %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">UF:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.uf }}</span></div>{% endif %}
+        {% if ch.fiscal_year_end %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Fim Exerc.:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.fiscal_year_end }}</span></div>{% endif %}
+        {% if ch.website %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Web:</span> <a href="{{ ch.website }}" target="_blank" style="color: var(--brand); text-decoration: none;">{{ ch.website }}</a></div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
     {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
+    {% if sec.description %}
+    <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
+    {% endif %}
     {% if sec.text %}
     <div class="text-block">
       {{ sec.text }}
@@ -41,6 +91,14 @@
     {% endif %}
     {% if sec.note %}
     <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
+    {% endif %}
+    {% if sec.price_range_selector %}
+    <div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
+      <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+      <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
+      <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+      <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
+    </div>
     {% endif %}
     {% if sec.type == 'chart' and sec.chart_data %}
     {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
@@ -107,6 +165,52 @@
   // Registry of all rendered charts for theme-toggle re-rendering.
   // Each entry: {canvas, chartData, chart}.
   var _chartRegistry = [];
+  // [v1.18] Price chart full datasets for time-range filtering.
+  var _priceChartFullData = {};
+
+  // [v1.18] Filter a price chart by time range (all/5y/1y/1m).
+  function filterPriceChart(btn, canvasId, range) {
+    var entry = _chartRegistry.find(function(e) { return e.canvas && e.canvas.id === canvasId; });
+    if (!entry) return;
+    var full = _priceChartFullData[canvasId];
+    if (!full) return;
+
+    // Update button styles.
+    var siblings = btn.parentElement.querySelectorAll('.price-range-btn');
+    siblings.forEach(function(s) {
+      s.classList.remove('active');
+      s.style.background = 'var(--bg-card)';
+      s.style.color = 'var(--text-sec)';
+    });
+    btn.classList.add('active');
+    btn.style.background = 'var(--brand-dim)';
+    btn.style.color = 'var(--brand)';
+
+    // Filter by range.
+    var labels = full.labels;
+    var data = full.data;
+    if (range !== 'all') {
+      var days = range === '5y' ? 1825 : range === '1y' ? 365 : 30;
+      var cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      var cutoffStr = cutoff.toISOString().slice(0, 10);
+      var filtered = [];
+      for (var i = 0; i < labels.length; i++) {
+        if (labels[i] >= cutoffStr) {
+          filtered.push({label: labels[i], value: data[i]});
+        }
+      }
+      labels = filtered.map(function(f) { return f.label; });
+      data = filtered.map(function(f) { return f.value; });
+    }
+
+    // Update the chart.
+    if (entry.chart) {
+      entry.chart.data.labels = labels;
+      entry.chart.data.datasets[0].data = data;
+      entry.chart.update('none');
+    }
+  }
 
   // Attach a percentage tooltip callback when chartData.options._tooltipPercent
   // is true.  Mutates `config` in place (strips the flag).
@@ -147,6 +251,9 @@
     {# Top-level chart #}
     {% if sec.type == 'chart' and sec.chart_data %}
     <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
+    {% if sec.price_range_selector %}
+    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | tojson }}, data: {{ sec.price_full_data | tojson }}};</script>
+    {% endif %}
     {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
     {% if sec.type == 'subtabs' and sec.tabs %}

@@ -203,9 +203,40 @@
     .ratio-category:hover { border-color: var(--brand); }
     .ratio-category-title { font-family: ui-monospace, monospace; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--brand); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
     .ratio-items { display: flex; flex-direction: column; gap: 6px; }
-    .ratio-item { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
-    .ratio-label { color: var(--text-sec); }
+    .ratio-item { display: flex; justify-content: space-between; align-items: center; font-size: 13px; cursor: help; position: relative; }
+    .ratio-label { color: var(--text-sec); display: inline-flex; align-items: center; gap: 4px; }
+    .ratio-info { display: inline-block; font-size: 10px; color: var(--text-sec); opacity: 0.5; cursor: help; }
+    .ratio-item:hover .ratio-info { opacity: 1; color: var(--brand); }
     .ratio-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* [v1.18] Custom CSS tooltip for ratio items — native title= tooltips
+       are unreliable on non-link elements in modern browsers. This ::after
+       pseudo-element shows the data-tooltip content on hover. */
+    .ratio-item[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-sec);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 400;
+      white-space: nowrap;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: var(--shadow);
+      z-index: 1000;
+      pointer-events: none;
+      white-space: normal;
+      width: max-content;
+      max-width: 280px;
+      text-align: center;
+    }
     .ratio-value.pos { color: #22c55e; }
     .ratio-value.neg { color: #ef4444; }
     .ratio-value.neu { color: var(--text-sec); }

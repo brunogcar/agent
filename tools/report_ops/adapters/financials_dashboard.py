@@ -415,19 +415,28 @@ def financials_dashboard(result: dict) -> dict:
                 break
 
     # Convert each tab's sections into the dashboard template format.
+    # [v1.16] Preserve the `group` field so the dashboard.html sidebar
+    # template (which uses Jinja2 namespace to render nav-section labels)
+    # can group tabs into Resumo / Demonstrações / Períodos / Séries
+    # Temporais. Without this field, the sidebar rendered as a flat list.
     tabs_out: list[dict] = []
     for tab in tabs_in:
         sections_out: list[dict] = []
         for sec in tab.get("sections") or []:
             sections_out.extend(_convert_section(sec))
-        tabs_out.append({
+        tab_out = {
             "name": tab.get("name", ""),
             "sections": sections_out,
-        })
+        }
+        if tab.get("group"):
+            tab_out["group"] = tab["group"]
+        tabs_out.append(tab_out)
 
     return {
         "company": result.get("company", ""),
+        "company_header": result.get("company_header", {}),
         "tabs": tabs_out,
         "kpis": kpis,
         "sources": [],
+        "freshness_footer": result.get("freshness_footer", ""),
     }

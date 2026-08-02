@@ -65,6 +65,9 @@
     {% for sec in t.sections %}
     <div class="section">
       {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
+      {% if sec.description %}
+      <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
+      {% endif %}
       {% if sec.text %}
       <div class="text-block">{{ sec.text }}</div>
       {% endif %}
@@ -142,8 +145,8 @@
     <div class="ratio-category-title">{{ cat.label }}</div>
     <div class="ratio-items">
       {% for item in cat["items"] %}
-      <div class="ratio-item">
-        <span class="ratio-label">{{ item.label }}</span>
+      <div class="ratio-item"{% if item.tooltip %} title="{{ item.tooltip }}" data-tooltip="{{ item.tooltip }}"{% endif %}>
+        <span class="ratio-label">{{ item.label }}{% if item.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}</span>
         <span class="ratio-value {{ 'pos' if item.value is string and item.value.startswith('+') else 'neg' if item.value is string and item.value.startswith('-') else 'neu' if item.value in ['—', 'None', 'N/A'] else '' }}">{{ item.value }}</span>
       </div>
       {% endfor %}

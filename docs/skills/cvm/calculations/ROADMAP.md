@@ -15,6 +15,7 @@
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Future | Technical analysis skill | FIBO, Swing, BTC, Termo — separate skill, not calculations-layer |
+| Done | Magic Number (v1.11) | EV/EBITDA × ROIC — Greenblatt-inspired cheapness × quality metric |
 | Done | EV/EBIT + DL/EBIT + CAGR (v1.10) | 2 new metrics + CAGR function + margem_ebit alias |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
 | Done | Growth metrics (v1.7) | 9 growth metrics (3M/1Y/5Y) with period-specific gap tolerance |
@@ -62,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-08-01. Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.11). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*

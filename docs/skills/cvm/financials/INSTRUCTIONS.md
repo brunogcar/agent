@@ -55,4 +55,4 @@
 
 ---
 
-*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint). See [CHANGELOG.md](CHANGELOG.md) for version history.*

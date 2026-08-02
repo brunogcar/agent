@@ -636,17 +636,24 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
     import traceback
 
     current_year = datetime.now().year
+    # [v1.16 3T2025-fix] Also sync the PREVIOUS year for DFP/ITR/FRE/IPE.
+    # CVM publishes quarterly ITR data throughout the year — 3T2025 (Q3) may
+    # be published AFTER the initial 2025 sync ran. The old code only force-
+    # synced current_year (2026), so late-published 2025 data was never
+    # picked up. Now we sync both current + previous year for the 4 CVM
+    # financial-statement sources (dfp/itr/fre/ipe).
+    prev_year = current_year - 1
 
     # (module_path, fn_name, kwargs_fn) — kwargs_fn builds the kwargs dict
     sync_map = {
         "dfp":          ("data_sources.cvm.dfp.sync_engine", "sync",
-                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
         "itr":          ("data_sources.cvm.itr.sync_engine", "sync",
-                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
         "fre":          ("data_sources.cvm.fre.sync_engine", "sync",
-                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
         "ipe":          ("data_sources.cvm.ipe.sync_engine", "sync",
-                         lambda: {"years": [current_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
         "fca":          ("data_sources.cvm.fca.sync_engine", "sync",
                          lambda: {"year": current_year, "force": True}),
         "cad":          ("data_sources.cvm.cad.sync_engine", "sync",

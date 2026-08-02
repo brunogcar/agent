@@ -24,18 +24,26 @@ class TestDashboardMode:
         assert "company is required" in result["error"]
 
     def test_dashboard_tab_structure(self, financials_env):
-        """Returns 9 tabs with the expected names + each tab has `sections`."""
+        """Returns 11 tabs with grouped sidebar."""
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 9
+        assert len(result["tabs"]) == 11
         expected_names = [
             "Overview", "Indicadores", "Crescimento",
             "Balanço", "DRE", "DFC", "DVA",
-            "TTM", "YoY Quarterly",
+            "Anual", "Trimestral",
+            "Anualizado", "Trimestral YoY",
         ]
         assert [t["name"] for t in result["tabs"]] == expected_names
+        groups = [t.get("group", "") for t in result["tabs"]]
+        assert groups == [
+            "Resumo", "Resumo", "Resumo",
+            "Demonstrações", "Demonstrações", "Demonstrações", "Demonstrações",
+            "Períodos", "Períodos",
+            "Séries Temporais", "Séries Temporais",
+        ]
         # Every tab must have a `sections` list (the Overview tab also has
         # `kpis`, but `sections` is the universal key).
         for tab in result["tabs"]:
@@ -95,15 +103,25 @@ class TestDashboardMode:
             assert len(rg["categories"]) >= 1
 
     def test_dashboard_balanco_uses_subtabs(self, financials_env):
-        """Balanço tab uses type=subtabs with BPA + BPP sub-tabs."""
+        """Balanço tab uses type=subtabs with BPA + BPP sub-tabs.
+
+        [v1.16] The Balanço tab now also carries a balance-sheet structure
+        chart (Caixa/Ativo/Dívida/PL) after the subtabs section, so the
+        section count is 1 (subtabs only, when chart data is missing) or
+        2 (subtabs + chart, when 2+ annual periods exist).
+        """
         from skills.cvm.financials.modes.dashboard import dashboard
         result = dashboard(company="33000167000101")
         balanco_tab = next(t for t in result["tabs"] if t["name"] == "Balanço")
-        assert len(balanco_tab["sections"]) == 1
+        # The subtabs section is always present; the chart may also be present.
+        assert len(balanco_tab["sections"]) >= 1
         sec = balanco_tab["sections"][0]
         assert sec["type"] == "subtabs"
         sub_names = [t["name"] for t in sec["tabs"]]
         assert sub_names == ["BPA", "BPP"]
+        # [v1.16] When 2+ annual periods exist, a chart section follows.
+        if len(balanco_tab["sections"]) >= 2:
+            assert balanco_tab["sections"][1].get("type") == "chart"
 
     def test_dashboard_dre_has_table_and_chart(self, financials_env):
         """DRE tab carries a table section + a chart section (margin trend)."""

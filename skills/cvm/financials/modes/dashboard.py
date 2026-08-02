@@ -1,42 +1,38 @@
-"""Mode: dashboard -- 7-tab financial dashboard (thin composition mode).
+"""Mode: dashboard -- multi-tab financial dashboard (thin composition mode).
 
-[v1.12] Reorganized from 5 tabs to 7 tabs with sub-tabs + charts:
+[v1.16] Critical bug fixes + new features:
+  - 3T2025 skip bug fixed in fetchers._fetch_quarterly_cumulative
+    (year filter + LIMIT scaled by empresa_id count).
+  - Sidebar group rendering fixed in the financials_dashboard adapter
+    (group field was being dropped).
+  - DVA pie chart "Outros" bug fixed (new 7.08.* taxonomy + no parent/
+    child double-count).
+  - Crescimento 3M/1Y/5Y now computed (3M from quarterly QoQ; 6 annual
+    periods fetched so 5Y has enough data).
+  - Chart titles + descriptions added to every chart section.
+  - Indicator tooltips (formula/explanation) on every ratio_grid item.
+  - Indicadores Crescimento subtab split by metric (Receita/Lucro Líq./
+    Resultado Bruto) instead of one "Outros" bucket.
+  - Trimestral YoY table restructured to group by YEAR (primary) instead
+    of by quarter.
+  - New charts: Overview trend, Balanço structure, Anual multi-line,
+    Trimestral bar.
 
-  1. Overview     — KPI cards (Receita, EBITDA, Lucro Líquido, ROE, ROIC,
-                    Dív.Líq/EBITDA) + latest-annual summary table +
-                    quarterly trend + freshness metadata
-  2. Indicadores  — ALL ratios in one categorized ratio_grid (valuation,
-                    profitability, liquidity, leverage, efficiency, growth,
-                    tax) via compute_all_ratios()
-  3. Crescimento  — 3M/1Y/5Y growth table (Receita, Lucro Bruto, Lucro
-                    Líquido) + bar chart
-  4. Balanço      — BPA + BPP as `type: "subtabs"` (2 sub-tabs)
-  5. DRE          — latest annual accounts table + 5Y margin trend chart
-  6. DFC          — latest annual accounts table + 5Y stacked bar chart
-                    (FCO / FCI / FCF)
-  7. DVA          — latest annual accounts table + doughnut chart of
-                    wealth distribution
-
-DESIGN
-------
-The dashboard mode does NOT fetch new data — it calls the standalone
-statement modes (bpa, bpp, dre, dfc, dva) for statement tables, plus
-annual() / quarterly() / compute_all_ratios() for the summary sections.
-Each sub-call is independently try/except-wrapped so a missing DB
-degrades the corresponding tab to an error payload instead of crashing
-the whole dashboard.
-
-The section-building helpers live in skills.cvm.financials.report (so
-they can be reused by other modes / tests). This module is the
-orchestrator: gather data → call report.* builders → assemble tabs.
-
-Registered as "dashboard" in skills.cvm.financials._registry.MODES via
-the @register_mode decorator. Auto-discovered by __init__.py.
+11 tabs grouped into 4 sidebar sections:
+  RESUMO:
+    - Overview, Indicadores, Crescimento
+  DEMONSTRAÇÕES:
+    - Balanço, DRE, DFC, DVA
+  PERÍODOS:
+    - Anual, Trimestral
+  SÉRIES TEMPORAIS:
+    - Anualizado, Trimestral YoY
 """
 from __future__ import annotations
 
 from datetime import date
 
+from skills._base import engine_cache_scope
 from skills.cvm.financials._registry import register_mode
 from skills.cvm.financials.modes.annual import annual
 from skills.cvm.financials.modes.quarterly import quarterly
@@ -45,11 +41,15 @@ from skills.cvm.financials.modes.yoy_quarterly import yoy_quarterly as yoy_mode
 from skills.cvm.financials.report import (
     annual_metric,
     annual_ratio,
+    build_company_header,
+    build_price_chart,
     build_overview_kpis,
     build_overview_sections,
+    build_overview_trend_chart,
     build_indicadores_section,
     build_crescimento_sections,
     build_balanco_section,
+    build_balanco_chart,
     build_dre_sections,
     build_dfc_sections,
     build_dva_sections,
@@ -58,6 +58,8 @@ from skills.cvm.financials.report import (
     build_ttm_table,
     build_yoy_chart,
     build_yoy_table,
+    build_period_table,
+    build_period_chart,
 )
 
 
@@ -72,13 +74,11 @@ def _safe_call(fn, *args, **kwargs):
 @register_mode(
     "dashboard",
     description=(
-        "Multi-tab financial dashboard (thin composition of annual() + "
-        "quarterly() + compute_all_ratios() + 5 standalone statement "
-        "modes). 7 tabs: Overview (KPI cards + summary), Indicadores "
-        "(ratio_grid with all 55 metrics), Crescimento (3M/1Y/5Y growth "
-        "+ bar chart), Balanço (BPA + BPP subtabs), DRE (table + margin "
-        "trend chart), DFC (table + stacked bar chart), DVA (table + "
-        "doughnut chart). Optimized for the report tool's dashboard action."
+        "Multi-tab financial dashboard. 11 tabs grouped into 4 sections: "
+        "Resumo (Overview/Indicadores/Crescimento), Demonstrações "
+        "(Balanço/DRE/DFC/DVA), Períodos (Anual/Trimestral), "
+        "Séries Temporais (Anualizado/Trimestral YoY). "
+        "KPI cards + charts + subtabs + ratio_grid."
     ),
     params={
         "company":     "str. Required.",
@@ -90,94 +90,80 @@ def _safe_call(fn, *args, **kwargs):
     ],
 )
 def dashboard(company: str = "", consolidado: int = 1) -> dict:
-    """7-tab financial dashboard (thin composition of existing modes).
-
-    Returns a structured payload with tabs optimized for the report tool's
-    dashboard action:
-
-      1. Overview     — KPI cards + latest-annual summary table + quarterly
-                        trend + freshness metadata
-      2. Indicadores  — categorized ratio_grid (all 55 calculations metrics)
-      3. Crescimento  — 3M/1Y/5Y growth table + bar chart
-      4. Balanço      — BPA + BPP as `type: "subtabs"`
-      5. DRE          — latest annual accounts table + margin trend chart
-      6. DFC          — latest annual accounts table + stacked bar chart
-      7. DVA          — latest annual accounts table + doughnut chart
-
-    Each sub-call is independently try/except-wrapped so a missing DB
-    degrades the corresponding tab to an error payload instead of
-    crashing the whole dashboard.
-
-    Args:
-        company: Ticker, name, or CNPJ. Required.
-        consolidado: 1=consolidated (default), 0=individual.
-
-    Returns:
-        Dict shaped as ``{"status": "ok", "company": ..., "tabs": [...], "kpis": [...]}``
-        where each tab is ``{"name": str, "sections": [...]}``. On empty
-        company, returns ``{"status": "error", "error": "company is required"}``.
-    """
+    """11-tab financial dashboard with sidebar grouping."""
     if not company:
         return {"status": "error", "error": "company is required"}
 
     print(f"[financials] Starting dashboard for {company}...", flush=True)
 
-    # ── Gather underlying data (each call wrapped independently) ────────────
-    print(f"[financials] Fetching annual data (5 periods)...", flush=True)
-    annual_payload = _safe_call(annual, company=company, periods=5,
-                                consolidado=consolidado)
-    print(f"[financials] Fetching quarterly data (4 periods)...", flush=True)
-    quarterly_payload = _safe_call(quarterly, company=company, periods=4,
-                                   consolidado=consolidado)
+    with engine_cache_scope() as cache:
+        # ── Gather underlying data ─────────────────────────────────────────
+        # [v1.16] Fetch 6 annual periods (was 5) so 5Y growth has enough
+        # data points: growth_at(target, LOOKBACK_5Y) needs the period 5
+        # years before the latest, which requires 6 total annual points.
+        print(f"[financials] Fetching annual data (6 periods)...", flush=True)
+        annual_payload = _safe_call(annual, company=company, periods=6,
+                                    consolidado=consolidado)
+        print(f"[financials] Fetching quarterly data (8 periods)...", flush=True)
+        quarterly_payload = _safe_call(quarterly, company=company, periods=8,
+                                       consolidado=consolidado)
 
-    latest_annual_period: dict | None = None
-    annual_periods: list[dict] = []
-    if annual_payload.get("status") == "ok" and annual_payload.get("periods"):
-        annual_periods = annual_payload["periods"]
-        latest_annual_period = annual_periods[0]
+        latest_annual_period: dict | None = None
+        annual_periods: list[dict] = []
+        if annual_payload.get("status") == "ok" and annual_payload.get("periods"):
+            annual_periods = annual_payload["periods"]
+            latest_annual_period = annual_periods[0]
 
-    quarterly_periods: list[dict] = []
-    if quarterly_payload.get("status") == "ok" and quarterly_payload.get("periods"):
-        quarterly_periods = quarterly_payload["periods"]
+        quarterly_periods: list[dict] = []
+        if quarterly_payload.get("status") == "ok" and quarterly_payload.get("periods"):
+            quarterly_periods = quarterly_payload["periods"]
 
-    # Current ratios via the calculations registry (point-in-time at today).
-    today = date.today().isoformat()
-    ratios_payload: dict = {"date": today}
-    print(f"[financials] Computing ratios (via compute_all_ratios)...", flush=True)
-    try:
-        from skills.cvm.calculations._registry import compute_all_ratios
+        # Current ratios via the calculations registry
+        today = date.today().isoformat()
+        ratios_payload: dict = {"date": today}
+        print(f"[financials] Computing ratios (via compute_all_ratios)...", flush=True)
+        try:
+            from skills.cvm.calculations._registry import compute_all_ratios
 
-        all_ratios = compute_all_ratios(
-            company,
-            today,
-            categories=["profitability", "liquidity", "leverage",
-                        "efficiency", "growth", "tax", "valuation"],
-            exclude=["lpa", "vpa", "dpa", "rps"],  # per-share metrics belong in valuation
-        )
-        ratios_payload.update(all_ratios)
-    except Exception as e:
-        ratios_payload["error"] = str(e)
+            all_ratios = compute_all_ratios(
+                company,
+                today,
+                categories=["profitability", "liquidity", "leverage",
+                            "efficiency", "growth", "tax", "valuation"],
+                exclude=["lpa", "vpa", "dpa", "rps"],
+            )
+            ratios_payload.update(all_ratios)
+        except Exception as e:
+            ratios_payload["error"] = str(e)
 
-    # ── Standalone statement modes (each wrapped independently) ─────────────
-    # We fetch the latest annual period for each statement. Failures degrade
-    # the corresponding tab to an error section, not a crash.
-    print(f"[financials] Fetching statement modes (BPA/BPP/DRE/DFC/DVA)...", flush=True)
-    bpa_result = _safe_call(_call_bpa, company, consolidado)
-    print(f"[financials]   Fetching BPA... done.", flush=True)
-    bpp_result = _safe_call(_call_bpp, company, consolidado)
-    print(f"[financials]   Fetching BPP... done.", flush=True)
-    dre_result = _safe_call(_call_dre, company, consolidado)
-    print(f"[financials]   Fetching DRE... done.", flush=True)
-    dfc_result = _safe_call(_call_dfc, company, consolidado)
-    print(f"[financials]   Fetching DFC... done.", flush=True)
-    dva_result = _safe_call(_call_dva, company, consolidado)
-    print(f"[financials]   Fetching DVA... done.", flush=True)
+        # ── Standalone statement modes (4 periods for richer tables) ──────
+        print(f"[financials] Fetching statement modes (BPA/BPP/DRE/DFC/DVA)...", flush=True)
+        bpa_result = _safe_call(_call_bpa, company, consolidado)
+        print(f"[financials]   Fetching BPA... done.", flush=True)
+        bpp_result = _safe_call(_call_bpp, company, consolidado)
+        print(f"[financials]   Fetching BPP... done.", flush=True)
+        dre_result = _safe_call(_call_dre, company, consolidado)
+        print(f"[financials]   Fetching DRE... done.", flush=True)
+        dfc_result = _safe_call(_call_dfc, company, consolidado)
+        print(f"[financials]   Fetching DFC... done.", flush=True)
+        dva_result = _safe_call(_call_dva, company, consolidado)
+        print(f"[financials]   Fetching DVA... done.", flush=True)
 
-    # ── Tab 1: Overview ─────────────────────────────────────────────────────
+        # ── TTM series ──────────────────────────────────────────────────────
+        print(f"[financials] Fetching TTM series...", flush=True)
+        ttm_result = _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
+
+        # ── YoY quarterly ───────────────────────────────────────────────────
+        print(f"[financials] Fetching YoY quarterly comparison...", flush=True)
+        yoy_result = _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
+
+        stats = cache.stats
+        print(f"[financials] F7 cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+
+    # ── Build sections ────────────────────────────────────────────────────
     print(f"[financials] Building dashboard sections...", flush=True)
-    # Pull ROE + ROIC + Net Debt/EBITDA from the ratios registry (point-in-time
-    # at today), falling back to the annual period's ratios when the registry
-    # value is None (e.g. cotahist missing in test env).
+
+    # Tab 1: Overview
     roe_val = ratios_payload.get("roe")
     if roe_val is None:
         roe_val = annual_ratio(latest_annual_period, "roe")
@@ -191,53 +177,89 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     overview_sections = build_overview_sections(
         latest_annual_period, quarterly_periods, ratios_payload)
 
-    # ── Tab 2: Indicadores ──────────────────────────────────────────────────
+    # [v1.18] Company info card at the TOP of the Overview tab.
+    # This pattern (company info + price chart at top of first tab) will be
+    # reused by valuation/historical/governance dashboards — financials is
+    # the template. The KPI boxes stay in the universal header (above tabs).
+    company_header = build_company_header(company)
+    if company_header.get("name"):
+        overview_sections.insert(0, {
+            "type": "company_info",
+            "company_header": company_header,
+        })
+
+    # [v1.18] Historical price chart with time-range selector — top of Overview.
+    price_chart = build_price_chart(company)
+    if price_chart:
+        overview_sections.insert(1, price_chart)
+
+    # [v1.18] Annual trend chart (Receita/EBITDA/Lucro) — after price chart.
+    overview_trend = build_overview_trend_chart(annual_periods)
+    if overview_trend:
+        overview_sections.append(overview_trend)
+
+    # Tab 2: Indicadores
     indicadores_section = build_indicadores_section(today, ratios_payload)
 
-    # ── Tab 3: Crescimento ──────────────────────────────────────────────────
+    # Tab 3: Crescimento
+    # [v1.16] Pass quarterly_periods so 3M (QoQ) growth can be computed.
     crescimento_sections = build_crescimento_sections(
-        latest_annual_period, annual_periods)
+        latest_annual_period, annual_periods, quarterly_periods)
 
-    # ── Tab 4: Balanço (BPA + BPP subtabs) ──────────────────────────────────
+    # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
         balanco_section = build_balanco_section(bpa_result, bpp_result)
+        # [v1.16] Add a balance-sheet structure chart (Caixa/Ativo/Dívida/PL).
+        balanco_chart = build_balanco_chart(bpa_result, bpp_result)
+        # The Balanço tab is a single subtabs section; append the chart as
+        # a top-level section after the subtabs so it renders below.
+        if balanco_chart:
+            balanco_sections = [balanco_section, balanco_chart]
+        else:
+            balanco_sections = [balanco_section]
     else:
-        balanco_section = {
-            "type": "text",
-            "text": (
-                "Balanço indisponível para esta empresa. "
-                f"Detalhe BPA: {bpa_result.get('error', '—')}. "
-                f"Detalhe BPP: {bpp_result.get('error', '—')}."
-            ),
-        }
+        balanco_sections = [build_error_section("Balanço", "BPA/BPP indisponível")]
 
-    # ── Tab 5: DRE ──────────────────────────────────────────────────────────
+    # Tab 5: DRE
     if dre_result.get("status") == "ok":
         dre_sections = build_dre_sections(
             dre_result, annual_periods, latest_annual_period)
     else:
-        dre_sections = [build_error_section(
-            "DRE", dre_result.get("error", "unknown"))]
+        dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
-    # ── Tab 6: DFC ──────────────────────────────────────────────────────────
+    # Tab 6: DFC
     if dfc_result.get("status") == "ok":
         dfc_sections = build_dfc_sections(
             dfc_result, annual_periods, latest_annual_period)
     else:
-        dfc_sections = [build_error_section(
-            "DFC", dfc_result.get("error", "unknown"))]
+        dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
 
-    # ── Tab 7: DVA ──────────────────────────────────────────────────────────
+    # Tab 7: DVA
     if dva_result.get("status") == "ok":
         dva_sections = build_dva_sections(dva_result)
     else:
-        dva_sections = [build_error_section(
-            "DVA", dva_result.get("error", "unknown"))]
+        dva_sections = [build_error_section("DVA", dva_result.get("error", "unknown"))]
 
-    # ── Tab 8: TTM (Anualizado) ─────────────────────────────────────────────
-    print(f"[financials] Fetching TTM series...", flush=True)
+    # Tab 8: Anual (raw annual periods table + trend chart)
+    if annual_payload.get("status") == "ok":
+        anual_sections = [build_period_table(annual_periods, "Anual")]
+        anual_chart = build_period_chart(annual_periods, "Anual")
+        if anual_chart:
+            anual_sections.append(anual_chart)
+    else:
+        anual_sections = [build_error_section("Anual", annual_payload.get("error", "unknown"))]
+
+    # Tab 9: Trimestral (raw quarterly periods table + bar chart)
+    if quarterly_payload.get("status") == "ok":
+        trimestral_sections = [build_period_table(quarterly_periods, "Trimestral")]
+        trimestral_chart = build_period_chart(quarterly_periods, "Trimestral")
+        if trimestral_chart:
+            trimestral_sections.append(trimestral_chart)
+    else:
+        trimestral_sections = [build_error_section("Trimestral", quarterly_payload.get("error", "unknown"))]
+
+    # Tab 10: TTM (Anualizado)
     ttm_sections: list[dict] = []
-    ttm_result = _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
     if isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
         ttm_periods = ttm_result.get("periods") or []
         if ttm_periods:
@@ -246,64 +268,90 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             if ttm_chart:
                 ttm_sections.append(ttm_chart)
     if not ttm_sections:
-        ttm_sections = [build_error_section("TTM", ttm_result.get("error", "unknown") if isinstance(ttm_result, dict) else "unknown")]
+        ttm_sections = [build_error_section("Anualizado", ttm_result.get("error", "unknown") if isinstance(ttm_result, dict) else "unknown")]
 
-    # ── Tab 9: YoY Quarterly (Trimestre) ────────────────────────────────────
-    print(f"[financials] Fetching YoY quarterly comparison...", flush=True)
+    # Tab 11: YoY Quarterly (Trimestral YoY)
+    # [v1.18] build_yoy_table now returns a LIST of sections (one per year).
     yoy_sections: list[dict] = []
-    yoy_result = _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
     if isinstance(yoy_result, dict) and yoy_result.get("status") == "ok":
         yoy_groups = yoy_result.get("groups") or []
         if yoy_groups:
-            yoy_sections.append(build_yoy_table(yoy_groups))
+            yoy_sections.extend(build_yoy_table(yoy_groups))
             yoy_chart = build_yoy_chart(yoy_groups)
             if yoy_chart:
                 yoy_sections.append(yoy_chart)
     if not yoy_sections:
-        yoy_sections = [build_error_section("YoY Quarterly", yoy_result.get("error", "unknown") if isinstance(yoy_result, dict) else "unknown")]
+        yoy_sections = [build_error_section("Trimestral YoY", yoy_result.get("error", "unknown") if isinstance(yoy_result, dict) else "unknown")]
 
-    # ── Assemble the dashboard payload ──────────────────────────────────────
-    # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
-    # renders them above all tabs via the kpi-grid div.
+    # ── Assemble the dashboard payload with sidebar groups ────────────────
     tabs = [
-        {"name": "Overview",     "sections": overview_sections},
-        {"name": "Indicadores",  "sections": [indicadores_section]},
-        {"name": "Crescimento",  "sections": crescimento_sections},
-        {"name": "Balanço",      "sections": [balanco_section]},
-        {"name": "DRE",          "sections": dre_sections},
-        {"name": "DFC",          "sections": dfc_sections},
-        {"name": "DVA",          "sections": dva_sections},
-        {"name": "TTM",          "sections": ttm_sections},
-        {"name": "YoY Quarterly", "sections": yoy_sections},
+        # RESUMO
+        {"name": "Overview",      "group": "Resumo",            "sections": overview_sections},
+        {"name": "Indicadores",   "group": "Resumo",            "sections": [indicadores_section]},
+        {"name": "Crescimento",   "group": "Resumo",            "sections": crescimento_sections},
+        # DEMONSTRAÇÕES
+        {"name": "Balanço",       "group": "Demonstrações",     "sections": balanco_sections},
+        {"name": "DRE",           "group": "Demonstrações",     "sections": dre_sections},
+        {"name": "DFC",           "group": "Demonstrações",     "sections": dfc_sections},
+        {"name": "DVA",           "group": "Demonstrações",     "sections": dva_sections},
+        # PERÍODOS
+        {"name": "Anual",         "group": "Períodos",          "sections": anual_sections},
+        {"name": "Trimestral",    "group": "Períodos",          "sections": trimestral_sections},
+        # SÉRIES TEMPORAIS
+        {"name": "Anualizado",    "group": "Séries Temporais",  "sections": ttm_sections},
+        {"name": "Trimestral YoY", "group": "Séries Temporais", "sections": yoy_sections},
     ]
+
+    # Freshness footer
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last_period = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        dfp_period = last_period.get("dfp", "")
+        itr_period = last_period.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'})"
+        )
+    except Exception:
+        pass
+
     print(f"[financials] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
-    return {"status": "ok", "company": company, "tabs": tabs, "kpis": kpis}
+    return {
+        "status": "ok",
+        "company": company,
+        "company_header": build_company_header(company),
+        "tabs": tabs,
+        "kpis": kpis,
+        "freshness_footer": freshness_footer,
+    }
 
 
-# ── Statement-mode call helpers ──────────────────────────────────────────────
-# These exist so the dashboard module's try/except wraps a single function
-# call per statement (cleaner than wrapping the import + call inline).
+# ── Statement-mode call helpers (4 periods for richer tables) ────────────────
 
 def _call_bpa(company: str, consolidado: int) -> dict:
     from skills.cvm.financials.modes.bpa import bpa
-    return bpa(company=company, period="annual", consolidado=consolidado, periods=1)
+    return bpa(company=company, period="annual", consolidado=consolidado, periods=4)
 
 
 def _call_bpp(company: str, consolidado: int) -> dict:
     from skills.cvm.financials.modes.bpp import bpp
-    return bpp(company=company, period="annual", consolidado=consolidado, periods=1)
+    return bpp(company=company, period="annual", consolidado=consolidado, periods=4)
 
 
 def _call_dre(company: str, consolidado: int) -> dict:
     from skills.cvm.financials.modes.dre import dre
-    return dre(company=company, period="annual", consolidado=consolidado, periods=1)
+    return dre(company=company, period="annual", consolidado=consolidado, periods=4)
 
 
 def _call_dfc(company: str, consolidado: int) -> dict:
     from skills.cvm.financials.modes.dfc import dfc
-    return dfc(company=company, period="annual", consolidado=consolidado, periods=1)
+    return dfc(company=company, period="annual", consolidado=consolidado, periods=4)
 
 
 def _call_dva(company: str, consolidado: int) -> dict:
     from skills.cvm.financials.modes.dva import dva
-    return dva(company=company, period="annual", consolidado=consolidado, periods=1)
+    return dva(company=company, period="annual", consolidado=consolidado, periods=4)

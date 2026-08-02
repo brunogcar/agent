@@ -49,6 +49,216 @@ def annual_ratio(latest_annual_period: dict | None, name: str) -> float | None:
     return (latest_annual_period.get("ratios") or {}).get(name)
 
 
+# ── Company header (v1.16) ───────────────────────────────────────────────────
+
+def build_company_header(company: str) -> dict:
+    """Build a company header with FCA/CAD registration info + latest price.
+
+    [v1.16] New. Pulls company registration data from:
+      - FCA (fca.db): company name, CNPJ, CD_CVM, sector, listing segment,
+        fiscal year-end, control type, website
+      - CAD (cad.db): trade name, sector, UF, auditor
+      - COTAHIST (cotahist.db): ISIN, latest close price
+
+    Returns a dict with:
+      {"ticker", "name", "trade_name", "cnpj", "cd_cvm", "sector",
+       "listing_segment", "control_type", "uf", "website", "isin",
+       "last_close", "fiscal_year_end"}
+
+    All fields are best-effort — missing DBs or lookups return None/"".
+    """
+    header: dict[str, Any] = {
+        "ticker": company,
+        "name": "",
+        "trade_name": "",
+        "cnpj": "",
+        "cd_cvm": "",
+        "sector": "",
+        "listing_segment": "",
+        "control_type": "",
+        "uf": "",
+        "website": "",
+        "isin": "",
+        "last_close": None,
+        "fiscal_year_end": "",
+    }
+
+    ticker = (company or "").strip().upper()
+    if not ticker:
+        return header
+
+    # ── FCA lookup: CNPJ, CD_CVM, name, sector, segment, control, website ──
+    try:
+        from data_sources.cvm._db import fca_db_path
+        import sqlite3
+        fca = fca_db_path()
+        if fca.exists():
+            conn = sqlite3.connect(f"file:{fca}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            # Join fca_valor_mobiliario + fca_geral on CNPJ (digits only)
+            row = conn.execute(
+                """SELECT g.Nome_Empresarial, g.CNPJ_Companhia, g.Codigo_CVM,
+                          g.Setor_Atividade, g.Descricao_Atividade,
+                          g.Especie_Controle_Acionario, g.Pagina_Web,
+                          g.Mes_Encerramento_Exercicio_Social,
+                          g.Dia_Encerramento_Exercicio_Social,
+                          v.Segmento, v.Codigo_Negociacao
+                   FROM fca_valor_mobiliario v
+                   JOIN fca_geral g
+                     ON REPLACE(REPLACE(REPLACE(g.CNPJ_Companhia,'.',''),'/',''),'-','')
+                      = REPLACE(REPLACE(REPLACE(v.CNPJ_Companhia,'.',''),'/',''),'-','')
+                   WHERE UPPER(v.Codigo_Negociacao) = ?
+                   ORDER BY v.Data_Referencia DESC, g.Data_Referencia DESC
+                   LIMIT 1""",
+                (ticker,),
+            ).fetchone()
+            if row:
+                header["name"] = row["Nome_Empresarial"] or ""
+                header["cnpj"] = row["CNPJ_Companhia"] or ""
+                header["cd_cvm"] = str(row["Codigo_CVM"] or "")
+                header["sector"] = row["Setor_Atividade"] or ""
+                header["control_type"] = row["Especie_Controle_Acionario"] or ""
+                header["website"] = row["Pagina_Web"] or ""
+                header["listing_segment"] = row["Segmento"] or ""
+                mes = row["Mes_Encerramento_Exercicio_Social"]
+                dia = row["Dia_Encerramento_Exercicio_Social"]
+                if mes and dia:
+                    header["fiscal_year_end"] = f"{int(mes):02d}-{int(dia):02d}"
+            conn.close()
+    except Exception:
+        pass
+
+    # ── CAD lookup: trade name, sector (fallback), UF, auditor ──
+    try:
+        from data_sources.cvm._db import cad_db_path
+        import sqlite3
+        cad = cad_db_path()
+        if cad.exists() and header["cnpj"]:
+            cnpj_digits = header["cnpj"].replace(".", "").replace("/", "").replace("-", "")
+            conn = sqlite3.connect(f"file:{cad}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT DENOM_SOCIAL, DENOM_COMERC, SETOR_ATIV, UF, AUDITOR
+                   FROM cia_aberta
+                   WHERE REPLACE(REPLACE(REPLACE(CNPJ_CIA,'.',''),'/',''),'-','') = ?
+                   AND SIT = 'ATIVO'
+                   ORDER BY rowid DESC LIMIT 1""",
+                (cnpj_digits,),
+            ).fetchone()
+            if row:
+                header["trade_name"] = row["DENOM_COMERC"] or ""
+                if not header["sector"]:
+                    header["sector"] = row["SETOR_ATIV"] or ""
+                header["uf"] = row["UF"] or ""
+            conn.close()
+    except Exception:
+        pass
+
+    # ── COTAHIST lookup: ISIN + latest close price ──
+    try:
+        from data_sources.b3.cotahist.catalog import db_path as cotahist_path
+        import sqlite3
+        cot = cotahist_path()
+        if cot.exists():
+            conn = sqlite3.connect(f"file:{cot}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            # ISIN
+            isin_row = conn.execute(
+                "SELECT DISTINCT isin FROM cotahist WHERE symbol=? AND isin IS NOT NULL LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            if isin_row:
+                header["isin"] = isin_row["isin"] or ""
+            # Latest close
+            close_row = conn.execute(
+                "SELECT close FROM cotahist WHERE symbol=? ORDER BY refdate DESC LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            if close_row and close_row["close"] is not None:
+                header["last_close"] = float(close_row["close"])
+            conn.close()
+    except Exception:
+        pass
+
+    return header
+
+
+def build_price_chart(company: str) -> dict | None:
+    """Build a historical price chart section with time-range selector.
+
+    [v1.18] New. Fetches the full available price history from COTAHIST
+    and returns a chart section. The time-range selector (All / 5Y / 1Y /
+    1M) is implemented client-side via JS buttons that filter the dataset.
+
+    Returns None if no price data is available.
+    """
+    try:
+        from skills.cvm.calculations.engines.price import price_series
+        from datetime import date, timedelta
+    except ImportError:
+        return None
+
+    today = date.today()
+    # Fetch last 10 years (or all available if less).
+    date_from = (today - timedelta(days=365 * 10)).isoformat()
+    date_to = today.isoformat()
+
+    try:
+        series = price_series(company, date_from, date_to)
+    except Exception:
+        return None
+
+    if not series or len(series) < 2:
+        return None
+
+    # Build the full dataset — JS will filter by range.
+    labels = [p.get("date", "") for p in series]
+    closes = [p.get("close") for p in series]
+
+    return {
+        "type": "chart",
+        "title": f"Cotação Histórica — {company}",
+        "description": (
+            "Preço de fechamento diário. Use os botões para selecionar o "
+            "período: Tudo / 5A / 1A / 1M."
+        ),
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": f"{company} — Fechamento (R$)",
+                    "data": closes,
+                    "borderColor": "#0d9488",
+                    "backgroundColor": "rgba(13,148,136,0.1)",
+                    "fill": True,
+                    "tension": 0.1,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {
+                    "x": {"ticks": {"maxTicksLimit": 12}},
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "R$"}},
+                },
+                "plugins": {
+                    "title": {"display": True, "text": f"Cotação Histórica — {company}"},
+                    "legend": {"display": False},
+                },
+            },
+        },
+        # [v1.18] Custom field consumed by dashboard.html to render the
+        # time-range selector buttons above the chart.
+        "price_range_selector": True,
+        "price_full_labels": labels,
+        "price_full_data": closes,
+    }
+
+
 # ── KPI cards (top-level) ────────────────────────────────────────────────────
 
 def build_overview_kpis(
@@ -181,27 +391,10 @@ def build_overview_sections(
             "rows": trend_rows,
         })
 
-    # Freshness (best-effort — only if the freshness module is importable)
-    try:
-        from skills.cvm._freshness import get_freshness, get_last_synced_period
-        fresh = get_freshness()
-        last = get_last_synced_period()
-        fresh_rows = [[k, str(v)] for k, v in sorted(fresh.items())]
-        last_rows = [[k, str(v)] for k, v in sorted(last.items())]
-        sections.append({
-            "title": "Data Freshness (sync timestamps)",
-            "type": "table",
-            "columns": ["Database", "Last Sync"],
-            "rows": fresh_rows,
-        })
-        sections.append({
-            "title": "Last Synced Period (data_fim_exerc)",
-            "type": "table",
-            "columns": ["Database", "Last Period"],
-            "rows": last_rows,
-        })
-    except Exception:
-        pass
+    # [v1.16] Freshness tables removed from Overview — the freshness footer
+    # at the dashboard level (built by modes/dashboard.py) shows the last
+    # sync timestamp + last synced period in a compact single-line format.
+    # No need for two bulky tables here.
     return sections
 
 
@@ -271,20 +464,141 @@ _INDICADORES_CATEGORIES = [
     "leverage", "efficiency", "growth", "tax",
 ]
 
+# [v1.16] Tooltips (formula/explanation) for each indicator. Shown as a
+# native browser tooltip (title=) on the ratio-item. The info icon (ⓘ)
+# is rendered by macros.html ratio_grid when item.tooltip is present.
+# These are short PT-BR explanations — keep under ~120 chars.
+_METRIC_TOOLTIPS = {
+    # profitability
+    "roe": "ROE = Lucro Líquido / Patrimônio Líquido. Rentabilidade do capital dos acionistas.",
+    "roa": "ROA = Lucro Líquido / Ativo Total. Eficiência do uso dos ativos.",
+    "roic": "ROIC = NOPAT / Capital Investido. Retorno sobre o capital aportado.",
+    "gross_margin": "Margem Bruta = Lucro Bruto / Receita Líquida.",
+    "operating_margin": "Margem Operacional = EBIT / Receita Líquida.",
+    "net_margin": "Margem Líquida = Lucro Líquido / Receita Líquida.",
+    "ebitda_margin": "Margem EBITDA = EBITDA / Receita Líquida.",
+    "ocf_margin": "Margem FCO = Fluxo de Caixa Operacional / Receita Líquida.",
+    "fcf_margin": "Margem FCF = Fluxo de Caixa Livre / Receita Líquida.",
+    # liquidity
+    "current_ratio": "Liquidez Corrente = Ativo Circulante / Passivo Circulante.",
+    "quick_ratio": "Liquidez Seca = (Ativo Circulante - Estoques) / Passivo Circulante.",
+    "cash_ratio": "Liquidez Imediata = Caixa / Passivo Circulante.",
+    "working_capital": "Capital de Giro = Ativo Circulante - Passivo Circulante.",
+    # leverage
+    "debt_equity": "Dívida/PL = Dívida Bruta / Patrimônio Líquido.",
+    "net_debt_ebitda": "Dív. Líq/EBITDA = (Dívida Bruta - Caixa) / EBITDA. Alavanca operacional.",
+    "dl_ebit": "Dív. Líq/EBIT = (Dívida Bruta - Caixa) / EBIT.",
+    "interest_coverage": "Cobertura de Juros = EBIT / Juros Líquidos Passivos.",
+    "cash_flow_to_debt": "FCO/Dívida = Fluxo de Caixa Operacional / Dívida Bruta.",
+    # efficiency
+    "asset_turnover": "Giro do Ativo = Receita Líquida / Ativo Total.",
+    "inventory_turnover": "Giro de Estoque = CMV / Estoque Médio.",
+    "receivables_turnover": "Giro de Contas a Receber = Receita / Contas a Receber.",
+    "fixed_asset_turnover": "Giro do Imobilizado = Receita / Imobilizado Líquido.",
+    "capex_revenue": "Capex/Receita = Investimentos / Receita Líquida.",
+    # growth
+    "retention_ratio": "Taxa de Retenção = 1 - Payout. Parcela do lucro retida.",
+    "sustainable_growth": "Crescimento Sustentável = ROE × Taxa de Retenção.",
+    # valuation
+    "ev_ebitda": "EV/EBITDA = (Market Cap + Dívida Líquida) / EBITDA.",
+    "ev_ebit": "EV/EBIT = (Market Cap + Dívida Líquida) / EBIT.",
+    "ev_fcf": "EV/FCF = (Market Cap + Dívida Líquida) / Fluxo de Caixa Livre.",
+    "ev_sales": "EV/Sales = Enterprise Value / Receita Líquida.",
+    "p_ebit": "P/EBIT = Preço da Ação / EBIT por ação.",
+    "p_fcf": "P/FCF = Preço da Ação / Fluxo de Caixa Livre por ação.",
+    "p_fco": "P/FCO = Preço da Ação / Fluxo de Caixa Operacional por ação.",
+    "graham_number": "Graham Number = √(22.5 × EPS × VPS). Preço justo segundo Graham.",
+    "price_to_tangible_book": "P/VPA Tangível = Preço / Valor Patrimonial Tangível.",
+    "magic_number": "Magic Number = EV/EBITDA × ROIC. Combina barato (EV/EBITDA) com qualidade (ROIC). <5 excelente, 5-15 bom, 15-30 justo, >30 caro.",
+    # per_share
+    "lpa": "P/L = Preço / Lucro por Ação. Quanto o mercado paga por R$1 de lucro.",
+    "vpa": "P/VPA = Preço / Valor Patrimonial por Ação.",
+    "dpa": "Dividend Yield = Dividendo por Ação / Preço.",
+    "rps": "PSR = Preço / Receita por Ação.",
+    # tax
+    "effective_tax_rate": "Taxa de Tributo Efetiva = Imposto / Lucro Antes de Impostos.",
+}
+
+
+def _get_tooltip(metric_name: str, spec: Any = None) -> str:
+    """Return a tooltip string for a metric, preferring the curated dict
+    then falling back to the registry spec's description."""
+    if metric_name in _METRIC_TOOLTIPS:
+        return _METRIC_TOOLTIPS[metric_name]
+    if spec is not None:
+        # Registry MetricSpec has a `description` attribute.
+        desc = getattr(spec, "description", None) or getattr(spec, "formula", None)
+        if desc:
+            return str(desc)
+    return ""
+
+
+def _group_metrics_by_prefix(items: list[dict]) -> list[dict]:
+    """Group metric items by their label prefix (EV/, P/, ROE, etc.).
+
+    Items with labels starting with "EV/" go into "EV" group.
+    Items with labels starting with "P/" go into "P/" group.
+    Growth items split by underlying metric (Receita/Lucro Líq./Resultado Bruto).
+    Everything else goes into a "Outros" group.
+    Returns a list of {"label": group_name, "items": [...]} dicts.
+
+    [v1.16] Added growth-specific prefixes so the Crescimento subtab
+    splits into Receita / Lucro Líquido / Resultado Bruto / Outros
+    instead of dumping all 11 growth metrics into a single "Outros".
+    """
+    groups: dict[str, list[dict]] = {}
+    for item in items:
+        label = item.get("label", "")
+        if label.startswith("EV/"):
+            gname = "EV (Enterprise Value)"
+        elif label.startswith("P/"):
+            gname = "P/ (Price)"
+        elif label.startswith("Marg."):
+            gname = "Margens"
+        elif label.startswith("Giro"):
+            gname = "Giro"
+        elif label in ("ROE", "ROA", "ROIC"):
+            gname = "Retorno"
+        elif label.startswith("Crescimento Receita"):
+            gname = "Receita"
+        elif label.startswith("Crescimento Lucro"):
+            gname = "Lucro Líquido"
+        elif label.startswith("Crescimento Resultado"):
+            gname = "Resultado Bruto"
+        elif label.startswith("Crescimento"):
+            gname = "Outros Crescimento"
+        else:
+            gname = "Outros"
+        groups.setdefault(gname, []).append(item)
+
+    # Return in a sensible order
+    order = [
+        "EV (Enterprise Value)", "P/ (Price)", "Retorno", "Margens",
+        "Giro",
+        "Receita", "Lucro Líquido", "Resultado Bruto",
+        "Outros Crescimento", "Outros",
+    ]
+    result = []
+    for gname in order:
+        if gname in groups:
+            result.append({"label": gname, "items": groups[gname]})
+    # Add any groups not in the order list
+    for gname, gitems in groups.items():
+        if gname not in order:
+            result.append({"label": gname, "items": gitems})
+    return result
+
 
 def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
     """Build the Indicadores tab as a ``type: "subtabs"`` section.
 
-    [v1.13 review-fix] Previously this returned a single ``ratio_grid``
-    with all 7 categories as cards on one canvas — visually dense and
-    hard to scan.  Now each category becomes its OWN sub-tab, each
-    carrying a single-category ``ratio_grid``:
+    [v1.16] First sub-tab "Todas" shows ALL categories in one ratio_grid.
+    Then individual category sub-tabs follow, each with items sub-grouped
+    by prefix (EV/, P/, Retorno, Margens, etc.) within the ratio_grid.
 
-      Valuation | Rentabilidade | Liquidez | Endividamento |
-      Eficiência | Crescimento | Tributos
-
-    Falls back to a single "Indicadores" sub-tab with a flat key-value
-    ratio_grid if the calculations registry is unavailable.
+    [v1.18] Each category subtab now also includes a bar chart showing
+    the numeric values of that category's metrics — visual comparison
+    alongside the ratio_grid.
     """
     sub_tabs: list[dict] = []
     try:
@@ -292,6 +606,8 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
             METRICS, list_metrics_by_category,
         )
 
+        # First sub-tab: "Todas" — all categories in one ratio_grid
+        all_cats: list[dict] = []
         for category in _INDICADORES_CATEGORIES:
             metrics_in_cat = list_metrics_by_category(category)
             if not metrics_in_cat:
@@ -304,23 +620,101 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                 value = ratios_payload.get(metric_name)
                 fmt_spec = "pct" if metric_name in _RATIO_PCT_KEYS else "num"
                 label = _METRIC_LABELS.get(metric_name, spec.ratio_label)
+                tooltip = _get_tooltip(metric_name, spec)
                 items.append({
                     "label": label,
                     "value": _fmt(value, fmt_spec),
+                    "tooltip": tooltip,
                 })
             if items:
-                cat_label = _RATIO_CATEGORY_LABELS.get(
-                    category, category.capitalize())
+                cat_label = _RATIO_CATEGORY_LABELS.get(category, category.capitalize())
+                all_cats.append({"label": cat_label, "items": items})
+
+        if all_cats:
+            sub_tabs.append({
+                "name": "Todas",
+                "sections": [{
+                    "title": f"Todos os Indicadores (as of {today})",
+                    "description": "Passe o mouse sobre cada indicador para ver a fórmula e explicação (ⓘ).",
+                    "type": "ratio_grid",
+                    "categories": all_cats,
+                }],
+            })
+
+        # Individual category sub-tabs with prefix sub-grouping
+        for category in _INDICADORES_CATEGORIES:
+            metrics_in_cat = list_metrics_by_category(category)
+            if not metrics_in_cat:
+                continue
+            items: list[dict] = []
+            for metric_name in metrics_in_cat:
+                spec = METRICS.get(metric_name)
+                if not spec:
+                    continue
+                value = ratios_payload.get(metric_name)
+                fmt_spec = "pct" if metric_name in _RATIO_PCT_KEYS else "num"
+                label = _METRIC_LABELS.get(metric_name, spec.ratio_label)
+                tooltip = _get_tooltip(metric_name, spec)
+                items.append({
+                    "label": label,
+                    "value": _fmt(value, fmt_spec),
+                    "tooltip": tooltip,
+                })
+            if items:
+                cat_label = _RATIO_CATEGORY_LABELS.get(category, category.capitalize())
+                # [v1.16] Sub-group by prefix within each category
+                grouped = _group_metrics_by_prefix(items)
+                sub_sections: list[dict] = [{
+                    "title": f"{cat_label} (as of {today})",
+                    "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
+                    "type": "ratio_grid",
+                    "categories": grouped,
+                }]
+                # [v1.18] Add a bar chart showing numeric values for this
+                # category's metrics. Skips metrics with None values.
+                chart_labels = []
+                chart_values = []
+                for item in items:
+                    val_str = item.get("value", "")
+                    if val_str and val_str != "—":
+                        try:
+                            # Values are formatted strings like "15,00%" or "4,39"
+                            # Parse back to float for the chart.
+                            clean = val_str.replace("%", "").replace(",", ".").replace("R$", "").replace(" ", "").replace("x", "")
+                            chart_labels.append(item["label"])
+                            chart_values.append(float(clean))
+                        except (ValueError, TypeError):
+                            pass
+                if len(chart_labels) >= 2:
+                    sub_sections.append({
+                        "type": "chart",
+                        "title": f"{cat_label} — Comparativo Visual",
+                        "description": f"Valores numéricos dos indicadores de {cat_label}.",
+                        "chart_data": {
+                            "type": "bar",
+                            "data": {
+                                "labels": chart_labels,
+                                "datasets": [{
+                                    "label": cat_label,
+                                    "data": chart_values,
+                                    "backgroundColor": "#0d9488",
+                                }],
+                            },
+                            "options": {
+                                "responsive": True,
+                                "maintainAspectRatio": False,
+                                "scales": {"y": {"ticks": {}}},
+                                "plugins": {
+                                    "title": {"display": True, "text": f"{cat_label} — Valores"},
+                                },
+                            },
+                        },
+                    })
                 sub_tabs.append({
                     "name": cat_label,
-                    "sections": [{
-                        "title": f"{cat_label} (as of {today})",
-                        "type": "ratio_grid",
-                        "categories": [{"label": cat_label, "items": items}],
-                    }],
+                    "sections": sub_sections,
                 })
     except Exception:
-        # Fallback: flat list of (name, value) in a single sub-tab.
         items = []
         for k, v in sorted(ratios_payload.items()):
             if k in ("date", "error"):
@@ -339,10 +733,7 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
             })
 
     if not sub_tabs:
-        return {
-            "type": "text",
-            "text": "Nenhum indicador disponível para esta empresa.",
-        }
+        return {"type": "text", "text": "Nenhum indicador disponível."}
 
     return {
         "title": f"Indicadores (as of {today})",
@@ -392,6 +783,7 @@ def _build_metric_periods(
 def build_crescimento_sections(
     latest_annual_period: dict | None,
     annual_periods: list[dict],
+    quarterly_periods: list[dict] | None = None,
 ) -> list[dict]:
     """Build the Crescimento tab: 3M/1Y/5Y growth table + bar chart.
 
@@ -401,10 +793,15 @@ def build_crescimento_sections(
     filing year, the helper finds the closest period within the tolerance
     window instead of blindly indexing ``sorted_periods[N]``.
 
+    [v1.16] Now accepts ``quarterly_periods`` to compute 3M growth from
+    the latest two standalone quarters. Previously 3M was always "—"
+    because only annual data was available. Also added chart title +
+    description, and the table now shows a note when 3M is derived
+    from quarterly data.
+
     Growth metrics (Revenue / Gross Profit / Net Income) are derived from
     the annual periods list when available; otherwise the table shows "—"
-    and the chart is skipped.  3M remains "—" in annual-only mode (no
-    quarterly data available here).
+    and the chart is skipped.
     """
     from skills.cvm.calculations.growth_helpers import (
         growth_at, LOOKBACK_1Y, LOOKBACK_5Y,
@@ -439,47 +836,91 @@ def build_crescimento_sections(
     ni_1y = growth_at(ni_periods, target_date, LOOKBACK_1Y)
     ni_5y = growth_at(ni_periods, target_date, LOOKBACK_5Y)
 
+    # [v1.16] 3M growth from quarterly data: compare the latest standalone
+    # quarter vs the immediately preceding quarter. If quarterly_periods
+    # is missing or has < 2 entries, 3M stays "—".
+    def _qoq_growth(metric_key: str) -> float | None:
+        if not quarterly_periods or len(quarterly_periods) < 2:
+            return None
+        # quarterly_periods are newest-first (from _build_quarterly_summary).
+        # Take the first two entries.
+        sorted_q = sorted(
+            [p for p in quarterly_periods if p.get("period")],
+            key=lambda p: str(p.get("period")),
+            reverse=True,
+        )
+        if len(sorted_q) < 2:
+            return None
+        curr = (sorted_q[0].get("metrics") or {}).get(metric_key)
+        prev = (sorted_q[1].get("metrics") or {}).get(metric_key)
+        if curr is None or prev is None or prev == 0:
+            return None
+        return (curr - prev) / abs(prev)
+
+    rev_3m = _qoq_growth("receita_liquida")
+    gp_3m = _qoq_growth("lucro_bruto")
+    ni_3m = _qoq_growth("lucro_liquido")
+
     rows = [
-        ["Receita Líquida",   "—", _fmt(rev_1y, "pct"), _fmt(rev_5y, "pct")],
-        ["Lucro Bruto",       "—", _fmt(gp_1y, "pct"), _fmt(gp_5y, "pct")],
-        ["Lucro Líquido",     "—", _fmt(ni_1y, "pct"), _fmt(ni_5y, "pct")],
+        ["Receita Líquida",   _fmt(rev_3m, "pct"), _fmt(rev_1y, "pct"), _fmt(rev_5y, "pct")],
+        ["Lucro Bruto",       _fmt(gp_3m, "pct"), _fmt(gp_1y, "pct"), _fmt(gp_5y, "pct")],
+        ["Lucro Líquido",     _fmt(ni_3m, "pct"), _fmt(ni_1y, "pct"), _fmt(ni_5y, "pct")],
     ]
     sections.append({
-        "title": "Growth Metrics (3M / 1Y / 5Y)",
+        "title": "Crescimento (3M / 1Y / 5Y)",
+        "description": (
+            "Crescimento de Receita, Lucro Bruto e Lucro Líquido. 3M = "
+            "trimestre vs trimestre anterior (QoQ); 1Y e 5Y usam período "
+            "anual com tolerância de gap (1.5x / 1.2x)."
+        ),
         "type": "table",
         "columns": ["Métrica", "3M", "1Y", "5Y"],
         "rows": rows,
         "note": (
-            "3M growth requires quarterly data; shows '—' in annual-only mode. "
-            "1Y/5Y use period-specific gap tolerance (1.5x / 1.2x) — a missed "
-            "filing year is bridged if a period falls within the tolerance window."
+            "3M = crescimento trimestral (QoQ) derivado de ITR. "
+            "1Y/5Y usam períodos anuais com tolerância de gap — um ano "
+            "de relatório ausente é compensado se houver período dentro "
+            "da janela de tolerância."
         ),
     })
 
     # Bar chart: 1Y + 5Y for each metric (3M excluded — usually missing).
     chart_data_1y = [rev_1y, gp_1y, ni_1y]
     chart_data_5y = [rev_5y, gp_5y, ni_5y]
-    if any(v is not None for v in chart_data_1y + chart_data_5y):
+    chart_data_3m = [rev_3m, gp_3m, ni_3m]
+    if any(v is not None for v in chart_data_1y + chart_data_5y + chart_data_3m):
+        datasets = []
+        if any(v is not None for v in chart_data_3m):
+            datasets.append({
+                "label": "3M (QoQ)",
+                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_3m],
+                "backgroundColor": "#a855f7",
+            })
+        if any(v is not None for v in chart_data_1y):
+            datasets.append({
+                "label": "1Y",
+                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_1y],
+                "backgroundColor": "#22c55e",
+            })
+        if any(v is not None for v in chart_data_5y):
+            datasets.append({
+                "label": "5Y",
+                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_5y],
+                "backgroundColor": "#3b82f6",
+            })
         sections.append({
             "type": "chart",
+            "title": "Crescimento Comparativo (3M / 1Y / 5Y)",
+            "description": (
+                "Crescimento percentual de Receita Líquida, Lucro Bruto e "
+                "Lucro Líquido nos três horizontes temporais. Barras "
+                "ausentes indicam dados insuficientes para o cálculo."
+            ),
             "chart_data": {
                 "type": "bar",
                 "data": {
                     "labels": ["Receita Líquida", "Lucro Bruto", "Lucro Líquido"],
-                    "datasets": [
-                        {
-                            "label": "1Y",
-                            "data": [(_v * 100 if _v is not None else None)
-                                     for _v in chart_data_1y],
-                            "backgroundColor": "#22c55e",
-                        },
-                        {
-                            "label": "5Y",
-                            "data": [(_v * 100 if _v is not None else None)
-                                     for _v in chart_data_5y],
-                            "backgroundColor": "#3b82f6",
-                        },
-                    ],
+                    "datasets": datasets,
                 },
                 "options": {
                     "responsive": True,
@@ -487,7 +928,11 @@ def build_crescimento_sections(
                     "scales": {
                         "y": {
                             "ticks": {},
+                            "title": {"display": True, "text": "Crescimento (%)"},
                         },
+                    },
+                    "plugins": {
+                        "title": {"display": True, "text": "Crescimento por Horizonte Temporal"},
                     },
                 },
             },
@@ -654,26 +1099,35 @@ def build_dre_sections(
             ebitda.append(_pct_of(r.get("marg_ebitda")))
         sections.append({
             "type": "chart",
+            "title": "Evolução das Margens (5 anos)",
+            "description": (
+                "Margens Bruta, EBIT, EBITDA e Líquida ao longo dos últimos "
+                "5 anos. Mostra a trajetória da rentabilidade operacional."
+            ),
             "chart_data": {
                 "type": "line",
                 "data": {
                     "labels": labels,
                     "datasets": [
                         {"label": "Marg. Bruta",  "data": gross,
-                         "borderColor": "#22c55e", "fill": False},
+                         "borderColor": "#22c55e", "fill": False, "tension": 0.3},
                         {"label": "Marg. EBIT",   "data": operating,
-                         "borderColor": "#3b82f6", "fill": False},
+                         "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
                         {"label": "Marg. EBITDA", "data": ebitda,
-                         "borderColor": "#f59e0b", "fill": False},
+                         "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
                         {"label": "Marg. Líquida","data": net,
-                         "borderColor": "#a855f7", "fill": False},
+                         "borderColor": "#a855f7", "fill": False, "tension": 0.3},
                     ],
                 },
                 "options": {
                     "responsive": True,
                     "maintainAspectRatio": False,
                     "scales": {
-                        "y": {"ticks": {}},
+                        "y": {"ticks": {},
+                              "title": {"display": True, "text": "Margem (%)"}},
+                    },
+                    "plugins": {
+                        "title": {"display": True, "text": "Margens Operacionais ao Longo do Tempo"},
                     },
                 },
             },
@@ -747,6 +1201,12 @@ def build_dfc_sections(
             fcf.append(_num_or_none(m.get("fcf")))
         sections.append({
             "type": "chart",
+            "title": "Fluxos de Caixa (5 anos, empilhado)",
+            "description": (
+                "Fluxo de Caixa Operacional (FCO), de Investimento (FCI) "
+                "e de Financiamento (FCF) ao longo dos últimos 5 anos. "
+                "Barras empilhadas mostram a composição total do fluxo de caixa."
+            ),
             "chart_data": {
                 "type": "bar",
                 "data": {
@@ -762,7 +1222,11 @@ def build_dfc_sections(
                     "maintainAspectRatio": False,
                     "scales": {
                         "x": {"stacked": True},
-                        "y": {"stacked": True},
+                        "y": {"stacked": True,
+                              "title": {"display": True, "text": "R$"}},
+                    },
+                    "plugins": {
+                        "title": {"display": True, "text": "Fluxos de Caixa Consolidados"},
                     },
                 },
             },
@@ -810,41 +1274,102 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
     ))
 
     # Doughnut chart: wealth distribution.
-    # Distribution-side codes (CVM DVA 8.01 / 8.02 / 8.03 / 8.04) — we detect
-    # them by the "section" field set by dva_section_for (returns "Distribuição").
+    # [v1.16 DVA-fix] Two fixes vs the v1.15 builder:
+    #
+    # 1. NEW TAXONOMY: CVM DVA codes changed in 2012+. The OLD taxonomy
+    #    used 8.01 (Pessoal), 8.02 (Governo), 8.03 (Credores), 8.04
+    #    (Acionistas). The NEW taxonomy uses 7.08.01 (Pessoal), 7.08.02
+    #    (Governo), 7.08.03 (Credores), 7.08.04 (Acionistas — Remuneração
+    #    de Capitais Próprios). Most filers post-2012 use the NEW codes;
+    #    the old builder only matched "8.0X" prefixes, so all 7.08.*
+    #    accounts fell into "Outros". We now match BOTH taxonomies.
+    #
+    # 2. DOUBLE-COUNT: The old builder summed parent + children codes
+    #    (e.g., 7.08.04 + 7.08.04.01 + 7.08.04.02), inflating the
+    #    "Acionistas" slice. The new builder uses depth-3 codes ONLY
+    #    (7.08.01 / 7.08.02 / 7.08.03 / 7.08.04) for the new taxonomy
+    #    and depth-2 codes (8.01 / 8.02 / 8.03 / 8.04) for the old
+    #    taxonomy. Deeper codes (7.08.04.01 JCP, 7.08.04.02 Dividendos)
+    #    are skipped because they are sub-components of the parent.
     distribution_labels = {
+        # NEW taxonomy (post-2012) — depth-3 codes under 7.08.*
+        "7.08.01": "Pessoal",
+        "7.08.02": "Governo",
+        "7.08.03": "Credores",
+        "7.08.04": "Acionistas",
+        "7.08.05": "Outros",
+        # OLD taxonomy (pre-2012) — depth-2 codes under 8.*
         "8.01": "Pessoal",
         "8.02": "Governo",
         "8.03": "Credores",
         "8.04": "Acionistas",
     }
-    # Walk accounts and pick up distribution-side codes by prefix.
-    dist_data: list[tuple[str, float]] = []
+
+    def _dva_depth(codigo: str) -> int:
+        """Number of dot-separated levels in a CVM account code.
+        '7.08.04' → 3, '7.08.04.01' → 4, '8.01' → 2."""
+        return len(codigo.split("."))
+
+    # Pass 1: collect all distribution-side codes + their depth.
+    dist_rows: list[tuple[str, str, float, int]] = []  # (codigo, label, valor, depth)
     for codigo, acc in accounts.items():
-        if (acc.get("section") == "Distribuição"
-                and acc.get("valor_brl") is not None):
-            # Find the canonical label by codigo prefix.
-            label = "Outros"
-            for prefix, lbl in distribution_labels.items():
-                if codigo.startswith(prefix):
-                    label = lbl
-                    break
-            try:
-                dist_data.append((label, float(acc["valor_brl"])))
-            except (TypeError, ValueError):
-                pass
+        if (acc.get("section") != "Distribuição"
+                or acc.get("valor_brl") is None):
+            continue
+        # Match against the prefix map. We need exact prefix match —
+        # 7.08.04.01 starts with "7.08.04" so it matches, but we want
+        # to attribute it to "Acionistas" only if no depth-3 sibling
+        # exists. So we record the depth and dedupe in pass 2.
+        label = None
+        matched_prefix = None
+        for prefix, lbl in distribution_labels.items():
+            if codigo == prefix or codigo.startswith(prefix + "."):
+                label = lbl
+                matched_prefix = prefix
+                break
+        if label is None:
+            continue
+        try:
+            val = float(acc["valor_brl"])
+        except (TypeError, ValueError):
+            continue
+        dist_rows.append((codigo, label, val, _dva_depth(codigo)))
+
+    # Pass 2: for each matched prefix, prefer the shallowest code.
+    # If 7.08.04 (depth 3) exists, skip 7.08.04.01/.02 (depth 4) — they
+    # are sub-components of the parent and would double-count.
+    best_per_prefix: dict[str, tuple[str, float, int]] = {}
+    for codigo, label, val, depth in dist_rows:
+        # Find which prefix this codigo matched.
+        for prefix, _ in distribution_labels.items():
+            if codigo == prefix or codigo.startswith(prefix + "."):
+                existing = best_per_prefix.get(prefix)
+                if existing is None or depth < existing[2]:
+                    best_per_prefix[prefix] = (codigo, val, depth)
+                break
+
+    # Aggregate by label (multiple prefixes map to the same label —
+    # e.g., both "7.08.04" and "8.04" → "Acionistas").
+    agg: dict[str, float] = {}
+    for prefix, (codigo, val, _depth) in best_per_prefix.items():
+        label = distribution_labels[prefix]
+        agg[label] = agg.get(label, 0.0) + val
+
+    dist_data = [(label, val) for label, val in agg.items()]
 
     if dist_data:
-        # Aggregate by label (multiple codes may map to the same label).
-        agg: dict[str, float] = {}
-        for label, val in dist_data:
-            agg[label] = agg.get(label, 0.0) + val
-        labels = list(agg.keys())
-        values = [agg[k] for k in labels]
+        labels = [lbl for lbl, _ in dist_data]
+        values = [val for _, val in dist_data]
         # Use absolute values for the chart (DVA distribution is positive).
         abs_values = [abs(v) for v in values]
         sections.append({
             "type": "chart",
+            "title": "Distribuição de Riqueza",
+            "description": (
+                "Distribuição do valor adicionado por stakeholder: Pessoal, "
+                "Governo, Credores e Acionistas. Códigos CVM 7.08.01-05 "
+                "(nova taxonomia) ou 8.01-04 (antiga)."
+            ),
             "chart_data": {
                 "type": "doughnut",
                 "data": {
@@ -923,6 +1448,12 @@ def build_ttm_chart(ttm_periods: list[dict]) -> dict | None:
 
     return {
         "type": "chart",
+        "title": "Série Temporal Anualizada (TTM)",
+        "description": (
+            "Receita, EBITDA e Lucro Líquido trailing-12-months (TTM) "
+            "recomputados a cada trimestre. Dessaonaliza os dados "
+            "trimestrais e mostra a tendência real."
+        ),
         "chart_data": {
             "type": "line",
             "data": {
@@ -939,7 +1470,11 @@ def build_ttm_chart(ttm_periods: list[dict]) -> dict | None:
             "options": {
                 "responsive": True,
                 "maintainAspectRatio": False,
-                "scales": {"y": {"ticks": {}}},
+                "scales": {"y": {"ticks": {},
+                                  "title": {"display": True, "text": "R$ (TTM)"}}},
+                "plugins": {
+                    "title": {"display": True, "text": "Série Temporal TTM (Anualizada)"},
+                },
             },
         },
     }
@@ -1020,6 +1555,13 @@ def build_yoy_chart(groups: list[dict]) -> dict | None:
 
     return {
         "type": "chart",
+        "title": "Crescimento YoY por Trimestre",
+        "description": (
+            "Crescimento YoY (year-over-year) da Receita Líquida por "
+            "trimestre (Q1/Q2/Q3/Q4) ao longo dos anos. Mostra se cada "
+            "trimestre está crescendo ou encolhendo em relação ao mesmo "
+            "trimestre do ano anterior."
+        ),
         "chart_data": {
             "type": "bar",
             "data": {
@@ -1029,36 +1571,302 @@ def build_yoy_chart(groups: list[dict]) -> dict | None:
             "options": {
                 "responsive": True,
                 "maintainAspectRatio": False,
-                "scales": {"y": {"ticks": {}}},
+                "scales": {"y": {"ticks": {},
+                                 "title": {"display": True, "text": "Crescimento YoY (%)"}}},
+                "plugins": {
+                    "title": {"display": True, "text": "Crescimento YoY da Receita por Trimestre"},
+                },
             },
         },
     }
 
 
-def build_yoy_table(groups: list[dict]) -> dict:
-    """Build a table showing same-quarter YoY comparison.
+def build_yoy_table(groups: list[dict]) -> list[dict]:
+    """Build per-year tables showing same-quarter YoY comparison.
 
-    Columns: Quarter, Year, Receita, EBITDA, Lucro Líq., Receita YoY %
+    [v1.18] Restructured to return ONE TABLE PER YEAR (was a single table
+    sorted by year). Each year gets its own section with a title like
+    "2026" and a table showing all 4 quarters for that year.
+
+    Returns a list of section dicts (one per year), newest year first.
     """
-    columns = ["Quarter", "Year", "Receita", "EBITDA", "Lucro Líq.", "Receita YoY %"]
-    rows = []
+    columns = ["Trimestre", "Receita", "EBITDA", "Lucro Líq.", "Receita YoY %"]
+
+    # Flatten all periods across groups, collect by year.
+    by_year: dict[int, list[dict]] = {}
     for g in groups:
         q_label = g.get("quarter", "")
         for p in g.get("periods") or []:
-            m = p.get("metrics") or {}
-            yoy = p.get("yoy_growth") or {}
+            year = p.get("year")
+            if year is None:
+                continue
+            by_year.setdefault(year, []).append({
+                "quarter": q_label,
+                "qnum": p.get("quarter", 0),
+                "receita": (p.get("metrics") or {}).get("receita_liquida"),
+                "ebitda": (p.get("metrics") or {}).get("ebitda"),
+                "lucro": (p.get("metrics") or {}).get("lucro_liquido"),
+                "yoy": (p.get("yoy_growth") or {}).get("receita_liquida"),
+            })
+
+    sections: list[dict] = []
+    for year in sorted(by_year.keys(), reverse=True):
+        periods = sorted(by_year[year], key=lambda x: x["qnum"])
+        rows = []
+        for p in periods:
             rows.append([
-                q_label,
-                str(p.get("year", "")),
-                _fmt(m.get("receita_liquida"), "brl"),
-                _fmt(m.get("ebitda"), "brl"),
-                _fmt(m.get("lucro_liquido"), "brl"),
-                _fmt(yoy.get("receita_liquida"), "pct"),
+                p["quarter"],
+                _fmt(p["receita"], "brl"),
+                _fmt(p["ebitda"], "brl"),
+                _fmt(p["lucro"], "brl"),
+                _fmt(p["yoy"], "pct"),
             ])
+        sections.append({
+            "title": str(year),
+            "description": f"Trimestres de {year}. YoY % = (atual - anterior) / |anterior|.",
+            "type": "table",
+            "columns": columns,
+            "rows": rows,
+        })
+
+    if not sections:
+        return [{
+            "title": "Comparação YoY por Ano",
+            "type": "text",
+            "text": "Sem dados trimestrais disponíveis.",
+        }]
+
+    return sections
+
+
+# ── Period table builder (v1.16) ────────────────────────────────────────────
+
+def build_period_table(periods: list[dict], label: str) -> dict:
+    """Build a table showing key metrics across multiple periods.
+
+    Used by the Anual and Trimestral tabs to show raw period data.
+    Columns: Período, Receita, EBIT, EBITDA, Lucro Líq., Marg. EBITDA, Marg. Líq.
+    """
+    columns = ["Período", "Receita", "EBIT", "EBITDA", "Lucro Líq.",
+               "Marg. EBITDA", "Marg. Líq."]
+    rows = []
+    for p in periods:
+        m = p.get("metrics") or {}
+        r = p.get("ratios") or {}
+        rows.append([
+            p.get("period", "—"),
+            _fmt(m.get("receita_liquida"), "brl"),
+            _fmt(m.get("ebit"), "brl"),
+            _fmt(m.get("ebitda"), "brl"),
+            _fmt(m.get("lucro_liquido"), "brl"),
+            _fmt(r.get("marg_ebitda"), "pct"),
+            _fmt(r.get("marg_liquida"), "pct"),
+        ])
     return {
-        "title": "Same-Quarter YoY Comparison (Trimestre)",
+        "title": f"{label} — {len(rows)} períodos",
         "type": "table",
         "columns": columns,
         "rows": rows,
-        "note": "Same quarter compared across years. YoY % = (curr - prev) / |prev|.",
+    }
+
+
+# ── New chart builders (v1.16) ────────────────────────────────────────────────
+
+def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
+    """Build a multi-line chart showing Receita/EBITDA/Lucro Líq. over annual periods.
+
+    [v1.16] New chart for the Overview tab — gives users an immediate
+    visual sense of the company's revenue + earnings trajectory without
+    having to navigate to the DRE or Anual tabs.
+    """
+    sorted_periods = sorted(
+        [p for p in annual_periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+
+    labels = [str(p.get("period")) for p in sorted_periods]
+    revenue, ebitda, net_income = [], [], []
+    for p in sorted_periods:
+        m = p.get("metrics") or {}
+        revenue.append(_num_or_none(m.get("receita_liquida")))
+        ebitda.append(_num_or_none(m.get("ebitda")))
+        net_income.append(_num_or_none(m.get("lucro_liquido")))
+
+    if not any(v is not None for v in revenue + ebitda + net_income):
+        return None
+
+    return {
+        "type": "chart",
+        "title": "Trajetória de Receita e Lucro (Anual)",
+        "description": (
+            "Receita Líquida, EBITDA e Lucro Líquido anuais. Mostra a "
+            "trajetória de crescimento e rentabilidade da empresa."
+        ),
+        "chart_data": {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {"label": "Receita Líquida", "data": revenue,
+                     "borderColor": "#0d9488", "fill": False, "tension": 0.3},
+                    {"label": "EBITDA", "data": ebitda,
+                     "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
+                    {"label": "Lucro Líquido", "data": net_income,
+                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {},
+                                 "title": {"display": True, "text": "R$"}}},
+                "plugins": {
+                    "title": {"display": True, "text": "Receita, EBITDA e Lucro Líquido"},
+                },
+            },
+        },
+    }
+
+
+def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
+    """Build a stacked bar chart showing Ativo vs Passivo+PL over annual periods.
+
+    [v1.16] New chart for the Balanço tab — visualizes the balance sheet
+    structure over time. Each year has two bars: Ativo (Caixa + Outros)
+    and Passivo+PL (Dívida + PL).
+    """
+    bpa_periods = (bpa_result or {}).get("periods") or []
+    bpp_periods = (bpp_result or {}).get("periods") or []
+    if not bpa_periods or not bpp_periods:
+        return None
+
+    # Build a year → accounts dict for BPA and BPP.
+    bpa_by_year: dict[str, dict] = {}
+    for p in bpa_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpa_by_year[str(period_label)] = p.get("accounts") or {}
+
+    bpp_by_year: dict[str, dict] = {}
+    for p in bpp_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpp_by_year[str(period_label)] = p.get("accounts") or {}
+
+    # Use the intersection of years, sorted oldest-first.
+    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
+    if len(years) < 2:
+        # Fall back to union if intersection is too small.
+        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
+    if len(years) < 2:
+        return None
+
+    def _val(accounts: dict, *codes: str) -> float | None:
+        for code in codes:
+            acc = accounts.get(code)
+            if acc and acc.get("valor_brl") is not None:
+                try:
+                    return float(acc["valor_brl"])
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    caixa, ativo_total, passivo_total, pl = [], [], [], []
+    for year in years:
+        bpa_acc = bpa_by_year.get(year, {})
+        bpp_acc = bpp_by_year.get(year, {})
+        ativo_total.append(_num_or_none(_val(bpa_acc, "1")))
+        pl.append(_num_or_none(_val(bpp_acc, "2.03")))
+        passivo_total.append(_num_or_none(_val(bpp_acc, "2")))
+
+    return {
+        "type": "chart",
+        "title": "Estrutura do Balanço (Anual)",
+        "description": (
+            "Ativo Total, Passivo Total e Patrimônio Líquido ao longo dos "
+            "anos. Mostra a estrutura de capital e a equação contábil "
+            "Ativo = Passivo + PL."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": years,
+                "datasets": [
+                    {"label": "Ativo Total", "data": ativo_total, "backgroundColor": "#0d9488"},
+                    {"label": "Passivo Total", "data": passivo_total, "backgroundColor": "#ef4444"},
+                    {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": "#3b82f6"},
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {},
+                                 "title": {"display": True, "text": "R$"}}},
+                "plugins": {
+                    "title": {"display": True, "text": "Estrutura do Balanço Patrimonial"},
+                },
+            },
+        },
+    }
+
+
+def build_period_chart(periods: list[dict], label: str) -> dict | None:
+    """Build a multi-line chart for the Anual or Trimestral tabs.
+
+    [v1.16] New chart showing Receita/EBITDA/Lucro Líq. across periods.
+    Used by both the Anual and Trimestral tabs (raw period data).
+    """
+    # Filter out periods without data, sort oldest-first.
+    sorted_periods = sorted(
+        [p for p in periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+
+    labels = [str(p.get("period")) for p in sorted_periods]
+    revenue, ebitda, net_income = [], [], []
+    for p in sorted_periods:
+        m = p.get("metrics") or {}
+        revenue.append(_num_or_none(m.get("receita_liquida")))
+        ebitda.append(_num_or_none(m.get("ebitda")))
+        net_income.append(_num_or_none(m.get("lucro_liquido")))
+
+    if not any(v is not None for v in revenue + ebitda + net_income):
+        return None
+
+    chart_type = "line" if label.lower().startswith("anual") else "bar"
+    return {
+        "type": "chart",
+        "title": f"Trajetória — {label}",
+        "description": (
+            f"Receita Líquida, EBITDA e Lucro Líquido por período ({label}). "
+            "Mostra a evolução temporal dos principais indicadores."
+        ),
+        "chart_data": {
+            "type": chart_type,
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {"label": "Receita Líquida", "data": revenue,
+                     "backgroundColor": "#0d9488", "borderColor": "#0d9488"},
+                    {"label": "EBITDA", "data": ebitda,
+                     "backgroundColor": "#f59e0b", "borderColor": "#f59e0b"},
+                    {"label": "Lucro Líquido", "data": net_income,
+                     "backgroundColor": "#3b82f6", "borderColor": "#3b82f6"},
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {"y": {"ticks": {},
+                                 "title": {"display": True, "text": "R$"}}},
+                "plugins": {
+                    "title": {"display": True,
+                              "text": f"Receita, EBITDA e Lucro — {label}"},
+                },
+            },
+        },
     }

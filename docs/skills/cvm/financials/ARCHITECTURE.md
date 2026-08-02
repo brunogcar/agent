@@ -14,7 +14,7 @@ skills/cvm/financials/
 │   ├── annual.py      @register_mode("annual")      — 5Y from DFP
 │   ├── complete.py    @register_mode("complete")    — by grupo + key codes
 │   ├── summary.py     @register_mode("summary")     — combined latest + current_ratios
-│   ├── dashboard.py   @register_mode("dashboard")   — 7-tab thin composition (v1.5; v1.12 reorg)
+│   ├── dashboard.py   @register_mode("dashboard")   — 11-tab thin composition with sidebar groups (v1.5; v1.12 reorg; v1.15 TTM+YoY; v1.16 dashboard v3)
 │   ├── bpa.py         @register_mode("bpa")         — Balance Patrimonial Ativo (v1.12)
 │   ├── bpp.py         @register_mode("bpp")         — Balance Patrimonial Passivo (v1.12)
 │   ├── dre.py         @register_mode("dre")         — Demonstração do Resultado (v1.12)
@@ -23,7 +23,7 @@ skills/cvm/financials/
 │   └── _statement_sections.py  shared section classifiers + reshape helper (v1.12)
 ├── fetchers.py        internal data fetching from DFP/ITR (_build_* + _get_* + _extract_metrics)
 ├── helpers.py         _safe_call, _compute_ttm_section (shared utilities)
-├── report.py          dashboard section builders (composition logic for 7-tab dashboard mode)
+├── report.py          dashboard section builders (composition logic for 11-tab dashboard mode — v1.16: tooltips, chart titles/descriptions, 4 new chart builders)
 └── metrics.py         ratio computation (SUMMARY_CODES, KEY_CODES_BY_GRUPO, compute_ratios,
                        compute_ebitda, compute_ttm, compute_ebitda_from_engines,
                        compute_ttm_with_engines) — UNCHANGED across v1.6 split
@@ -196,4 +196,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes + dashboard reorg). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint: 3T2025 skip fix, sidebar groups, DVA pie taxonomy, chart titles+descriptions, indicator tooltips, 4 new charts). See [CHANGELOG.md](CHANGELOG.md) for version history.*

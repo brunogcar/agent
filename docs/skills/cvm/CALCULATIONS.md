@@ -71,10 +71,11 @@ No own config. Uses:
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](calculations/ARCHITECTURE.md) | Engine/metric pattern, auto-discovery, categories, algorithms, how to add engines/metrics |
-| [API.md](calculations/API.md) | All 18 engine APIs + 21 metric APIs + registry API |
-| [CHANGELOG.md](calculations/CHANGELOG.md) | Version history |
+| [API.md](calculations/API.md) | All 34 engine APIs + 58 metric APIs + registry API |
+| [CHANGELOG.md](calculations/CHANGELOG.md) | Version history (v1.11 — Magic Number metric) |
+| [ROADMAP.md](calculations/ROADMAP.md) | Backlog + priorities (DVA generation engines, BCB SGS/COE, performance, new engines/metrics) |
 | [INSTRUCTIONS.md](calculations/INSTRUCTIONS.md) | AI editing rules — engine/metric separation, auto-discovery, NEVER DO, ALWAYS DO |
 
 ---
 
-*Last updated: 2026-07-26 (v1.0 — extracted from historical v1.10).*
+*Last updated: 2026-08-01 (v1.11 — Magic Number metric: EV/EBITDA × ROIC; see CHANGELOG.md).*

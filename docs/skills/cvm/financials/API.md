@@ -98,9 +98,9 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
-### mode="dashboard" (v1.12; v1.13 review fixes; v1.14 sync guard)
+### mode="dashboard" (v1.12; v1.13 review fixes; v1.14 sync guard; v1.15 TTM+YoY; v1.16 dashboard v3)
 
-7-tab multi-section dashboard, optimized for the report tool's `dashboard` action.
+11-tab multi-section dashboard with sidebar grouping, optimized for the report tool's `dashboard` action.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -108,15 +108,26 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 | consolidado | int | 1 | 1=consolidated, 0=individual |
 | skip_sync | bool | False | [v1.14] Bypass sync guard (no freshness check, no force-sync) |
 
-**v1.12 tabs:**
+**v1.16 tabs (grouped into 4 sidebar sections):**
 
-1. **Overview** — KPI cards (Receita TTM, EBITDA, Lucro Líquido, ROE, ROIC, Dív.Líq/EBITDA) + summary text + latest-annual metrics table + quarterly trend + freshness metadata.
-2. **Indicadores** — `type: "ratio_grid"` with all 7 ratio categories (Valuation / Rentabilidade / Liquidez / Endividamento / Eficiência / Crescimento / Tributos) via `compute_all_ratios()`.
-3. **Crescimento** — 3M/1Y/5Y growth table (Receita, Lucro Bruto, Lucro Líquido) + bar chart comparing 1Y vs 5Y.
-4. **Balanço** — `type: "subtabs"` with BPA + BPP sub-tabs (latest annual accounts, grouped by section).
-5. **DRE** — latest annual accounts table + 5Y margin trend line chart (Bruta / EBIT / EBITDA / Líquida).
-6. **DFC** — latest annual accounts table + 5Y stacked bar chart (FCO / FCI / FCF).
-7. **DVA** — latest annual accounts table + doughnut chart of wealth distribution (Pessoal / Governo / Credores / Acionistas).
+**Resumo:**
+1. **Overview** — KPI cards (Receita TTM, EBITDA, Lucro Líquido, ROE, ROIC, Dív.Líq/EBITDA) + summary text + latest-annual metrics table + quarterly trend + freshness metadata + [v1.16] annual trend line chart.
+2. **Indicadores** — `type: "subtabs"` with "Todas" + 7 category sub-tabs. Each ratio_grid item has a [v1.16] tooltip (ⓘ icon) with the formula/explanation.
+3. **Crescimento** — 3M/1Y/5Y growth table (3M now computed from quarterly QoQ) + bar chart with 3M/1Y/5Y datasets + chart title/description.
+
+**Demonstrações:**
+4. **Balanço** — `type: "subtabs"` with BPA + BPP sub-tabs + [v1.16] balance-sheet structure bar chart (Caixa/Ativo Total/Dívida Bruta/PL).
+5. **DRE** — latest annual accounts table + 5Y margin trend line chart (Bruta / EBIT / EBITDA / Líquida) with title/description.
+6. **DFC** — latest annual accounts table + 5Y stacked bar chart (FCO / FCI / FCF) with title/description.
+7. **DVA** — latest annual accounts table + [v1.16 fixed] doughnut chart with both DVA taxonomies (7.08.01-05 new + 8.01-04 old), no parent/child double-count.
+
+**Períodos:**
+8. **Anual** — raw annual periods table (6 periods) + [v1.16] multi-line trend chart.
+9. **Trimestral** — raw quarterly periods table (8 periods) + [v1.16] bar chart.
+
+**Séries Temporais:**
+10. **Anualizado** — TTM (trailing 12 months) series table + line chart with title/description.
+11. **Trimestral YoY** — [v1.16 restructured] same-quarter YoY comparison table grouped by YEAR (was by quarter) + bar chart with title/description.
 
 The dashboard calls the 5 standalone statement modes (bpa/bpp/dre/dfc/dva) via try/except — a failure in one statement degrades the corresponding tab to an error text section instead of crashing the whole dashboard.
 
@@ -264,4 +275,4 @@ skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-08-01 (v1.15 — sync guard + review fixes). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint). See [CHANGELOG.md](CHANGELOG.md) for version history.*
