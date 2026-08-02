@@ -109,4 +109,4 @@ This skill is the **pattern template** for central auto-discovery + registry arc
 
 ---
 
-*Last updated: 2026-07-30 (v2.0).*
+*Last updated: 2026-07-31 (v1.14).*

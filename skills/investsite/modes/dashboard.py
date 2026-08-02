@@ -185,10 +185,10 @@ def dashboard(ticker: str = "") -> dict:
     # Assemble tabs — Balanço first in Demonstrações
     tabs = [
         {"name": "Overview",              "group": "Resumo",          "sections": overview_sections},
-        {"name": "Preços Relativos",      "group": "Indicadores",     "sections": precos_sections},
-        {"name": "Retornos e Margens",    "group": "Indicadores",     "sections": retornos_sections},
-        {"name": "Balanço Patrimonial",   "group": "Indicadores",     "sections": balanco_sections},
-        {"name": "Experimental",          "group": "Indicadores",     "sections": experimental_sections},
+        {"name": "Preços Relativos",      "group": "Análise",     "sections": precos_sections},
+        {"name": "Retornos e Margens",    "group": "Análise",     "sections": retornos_sections},
+        {"name": "Balanço Patrimonial",   "group": "Análise",     "sections": balanco_sections},
+        {"name": "CAPEX e FCF",          "group": "Análise",     "sections": experimental_sections},
         {"name": "Balanço",               "group": "Demonstrações",   "sections": balanco_full_sections},
         {"name": "DRE",                   "group": "Demonstrações",   "sections": dre_sections},
         {"name": "DFC",                   "group": "Demonstrações",   "sections": dfc_sections},

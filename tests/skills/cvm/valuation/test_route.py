@@ -51,4 +51,4 @@ class TestValuationRoute:
         result = route(mode="dashboard", company="PETR4")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 5
+        assert len(result["tabs"]) == 6

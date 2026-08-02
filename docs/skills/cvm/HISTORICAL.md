@@ -128,7 +128,8 @@ report(action="dashboard", title="PETR4 Historical Dashboard",
 | [CALCULATIONS.md](CALCULATIONS.md) | Shared engine + metric library (18 engines + 21 metrics) |
 | [ARCHITECTURE.md](historical/ARCHITECTURE.md) | Historical architecture — thin wrapper over calculations, mode dispatch, percentile analysis, testing |
 | [API.md](historical/API.md) | All historical modes (auto-generated), error cases, report adapters. Engine/metric/registry API: see [calculations/API.md](calculations/API.md) |
-| [CHANGELOG.md](historical/CHANGELOG.md) | Version history + roadmap (backtest) |
+| [CHANGELOG.md](historical/CHANGELOG.md) | Version history |
+| [ROADMAP.md](historical/ROADMAP.md) | Backlog + priorities (percentile band chart, trend arrows, distribution histogram) |
 | [INSTRUCTIONS.md](historical/INSTRUCTIONS.md) | AI editing rules for the historical skill (engine/metric rules: see calculations/INSTRUCTIONS.md) |
 
 **Related:**
@@ -141,4 +142,4 @@ report(action="dashboard", title="PETR4 Historical Dashboard",
 
 ---
 
-*Last updated: 2026-07-29 (v1.2 — modular split + dashboard mode: `_registry.py` + `modes/` + `helpers.py` + `report.py`; the calculations extraction happened earlier in v2.2).*
+*Last updated: 2026-08-02 (v1.14 — dashboard reorg + F7 speed fix + sync guard; see CHANGELOG.md).*

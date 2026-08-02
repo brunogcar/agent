@@ -37,8 +37,9 @@ skill(domain="cvm", sub_domain="backtest", mode="run", params='{"ticker":"VALE3"
 | [ARCHITECTURE.md](backtest/ARCHITECTURE.md) | Strategy design, backtest loop, performance metrics, calculations integration |
 | [API.md](backtest/API.md) | 4 modes: run, strategies, results, dashboard |
 | [CHANGELOG.md](backtest/CHANGELOG.md) | Version history |
+| [ROADMAP.md](backtest/ROADMAP.md) | Backlog + priorities (benchmark comparison, monthly heatmap, Sortino) |
 | [INSTRUCTIONS.md](backtest/INSTRUCTIONS.md) | AI editing rules |
 
 ---
 
-*Last updated: 2026-07-29 (v1.1).*
+*Last updated: 2026-08-02 (v1.2 — dashboard reorg + sync guard; see CHANGELOG.md).*

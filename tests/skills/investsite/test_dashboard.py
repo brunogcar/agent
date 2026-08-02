@@ -102,7 +102,7 @@ class TestDashboardMode:
         # Every tab has a group field.
         groups = [t.get("group") for t in r["tabs"]]
         assert "Resumo" in groups
-        assert "Indicadores" in groups
+        assert "Análise" in groups
         assert "Demonstrações" in groups
         assert "Corporativo" in groups
 

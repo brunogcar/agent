@@ -36,13 +36,14 @@ class TestDashboardMode:
         result = dashboard(company="PETR4")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 5
+        assert len(result["tabs"]) == 6
         expected_names = [
             "Overview",
-            "Multiples",
-            "Profitability",
-            "Liquidity & Leverage",
-            "Efficiency & Growth",
+            "Múltiplos",
+            "Rentabilidade",
+            "Liquidez e Alavancagem",
+            "Eficiência e Crescimento",
+            "Histórico",
         ]
         assert [t["name"] for t in result["tabs"]] == expected_names
         # [v1.8] Every tab must have a `group` field for sidebar grouping.
@@ -52,14 +53,18 @@ class TestDashboardMode:
             "Fundamentos",
             "Fundamentos",
             "Crescimento",
+            "Séries Temporais",
         ]
         assert [t.get("group") for t in result["tabs"]] == expected_groups
         # Every tab must have a `sections` list.
+        # Note: "Histórico" tab may have empty sections in test env (no DFP DB
+        # for historical_valuation mode) — that's OK, it degrades gracefully.
         for tab in result["tabs"]:
             assert "sections" in tab, f"tab {tab['name']} missing 'sections'"
             assert isinstance(tab["sections"], list)
-            assert len(tab["sections"]) >= 1, (
-                f"tab {tab['name']} has empty sections")
+            if tab["name"] != "Histórico":
+                assert len(tab["sections"]) >= 1, (
+                    f"tab {tab['name']} has empty sections")
 
     def test_dashboard_overview_kpis(self, valuation_env):
         """Top-level KPI cards with the expected labels."""
@@ -89,7 +94,7 @@ class TestDashboardMode:
         result = dashboard(company="PETR4")
         assert result["status"] == "ok"
         multiples_tab = result["tabs"][1]
-        assert multiples_tab["name"] == "Multiples"
+        assert multiples_tab["name"] == "Múltiplos"
         # [v1.9] First section is now "Múltiplos de Preço" (was "Top Price Multiples").
         section = multiples_tab["sections"][0]
         assert section["type"] == "table"
@@ -127,7 +132,7 @@ class TestDashboardMode:
         result = dashboard(company="PETR4")
         assert result["status"] == "ok"
         profitability_tab = result["tabs"][2]
-        assert profitability_tab["name"] == "Profitability"
+        assert profitability_tab["name"] == "Rentabilidade"
         section = profitability_tab["sections"][0]
         assert section["type"] == "ratio_grid"
         assert "categories" in section
@@ -148,7 +153,7 @@ class TestDashboardMode:
         result = dashboard(company="PETR4")
         assert result["status"] == "ok"
         ll_tab = result["tabs"][3]
-        assert ll_tab["name"] == "Liquidity & Leverage"
+        assert ll_tab["name"] == "Liquidez e Alavancagem"
         section = ll_tab["sections"][0]
         assert section["type"] == "ratio_grid"
         assert len(section["categories"]) == 2
