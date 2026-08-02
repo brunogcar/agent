@@ -27,6 +27,13 @@ from typing import Any
 
 from tools.report_ops.formats import apply_fmt
 
+# [v1.16.1] Shared builders extracted to skills/cvm/_shared_report/ so all
+# CVM skills can reuse them. Financials re-exports them for backward
+# compatibility with existing imports.
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
+from skills.cvm._shared_report.tooltips import get_tooltip as _get_tooltip
+
 
 def _fmt(value: Any, spec: str) -> str:
     if value is None:
@@ -48,215 +55,6 @@ def annual_ratio(latest_annual_period: dict | None, name: str) -> float | None:
         return None
     return (latest_annual_period.get("ratios") or {}).get(name)
 
-
-# ── Company header (v1.16) ───────────────────────────────────────────────────
-
-def build_company_header(company: str) -> dict:
-    """Build a company header with FCA/CAD registration info + latest price.
-
-    [v1.16] New. Pulls company registration data from:
-      - FCA (fca.db): company name, CNPJ, CD_CVM, sector, listing segment,
-        fiscal year-end, control type, website
-      - CAD (cad.db): trade name, sector, UF, auditor
-      - COTAHIST (cotahist.db): ISIN, latest close price
-
-    Returns a dict with:
-      {"ticker", "name", "trade_name", "cnpj", "cd_cvm", "sector",
-       "listing_segment", "control_type", "uf", "website", "isin",
-       "last_close", "fiscal_year_end"}
-
-    All fields are best-effort — missing DBs or lookups return None/"".
-    """
-    header: dict[str, Any] = {
-        "ticker": company,
-        "name": "",
-        "trade_name": "",
-        "cnpj": "",
-        "cd_cvm": "",
-        "sector": "",
-        "listing_segment": "",
-        "control_type": "",
-        "uf": "",
-        "website": "",
-        "isin": "",
-        "last_close": None,
-        "fiscal_year_end": "",
-    }
-
-    ticker = (company or "").strip().upper()
-    if not ticker:
-        return header
-
-    # ── FCA lookup: CNPJ, CD_CVM, name, sector, segment, control, website ──
-    try:
-        from data_sources.cvm._db import fca_db_path
-        import sqlite3
-        fca = fca_db_path()
-        if fca.exists():
-            conn = sqlite3.connect(f"file:{fca}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            # Join fca_valor_mobiliario + fca_geral on CNPJ (digits only)
-            row = conn.execute(
-                """SELECT g.Nome_Empresarial, g.CNPJ_Companhia, g.Codigo_CVM,
-                          g.Setor_Atividade, g.Descricao_Atividade,
-                          g.Especie_Controle_Acionario, g.Pagina_Web,
-                          g.Mes_Encerramento_Exercicio_Social,
-                          g.Dia_Encerramento_Exercicio_Social,
-                          v.Segmento, v.Codigo_Negociacao
-                   FROM fca_valor_mobiliario v
-                   JOIN fca_geral g
-                     ON REPLACE(REPLACE(REPLACE(g.CNPJ_Companhia,'.',''),'/',''),'-','')
-                      = REPLACE(REPLACE(REPLACE(v.CNPJ_Companhia,'.',''),'/',''),'-','')
-                   WHERE UPPER(v.Codigo_Negociacao) = ?
-                   ORDER BY v.Data_Referencia DESC, g.Data_Referencia DESC
-                   LIMIT 1""",
-                (ticker,),
-            ).fetchone()
-            if row:
-                header["name"] = row["Nome_Empresarial"] or ""
-                header["cnpj"] = row["CNPJ_Companhia"] or ""
-                header["cd_cvm"] = str(row["Codigo_CVM"] or "")
-                header["sector"] = row["Setor_Atividade"] or ""
-                header["control_type"] = row["Especie_Controle_Acionario"] or ""
-                header["website"] = row["Pagina_Web"] or ""
-                header["listing_segment"] = row["Segmento"] or ""
-                mes = row["Mes_Encerramento_Exercicio_Social"]
-                dia = row["Dia_Encerramento_Exercicio_Social"]
-                if mes and dia:
-                    header["fiscal_year_end"] = f"{int(mes):02d}-{int(dia):02d}"
-            conn.close()
-    except Exception:
-        pass
-
-    # ── CAD lookup: trade name, sector (fallback), UF, auditor ──
-    try:
-        from data_sources.cvm._db import cad_db_path
-        import sqlite3
-        cad = cad_db_path()
-        if cad.exists() and header["cnpj"]:
-            cnpj_digits = header["cnpj"].replace(".", "").replace("/", "").replace("-", "")
-            conn = sqlite3.connect(f"file:{cad}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                """SELECT DENOM_SOCIAL, DENOM_COMERC, SETOR_ATIV, UF, AUDITOR
-                   FROM cia_aberta
-                   WHERE REPLACE(REPLACE(REPLACE(CNPJ_CIA,'.',''),'/',''),'-','') = ?
-                   AND SIT = 'ATIVO'
-                   ORDER BY rowid DESC LIMIT 1""",
-                (cnpj_digits,),
-            ).fetchone()
-            if row:
-                header["trade_name"] = row["DENOM_COMERC"] or ""
-                if not header["sector"]:
-                    header["sector"] = row["SETOR_ATIV"] or ""
-                header["uf"] = row["UF"] or ""
-            conn.close()
-    except Exception:
-        pass
-
-    # ── COTAHIST lookup: ISIN + latest close price ──
-    try:
-        from data_sources.b3.cotahist.catalog import db_path as cotahist_path
-        import sqlite3
-        cot = cotahist_path()
-        if cot.exists():
-            conn = sqlite3.connect(f"file:{cot}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            # ISIN
-            isin_row = conn.execute(
-                "SELECT DISTINCT isin FROM cotahist WHERE symbol=? AND isin IS NOT NULL LIMIT 1",
-                (ticker,),
-            ).fetchone()
-            if isin_row:
-                header["isin"] = isin_row["isin"] or ""
-            # Latest close
-            close_row = conn.execute(
-                "SELECT close FROM cotahist WHERE symbol=? ORDER BY refdate DESC LIMIT 1",
-                (ticker,),
-            ).fetchone()
-            if close_row and close_row["close"] is not None:
-                header["last_close"] = float(close_row["close"])
-            conn.close()
-    except Exception:
-        pass
-
-    return header
-
-
-def build_price_chart(company: str) -> dict | None:
-    """Build a historical price chart section with time-range selector.
-
-    [v1.18] New. Fetches the full available price history from COTAHIST
-    and returns a chart section. The time-range selector (All / 5Y / 1Y /
-    1M) is implemented client-side via JS buttons that filter the dataset.
-
-    Returns None if no price data is available.
-    """
-    try:
-        from skills.cvm.calculations.engines.price import price_series
-        from datetime import date, timedelta
-    except ImportError:
-        return None
-
-    today = date.today()
-    # Fetch last 10 years (or all available if less).
-    date_from = (today - timedelta(days=365 * 10)).isoformat()
-    date_to = today.isoformat()
-
-    try:
-        series = price_series(company, date_from, date_to)
-    except Exception:
-        return None
-
-    if not series or len(series) < 2:
-        return None
-
-    # Build the full dataset — JS will filter by range.
-    labels = [p.get("date", "") for p in series]
-    closes = [p.get("close") for p in series]
-
-    return {
-        "type": "chart",
-        "title": f"Cotação Histórica — {company}",
-        "description": (
-            "Preço de fechamento diário. Use os botões para selecionar o "
-            "período: Tudo / 5A / 1A / 1M."
-        ),
-        "chart_data": {
-            "type": "line",
-            "data": {
-                "labels": labels,
-                "datasets": [{
-                    "label": f"{company} — Fechamento (R$)",
-                    "data": closes,
-                    "borderColor": "#0d9488",
-                    "backgroundColor": "rgba(13,148,136,0.1)",
-                    "fill": True,
-                    "tension": 0.1,
-                    "pointRadius": 0,
-                    "pointHoverRadius": 4,
-                }],
-            },
-            "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
-                "scales": {
-                    "x": {"ticks": {"maxTicksLimit": 12}},
-                    "y": {"ticks": {},
-                          "title": {"display": True, "text": "R$"}},
-                },
-                "plugins": {
-                    "title": {"display": True, "text": f"Cotação Histórica — {company}"},
-                    "legend": {"display": False},
-                },
-            },
-        },
-        # [v1.18] Custom field consumed by dashboard.html to render the
-        # time-range selector buttons above the chart.
-        "price_range_selector": True,
-        "price_full_labels": labels,
-        "price_full_data": closes,
-    }
 
 
 # ── KPI cards (top-level) ────────────────────────────────────────────────────
@@ -464,75 +262,6 @@ _INDICADORES_CATEGORIES = [
     "leverage", "efficiency", "growth", "tax",
 ]
 
-# [v1.16] Tooltips (formula/explanation) for each indicator. Shown as a
-# native browser tooltip (title=) on the ratio-item. The info icon (ⓘ)
-# is rendered by macros.html ratio_grid when item.tooltip is present.
-# These are short PT-BR explanations — keep under ~120 chars.
-_METRIC_TOOLTIPS = {
-    # profitability
-    "roe": "ROE = Lucro Líquido / Patrimônio Líquido. Rentabilidade do capital dos acionistas.",
-    "roa": "ROA = Lucro Líquido / Ativo Total. Eficiência do uso dos ativos.",
-    "roic": "ROIC = NOPAT / Capital Investido. Retorno sobre o capital aportado.",
-    "gross_margin": "Margem Bruta = Lucro Bruto / Receita Líquida.",
-    "operating_margin": "Margem Operacional = EBIT / Receita Líquida.",
-    "net_margin": "Margem Líquida = Lucro Líquido / Receita Líquida.",
-    "ebitda_margin": "Margem EBITDA = EBITDA / Receita Líquida.",
-    "ocf_margin": "Margem FCO = Fluxo de Caixa Operacional / Receita Líquida.",
-    "fcf_margin": "Margem FCF = Fluxo de Caixa Livre / Receita Líquida.",
-    # liquidity
-    "current_ratio": "Liquidez Corrente = Ativo Circulante / Passivo Circulante.",
-    "quick_ratio": "Liquidez Seca = (Ativo Circulante - Estoques) / Passivo Circulante.",
-    "cash_ratio": "Liquidez Imediata = Caixa / Passivo Circulante.",
-    "working_capital": "Capital de Giro = Ativo Circulante - Passivo Circulante.",
-    # leverage
-    "debt_equity": "Dívida/PL = Dívida Bruta / Patrimônio Líquido.",
-    "net_debt_ebitda": "Dív. Líq/EBITDA = (Dívida Bruta - Caixa) / EBITDA. Alavanca operacional.",
-    "dl_ebit": "Dív. Líq/EBIT = (Dívida Bruta - Caixa) / EBIT.",
-    "interest_coverage": "Cobertura de Juros = EBIT / Juros Líquidos Passivos.",
-    "cash_flow_to_debt": "FCO/Dívida = Fluxo de Caixa Operacional / Dívida Bruta.",
-    # efficiency
-    "asset_turnover": "Giro do Ativo = Receita Líquida / Ativo Total.",
-    "inventory_turnover": "Giro de Estoque = CMV / Estoque Médio.",
-    "receivables_turnover": "Giro de Contas a Receber = Receita / Contas a Receber.",
-    "fixed_asset_turnover": "Giro do Imobilizado = Receita / Imobilizado Líquido.",
-    "capex_revenue": "Capex/Receita = Investimentos / Receita Líquida.",
-    # growth
-    "retention_ratio": "Taxa de Retenção = 1 - Payout. Parcela do lucro retida.",
-    "sustainable_growth": "Crescimento Sustentável = ROE × Taxa de Retenção.",
-    # valuation
-    "ev_ebitda": "EV/EBITDA = (Market Cap + Dívida Líquida) / EBITDA.",
-    "ev_ebit": "EV/EBIT = (Market Cap + Dívida Líquida) / EBIT.",
-    "ev_fcf": "EV/FCF = (Market Cap + Dívida Líquida) / Fluxo de Caixa Livre.",
-    "ev_sales": "EV/Sales = Enterprise Value / Receita Líquida.",
-    "p_ebit": "P/EBIT = Preço da Ação / EBIT por ação.",
-    "p_fcf": "P/FCF = Preço da Ação / Fluxo de Caixa Livre por ação.",
-    "p_fco": "P/FCO = Preço da Ação / Fluxo de Caixa Operacional por ação.",
-    "graham_number": "Graham Number = √(22.5 × EPS × VPS). Preço justo segundo Graham.",
-    "price_to_tangible_book": "P/VPA Tangível = Preço / Valor Patrimonial Tangível.",
-    "magic_number": "Magic Number = EV/EBITDA × ROIC. Combina barato (EV/EBITDA) com qualidade (ROIC). <5 excelente, 5-15 bom, 15-30 justo, >30 caro.",
-    # per_share
-    "lpa": "P/L = Preço / Lucro por Ação. Quanto o mercado paga por R$1 de lucro.",
-    "vpa": "P/VPA = Preço / Valor Patrimonial por Ação.",
-    "dpa": "Dividend Yield = Dividendo por Ação / Preço.",
-    "rps": "PSR = Preço / Receita por Ação.",
-    # tax
-    "effective_tax_rate": "Taxa de Tributo Efetiva = Imposto / Lucro Antes de Impostos.",
-}
-
-
-def _get_tooltip(metric_name: str, spec: Any = None) -> str:
-    """Return a tooltip string for a metric, preferring the curated dict
-    then falling back to the registry spec's description."""
-    if metric_name in _METRIC_TOOLTIPS:
-        return _METRIC_TOOLTIPS[metric_name]
-    if spec is not None:
-        # Registry MetricSpec has a `description` attribute.
-        desc = getattr(spec, "description", None) or getattr(spec, "formula", None)
-        if desc:
-            return str(desc)
-    return ""
-
-
 def _group_metrics_by_prefix(items: list[dict]) -> list[dict]:
     """Group metric items by their label prefix (EV/, P/, ROE, etc.).
 
@@ -658,6 +387,10 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                 items.append({
                     "label": label,
                     "value": _fmt(value, fmt_spec),
+                    # [v1.16.1] Store raw numeric value for chart builders.
+                    # Avoids fragile parsing of formatted strings (was a P0
+                    # bug — PT-BR "1.234,56" broke float() parse).
+                    "value_raw": float(value) if value is not None else None,
                     "tooltip": tooltip,
                 })
             if items:
@@ -670,21 +403,16 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                     "type": "ratio_grid",
                     "categories": grouped,
                 }]
-                # [v1.18] Add a bar chart showing numeric values for this
-                # category's metrics. Skips metrics with None values.
+                # [v1.16.1] Add a bar chart showing numeric values for this
+                # category's metrics. Uses value_raw (not the formatted string)
+                # to avoid the PT-BR decimal-comma parse bug.
                 chart_labels = []
                 chart_values = []
                 for item in items:
-                    val_str = item.get("value", "")
-                    if val_str and val_str != "—":
-                        try:
-                            # Values are formatted strings like "15,00%" or "4,39"
-                            # Parse back to float for the chart.
-                            clean = val_str.replace("%", "").replace(",", ".").replace("R$", "").replace(" ", "").replace("x", "")
-                            chart_labels.append(item["label"])
-                            chart_values.append(float(clean))
-                        except (ValueError, TypeError):
-                            pass
+                    raw = item.get("value_raw")
+                    if raw is not None:
+                        chart_labels.append(item["label"])
+                        chart_values.append(raw)
                 if len(chart_labels) >= 2:
                     sub_sections.append({
                         "type": "chart",
@@ -1291,6 +1019,20 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
     #    and depth-2 codes (8.01 / 8.02 / 8.03 / 8.04) for the old
     #    taxonomy. Deeper codes (7.08.04.01 JCP, 7.08.04.02 Dividendos)
     #    are skipped because they are sub-components of the parent.
+    # [v1.16.1 DVA-fix] Two bugs fixed from v1.16:
+    #
+    # 1. SAME-DEPTH SIBLING DROP: when a filer reports only children
+    #    (e.g., 7.08.04.01 JCP + 7.08.04.02 Dividendos) without a parent
+    #    (7.08.04 roll-up), the v1.16 dedup kept only the FIRST child
+    #    because depth(4) < depth(4) is False. Now: if no depth-3 parent
+    #    exists for a prefix, SUM all same-depth children instead of
+    #    keeping only one.
+    #
+    # 2. CROSS-TAXONOMY DOUBLE-COUNT: if a filer reports BOTH new (7.08.04)
+    #    AND old (8.04) taxonomies for the same label in the same period,
+    #    v1.16 summed both → double-count. Now: prefer the NEW taxonomy
+    #    (7.08.*) when both are present; only fall back to old (8.*) when
+    #    new is absent for that label.
     distribution_labels = {
         # NEW taxonomy (post-2012) — depth-3 codes under 7.08.*
         "7.08.01": "Pessoal",
@@ -1305,21 +1047,20 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
         "8.04": "Acionistas",
     }
 
+    NEW_TAXONOMY_PREFIXES = {"7.08.01", "7.08.02", "7.08.03", "7.08.04", "7.08.05"}
+
     def _dva_depth(codigo: str) -> int:
         """Number of dot-separated levels in a CVM account code.
         '7.08.04' → 3, '7.08.04.01' → 4, '8.01' → 2."""
         return len(codigo.split("."))
 
-    # Pass 1: collect all distribution-side codes + their depth.
-    dist_rows: list[tuple[str, str, float, int]] = []  # (codigo, label, valor, depth)
+    # Pass 1: collect all distribution-side codes + their depth + matched prefix.
+    # dist_rows: (codigo, label, valor, depth, matched_prefix)
+    dist_rows: list[tuple[str, str, float, int, str]] = []
     for codigo, acc in accounts.items():
         if (acc.get("section") != "Distribuição"
                 or acc.get("valor_brl") is None):
             continue
-        # Match against the prefix map. We need exact prefix match —
-        # 7.08.04.01 starts with "7.08.04" so it matches, but we want
-        # to attribute it to "Acionistas" only if no depth-3 sibling
-        # exists. So we record the depth and dedupe in pass 2.
         label = None
         matched_prefix = None
         for prefix, lbl in distribution_labels.items():
@@ -1333,27 +1074,44 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
             val = float(acc["valor_brl"])
         except (TypeError, ValueError):
             continue
-        dist_rows.append((codigo, label, val, _dva_depth(codigo)))
+        dist_rows.append((codigo, label, val, _dva_depth(codigo), matched_prefix))
 
-    # Pass 2: for each matched prefix, prefer the shallowest code.
-    # If 7.08.04 (depth 3) exists, skip 7.08.04.01/.02 (depth 4) — they
-    # are sub-components of the parent and would double-count.
-    best_per_prefix: dict[str, tuple[str, float, int]] = {}
-    for codigo, label, val, depth in dist_rows:
-        # Find which prefix this codigo matched.
-        for prefix, _ in distribution_labels.items():
-            if codigo == prefix or codigo.startswith(prefix + "."):
-                existing = best_per_prefix.get(prefix)
-                if existing is None or depth < existing[2]:
-                    best_per_prefix[prefix] = (codigo, val, depth)
-                break
+    # Pass 2: for each prefix, collect ALL values grouped by depth.
+    # If a shallow depth exists (parent), use ONLY that (skip children).
+    # If no shallow depth exists (only children), SUM all children.
+    # best_per_prefix: prefix -> {depth: sum_of_values_at_that_depth}
+    per_prefix_by_depth: dict[str, dict[int, float]] = {}
+    for codigo, label, val, depth, prefix in dist_rows:
+        if prefix not in per_prefix_by_depth:
+            per_prefix_by_depth[prefix] = {}
+        per_prefix_by_depth[prefix][depth] = per_prefix_by_depth[prefix].get(depth, 0.0) + val
 
-    # Aggregate by label (multiple prefixes map to the same label —
-    # e.g., both "7.08.04" and "8.04" → "Acionistas").
+    # For each prefix, pick the shallowest depth's sum.
+    best_per_prefix: dict[str, float] = {}
+    for prefix, depth_map in per_prefix_by_depth.items():
+        shallowest_depth = min(depth_map.keys())
+        best_per_prefix[prefix] = depth_map[shallowest_depth]
+
+    # Pass 3: aggregate by label, but prefer NEW taxonomy when both
+    # new + old are present for the same label.
+    # Group prefixes by label, track which prefixes have new-taxonomy data.
+    label_to_prefixes: dict[str, list[str]] = {}
+    for prefix, label in distribution_labels.items():
+        if prefix in best_per_prefix:
+            label_to_prefixes.setdefault(label, []).append(prefix)
+
     agg: dict[str, float] = {}
-    for prefix, (codigo, val, _depth) in best_per_prefix.items():
-        label = distribution_labels[prefix]
-        agg[label] = agg.get(label, 0.0) + val
+    for label, prefixes in label_to_prefixes.items():
+        has_new = any(p in NEW_TAXONOMY_PREFIXES for p in prefixes)
+        if has_new:
+            # Prefer new taxonomy — sum only new-taxonomy prefixes for this label.
+            for p in prefixes:
+                if p in NEW_TAXONOMY_PREFIXES:
+                    agg[label] = agg.get(label, 0.0) + best_per_prefix[p]
+        else:
+            # Only old taxonomy present — use it.
+            for p in prefixes:
+                agg[label] = agg.get(label, 0.0) + best_per_prefix[p]
 
     dist_data = [(label, val) for label, val in agg.items()]
 

@@ -196,4 +196,4 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 ---
 
-*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint: 3T2025 skip fix, sidebar groups, DVA pie taxonomy, chart titles+descriptions, indicator tooltips, 4 new charts). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16.1 — collective-review bugfix sprint + shared report module). See [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -19,8 +19,27 @@
 | Done | Dashboard reorg (v1.12) | 5→7 tabs, 5 standalone statement modes, charts, subtabs, ratio_grid |
 | Done | TTM + YoY Quarterly (v1.15) | 2 new period-view modes: rolling TTM series + same-quarter YoY comparison. Dashboard 7→9 tabs |
 | Done | Dashboard v3 bugfix sprint (v1.16) | 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts (6→10 total). Dashboard 9→11 tabs |
+| Done | Collective-review bugfix sprint (v1.16.1) | DVA same-depth sibling drop, Indicadores value parsing, build_company_header called twice, valuation growth keys, DVA cross-taxonomy dedup, Magic Number docstring, shared report module extraction |
 
 > **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
+
+## 📋 Next: Valuation Skill Overhaul
+
+The financials dashboard v3 pattern (company header + price chart + sidebar
+groups + tooltips + chart titles + freshness footer) is now the template
+for all CVM skill dashboards. **Next commit** will apply the same pattern
+to the `valuation` skill:
+
+1. **Company header** — reuse `build_company_header()` from `skills/cvm/_shared_report/`
+2. **Historical price chart** — reuse `build_price_chart()` from `skills/cvm/_shared_report/`
+3. **Sidebar groups** — Resumo / Múltiplos / Fundamentos / Crescimento
+4. **Chart titles + descriptions** — on all existing charts
+5. **Tooltips** — reuse `get_tooltip()` from `skills/cvm/_shared_report/`
+6. **Freshness footer** — compact, replaces bulky tables
+7. **engine_cache_scope** — wrap dashboard in cache scope
+8. **New mode: historical_valuation** — P/L, EV/EBITDA over time (mirrors financials TTM pattern)
+
+See the valuation skill's own [ROADMAP.md](../valuation/ROADMAP.md) for details.
 
 ## 📋 Backlog
 
@@ -134,4 +153,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-08-01 (v1.16). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16.1). See [CHANGELOG.md](CHANGELOG.md) for version history.*

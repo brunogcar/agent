@@ -73,10 +73,10 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 |------|---------|
 | [ARCHITECTURE.md](financials/ARCHITECTURE.md) | Standalone quarter derivation, EBITDA formula, mode → source mapping |
 | [API.md](financials/API.md) | 11 modes: quarterly, annual, complete, summary, dashboard (11-tab), bpa, bpp, dre, dfc, dva, ttm, yoy_quarterly |
-| [CHANGELOG.md](financials/CHANGELOG.md) | Version history (v1.16 — dashboard v3 bugfix sprint) |
+| [CHANGELOG.md](financials/CHANGELOG.md) | Version history (v1.16.1 — collective-review bugfix sprint) |
 | [ROADMAP.md](financials/ROADMAP.md) | Backlog + priorities (F1-F7: chart serialization, comparison tab, price overlay, period selector, cross-skill dashboard, verification script, company header) |
 | [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint: 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts; see CHANGELOG.md).*
+*Last updated: 2026-08-01 (v1.16.1 — collective-review bugfix sprint: 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts; see CHANGELOG.md).*

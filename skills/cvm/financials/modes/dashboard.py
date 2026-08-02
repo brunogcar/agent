@@ -174,26 +174,30 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
 
     kpis = build_overview_kpis(latest_annual_period, roe_val, roic_val,
                                net_debt_ebitda_val)
-    overview_sections = build_overview_sections(
-        latest_annual_period, quarterly_periods, ratios_payload)
-
-    # [v1.18] Company info card at the TOP of the Overview tab.
+    # [v1.16.1] Company info card at the TOP of the Overview tab.
     # This pattern (company info + price chart at top of first tab) will be
     # reused by valuation/historical/governance dashboards — financials is
     # the template. The KPI boxes stay in the universal header (above tabs).
+    # [v1.16.1] Build header ONCE and reuse — was called twice (P0 bug from
+    # collective review). Second call was outside engine_cache_scope, causing
+    # redundant FCA + CAD + COTAHIST queries.
     company_header = build_company_header(company)
+
+    overview_sections = build_overview_sections(
+        latest_annual_period, quarterly_periods, ratios_payload)
+
     if company_header.get("name"):
         overview_sections.insert(0, {
             "type": "company_info",
             "company_header": company_header,
         })
 
-    # [v1.18] Historical price chart with time-range selector — top of Overview.
+    # [v1.16.1] Historical price chart with time-range selector — top of Overview.
     price_chart = build_price_chart(company)
     if price_chart:
         overview_sections.insert(1, price_chart)
 
-    # [v1.18] Annual trend chart (Receita/EBITDA/Lucro) — after price chart.
+    # [v1.16.1] Annual trend chart (Receita/EBITDA/Lucro) — after price chart.
     overview_trend = build_overview_trend_chart(annual_periods)
     if overview_trend:
         overview_sections.append(overview_trend)
@@ -323,7 +327,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     return {
         "status": "ok",
         "company": company,
-        "company_header": build_company_header(company),
+        "company_header": company_header,  # [v1.16.1] reuse, don't re-call
         "tabs": tabs,
         "kpis": kpis,
         "freshness_footer": freshness_footer,

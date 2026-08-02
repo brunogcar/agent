@@ -41,10 +41,13 @@ def magic_number_at(company: str, date: str) -> float | None:
     """Magic Number = EV / EBITDA × ROIC.
 
     EV/EBITDA = (price × shares + debt - cash) / (EBIT + D&A)
-    ROIC = NOPAT / Invested Capital = (EBIT × (1 - tax/EBT)) / (PL + Debt)
+    ROIC = NOPAT / Invested Capital
 
-    To avoid requiring EBT (which may be missing), we use the simplified
-    NOPAT = EBIT - max(0, tax_expense) (same as roic.py's pre-cash version).
+    NOPAT formula: EBIT - max(0, tax_expense) (simplified — same as roic.py).
+    This differs from the textbook NOPAT = EBIT × (1 - tax/EBT) which
+    requires EBT. The simplified version is used to avoid requiring the
+    EBT engine. Document this limitation when comparing Magic Number's
+    ROIC component with standalone ROIC.
 
     Returns None if EBITDA <= 0 or ROIC <= 0 or any component missing.
     """

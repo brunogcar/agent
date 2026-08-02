@@ -275,4 +275,4 @@ skill(domain="cvm", sub_domain="financials", mode="dva", params='{"company":"PET
 
 ---
 
-*Last updated: 2026-08-01 (v1.16 — dashboard v3 bugfix sprint). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-01 (v1.16.1 — collective-review bugfix sprint). See [CHANGELOG.md](CHANGELOG.md) for version history.*

@@ -162,6 +162,11 @@ class MetricSpec:
     per_share_key: str | None = None
     per_share_fn: Callable | None = None
     aliases: list[str] = field(default_factory=list)
+    # [v1.16.1] Optional tooltip (PT-BR formula/explanation) shown in dashboard
+    # ratio_grid items. When None, skills fall back to a local tooltip dict.
+    # Centralizing here means any skill using compute_all_ratios() gets tooltips
+    # for free — no per-skill maintenance.
+    tooltip: str | None = None
 
 
 # ── Registries ───────────────────────────────────────────────────────────────

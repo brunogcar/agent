@@ -564,24 +564,24 @@ _GROWTH_ITEMS: list[tuple[str, str]] = [
     ("Revenue Growth (3M)",      "revenue_growth_3m"),
     ("Revenue Growth (1Y)",      "revenue_growth_1y"),
     ("Revenue Growth (5Y)",      "revenue_growth_5y"),
-    ("Gross Profit Growth (3M)", "gp_growth_3m"),
-    ("Gross Profit Growth (1Y)", "gp_growth_1y"),
-    ("Gross Profit Growth (5Y)", "gp_growth_5y"),
-    ("Net Income Growth (3M)",   "ni_growth_3m"),
-    ("Net Income Growth (1Y)",   "ni_growth_1y"),
-    ("Net Income Growth (5Y)",   "ni_growth_5y"),
+    ("Gross Profit Growth (3M)", "gross_profit_growth_3m"),
+    ("Gross Profit Growth (1Y)", "gross_profit_growth_1y"),
+    ("Gross Profit Growth (5Y)", "gross_profit_growth_5y"),
+    ("Net Income Growth (3M)",   "net_income_growth_3m"),
+    ("Net Income Growth (1Y)",   "net_income_growth_1y"),
+    ("Net Income Growth (5Y)",   "net_income_growth_5y"),
 ]
 
 _GROWTH_CHART_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Receita Líquida",  [("3M", "revenue_growth_3m"),
                           ("1Y", "revenue_growth_1y"),
                           ("5Y", "revenue_growth_5y")]),
-    ("Lucro Bruto",      [("3M", "gp_growth_3m"),
-                          ("1Y", "gp_growth_1y"),
-                          ("5Y", "gp_growth_5y")]),
-    ("Lucro Líquido",    [("3M", "ni_growth_3m"),
-                          ("1Y", "ni_growth_1y"),
-                          ("5Y", "ni_growth_5y")]),
+    ("Lucro Bruto",      [("3M", "gross_profit_growth_3m"),
+                          ("1Y", "gross_profit_growth_1y"),
+                          ("5Y", "gross_profit_growth_5y")]),
+    ("Lucro Líquido",    [("3M", "net_income_growth_3m"),
+                          ("1Y", "net_income_growth_1y"),
+                          ("5Y", "net_income_growth_5y")]),
 ]
 
 _GROWTH_CHART_COLORS = ["#22c55e", "#3b82f6", "#f59e0b"]

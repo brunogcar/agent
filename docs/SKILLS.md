@@ -75,17 +75,22 @@ skills/
 ├── dispatcher.py                     # Auto-discovers skill domains
 ├── cvm/
 │   ├── __init__.py                   # CVM domain hub (routes sub_domain → skill)
+│   ├── _shared_report/               # [v1.16.1] Shared dashboard builders (all CVM skills)
+│   │   ├── __init__.py               # Exports: build_company_header, build_price_chart, get_tooltip
+│   │   ├── company_header.py         # FCA + CAD + COTAHIST company info card
+│   │   ├── price_chart.py            # Historical price chart with Tudo/5A/1A/1M range selector
+│   │   └── tooltips.py               # PT-BR formula tooltips for ratio_grid indicators
 │   ├── financials/
 │   │   ├── __init__.py               # ~20 lines: auto_discover + MANIFEST + route
 │   │   ├── _registry.py              # ~3 lines: MODES, register_mode = make_registry()
-│   │   ├── report.py                 # Dashboard composition helpers
+│   │   ├── report.py                 # Dashboard composition helpers (imports from _shared_report)
 │   │   ├── fetchers.py / helpers.py  # Internal utilities (optional)
 │   │   └── modes/
 │   │       ├── __init__.py           # Empty marker
 │   │       ├── quarterly.py          # @register_mode("quarterly", ...)
 │   │       ├── annual.py             # @register_mode("annual", ...)
 │   │       └── dashboard.py          # @register_mode("dashboard", ...)
-│   ├── valuation/                    # Same pattern
+│   ├── valuation/                    # Same pattern (imports from _shared_report)
 │   ├── governance/                   # Same pattern
 │   └── ... (8 more CVM skills)
 └── investsite/
@@ -96,6 +101,47 @@ skills/
     └── modes/
         └── ... (6 mode files)
 ```
+
+### Shared Report Builders (`skills/cvm/_shared_report/`)
+
+[v1.16.1] Extracted from `financials/report.py` so all CVM skill dashboards
+can reuse the same company header, price chart, and tooltip system without
+copying code. Prevents the copy-paste-drift pattern identified by
+collective LLM review.
+
+**Usage:**
+```python
+from skills.cvm._shared_report import build_company_header, build_price_chart, get_tooltip
+
+# Company header (FCA + CAD + COTAHIST)
+header = build_company_header("PETR4")
+# → {"ticker": "PETR4", "name": "PETROLEO BRASILEIRO S.A. PETROBRAS", "cnpj": "33.000.167/0001-01", ...}
+
+# Historical price chart with time-range selector
+chart = build_price_chart("PETR4")
+# → {"type": "chart", "price_range_selector": True, "price_full_labels": [...], ...}
+
+# Tooltip for a metric
+tooltip = get_tooltip("roe", spec)
+# → "ROE = Lucro Líquido / Patrimônio Líquido. Rentabilidade do capital dos acionistas."
+```
+
+**Modules:**
+| File | Exports | Purpose |
+|------|---------|---------|
+| `company_header.py` | `build_company_header(company)` | FCA (name, CNPJ, CD_CVM, sector, listing segment, control type, website, fiscal year-end) + CAD (trade name, UF) + COTAHIST (ISIN, latest close) |
+| `price_chart.py` | `build_price_chart(company)` | 10Y daily closes from COTAHIST + Tudo/5A/1A/1M range selector (client-side JS filtering) |
+| `tooltips.py` | `get_tooltip(metric_name, spec)`, `_METRIC_TOOLTIPS` | 38 PT-BR formula strings; falls back to `MetricSpec.tooltip` field (calculations `_registry.py`) |
+
+**Adding a new CVM skill dashboard:**
+1. Import `build_company_header` + `build_price_chart` + `get_tooltip` from `_shared_report`.
+2. Call `build_company_header(company)` once, store in `result["company_header"]` + insert as `company_info` section at top of Overview tab.
+3. Call `build_price_chart(company)`, insert as chart section after header.
+4. Use `get_tooltip(metric_name, spec)` when building `ratio_grid` items.
+
+The financials dashboard (`skills/cvm/financials/modes/dashboard.py`) is the
+reference implementation — valuation/historical/governance will follow the
+same pattern.
 
 ### How to Create a New Skill
 
