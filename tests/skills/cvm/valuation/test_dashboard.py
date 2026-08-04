@@ -19,6 +19,34 @@ compute_all_ratios + _get_price).
 """
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _mock_historical_valuation(monkeypatch):
+    """[v1.1] Mock historical_valuation for all dashboard tests.
+
+    The dashboard's Histórico tab calls historical_valuation(), which runs
+    9 metrics x 5 years x 4 quarters of DB queries against ITR. With the
+    valuation_env fixture's mocked engines, this is fast — but the real
+    ITR DB (15M rows after full sync) makes each query take seconds,
+    causing tests to hang for minutes.
+
+    These tests validate dashboard tab structure/KPIs/sections, NOT
+    historical_valuation logic (which has its own tests in
+    test_historical_valuation.py). Mocking here keeps all dashboard
+    tests fast (<1s each) regardless of DB state.
+    """
+    def _mock(company, years=5):
+        return {"status": "ok", "series": [], "metrics": []}
+
+    # Patch at the source module — dashboard.py does a local import
+    # (from ...historical_valuation import historical_valuation) inside
+    # the function, so patching the source module ensures the mock is
+    # picked up on each call.
+    import skills.cvm.valuation.modes.historical_valuation as hv_mod
+    monkeypatch.setattr(hv_mod, "historical_valuation", _mock)
+
 
 class TestDashboardMode:
     """[v1.8] Tests for `valuation.dashboard()` -- 5-tab composition with sidebar groups."""

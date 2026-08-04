@@ -12,6 +12,8 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+import sys
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +32,7 @@ def sync(
     full_history: bool = False,
     force: bool = False,
     trace_id: str = "",
+    verbose: bool = True,
 ) -> dict:
     """Download IPE ZIPs and populate ipe.db.
 
@@ -38,6 +41,7 @@ def sync(
         full_history: Sync all years from FIRST_YEAR (2003) to current.
         force: Re-download even if already synced.
         trace_id: Tracer ID for logging.
+        verbose: Print progress to stderr.
     """
     tid = trace_id or ""
     current_year = datetime.now().year
@@ -49,6 +53,11 @@ def sync(
     else:
         years_to_sync = [current_year]
 
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[ipe] {msg}", file=sys.stderr, flush=True)
+
+    _log(f"Starting IPE sync — {len(years_to_sync)} year(s): {years_to_sync[0]}..{years_to_sync[-1]}")
     tracer.step(tid, "ipe_sync", f"Starting IPE sync for years: {years_to_sync}")
 
     conn = connect_ipe(read_only=False)
@@ -56,26 +65,37 @@ def sync(
 
     results = {"synced": [], "skipped": [], "errors": []}
     total_rows = 0
+    sync_start = time.time()
 
-    for year in years_to_sync:
+    for idx, year in enumerate(years_to_sync, 1):
+        _log(f"[{idx}/{len(years_to_sync)}] Year {year} ...")
         if not force:
             existing = conn.execute(
                 "SELECT * FROM sync_state WHERE year=?", (year,),
             ).fetchone()
             if existing:
+                _log(f"  skip (already synced, use force=True to re-download)")
                 results["skipped"].append(year)
                 continue
 
         url = URL_PATTERN.format(year=year)
+        _log(f"  downloading {url}")
         tracer.step(tid, "ipe_sync", f"Downloading IPE {year}: {url}")
 
         try:
+            t0 = time.time()
             raw = _download_zip(url)
+            dl_secs = time.time() - t0
             if not raw:
+                _log(f"  FAILED: empty response")
                 results["errors"].append({"year": year, "error": "Download failed (empty response)"})
                 continue
+            _log(f"  downloaded {len(raw) / 1024 / 1024:.1f} MB in {dl_secs:.1f}s")
 
+            t1 = time.time()
             row_count = _parse_and_store(conn, raw, year)
+            parse_secs = time.time() - t1
+            _log(f"  parsed + stored {row_count:,} rows in {parse_secs:.1f}s")
             total_rows += row_count
 
             conn.execute(
@@ -89,10 +109,13 @@ def sync(
             tracer.step(tid, "ipe_sync", f"IPE {year}: {row_count} rows stored")
 
         except Exception as e:
+            _log(f"  FAILED: {e}")
             results["errors"].append({"year": year, "error": str(e)})
             tracer.warning(tid, "ipe_sync", f"IPE {year} failed: {e}")
 
     conn.close()
+    elapsed = time.time() - sync_start
+    _log(f"Done in {elapsed:.1f}s — {total_rows:,} total rows, {len(results['errors'])} errors")
 
     return {
         "status": "ok" if not results["errors"] else "partial",

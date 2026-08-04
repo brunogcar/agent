@@ -6,8 +6,29 @@ The dispatch test uses valuation_env so the underlying ratios() call succeeds.
 
 [v1.6-valuation-split] Added test_route_dispatches_to_dashboard + a check
 that the dashboard mode is registered.
+
+[v1.1] Added autouse _mock_historical_valuation fixture — the dashboard
+dispatch test was hanging against the real 15M-row ITR DB because
+historical_valuation runs 9 metrics x 5 years x 4 quarters of queries.
 """
 from __future__ import annotations
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _mock_historical_valuation(monkeypatch):
+    """[v1.1] Mock historical_valuation for all route tests.
+
+    The dashboard mode calls historical_valuation() which hits the real ITR
+    DB. With a full 15M-row DB, this hangs for minutes. Mock it to keep
+    tests fast. historical_valuation has its own dedicated tests.
+    """
+    def _mock(company, years=5):
+        return {"status": "ok", "series": [], "metrics": []}
+
+    import skills.cvm.valuation.modes.historical_valuation as hv_mod
+    monkeypatch.setattr(hv_mod, "historical_valuation", _mock)
 
 
 class TestValuationRoute:

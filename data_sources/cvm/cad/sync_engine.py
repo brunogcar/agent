@@ -12,28 +12,34 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+import sys
 from datetime import datetime
 
 import requests
 
 from core.tracer import tracer
-from data_sources.cvm._db import connect_cad, cad_db_path
+from data_sources.cvm._db import connect_cad, cad_db_path, cnpj_digits
 from data_sources.cvm.cad.catalog import (
     CSV_URL, CSV_ENCODING, CSV_DELIMITER, ALL_COLS, SCHEMA_SQL,
 )
 
 
-def sync(force: bool = False, trace_id: str = "") -> dict:
+def sync(force: bool = False, trace_id: str = "", verbose: bool = True) -> dict:
     """Download cad_cia_aberta.csv from CVM and store to cad.db.
 
     Args:
         force: Re-download even if already synced today.
         trace_id: Tracer ID for logging.
+        verbose: Print progress to stderr.
 
     Returns:
         Dict with sync status, row count, file size.
     """
     tid = trace_id or ""
+
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[cad] {msg}", file=sys.stderr, flush=True)
 
     # Check if already synced today (unless force)
     if not force:
@@ -47,8 +53,10 @@ def sync(force: bool = False, trace_id: str = "") -> dict:
             today = datetime.now().strftime("%Y-%m-%d")
             if synced_date == today:
                 conn.close()
+                _log(f"skip (already synced today, use force=True to re-download)")
                 return {"status": "skipped", "reason": "already synced today"}
 
+    _log(f"downloading {CSV_URL}")
     tracer.step(tid, "cad_sync", f"Downloading: {CSV_URL}")
 
     try:
@@ -58,11 +66,15 @@ def sync(force: bool = False, trace_id: str = "") -> dict:
     except Exception as e:
         return {"status": "error", "error": f"Download failed: {e}"}
 
+    _log(f"downloaded {len(csv_text) / 1024:.1f} KB")
+
     # Parse CSV
     reader = csv.DictReader(io.StringIO(csv_text), delimiter=CSV_DELIMITER)
     rows = list(reader)
     if not rows:
         return {"status": "error", "error": "CSV parsed to zero rows"}
+
+    _log(f"parsed {len(rows):,} rows")
 
     # Store — full replace (file is a complete snapshot)
     conn = connect_cad(read_only=False)
@@ -75,8 +87,14 @@ def sync(force: bool = False, trace_id: str = "") -> dict:
 
         batch = []
         for row in rows:
-            vals = tuple(str(row.get(c, "") or "").strip() for c in ALL_COLS)
-            batch.append(vals)
+            vals = []
+            for c in ALL_COLS:
+                val = str(row.get(c, "") or "").strip()
+                # [v1.1] Normalize CNPJ columns to 14 plain digits
+                if c in ("CNPJ_CIA", "CNPJ_AUDITOR"):
+                    val = cnpj_digits(val)
+                vals.append(val)
+            batch.append(tuple(vals))
 
         conn.executemany(insert_sql, batch)
 
@@ -87,6 +105,7 @@ def sync(force: bool = False, trace_id: str = "") -> dict:
         )
         conn.commit()
 
+        _log(f"stored {len(rows):,} companies")
         tracer.step(tid, "cad_sync", f"Stored {len(rows)} companies")
 
         return {

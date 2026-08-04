@@ -16,7 +16,7 @@ import zipfile
 from datetime import datetime
 from typing import Any
 
-from data_sources.cvm._db import connect_fca, fca_db_path
+from data_sources.cvm._db import connect_fca, fca_db_path, cnpj_digits
 from data_sources.cvm.fca.catalog import ensure_schema
 
 
@@ -256,6 +256,9 @@ def _parse_and_insert_csv(
                         values.append(int(val))
                     except (ValueError, TypeError):
                         values.append(None)
+                elif col == "CNPJ_Companhia":
+                    # [v1.1] Normalize CNPJ to 14 plain digits
+                    values.append(cnpj_digits(val) or None)
                 else:
                     values.append(val)
         batch.append(values)

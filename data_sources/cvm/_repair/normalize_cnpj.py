@@ -86,8 +86,15 @@ def normalize_db(db_path, label: str, dry_run: bool = False):
         conn.close()
         return
 
-    # --- Step 2: Merge duplicates (move contas, delete dup rows) ---
+    # --- Step 2: Merge duplicates (delete colliding, move rest, delete dup rows) ---
+    # When DFP/ITR was re-synced with force=True before normalization, INSERT OR REPLACE
+    # wrote identical contas rows under BOTH the dotted-CNPJ empresa and plain-CNPJ
+    # empresa. A direct UPDATE id_empresa=primary WHERE id_empresa=dup would hit
+    # UNIQUE constraint on (id_empresa, codigo, consolidado, data_ini_exerc, data_fim_exerc).
+    # Fix: delete rows from dup that already exist in primary (identical data anyway),
+    # then move the remaining non-colliding rows.
     merged_count = 0
+    contas_deleted_colliding = 0
     contas_moved = 0
     for (norm, ano), ids in dup_groups.items():
         ids.sort()
@@ -95,17 +102,35 @@ def normalize_db(db_path, label: str, dry_run: bool = False):
         duplicate_ids = ids[1:]
 
         for dup_id in duplicate_ids:
+            # Step 2a: Delete colliding rows from dup (they already exist in primary)
+            deleted = conn.execute(
+                """DELETE FROM contas WHERE id_empresa = ?
+                   AND EXISTS (
+                       SELECT 1 FROM contas c2
+                       WHERE c2.id_empresa = ?
+                         AND c2.codigo = contas.codigo
+                         AND c2.consolidado = contas.consolidado
+                         AND COALESCE(c2.data_ini_exerc, '') = COALESCE(contas.data_ini_exerc, '')
+                         AND c2.data_fim_exerc = contas.data_fim_exerc
+                   )""",
+                (dup_id, primary_id),
+            ).rowcount
+            contas_deleted_colliding += deleted
+
+            # Step 2b: Move remaining (non-colliding) rows to primary
             moved = conn.execute(
                 "UPDATE contas SET id_empresa = ? WHERE id_empresa = ?",
                 (primary_id, dup_id),
             ).rowcount
             contas_moved += moved
 
+            # Step 2c: Delete the now-empty duplicate empresa row
             conn.execute("DELETE FROM empresas WHERE id = ?", (dup_id,))
             merged_count += 1
 
     conn.commit()
     print(f"  Merged {merged_count:,} duplicate empresa rows")
+    print(f"  Deleted {contas_deleted_colliding:,} colliding contas (already in primary)")
     print(f"  Moved {contas_moved:,} contas rows to primary empresa")
 
     # --- Step 3: Normalize CNPJ format on remaining rows ---
