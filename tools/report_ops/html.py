@@ -179,7 +179,9 @@ def _normalize_table_sections(sections: list) -> None:
         if formats_map and sec.get("columns") and sec.get("rows"):
             col_formats = [formats_map.get(c, "text") for c in sec["columns"]]
             sec["rows"] = [
-                [apply_fmt(cell, col_formats[j]) for j, cell in enumerate(row)]
+                [apply_fmt(cell, col_formats[j]) if not isinstance(cell, dict)
+                 else cell
+                 for j, cell in enumerate(row)]
                 for row in sec["rows"]
             ]
             # Clear formats so re-normalization is a no-op (idempotency).

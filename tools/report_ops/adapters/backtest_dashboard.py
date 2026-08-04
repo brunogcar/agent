@@ -105,9 +105,22 @@ def backtest_dashboard(result: dict) -> dict:
     kpis_in = result.get("kpis") or []
     kpis_out = [_format_kpi(k) for k in kpis_in]
 
+    # [v1.4] Preserve group field on tabs + pass company_header + freshness_footer.
+    tabs_out: list[dict] = []
+    for tab in tabs_in:
+        tab_out = {
+            "name": tab.get("name", ""),
+            "sections": tab.get("sections", []),
+        }
+        if tab.get("group"):
+            tab_out["group"] = tab["group"]
+        tabs_out.append(tab_out)
+
     return {
         "company": result.get("ticker", ""),
-        "tabs": tabs_in,
+        "company_header": result.get("company_header", {}),
+        "tabs": tabs_out,
         "kpis": kpis_out,
         "sources": [],
+        "freshness_footer": result.get("freshness_footer", ""),
     }

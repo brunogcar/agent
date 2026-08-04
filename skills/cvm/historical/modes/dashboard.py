@@ -1,191 +1,153 @@
-"""Mode: dashboard -- multi-tab historical dashboard (thin composition mode).
+"""Mode: dashboard -- multi-tab historical dashboard with sidebar groups.
 
-[v2.1] Reorganized from 3 tabs to 5 tabs with charts, ratio_grid, subtabs:
-  - Overview:             KPI cards + Summary text section
-  - Valuation:            subtabs (Percentile table + bar chart, Trend table)
-                          for valuation metrics (P/L, P/VPA, EV/EBITDA)
-  - Profitability:        subtabs (Percentile table + bar chart, Trend table)
-                          for profitability metrics (ROE, ROIC, Div Yield,
-                          Margem Bruta, Margem Líquida)
-  - Ratio Grid:           current vs 1Y/3Y averages grouped by category
-  - Percentile Analysis:  full table showing all metrics
-
-[v2.1 speed fix] The 6+ summary() calls + fetch_quartiles() calls are now
-wrapped in `with engine_cache_scope():` so shared engines (earnings, pl,
-shares, etc.) are queried ONCE across all metric calls instead of N times.
-This was the root cause of the dashboard being slow — F7 only activates
-inside compute_all_ratios(), which historical doesn't use. Now the cache
-is activated explicitly.
-
-This mode does NOT fetch new data -- it calls ``summary()`` once per
-covered metric and reshapes the results into a multi-tab payload.
-
-Registered as "dashboard" in skills.cvm.historical._registry.MODES via the
-@register_mode decorator. Auto-discovered by __init__.py.
+[v1.15] 5 tabs in 3 groups: Resumo / Avaliação / Análise.
 """
 from __future__ import annotations
-
 from skills._base import engine_cache_scope
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.historical._registry import register_mode
 from skills.cvm.historical.modes.summary import summary
 from skills.cvm.historical.report import (
-    build_overview_kpis,
-    build_overview_section,
-    build_percentile_section,
-    build_percentile_chart,
-    build_trend_section,
-    build_ratio_grid_section,
-    fetch_quartiles,
+    build_overview_kpis, build_overview_section, build_percentile_section,
+    build_percentile_chart, build_trend_section, build_trend_line_chart,
+    build_ratio_grid_section, fetch_quartiles, fetch_series, _fmt, _tip, _ok,
 )
+from skills.cvm.calculations._registry import resolve_metric
 
-
-# ── Metrics covered by the dashboard ────────────────────────────────────────
-# (metric_name, KPI label, unit_kind, category) — unit_kind is "ratio" for
-# price multiples (P/L, P/VPA, EV/EBITDA) and "pct" for profitability/yield
-# ratios (ROE, ROIC, Div Yield, margins).
-_METRIC_DEFS: list[tuple[str, str, str, str]] = [
-    # Valuation
-    ("lpa",            "P/L",              "ratio", "valuation"),
-    ("vpa",            "P/VPA",            "ratio", "valuation"),
-    ("ev_ebitda",      "EV/EBITDA",        "ratio", "valuation"),
-    # Profitability
-    ("roe",            "ROE",              "pct",   "profitability"),
-    ("roic",           "ROIC",             "pct",   "profitability"),
-    ("dpa",            "Div Yield",        "pct",   "profitability"),
-    ("gross_margin",   "Marg. Bruta",      "pct",   "profitability"),
-    ("net_margin",     "Marg. Líquida",    "pct",   "profitability"),
+_METRIC_DEFS = [
+    ("lpa", "P/L", "ratio", "valuation"), ("vpa", "P/VPA", "ratio", "valuation"),
+    ("ev_ebitda", "EV/EBITDA", "ratio", "valuation"),
+    ("roe", "ROE", "pct", "profitability"), ("roic", "ROIC", "pct", "profitability"),
+    ("dpa", "Div Yield", "pct", "profitability"),
+    ("gross_margin", "Marg. Bruta", "pct", "profitability"),
+    ("net_margin", "Marg. Líquida", "pct", "profitability"),
 ]
-
-# Legacy 3-tuple for builders that still expect it
 _METRIC_DEFS_3 = [(m, l, u) for m, l, u, _ in _METRIC_DEFS]
 
-
-@register_mode(
-    "dashboard",
-    description=(
-        "Multi-tab historical dashboard (thin composition of summary()). "
-        "Tabs: Overview (8 KPI cards), Valuation (subtabs: percentile + "
-        "trend), Profitability (subtabs: percentile + trend), Ratio Grid, "
-        "Percentile Analysis (all metrics)."
-    ),
-    params={
-        "company": "str. Ticker. Required.",
-    },
-    include_in_all=False,
-    examples=[
-        'skill(domain="cvm", sub_domain="historical", mode="dashboard", '
-        'params=\'{"company":"PETR4"}\')',
-    ],
+@register_mode("dashboard",
+    description="Multi-tab historical dashboard with sidebar groups.",
+    params={"company": "str. Required."}, include_in_all=False,
+    examples=['skill(domain="cvm", sub_domain="historical", mode="dashboard", params=\'{"company":"PETR4"}\')'],
 )
 def dashboard(company: str = "") -> dict:
-    """Multi-tab historical dashboard (thin composition of summary()).
-
-    [v2.1] 5 tabs: Overview, Valuation (subtabs), Profitability (subtabs),
-    Ratio Grid, Percentile Analysis.
-
-    Args:
-        company: Ticker. Required.
-
-    Returns:
-        Dict shaped as ``{"status": "ok", "company": ..., "tabs": [...],
-        "kpis": [...]}``.
-    """
     if not company:
         return {"status": "error", "error": "company is required"}
+    print(f"[historical] Starting for {company}...", flush=True)
 
-    print(f"[historical] Starting dashboard for {company}...", flush=True)
-
-    # ── Gather underlying data: call summary() once per covered metric ──
-    # [v2.1 speed fix] Wrap ALL metric calls in engine_cache_scope() so
-    # shared engines (earnings, pl, shares) are queried ONCE across all
-    # 8 metrics instead of N times. This is the fix for the slow dashboard.
-    summaries: dict[str, dict] = {}
-    quartiles: dict[str, dict | None] = {}
+    summaries, quartiles, series_data = {}, {}, {}
     total = len(_METRIC_DEFS)
-
-    print(f"[historical] Fetching {total} metric summaries (with F7 cache)...", flush=True)
+    print(f"[historical] Fetching {total} summaries (F7 cache)...", flush=True)
     with engine_cache_scope() as cache:
-        for i, (metric_name, label, _unit, _cat) in enumerate(_METRIC_DEFS, 1):
-            print(f"[historical]   {i}/{total}: {label} ({metric_name})...", flush=True, end="")
-            try:
-                summaries[metric_name] = summary(company=company, metric=metric_name)
-            except Exception as e:
-                summaries[metric_name] = {"status": "error", "error": str(e)}
+        for i, (mn, label, _, _) in enumerate(_METRIC_DEFS, 1):
+            print(f"[historical]   {i}/{total}: {label}...", flush=True, end="")
+            try: summaries[mn] = summary(company=company, metric=mn)
+            except Exception as e: summaries[mn] = {"status": "error", "error": str(e)}
             print(" done.", flush=True)
-
-        # ── Fetch quartiles within the SAME cache scope ──
-        print(f"[historical] Fetching quartiles (5Y distribution)...", flush=True)
-        for metric_name, _label, _unit, _cat in _METRIC_DEFS:
-            s = summaries.get(metric_name) or {}
+        print(f"[historical] Fetching quartiles + series...", flush=True)
+        for mn, _, _, _ in _METRIC_DEFS:
+            s = summaries.get(mn) or {}
             if s.get("status") != "ok":
-                quartiles[metric_name] = None
-                continue
-            quartiles[metric_name] = fetch_quartiles(company, metric_name, months=60)
-
+                quartiles[mn] = None; series_data[mn] = None; continue
+            quartiles[mn] = fetch_quartiles(company, mn, 60)
+            series_data[mn] = fetch_series(company, mn, 60)
         stats = cache.stats
-        print(f"[historical] F7 cache: {stats['hits']} hits, {stats['misses']} misses, {stats['size']} entries.", flush=True)
+        print(f"[historical] F7: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
 
-    # ── Top-level KPI cards (one per metric) ──
-    print(f"[historical] Building dashboard sections...", flush=True)
+    print(f"[historical] Building header + price chart...", flush=True)
+    company_header = build_company_header(company)
+    price_chart = build_price_chart(company)
+
+    print(f"[historical] Building sections...", flush=True)
     kpis = build_overview_kpis(summaries, _METRIC_DEFS_3)
 
-    # ── Split metrics by category for subtabs ──
-    valuation_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "valuation"]
-    profitability_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "profitability"]
+    # Overview: header + price chart + split tables (Valuation + Rentabilidade)
+    print(f"[historical]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info", "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    val_rows, prof_rows = [], []
+    for mn, label, unit, _cat in _METRIC_DEFS:
+        s = summaries.get(mn) or {}
+        if not _ok(s): continue
+        try: spec = resolve_metric(mn)
+        except: continue
+        cur = s.get("current", {}).get(spec.ratio_key)
+        ss = "pct" if unit == "pct" else "num"
+        row = [{"text": label, "tooltip": _tip(mn)}, _fmt(cur, ss)]
+        if unit == "ratio": val_rows.append(row)
+        else: prof_rows.append(row)
+    if val_rows:
+        overview_sections.append({"title": "Valuation", "type": "table", "columns": ["Métrica", "Valor"], "rows": val_rows})
+    if prof_rows:
+        overview_sections.append({"title": "Rentabilidade", "type": "table", "columns": ["Métrica", "Valor"], "rows": prof_rows})
 
-    # ── Tab 1: Overview -- Summary text section ──
-    overview_sections = [build_overview_section(summaries, _METRIC_DEFS_3, company)]
-
-    # ── Tab 2: Valuation -- subtabs (Percentile + Trend) ──
-    val_summaries = {m: summaries.get(m, {}) for m, _, _ in valuation_metrics}
-    val_quartiles = {m: quartiles.get(m) for m, _, _ in valuation_metrics}
-    val_subtabs = []
-    val_pct_table = build_percentile_section(val_summaries, val_quartiles, valuation_metrics)
-    val_subtabs.append({"name": "Percentile", "sections": [val_pct_table]})
-    val_chart = build_percentile_chart(val_summaries, val_quartiles, valuation_metrics)
-    if val_chart:
-        val_subtabs.append({"name": "Chart", "sections": [val_chart]})
-    val_trend = build_trend_section(val_summaries, valuation_metrics)
-    val_subtabs.append({"name": "Trend", "sections": [val_trend]})
+    # Valuation + Profitability subtabs
+    print(f"[historical]   Valuation...", flush=True)
+    val_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "valuation"]
+    val_s = {m: summaries.get(m, {}) for m, _, _ in val_metrics}
+    val_q = {m: quartiles.get(m) for m, _, _ in val_metrics}
+    val_subtabs = [
+        {"name": "Percentil", "sections": [build_percentile_section(val_s, val_q, val_metrics)]},
+        {"name": "Tendência", "sections": [build_trend_section(val_s, val_metrics)]},
+    ]
+    vc = build_percentile_chart(val_s, val_q, val_metrics)
+    if vc: val_subtabs.insert(1, {"name": "Gráfico", "sections": [vc]})
+    for mn, label, _ in val_metrics:
+        try:
+            spec = resolve_metric(mn)
+            lc = build_trend_line_chart(series_data.get(mn), label, spec.ratio_key)
+            if lc: val_subtabs.append({"name": f"{label} 5A", "sections": [lc]})
+        except: pass
     valuation_sections = [{"type": "subtabs", "tabs": val_subtabs}]
 
-    # ── Tab 3: Profitability -- subtabs (Percentile + Trend) ──
-    prof_summaries = {m: summaries.get(m, {}) for m, _, _ in profitability_metrics}
-    prof_quartiles = {m: quartiles.get(m) for m, _, _ in profitability_metrics}
-    prof_subtabs = []
-    prof_pct_table = build_percentile_section(prof_summaries, prof_quartiles, profitability_metrics)
-    prof_subtabs.append({"name": "Percentile", "sections": [prof_pct_table]})
-    prof_chart = build_percentile_chart(prof_summaries, prof_quartiles, profitability_metrics)
-    if prof_chart:
-        prof_subtabs.append({"name": "Chart", "sections": [prof_chart]})
-    prof_trend = build_trend_section(prof_summaries, profitability_metrics)
-    prof_subtabs.append({"name": "Trend", "sections": [prof_trend]})
+    print(f"[historical]   Profitability...", flush=True)
+    prof_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "profitability"]
+    prof_s = {m: summaries.get(m, {}) for m, _, _ in prof_metrics}
+    prof_q = {m: quartiles.get(m) for m, _, _ in prof_metrics}
+    prof_subtabs = [
+        {"name": "Percentil", "sections": [build_percentile_section(prof_s, prof_q, prof_metrics)]},
+        {"name": "Tendência", "sections": [build_trend_section(prof_s, prof_metrics)]},
+    ]
+    pc = build_percentile_chart(prof_s, prof_q, prof_metrics)
+    if pc: prof_subtabs.insert(1, {"name": "Gráfico", "sections": [pc]})
+    for mn, label, _ in prof_metrics:
+        try:
+            spec = resolve_metric(mn)
+            lc = build_trend_line_chart(series_data.get(mn), label, spec.ratio_key)
+            if lc: prof_subtabs.append({"name": f"{label} 5A", "sections": [lc]})
+        except: pass
     profitability_sections = [{"type": "subtabs", "tabs": prof_subtabs}]
 
-    # ── Tab 4: Ratio Grid -- current vs 1Y/3Y grouped by category ──
-    grid_sections = [build_ratio_grid_section(summaries, _METRIC_DEFS_3)]
+    # Ratio Grid (now split tables)
+    print(f"[historical]   Ratio Grid...", flush=True)
+    grid_sections = build_ratio_grid_section(summaries, _METRIC_DEFS_3)
 
-    # ── Tab 5: Percentile Analysis -- full table (all metrics) ──
-    percentile_sections = [
-        build_percentile_section(summaries, quartiles, _METRIC_DEFS_3),
-    ]
-    full_chart = build_percentile_chart(summaries, quartiles, _METRIC_DEFS_3)
-    if full_chart:
-        percentile_sections.append(full_chart)
+    # Percentile Analysis
+    print(f"[historical]   Percentile Analysis...", flush=True)
+    pct_sections = [build_percentile_section(summaries, quartiles, _METRIC_DEFS_3)]
+    fc = build_percentile_chart(summaries, quartiles, _METRIC_DEFS_3)
+    if fc: pct_sections.append(fc)
 
-    # ── Assemble the dashboard payload ─────────────────────────────────────
+    # Freshness footer
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness(); last = get_last_synced_period()
+        freshness_footer = (f"DFP: {fresh.get('dfp','')[:10] or '—'} (até {last.get('dfp','') or '—'}) • "
+                            f"ITR: {fresh.get('itr','')[:10] or '—'} (até {last.get('itr','') or '—'}) • "
+                            f"COTAHIST: {fresh.get('cotahist','')[:10] or '—'}")
+    except: pass
+
     tabs = [
-        {"name": "Overview",            "sections": overview_sections},
-        {"name": "Valuation",           "sections": valuation_sections},
-        {"name": "Profitability",       "sections": profitability_sections},
-        {"name": "Ratio Grid",          "sections": grid_sections},
-        {"name": "Percentile Analysis", "sections": percentile_sections},
+        {"name": "Overview", "group": "Resumo", "sections": overview_sections},
+        {"name": "Valuation", "group": "Avaliação", "sections": valuation_sections},
+        {"name": "Profitability", "group": "Avaliação", "sections": profitability_sections},
+        {"name": "Ratio Grid", "group": "Análise", "sections": grid_sections},
+        {"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections},
     ]
-
     print(f"[historical] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
-    return {
-        "status": "ok",
-        "company": company,
-        "tabs": tabs,
-        "kpis": kpis,
-    }
+    return {"status": "ok", "company": company, "company_header": company_header,
+            "tabs": tabs, "kpis": kpis, "freshness_footer": freshness_footer}
