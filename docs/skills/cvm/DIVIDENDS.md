@@ -65,8 +65,9 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 | [ARCHITECTURE.md](dividends/ARCHITECTURE.md) | 3-source combination, DVA codes, mode → source mapping, modular file layout |
 | [API.md](dividends/API.md) | 6 modes: history, annual, payable, announcements, summary, dashboard |
 | [CHANGELOG.md](dividends/CHANGELOG.md) | Version history (v1.0 → v1.1) |
+| [ROADMAP.md](dividends/ROADMAP.md) | Backlog + priorities |
 | [INSTRUCTIONS.md](dividends/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*
+*Last updated: 2026-08-04 (v1.2 — dashboard overhaul with sidebar groups + company header + price chart + freshness footer; see CHANGELOG.md).*

@@ -24,6 +24,8 @@ Registered as "dashboard" in skills.cvm.comparison._registry.MODES via the
 """
 from __future__ import annotations
 
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.comparison._registry import register_mode
 from skills.cvm.comparison.modes.side_by_side import side_by_side
 from skills.cvm.comparison.modes.growth import growth
@@ -35,9 +37,23 @@ from skills.cvm.comparison.report import (
     build_financials_section,
     build_dividends_section,
     build_growth_section,
+    build_growth_chart,
     build_peer_comparison_chart,
     build_peer_ratio_grid,
 )
+
+
+# Heuristic: a B3 ticker is 4-6 alphanumeric chars (typically uppercase,
+# ending in 3 or 4). Used to decide whether to add a company header in the
+# Overview tab — comparison may be invoked with a sector name as the
+# (single) company fallback, in which case we skip the header.
+import re as _re
+_TICKER_RE = _re.compile(r"^[A-Z0-9]{4,6}$")
+
+
+def _looks_like_ticker(s: str) -> bool:
+    """Return True if s looks like a B3 ticker (e.g. PETR4, VALE3, SUZB3)."""
+    return bool(s) and bool(_TICKER_RE.match((s or "").strip().upper()))
 
 
 @register_mode(
@@ -93,6 +109,35 @@ def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> 
     if not tickers and company:
         tickers = [company]
 
+    # [v3] Build company header + price chart for the first ticker (target).
+    # Only add if the first ticker looks like a B3 ticker (not a sector name).
+    target_ticker = (tickers[0] if tickers else "") or company
+    print(f"[comparison] Building company header + price chart for target='{target_ticker}'...", flush=True)
+    company_header: dict = {}
+    price_chart: dict | None = None
+    if _looks_like_ticker(target_ticker):
+        company_header = build_company_header(target_ticker)
+        price_chart = build_price_chart(target_ticker)
+
+    # Freshness footer (DFP + ITR + COTAHIST sync dates) — computed once.
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     # ── Gather underlying data (side_by_side + growth, wrapped defensively) ──
     print(f"[comparison] Starting comparison dashboard for {tickers}...", flush=True)
     print(f"[comparison] Fetching side_by_side()...", flush=True)
@@ -120,13 +165,21 @@ def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> 
     print(f"[comparison] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(sbs)
 
-    # ── Tab 1: Overview -- KPI cards + tickers/sectors + per-ticker errors ─
-    overview_sections = [build_tickers_section(sbs)]
+    # ── Tab 1: Overview -- header + price chart + tickers/sectors + per-ticker errors ─
+    print(f"[comparison]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info",
+                                   "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    overview_sections.append(build_tickers_section(sbs))
     errors_section = build_errors_section(sbs)
     if errors_section is not None:
         overview_sections.append(errors_section)
 
     # ── Tab 2: Valuation -- side-by-side valuation ratios + peer comparison chart ──
+    print(f"[comparison]   Valuation...", flush=True)
     valuation_sections = [build_valuation_section(sbs)]
     # Use the first ticker as the “target” for the peer comparison chart.
     target = (tickers[0] if tickers else "")
@@ -135,35 +188,47 @@ def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> 
         valuation_sections.append(peer_chart)
 
     # ── Tab 3: Financials -- side-by-side financial metrics ────────────────
+    print(f"[comparison]   Financials...", flush=True)
     financials_sections = [build_financials_section(sbs)]
 
     # ── Tab 4: Dividends -- side-by-side dividend metrics ──────────────────
+    print(f"[comparison]   Dividends...", flush=True)
     dividends_sections = [build_dividends_section(sbs)]
 
     # ── Tab 5: Growth -- QoQ + YoY + TTM ratios ────────────────────────────
+    print(f"[comparison]   Growth...", flush=True)
     growth_sections = [build_growth_section(growth_result)]
+    # [v3] Add a YoY growth bar chart per ticker (Receita/EBITDA/Lucro).
+    growth_chart = build_growth_chart(growth_result)
+    if growth_chart:
+        growth_sections.append(growth_chart)
 
     # ── Tab 6: Ratio Grid -- peer metrics grouped by category ──────────────
+    print(f"[comparison]   Ratio Grid...", flush=True)
     grid_section = build_peer_ratio_grid(sbs)
     grid_sections = [grid_section] if grid_section else []
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    # [v3] Sidebar groups: Resumo / Comparação.
     tabs = [
-        {"name": "Overview",    "sections": overview_sections},
-        {"name": "Valuation",   "sections": valuation_sections},
-        {"name": "Financials",  "sections": financials_sections},
-        {"name": "Dividends",   "sections": dividends_sections},
-        {"name": "Growth",      "sections": growth_sections},
+        {"name": "Overview",    "group": "Resumo",     "sections": overview_sections},
+        {"name": "Valuation",   "group": "Comparação", "sections": valuation_sections},
+        {"name": "Financials",  "group": "Comparação", "sections": financials_sections},
+        {"name": "Dividends",   "group": "Comparação", "sections": dividends_sections},
+        {"name": "Growth",      "group": "Comparação", "sections": growth_sections},
     ]
     if grid_sections:
-        tabs.append({"name": "Ratio Grid", "sections": grid_sections})
+        tabs.append({"name": "Ratio Grid", "group": "Comparação",
+                     "sections": grid_sections})
 
     print(f"[comparison] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {
         "status": "ok",
         "tickers": sbs.get("tickers") or [],
+        "company_header": company_header,
         "tabs": tabs,
         "kpis": kpis,
+        "freshness_footer": freshness_footer,
     }

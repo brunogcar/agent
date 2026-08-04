@@ -24,6 +24,8 @@ the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
 
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.governance._registry import register_mode
 from skills.cvm.governance.modes.practices import practices
 from skills.cvm.governance.modes.score import score
@@ -33,6 +35,7 @@ from skills.cvm.governance.report import (
     build_overview_section,
     build_practices_section,
     build_by_chapter_section,
+    build_by_chapter_chart,
     build_practices_doughnut,
 )
 
@@ -117,30 +120,49 @@ def dashboard(company: str = "") -> dict:
     print(f"[governance] Data fetched: {practices_count} practices.",
           flush=True)
 
+    # ── Build company header + price chart (v3 dashboard pattern) ──
+    print(f"[governance] Building company header + price chart...", flush=True)
+    company_header = build_company_header(company)
+    price_chart = build_price_chart(company)
+
     # ── Top-level KPI cards (Governance Score, Practices Count,
     #     Compliance Level) ──────────────────────────────────────────────────
     print(f"[governance] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(score_payload, practices_payload)
 
-    # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
-    overview_sections = [build_overview_section(score_payload, practices_payload)]
+    # ── Tab 1: Overview -- header + price chart + Summary text ──
+    print(f"[governance]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info",
+                                   "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    overview_sections.append(build_overview_section(score_payload, practices_payload))
 
     # ── Tab 2: Practices -- full practices table + compliance doughnut ──
+    print(f"[governance]   Practices...", flush=True)
     practices_sections = [build_practices_section(practices_payload)]
     practices_doughnut = build_practices_doughnut(practices_payload)
     if practices_doughnut:
         practices_sections.append(practices_doughnut)
 
-    # ── Tab 3: By Chapter -- per-chapter adoption table ──
+    # ── Tab 3: By Chapter -- per-chapter adoption table + score bar chart ──
+    print(f"[governance]   By Chapter...", flush=True)
     by_chapter_sections = [build_by_chapter_section(by_chapter_payload)]
+    # [v3] Add a horizontal bar chart showing Score % by chapter.
+    chapter_chart = build_by_chapter_chart(by_chapter_payload)
+    if chapter_chart:
+        by_chapter_sections.append(chapter_chart)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    # [v3] Sidebar groups: Resumo / Governança.
     tabs = [
-        {"name": "Overview",   "sections": overview_sections},
-        {"name": "Practices",  "sections": practices_sections},
-        {"name": "By Chapter", "sections": by_chapter_sections},
+        {"name": "Overview",   "group": "Resumo",     "sections": overview_sections},
+        {"name": "Practices",  "group": "Governança", "sections": practices_sections},
+        {"name": "By Chapter", "group": "Governança", "sections": by_chapter_sections},
     ]
     print(f"[governance] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
           f"{practices_count} practices.", flush=True)
@@ -152,9 +174,30 @@ def dashboard(company: str = "") -> dict:
                    or practices_payload.get("company")
                    or company)
 
+    # ── Freshness footer (DFP + ITR + COTAHIST sync dates) ──
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "company": company_out,
+        "company_header": company_header,
         "tabs": tabs,
         "kpis": kpis,
+        "freshness_footer": freshness_footer,
     }

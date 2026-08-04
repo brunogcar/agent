@@ -58,8 +58,9 @@ report(action="dashboard", title="PETR4 Insider Dashboard",
 | [ARCHITECTURE.md](insider/ARCHITECTURE.md) | Data flow, sentiment computation |
 | [API.md](insider/API.md) | 4 modes: history, by_role, summary, dashboard |
 | [CHANGELOG.md](insider/CHANGELOG.md) | Version history |
+| [ROADMAP.md](insider/ROADMAP.md) | Backlog + priorities |
 | [INSTRUCTIONS.md](insider/INSTRUCTIONS.md) | AI editing rules |
 
 ---
 
-*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*
+*Last updated: 2026-08-04 (v1.2 — dashboard overhaul with sidebar groups + company header + price chart + freshness footer; see CHANGELOG.md).*

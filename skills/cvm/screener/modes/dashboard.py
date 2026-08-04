@@ -24,6 +24,8 @@ the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
 
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.screener._registry import register_mode
 from skills.cvm.screener.modes.compare import compare
 from skills.cvm.screener.report import (
@@ -31,6 +33,7 @@ from skills.cvm.screener.report import (
     build_overview_section,
     build_peers_section,
     build_comparison_section,
+    build_comparison_chart,
     build_top_companies_chart,
 )
 
@@ -94,6 +97,34 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     except Exception as e:
         compare_payload = {"status": "error", "error": str(e)}
 
+    # [v3] Build company header + price chart once at the start so they're
+    # available for both the happy path and the degraded early-return path.
+    # The screener's `company` parameter is always a ticker (e.g. SUZB3),
+    # so we always pass it to build_company_header().
+    print(f"[screener] Building company header + price chart...", flush=True)
+    company_header = build_company_header(company)
+    price_chart = build_price_chart(company)
+
+    # Freshness footer (DFP + ITR + COTAHIST sync dates) — computed once so it
+    # can be returned by both the happy path and the degraded early-return.
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     # [v4] When compare() fails (not_found / error), still return status=ok
     # with the full 3-tab dashboard structure (Overview/Peers/Comparison) so
     # the HTML renders with the dashboard layout (KPI cards + tab nav). The
@@ -102,45 +133,49 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     # renders as "almost blank" in the HTML dashboard template).
     if compare_payload.get("status") != "ok":
         error_msg = compare_payload.get("error", "compare() failed")
+        # [v3] Build Overview sections with header + price chart + error text.
+        degraded_overview: list[dict] = []
+        if company_header.get("name"):
+            degraded_overview.append({"type": "company_info",
+                                       "company_header": company_header})
+        if price_chart:
+            degraded_overview.append(price_chart)
+        degraded_overview.append({
+            "title": "Summary",
+            "type": "text",
+            "text": (
+                f"Company: {company}\n"
+                f"Status: {compare_payload.get('status', 'error')}\n"
+                f"Error: {error_msg}\n\n"
+                f"This usually means the ticker's sector has no peers "
+                f"with valuation data, or the ticker was not found in "
+                f"the bridge/CAD."
+            ),
+        })
         return {
             "status": "ok",  # render the dashboard structure
             "company": company,
+            "company_header": company_header,
             "error": error_msg,  # keep error in payload for console output
-            "tabs": [{
-                "name": "Overview",
-                "sections": [{
-                    "title": "Summary",
-                    "type": "text",
-                    "text": (
-                        f"Company: {company}\n"
-                        f"Status: {compare_payload.get('status', 'error')}\n"
-                        f"Error: {error_msg}\n\n"
-                        f"This usually means the ticker's sector has no peers "
-                        f"with valuation data, or the ticker was not found in "
-                        f"the bridge/CAD."
-                    ),
-                }],
-            }, {
-                "name": "Peers",
-                "sections": [{
+            "tabs": [
+                {"name": "Overview",   "group": "Resumo",  "sections": degraded_overview},
+                {"name": "Peers",      "group": "Análise", "sections": [{
                     "title": "Peers (0)",
                     "type": "table",
                     "columns": ["Ticker", "P/L", "P/VPA", "EV/EBITDA", "ROE"],
                     "rows": [],
                     "formats": {"Ticker": "text", "P/L": "num",
                                 "P/VPA": "num", "EV/EBITDA": "num", "ROE": "pct"},
-                }],
-            }, {
-                "name": "Comparison",
-                "sections": [{
+                }]},
+                {"name": "Comparison", "group": "Análise", "sections": [{
                     "title": "My Ticker vs Sector Medians",
                     "type": "table",
                     "columns": ["Metric", "My Value", "Sector Median", "vs Sector"],
                     "rows": [],
                     "formats": {"Metric": "text", "My Value": "text",
                                 "Sector Median": "text", "vs Sector": "text"},
-                }],
-            }],
+                }]},
+            ],
             "kpis": [
                 {"label": "Median P/L",       "value": "—", "unit": "num"},
                 {"label": "Median P/VPA",     "value": "—", "unit": "num"},
@@ -148,6 +183,7 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
                 {"label": "Median ROE",       "value": "—", "unit": "pct"},
                 {"label": "Median Div Yield", "value": "—", "unit": "pct"},
             ],
+            "freshness_footer": freshness_footer,
         }
 
     # compare() succeeded — reconstruct sector payload from compare's fields.
@@ -165,25 +201,39 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     print(f"[screener] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(medians, compare_payload.get("my_data"))
 
-    # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ──
-    overview_sections = [build_overview_section(sector_payload, compare_payload)]
+    # ── Tab 1: Overview -- header + price chart + Summary text ──
+    print(f"[screener]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info",
+                                   "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    overview_sections.append(build_overview_section(sector_payload, compare_payload))
 
     # ── Tab 2: Peers -- full peers table + top companies chart ──
+    print(f"[screener]   Peers...", flush=True)
     peers_sections = [build_peers_section(sector_payload)]
     top_chart = build_top_companies_chart(sector_payload, metric="p_l")
     if top_chart:
         peers_sections.append(top_chart)
 
     # ── Tab 3: Comparison -- my ticker vs sector medians ──
+    print(f"[screener]   Comparison...", flush=True)
     comparison_sections = [build_comparison_section(compare_payload)]
+    # [v3] Add a grouped bar chart showing My Value vs Sector Median per metric.
+    comp_chart = build_comparison_chart(compare_payload)
+    if comp_chart:
+        comparison_sections.append(comp_chart)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    # [v3] Sidebar groups: Resumo / Análise.
     tabs = [
-        {"name": "Overview",    "sections": overview_sections},
-        {"name": "Peers",       "sections": peers_sections},
-        {"name": "Comparison",  "sections": comparison_sections},
+        {"name": "Overview",    "group": "Resumo",  "sections": overview_sections},
+        {"name": "Peers",       "group": "Análise", "sections": peers_sections},
+        {"name": "Comparison",  "group": "Análise", "sections": comparison_sections},
     ]
 
     print(f"[screener] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
@@ -195,6 +245,8 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     return {
         "status": "ok",
         "company": company_out,
+        "company_header": company_header,
         "tabs": tabs,
         "kpis": kpis,
+        "freshness_footer": freshness_footer,
     }

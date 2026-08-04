@@ -40,6 +40,46 @@ def _fmt(value: Any, spec: str) -> str:
         return str(value)
 
 
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
+
+
+# ── Insider movement type tooltips (v3) ──────────────────────────────────────
+# Maps the VLMO ``Tipo_Movimentacao`` value (lowercased for fuzzy match) to a
+# PT-BR explanation of what each transaction type means. Used as cell-level
+# tooltip on the "Tipo" column of the Recent Transactions tab.
+_MOVIMENTACAO_TOOLTIPS: dict[str, str] = {
+    "compra":           "Compra = aquisição de ações por insider (sentimento positivo).",
+    "venda":            "Venda = alienação de ações por insider (sentimento negativo).",
+    "doacao":           "Doação = transferência sem contraprestação.",
+    "transferencia":    "Transferência = movimentação entre contas do mesmo titular.",
+    "exercicio":        "Exercício = exercício de opção/bspread de ações.",
+    "amortizacao":      "Amortização = amortização de valor de aportes.",
+}
+
+# Tooltip for the "Net Volume" column — same explanation for every cell.
+_NET_VOLUME_TOOLTIP = (
+    "Net Volume = Volume Comprado − Volume Vendido (R$). Positivo = insiders "
+    "comprando (sentimento positivo); negativo = insiders vendendo."
+)
+
+
+def _movimentacao_tooltip(tipo: str) -> str:
+    """Return the tooltip for a Tipo_Movimentacao value (fuzzy match)."""
+    if not tipo:
+        return ""
+    key = tipo.strip().lower()
+    for k, v in _MOVIMENTACAO_TOOLTIPS.items():
+        if k in key:
+            return v
+    return ""
+
+
 def _num(v: Any) -> Any:
     """Coerce numeric strings/values to int or float (passthrough None)."""
     if v is None:
@@ -156,6 +196,9 @@ def build_recent_transactions_section(history_result: dict) -> dict:
     Columns: Data, Cargo, Tipo, Ativo, Qtd, Preço, Volume
     Limited to the 10 most recent transactions (history() already returns
     newest-first).
+
+    [v3] The "Tipo" column cell now carries a tooltip explaining what each
+    Tipo_Movimentacao value means (compra = purchase, venda = sale, ...).
     """
     movements = (history_result.get("movements")
                  if _ok(history_result) else []) or []
@@ -166,10 +209,12 @@ def build_recent_transactions_section(history_result: dict) -> dict:
     columns = ["Data", "Cargo", "Tipo", "Ativo", "Qtd", "Preço", "Volume"]
     rows = []
     for m in recent:
+        tipo = m.get("Tipo_Movimentacao", "") or "—"
+        tipo_cell = _cell(tipo, _movimentacao_tooltip(tipo))
         rows.append([
             m.get("Data_Movimentacao", "") or "—",
             m.get("Tipo_Cargo", "") or "—",
-            m.get("Tipo_Movimentacao", "") or "—",
+            tipo_cell,
             m.get("Tipo_Ativo", "") or "—",
             m.get("Quantidade") if m.get("Quantidade") is not None else "—",
             m.get("Preco_Unitario") if m.get("Preco_Unitario") is not None else "—",
@@ -199,6 +244,9 @@ def build_by_role_section(by_role_result: dict) -> dict:
 
     Columns: Cargo, Transações, Qtd Comprada, Qtd Vendida,
              Vol Comprado, Vol Vendido, Net Volume
+
+    [v3] The "Net Volume" column cell now carries a tooltip explaining
+    the formula (bought - sold) and how to interpret the sign.
     """
     roles = (by_role_result.get("by_role")
              if _ok(by_role_result) else []) or []
@@ -209,6 +257,8 @@ def build_by_role_section(by_role_result: dict) -> dict:
     for r in roles:
         vol_bought = r.get("volume_bought") or 0
         vol_sold = r.get("volume_sold") or 0
+        net_vol = (vol_bought - vol_sold) if (vol_bought is not None
+                                                and vol_sold is not None) else None
         rows.append([
             r.get("Tipo_Cargo", "") or "—",
             r.get("transaction_count") if r.get("transaction_count") is not None else "—",
@@ -216,8 +266,7 @@ def build_by_role_section(by_role_result: dict) -> dict:
             r.get("total_sold") if r.get("total_sold") is not None else "—",
             vol_bought if vol_bought is not None else "—",
             vol_sold if vol_sold is not None else "—",
-            (vol_bought - vol_sold) if (vol_bought is not None
-                                        and vol_sold is not None) else "—",
+            _cell(net_vol, _NET_VOLUME_TOOLTIP) if net_vol is not None else "—",
         ])
 
     formats = {
@@ -244,6 +293,9 @@ def build_monthly_section(summary_result: dict) -> dict:
 
     Columns: Mês, Transações, Comprado, Vendido,
              Vol Comprado, Vol Vendido, Net Volume
+
+    [v3] The "Net Volume" column cell now carries a tooltip explaining
+    the formula (bought - sold) and how to interpret the sign.
     """
     monthly = (summary_result.get("monthly")
                if _ok(summary_result) else []) or []
@@ -252,6 +304,7 @@ def build_monthly_section(summary_result: dict) -> dict:
                "Vol Comprado", "Vol Vendido", "Net Volume"]
     rows = []
     for m in monthly:
+        net_vol = m.get("net_volume")
         rows.append([
             m.get("month", "") or "—",
             m.get("transaction_count") if m.get("transaction_count") is not None else "—",
@@ -259,7 +312,7 @@ def build_monthly_section(summary_result: dict) -> dict:
             m.get("sold") if m.get("sold") is not None else "—",
             m.get("volume_bought") if m.get("volume_bought") is not None else "—",
             m.get("volume_sold") if m.get("volume_sold") is not None else "—",
-            m.get("net_volume") if m.get("net_volume") is not None else "—",
+            _cell(net_vol, _NET_VOLUME_TOOLTIP) if net_vol is not None else "—",
         ])
 
     formats = {
@@ -328,6 +381,12 @@ def build_monthly_net_chart(summary_result: dict) -> dict | None:
         return None
 
     return {
+        "title": "Monthly Net Insider Volume",
+        "description": (
+            "Volume líquido mensal (R$) de compras menos vendas por insiders. "
+            "Barras verdes (teal) indicam meses de compra líquida; vermelhas, "
+            "meses de venda líquida."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "bar",
@@ -406,6 +465,11 @@ def build_cumulative_chart(transactions: dict) -> dict | None:
         return None
 
     return {
+        "title": "Cumulative Insider Net Volume",
+        "description": (
+            "Volume líquido acumulado (R$) das transações de insiders ao "
+            "longo do tempo. Compras somam; vendas subtraem."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "line",
@@ -428,6 +492,93 @@ def build_cumulative_chart(transactions: dict) -> dict | None:
                     "legend": {"display": True, "position": "bottom"},
                     "title": {"display": True,
                               "text": "Cumulative Insider Net Volume"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }
+
+
+# ── Buy vs Sell volume per Cargo grouped chart (v3) ──────────────────────────
+
+def build_by_role_chart(by_role_result: dict) -> dict | None:
+    """Build a grouped bar chart showing buy vs sell volume per Cargo (role).
+
+    Each Cargo (Tipo_Cargo) gets two bars side-by-side: Vol Comprado
+    (teal, purchases) and Vol Vendido (red, sales). Useful to spot which
+    insider roles are net buyers vs net sellers.
+
+    Returns None when by_role() returned no roles or no role has a numeric
+    volume_bought/volume_sold value.
+    """
+    roles = (by_role_result.get("by_role")
+             if _ok(by_role_result) else []) or []
+    if not roles:
+        return None
+
+    labels: list[str] = []
+    bought: list[float] = []
+    sold: list[float] = []
+    for r in roles:
+        vol_bought = r.get("volume_bought")
+        vol_sold = r.get("volume_sold")
+        if vol_bought is None and vol_sold is None:
+            continue
+        try:
+            bv = float(vol_bought) if vol_bought is not None else 0.0
+        except (TypeError, ValueError):
+            bv = 0.0
+        try:
+            sv = float(vol_sold) if vol_sold is not None else 0.0
+        except (TypeError, ValueError):
+            sv = 0.0
+        labels.append(r.get("Tipo_Cargo", "") or "—")
+        bought.append(round(bv, 2))
+        sold.append(round(sv, 2))
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Buy vs Sell Volume per Cargo (R$)",
+        "description": (
+            "Volume comprado (teal) vs vendido (vermelho) por cargo "
+            "(Tipo_Cargo). Cargos com barras teal maiores são compradores "
+            "líquidos; cargos com barras vermelhas maiores são vendedores "
+            "líquidos. Valores em BRL."
+        ),
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Vol Comprado (BRL)",
+                        "data": bought,
+                        "backgroundColor": _TEAL,
+                        "borderColor": _TEAL,
+                        "borderWidth": 1,
+                    },
+                    {
+                        "label": "Vol Vendido (BRL)",
+                        "data": sold,
+                        "backgroundColor": _RED,
+                        "borderColor": _RED,
+                        "borderWidth": 1,
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Buy vs Sell Volume per Cargo (R$)"},
                 },
                 "scales": {
                     "x": {"grid": {"display": False}},

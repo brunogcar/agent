@@ -33,5 +33,15 @@ report(action="dashboard", title="PETR4 Governance Dashboard", data=<governance 
 
 ---
 
-*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*
+## 📁 Subfile Directory
+
+| File | Purpose |
+|------|---------|
+| [CHANGELOG.md](governance/CHANGELOG.md) | Version history |
+| [ROADMAP.md](governance/ROADMAP.md) | Backlog + priorities |
+| [INSTRUCTIONS.md](governance/INSTRUCTIONS.md) | AI editing rules |
+
+---
+
+*Last updated: 2026-08-04 (v1.2 — dashboard overhaul with sidebar groups + company header + price chart + freshness footer; see CHANGELOG.md).*
 

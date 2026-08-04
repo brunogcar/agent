@@ -25,6 +25,8 @@ the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
 
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.shareholders._registry import register_mode
 from skills.cvm.shareholders.modes.summary import summary
 from skills.cvm.shareholders.report import (
@@ -118,10 +120,23 @@ def dashboard(company: str = "") -> dict:
     print(f"[shareholders] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
-    # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
-    overview_sections = [build_overview_section(summary_payload)]
+    # ── Build company header + price chart (v3 dashboard pattern) ──
+    print(f"[shareholders] Building company header + price chart...", flush=True)
+    company_header = build_company_header(company)
+    price_chart = build_price_chart(company)
+
+    # ── Tab 1: Overview -- header + price chart + Summary text ──
+    print(f"[shareholders]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info",
+                                   "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    overview_sections.append(build_overview_section(summary_payload))
 
     # ── Tab 2: Top Shareholders -- top 5 named shareholders table + doughnut
+    print(f"[shareholders]   Top Shareholders...", flush=True)
     top_shareholders_sections = [build_top_shareholders_section(summary_payload)]
     top_list = (sh_section.get("top") or []) if isinstance(sh_section, dict) else []
     shareholder_doughnut = build_shareholder_doughnut(top_list)
@@ -129,9 +144,11 @@ def dashboard(company: str = "") -> dict:
         top_shareholders_sections.append(shareholder_doughnut)
 
     # ── Tab 3: Free Float -- single-row table of free float metrics ──
+    print(f"[shareholders]   Free Float...", flush=True)
     free_float_sections = [build_free_float_section(summary_payload)]
 
     # ── Tab 4: Equity Structure -- BPP 2.03.* components table + bar chart ──
+    print(f"[shareholders]   Equity Structure...", flush=True)
     equity_sections = [build_equity_section(summary_payload)]
     equity_bar = build_equity_structure_bar(eq_section)
     if equity_bar:
@@ -140,11 +157,12 @@ def dashboard(company: str = "") -> dict:
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    # [v3] Sidebar groups: Resumo / Acionistas / Estrutura.
     tabs = [
-        {"name": "Overview",         "sections": overview_sections},
-        {"name": "Top Shareholders", "sections": top_shareholders_sections},
-        {"name": "Free Float",       "sections": free_float_sections},
-        {"name": "Equity Structure", "sections": equity_sections},
+        {"name": "Overview",         "group": "Resumo",    "sections": overview_sections},
+        {"name": "Top Shareholders", "group": "Acionistas","sections": top_shareholders_sections},
+        {"name": "Free Float",       "group": "Acionistas","sections": free_float_sections},
+        {"name": "Equity Structure", "group": "Estrutura", "sections": equity_sections},
     ]
     print(f"[shareholders] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
           f"{top_count} shareholders.", flush=True)
@@ -153,9 +171,30 @@ def dashboard(company: str = "") -> dict:
     # company name from FRE/DFP); fall back to the input company string.
     company_out = summary_payload.get("company") or company
 
+    # ── Freshness footer (DFP + ITR + COTAHIST sync dates) ──
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "company": company_out,
+        "company_header": company_header,
         "tabs": tabs,
         "kpis": kpis,
+        "freshness_footer": freshness_footer,
     }

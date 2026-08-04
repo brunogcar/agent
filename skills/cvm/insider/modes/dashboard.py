@@ -25,6 +25,8 @@ the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
 
+from skills.cvm._shared_report.company_header import build_company_header
+from skills.cvm._shared_report.price_chart import build_price_chart
 from skills.cvm.insider._registry import register_mode
 from skills.cvm.insider.modes.summary import summary
 from skills.cvm.insider.modes.history import history
@@ -34,6 +36,7 @@ from skills.cvm.insider.report import (
     build_overview_section,
     build_recent_transactions_section,
     build_by_role_section,
+    build_by_role_chart,
     build_monthly_section,
     build_monthly_net_chart,
     build_cumulative_chart,
@@ -123,19 +126,38 @@ def dashboard(company: str = "") -> dict:
     print(f"[insider] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
-    # ── Tab 1: Overview -- Summary text section (KPIs live at the top level) ─
-    overview_sections = [build_overview_section(summary_payload)]
+    # ── Build company header + price chart (v3 dashboard pattern) ──
+    print(f"[insider] Building company header + price chart...", flush=True)
+    company_header = build_company_header(company)
+    price_chart = build_price_chart(company)
+
+    # ── Tab 1: Overview -- header + price chart + Summary text ──
+    print(f"[insider]   Overview...", flush=True)
+    overview_sections: list[dict] = []
+    if company_header.get("name"):
+        overview_sections.append({"type": "company_info",
+                                   "company_header": company_header})
+    if price_chart:
+        overview_sections.append(price_chart)
+    overview_sections.append(build_overview_section(summary_payload))
 
     # ── Tab 2: Recent Transactions -- last 10 transactions table + cumulative chart ──
+    print(f"[insider]   Recent Transactions...", flush=True)
     recent_sections = [build_recent_transactions_section(history_payload)]
     cumulative_chart = build_cumulative_chart(history_payload)
     if cumulative_chart:
         recent_sections.append(cumulative_chart)
 
-    # ── Tab 3: By Role -- per-role summary table ──
+    # ── Tab 3: By Role -- per-role summary table + buy/sell grouped chart ──
+    print(f"[insider]   By Role...", flush=True)
     by_role_sections = [build_by_role_section(by_role_payload)]
+    # [v3] Add a grouped bar chart showing buy vs sell volume per Cargo.
+    by_role_chart = build_by_role_chart(by_role_payload)
+    if by_role_chart:
+        by_role_sections.append(by_role_chart)
 
     # ── Tab 4: Monthly Net -- monthly net buy/sell table + monthly net chart ──
+    print(f"[insider]   Monthly Net...", flush=True)
     monthly_sections = [build_monthly_section(summary_payload)]
     monthly_chart = build_monthly_net_chart(summary_payload)
     if monthly_chart:
@@ -144,11 +166,12 @@ def dashboard(company: str = "") -> dict:
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
     # renders them above all tabs via the kpi-grid div.
+    # [v3] Sidebar groups: Resumo / Transações / Análise.
     tabs = [
-        {"name": "Overview",            "sections": overview_sections},
-        {"name": "Recent Transactions", "sections": recent_sections},
-        {"name": "By Role",             "sections": by_role_sections},
-        {"name": "Monthly Net",         "sections": monthly_sections},
+        {"name": "Overview",            "group": "Resumo",     "sections": overview_sections},
+        {"name": "Recent Transactions", "group": "Transações", "sections": recent_sections},
+        {"name": "By Role",             "group": "Transações", "sections": by_role_sections},
+        {"name": "Monthly Net",         "group": "Análise",    "sections": monthly_sections},
     ]
 
     print(f"[insider] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
@@ -160,9 +183,30 @@ def dashboard(company: str = "") -> dict:
                    or by_role_payload.get("company")
                    or company)
 
+    # ── Freshness footer (DFP + ITR + COTAHIST sync dates) ──
+    freshness_footer = ""
+    try:
+        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        fresh = get_freshness()
+        last = get_last_synced_period()
+        dfp_sync = fresh.get("dfp", "")
+        itr_sync = fresh.get("itr", "")
+        cot_sync = fresh.get("cotahist", "")
+        dfp_period = last.get("dfp", "")
+        itr_period = last.get("itr", "")
+        freshness_footer = (
+            f"DFP: {dfp_sync[:10] if dfp_sync else '—'} (até {dfp_period or '—'}) • "
+            f"ITR: {itr_sync[:10] if itr_sync else '—'} (até {itr_period or '—'}) • "
+            f"COTAHIST: {cot_sync[:10] if cot_sync else '—'}"
+        )
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "company": company_out,
+        "company_header": company_header,
         "tabs": tabs,
         "kpis": kpis,
+        "freshness_footer": freshness_footer,
     }

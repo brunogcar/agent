@@ -134,7 +134,7 @@ class TestDashboardMode:
         r = dashboard(tickers=["PETR4", "VALE3"])
         assert r["status"] == "ok"
         overview = next(t for t in r["tabs"] if t["name"] == "Overview")
-        titles = [s["title"] for s in overview["sections"]]
+        titles = [s.get("title", "") for s in overview["sections"]]
         assert "Compared Tickers" in titles
         assert "Per-Ticker Errors (best-effort)" in titles
 

@@ -19,6 +19,12 @@ from typing import Any
 
 from tools.report_ops.formats import apply_fmt
 
+# [v3] Shared tooltip registry — provides PT-BR formula explanations for
+# standard financial metrics. Used to populate column_tooltips on the
+# valuation/financials/dividends/growth side-by-side tables, and tooltips
+# on the peer ratio_grid items.
+from skills.cvm._shared_report.tooltips import get_tooltip as _get_tooltip
+
 
 # ── Brand colors for chart builders ──────────────────────────────────────────
 _TEAL = "#0d9488"
@@ -38,6 +44,99 @@ def _fmt(value: Any, spec: str) -> str:
         return apply_fmt(value, spec)
     except Exception:
         return str(value)
+
+
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
+
+
+# ── Column tooltip registry (v3) ─────────────────────────────────────────────
+# Maps the column labels used in side_by_side sections to their PT-BR
+# formula/tooltip string. Looked up via _get_tooltip for the standard
+# financial metrics registry; for comparison-only labels (e.g. "Preço",
+# "Market Cap", "EV") we fall back to inline strings.
+_COLUMN_TOOLTIPS: dict[str, str] = {
+    # Valuation
+    "Preço":            "Preço atual da ação (B3 cotahist).",
+    "Market Cap":       "Market Cap = Preço × Total de Ações.",
+    "EV":               "Enterprise Value = Market Cap + Dívida Líquida.",
+    "P/L":              _get_tooltip("lpa"),
+    "P/VPA":            _get_tooltip("vpa"),
+    "P/EBIT":           _get_tooltip("p_ebit"),
+    "EV/EBITDA":        _get_tooltip("ev_ebitda"),
+    "PSR":              _get_tooltip("rps"),
+    "Div Yield":        _get_tooltip("dpa"),
+    "DPA":              "Dividendos por Ação (TTM) = Dividendos pagos / Total de Ações.",
+    "EPS":              "Lucro por Ação (LPA) = Lucro Líquido / Total de Ações.",
+    "VPA":              "Valor Patrimonial por Ação = PL / Total de Ações.",
+    "Total Ações":      "Total de ações outstanding (FRE).",
+    "ROE (val)":        _get_tooltip("roe"),
+    "ROA (val)":        _get_tooltip("roa"),
+    "Marg. Líq. (val)": _get_tooltip("net_margin"),
+    "Dívida/PL":        _get_tooltip("debt_equity"),
+    "Liquidez Corrente": _get_tooltip("current_ratio"),
+    "EV/Receita":       _get_tooltip("ev_sales"),
+    "EV/FCF":           _get_tooltip("ev_fcf"),
+    "Liquidez Seca":    _get_tooltip("quick_ratio"),
+    "Índice Caixa":     _get_tooltip("cash_ratio"),
+    "Marg. FCO":        _get_tooltip("ocf_margin"),
+    "Marg. FCF":        _get_tooltip("fcf_margin"),
+    "Cap. Giro":        _get_tooltip("working_capital"),
+    "FCO/Dívida":       _get_tooltip("cash_flow_to_debt"),
+    "Taxa Retenção":    _get_tooltip("retention_ratio"),
+    "Cresc. Sust.":     _get_tooltip("sustainable_growth"),
+    "Cobertura Juros":  _get_tooltip("interest_coverage"),
+    "Giro Estoque":     _get_tooltip("inventory_turnover"),
+    "Giro Receber":     _get_tooltip("receivables_turnover"),
+    "Giro Imob.":       _get_tooltip("fixed_asset_turnover"),
+    "P/VPA Tang.":      _get_tooltip("price_to_tangible_book"),
+    # Financials
+    "Receita Líquida":  "Receita total após deduções (DRE 3.01).",
+    "Lucro Bruto":      "Lucro Bruto = Receita Líquida - CMV (DRE 3.03).",
+    "EBIT":             "EBIT = Resultado antes de juros e impostos (DRE 3.05).",
+    "EBITDA":           "EBITDA = EBIT + Depreciação & Amortização.",
+    "Lucro Líquido":    "Lucro/Prejuízo Consolidado (DRE 3.11).",
+    "Ativo Total":      "Total de ativos (BPA 1).",
+    "Patrimônio Líq.":  "Capital próprio dos acionistas (BPP 2.03).",
+    "Caixa":            "Caixa e Equivalentes (BPA 1.01.01).",
+    "Dívida Bruta":     "Empréstimos Circ + Não Circ (2.01.04 + 2.02.01).",
+    "FCO":              "Fluxo de Caixa Operacional (DFC 6.01).",
+    "Marg. Bruta":      _get_tooltip("gross_margin"),
+    "Marg. EBITDA":     _get_tooltip("ebitda_margin"),
+    "Marg. Líquida":    _get_tooltip("net_margin"),
+    "ROE":              _get_tooltip("roe"),
+    "ROA":              _get_tooltip("roa"),
+    "Payout":           "Payout = Dividendos / Lucro Líquido. % do lucro distribuído.",
+    # Dividends
+    "Eventos (B3)":         "Número de eventos de proventos (B3) no período.",
+    "DPA (B3 médio)":       "Média de Dividendos por Ação (B3 histórico).",
+    "Dividendos (últ ano)": "Total de dividendos pagos no último exercício (DVA 7.08.04.02).",
+    "JCP (últ ano)":        "Total de Juros sobre Capital Próprio no último exercício (DVA 7.08.04.01).",
+    "Total Remun. (últ a)": "Dividendos + JCP no último exercício (DVA 7.08.04).",
+    # Growth
+    "Receita QoQ":      "Receita: variação trimestre-sobre-trimestre = (atual - anterior) / |anterior|.",
+    "Receita YoY":      "Receita: variação ano-sobre-ano = (atual - mesmo trim. ano pass.) / |mesmo trim.|.",
+    "EBITDA QoQ":       "EBITDA: variação trimestre-sobre-trimestre.",
+    "EBITDA YoY":       "EBITDA: variação ano-sobre-ano.",
+    "Lucro Liq. QoQ":   "Lucro Líquido: variação trimestre-sobre-trimestre.",
+    "Lucro Liq. YoY":   "Lucro Líquido: variação ano-sobre-ano.",
+    "ROE (TTM)":        _get_tooltip("roe"),
+}
+
+
+def _column_tooltips_for(columns: list[str]) -> dict[str, str]:
+    """Build a ``{column_label: tooltip}`` dict for the given column labels.
+
+    Only labels present in ``_COLUMN_TOOLTIPS`` are included. Used by the
+    side_by_side section builders to populate the ``column_tooltips`` field
+    so the dashboard template can render tooltips on column headers.
+    """
+    return {c: _COLUMN_TOOLTIPS[c] for c in columns if c in _COLUMN_TOOLTIPS}
 
 
 def _find_leader(section: dict, col_label: str, direction: str) -> tuple[str | None, float | None]:
@@ -163,30 +262,51 @@ def _as_table_section(section: dict) -> dict:
 
 
 def build_valuation_section(side_by_side_result: dict) -> dict:
-    """Build the Valuation tab section from side_by_side()['sections']['valuation']."""
+    """Build the Valuation tab section from side_by_side()['sections']['valuation'].
+
+    [v3] Adds ``column_tooltips`` so the dashboard template can render a
+    formula tooltip on each metric column header (P/L, P/VPA, EV/EBITDA, ...).
+    """
     sections = side_by_side_result.get("sections") or {}
-    return _as_table_section(sections.get("valuation") or {
+    section = sections.get("valuation") or {
         "title": "Valuation Ratios", "type": "table",
         "columns": ["Ticker"], "rows": [], "formats": {"Ticker": "text"},
-    })
+    }
+    out = _as_table_section(section)
+    out["column_tooltips"] = _column_tooltips_for(out.get("columns") or [])
+    return out
 
 
 def build_financials_section(side_by_side_result: dict) -> dict:
-    """Build the Financials tab section from side_by_side()['sections']['financials']."""
+    """Build the Financials tab section from side_by_side()['sections']['financials'].
+
+    [v3] Adds ``column_tooltips`` so the dashboard template can render a
+    formula tooltip on each metric column header (Receita, EBITDA, ROE, ...).
+    """
     sections = side_by_side_result.get("sections") or {}
-    return _as_table_section(sections.get("financials") or {
+    section = sections.get("financials") or {
         "title": "Financial Metrics (latest annual)", "type": "table",
         "columns": ["Ticker"], "rows": [], "formats": {"Ticker": "text"},
-    })
+    }
+    out = _as_table_section(section)
+    out["column_tooltips"] = _column_tooltips_for(out.get("columns") or [])
+    return out
 
 
 def build_dividends_section(side_by_side_result: dict) -> dict:
-    """Build the Dividends tab section from side_by_side()['sections']['dividends']."""
+    """Build the Dividends tab section from side_by_side()['sections']['dividends'].
+
+    [v3] Adds ``column_tooltips`` so the dashboard template can render a
+    formula tooltip on each metric column header (Eventos, DPA, JCP, ...).
+    """
     sections = side_by_side_result.get("sections") or {}
-    return _as_table_section(sections.get("dividends") or {
+    section = sections.get("dividends") or {
         "title": "Dividend Metrics", "type": "table",
         "columns": ["Ticker"], "rows": [], "formats": {"Ticker": "text"},
-    })
+    }
+    out = _as_table_section(section)
+    out["column_tooltips"] = _column_tooltips_for(out.get("columns") or [])
+    return out
 
 
 def build_growth_section(growth_result: dict) -> dict:
@@ -194,6 +314,9 @@ def build_growth_section(growth_result: dict) -> dict:
 
     The growth mode returns sections as a list (single-element); this helper
     extracts that section and re-tags it with type='table'.
+
+    [v3] Adds ``column_tooltips`` so the dashboard template can render a
+    formula tooltip on each growth metric column header (Receita QoQ, YoY, ...).
     """
     sections = growth_result.get("sections") or []
     if not sections:
@@ -201,7 +324,9 @@ def build_growth_section(growth_result: dict) -> dict:
             "title": "Growth Metrics (QoQ + YoY + TTM)", "type": "table",
             "columns": ["Ticker"], "rows": [], "formats": {"Ticker": "text"},
         }
-    return _as_table_section(sections[0])
+    out = _as_table_section(sections[0])
+    out["column_tooltips"] = _column_tooltips_for(out.get("columns") or [])
+    return out
 
 
 # ── Peer comparison chart (v1.2) ─────────────────────────────────────────────
@@ -279,6 +404,11 @@ def build_peer_comparison_chart(company: str, peers: dict,
 
     unit = "%" if scale == 100.0 else "×"
     return {
+        "title": f"{col_label} — {company} vs Peers",
+        "description": (
+            f"Comparação de {col_label} entre {company} (destaque roxo) e "
+            f"os demais tickers. {'Valores em %.' if scale == 100.0 else 'Valores em múltiplos (×).'}"
+        ),
         "type": "chart",
         "chart_data": {
             "type": "bar",
@@ -311,19 +441,21 @@ def build_peer_comparison_chart(company: str, peers: dict,
 
 # ── Peer ratio grid (v1.2) ───────────────────────────────────────────────────
 
-# (peer_label, section_key, col_label, scale, spec)
+# (peer_label, section_key, col_label, display_label, scale, spec, tooltip)
 # Group metrics into 3 categories: Valuation, Profitability, Leverage.
-_PEER_GRID_DEFS: list[tuple[str, str, str, str, float, str]] = [
-    # category_label, section_key, column_label, display_label, scale, spec
-    ("Valuation",     "valuation", "P/L",              "P/L",              1.0,   "num"),
-    ("Valuation",     "valuation", "P/VPA",            "P/VPA",            1.0,   "num"),
-    ("Valuation",     "valuation", "EV/EBITDA",        "EV/EBITDA",        1.0,   "num"),
-    ("Profitability", "valuation", "ROE (val)",        "ROE",              100.0, "pct"),
-    ("Profitability", "valuation", "ROA (val)",        "ROA",              100.0, "pct"),
-    ("Profitability", "valuation", "Marg. Líq. (val)", "Marg. Líquida",    100.0, "pct"),
-    ("Profitability", "valuation", "Div Yield",        "Div Yield",        100.0, "pct"),
-    ("Leverage",      "valuation", "Dívida/PL",        "Dívida/PL",        1.0,   "num"),
-    ("Leverage",      "valuation", "Liquidez Corrente","Liquidez Corrente",1.0,   "num"),
+# [v3] Added tooltip field — sourced from _get_tooltip for standard metrics;
+# for comparison-only labels we fall back to inline strings.
+_PEER_GRID_DEFS: list[tuple[str, str, str, str, float, str, str]] = [
+    # category_label, section_key, column_label, display_label, scale, spec, tooltip
+    ("Valuation",     "valuation", "P/L",              "P/L",              1.0,   "num", _get_tooltip("lpa")),
+    ("Valuation",     "valuation", "P/VPA",            "P/VPA",            1.0,   "num", _get_tooltip("vpa")),
+    ("Valuation",     "valuation", "EV/EBITDA",        "EV/EBITDA",        1.0,   "num", _get_tooltip("ev_ebitda")),
+    ("Profitability", "valuation", "ROE (val)",        "ROE",              100.0, "pct", _get_tooltip("roe")),
+    ("Profitability", "valuation", "ROA (val)",        "ROA",              100.0, "pct", _get_tooltip("roa")),
+    ("Profitability", "valuation", "Marg. Líq. (val)", "Marg. Líquida",    100.0, "pct", _get_tooltip("net_margin")),
+    ("Profitability", "valuation", "Div Yield",        "Div Yield",        100.0, "pct", _get_tooltip("dpa")),
+    ("Leverage",      "valuation", "Dívida/PL",        "Dívida/PL",        1.0,   "num", _get_tooltip("debt_equity")),
+    ("Leverage",      "valuation", "Liquidez Corrente","Liquidez Corrente",1.0,   "num", _get_tooltip("current_ratio")),
 ]
 
 
@@ -368,7 +500,7 @@ def build_peer_ratio_grid(peers: dict) -> dict | None:
                               for i, c in enumerate(fin_cols)}
 
     categories: dict[str, list[dict]] = {}
-    for cat_label, section_key, col_label, display_label, scale, spec in _PEER_GRID_DEFS:
+    for cat_label, section_key, col_label, display_label, scale, spec, tooltip in _PEER_GRID_DEFS:
         lookup = val_lookup if section_key == "valuation" else fin_lookup
         cols = val_cols if section_key == "valuation" else fin_cols
         if col_label not in cols:
@@ -386,11 +518,15 @@ def build_peer_ratio_grid(peers: dict) -> dict | None:
                     values_per_ticker.append("—")
         if all(v == "—" for v in values_per_ticker):
             continue  # skip metrics with no data for any ticker
-        categories.setdefault(cat_label, [])
-        categories[cat_label].append({
+        item: dict = {
             "label": f"{display_label} ({' / '.join(tickers)})",
             "value": " / ".join(values_per_ticker),
-        })
+        }
+        # [v3] Attach tooltip with the formula/explanation for each metric.
+        if tooltip:
+            item["tooltip"] = tooltip
+        categories.setdefault(cat_label, [])
+        categories[cat_label].append(item)
 
     if not categories:
         return None
@@ -400,4 +536,102 @@ def build_peer_ratio_grid(peers: dict) -> dict | None:
         "title": "Peer Metrics by Category",
         "type": "ratio_grid",
         "categories": cats_out,
+    }
+
+
+# ── Growth chart (v3) ────────────────────────────────────────────────────────
+
+def build_growth_chart(growth_result: dict) -> dict | None:
+    """Build a grouped bar chart showing YoY growth per ticker.
+
+    Uses the growth() result's ``sections[0]`` (the side-by-side growth table)
+    to extract ``Receita YoY``, ``EBITDA YoY`` and ``Lucro Liq. YoY`` columns
+    (stored as pct_raw fractions — scaled by 100 here for natural display).
+    Each ticker gets a group of 3 bars.
+
+    Returns None when there is no growth section, no tickers, or no ticker
+    has any of the YoY metrics available.
+    """
+    sections = growth_result.get("sections") or []
+    if not sections:
+        return None
+    section = sections[0]
+    columns = section.get("columns") or []
+    rows = section.get("rows") or []
+    if not columns or not rows:
+        return None
+
+    yoy_metric_labels = ["Receita YoY", "EBITDA YoY", "Lucro Liq. YoY"]
+    # Resolve column indices; skip any missing column.
+    yoy_indices: list[tuple[str, int]] = []
+    for label in yoy_metric_labels:
+        if label in columns:
+            yoy_indices.append((label, columns.index(label)))
+    if not yoy_indices:
+        return None
+
+    tickers: list[str] = []
+    datasets: dict[str, list[float]] = {label: [] for label, _ in yoy_indices}
+    for row in rows:
+        if not row:
+            continue
+        ticker = str(row[0]) if row[0] is not None else "—"
+        has_any = False
+        for label, idx in yoy_indices:
+            v = row[idx] if idx < len(row) else None
+            try:
+                fv = float(v) * 100.0 if v is not None else None  # pct_raw → %
+            except (TypeError, ValueError):
+                fv = None
+            if fv is not None:
+                has_any = True
+                datasets[label].append(round(fv, 2))
+            else:
+                datasets[label].append(0.0)
+        if has_any:
+            tickers.append(ticker)
+
+    if not tickers:
+        return None
+
+    palette = [_TEAL, _ORANGE, _PURPLE]
+    chart_datasets = []
+    for i, (label, _) in enumerate(yoy_indices):
+        chart_datasets.append({
+            "label": label,
+            "data": datasets[label],
+            "backgroundColor": palette[i % len(palette)],
+            "borderColor": palette[i % len(palette)],
+            "borderWidth": 1,
+        })
+
+    return {
+        "title": "YoY Growth — Receita vs EBITDA vs Lucro Líquido",
+        "description": (
+            "Crescimento ano-sobre-ano (%) por ticker: Receita (teal), "
+            "EBITDA (laranja) e Lucro Líquido (roxo). Valores em %. "
+            "Barras negativas indicam queda no trimestre corrente vs mesmo "
+            "trimestre do ano anterior."
+        ),
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": tickers,
+                "datasets": chart_datasets,
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "YoY Growth — Receita vs EBITDA vs Lucro Líquido"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
     }

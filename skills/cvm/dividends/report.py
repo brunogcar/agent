@@ -62,6 +62,34 @@ def _kpi(label: str, value: Any, spec: str, unit: str) -> dict:
     return {"label": label, "value": _fmt(value, spec), "unit": unit}
 
 
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
+
+
+# ── Dividend type tooltips (v3) ──────────────────────────────────────────────
+# Maps the B3 dividend ``label`` (Tipo) to a PT-BR explanation of what each
+# type means. Used as cell-level tooltip on the "Tipo" column of the History
+# tab so the user can hover to see the meaning of Dividendo / JCP / Restituição.
+_DIVIDEND_TYPE_TOOLTIPS: dict[str, str] = {
+    "Dividendo":   "Dividendo = distribuição de lucros aos acionistas (tributado).",
+    "JCP":         "JCP = Juros sobre Capital Próprio (dedutível fiscalmente).",
+    "Restituição": "Restituição = devolução de capital aos acionistas.",
+    "DIVIDENDO":   "Dividendo = distribuição de lucros aos acionistas (tributado).",
+    "Juros sobre Capital Próprio": "JCP = Juros sobre Capital Próprio (dedutível fiscalmente).",
+}
+
+# Tooltip for the "Valor/Ação" column — same explanation for every cell.
+_VALUE_PER_SHARE_TOOLTIP = (
+    "Valor/Ação = valor do provento por ação em BRL (R$). Para JCP, já líquido "
+    "de impostos na fonte."
+)
+
+
 # ── Annual total extraction ──────────────────────────────────────────────────
 
 def _annual_total(period: dict) -> float | None:
@@ -198,6 +226,10 @@ def build_history_section(summary_result: dict) -> dict:
     """Build the History tab table from summary()['sections']['recent_events'].
 
     Columns: Data Aprovação, Data Ex, Data Pagamento, Valor/Ação, Tipo, Relativo a
+
+    [v3] The "Valor/Ação" and "Tipo" column cells now carry tooltips — the
+    former explaining "value per share in BRL", the latter explaining the
+    difference between Dividendo / JCP / Restituição.
     """
     sections = summary_result.get("sections") or {}
     recent_events = sections.get("recent_events") or {}
@@ -207,12 +239,18 @@ def build_history_section(summary_result: dict) -> dict:
                "Valor/Ação", "Tipo", "Relativo a"]
     rows = []
     for e in events:
+        tipo = e.get("label", "") or "—"
+        rate = _num(e.get("rate"))
+        # Wrap the rate cell with a tooltip explaining "value per share".
+        rate_cell = _cell(rate, _VALUE_PER_SHARE_TOOLTIP) if rate is not None else "—"
+        # Wrap the Tipo cell with a tooltip explaining Dividendo/JCP/Restituição.
+        tipo_cell = _cell(tipo, _DIVIDEND_TYPE_TOOLTIPS.get(tipo, ""))
         rows.append([
             e.get("approved_on", "") or "—",
             e.get("last_date_prior", "") or "—",
             e.get("payment_date", "") or "—",
-            _num(e.get("rate")),
-            e.get("label", "") or "—",
+            rate_cell,
+            tipo_cell,
             e.get("related_to", "") or "—",
         ])
     return {
@@ -319,6 +357,10 @@ def build_dividend_history_chart(history_data: Any) -> dict | None:
 
     return {
         "title": "Dividend Payments Over Time",
+        "description": (
+            "Valor por ação (R$) pago em cada data de pagamento. "
+            "Inclui dividendos e JCP."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "line",
@@ -383,6 +425,10 @@ def build_annual_dividend_chart(annual_data: Any) -> dict | None:
 
     return {
         "title": "Total Dividends per Year",
+        "description": (
+            "Total de proventos pagos por exercício social (BRL), "
+            "somando dividendos + JCP (DVA 7.08.04)."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "bar",
@@ -407,6 +453,101 @@ def build_annual_dividend_chart(annual_data: Any) -> dict | None:
                 "scales": {
                     "x": {"grid": {"display": False}},
                     "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
+    }
+
+
+# ── Stacked Dividendo vs JCP per year chart (v3) ─────────────────────────────
+
+def build_annual_dividend_stacked_chart(annual_data: Any) -> dict | None:
+    """Build a stacked bar chart showing Dividendo vs JCP per year.
+
+    annual_data is the periods list from summary()['sections']
+    ['annual_trend']['periods']. For each period the chart extracts:
+      - Dividendos = accounts['7.08.04.02'] (DVA Dividendos)
+      - JCP        = accounts['7.08.04.01'] (DVA JCP)
+
+    The two are stacked per fiscal year so the user can see at a glance
+    both the total remuneração and its composition.
+
+    Returns None when the periods list is empty or no period has a numeric
+    Dividendo or JCP value.
+    """
+    if not annual_data:
+        return None
+
+    labels: list[str] = []
+    dividendos: list[float] = []
+    jcp: list[float] = []
+    for p in annual_data:
+        date = p.get("data_fim_exerc") or ""
+        year = date[:4] if date else ""
+        if not year:
+            continue
+        accounts = p.get("accounts") or {}
+        div_val = (accounts.get("7.08.04.02") or {}).get("valor_brl")
+        jcp_val = (accounts.get("7.08.04.01") or {}).get("valor_brl")
+        if div_val is None and jcp_val is None:
+            continue
+        try:
+            div_f = float(div_val) if div_val is not None else 0.0
+        except (TypeError, ValueError):
+            div_f = 0.0
+        try:
+            jcp_f = float(jcp_val) if jcp_val is not None else 0.0
+        except (TypeError, ValueError):
+            jcp_f = 0.0
+        labels.append(year)
+        dividendos.append(round(div_f, 2))
+        jcp.append(round(jcp_f, 2))
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Dividendo vs JCP per Year (stacked)",
+        "description": (
+            "Composição da remuneração por exercício social (BRL): "
+            "Dividendos (teal, DVA 7.08.04.02) e JCP (laranja, DVA 7.08.04.01) "
+            "empilhados. A altura total = remuneração total; a proporção entre "
+            "as cores mostra o mix entre dividendos e Juros sobre Capital Próprio."
+        ),
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Dividendos (BRL)",
+                        "data": dividendos,
+                        "backgroundColor": _TEAL,
+                        "borderColor": _TEAL,
+                        "borderWidth": 1,
+                    },
+                    {
+                        "label": "JCP (BRL)",
+                        "data": jcp,
+                        "backgroundColor": _ORANGE,
+                        "borderColor": _ORANGE,
+                        "borderWidth": 1,
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Dividendo vs JCP per Year (stacked)"},
+                },
+                "scales": {
+                    "x": {"stacked": True, "grid": {"display": False}},
+                    "y": {"stacked": True,
+                          "grid": {"color": "rgba(128,128,128,0.1)"}},
                 },
             },
         },

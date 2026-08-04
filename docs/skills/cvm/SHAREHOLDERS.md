@@ -63,8 +63,9 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 | [ARCHITECTURE.md](shareholders/ARCHITECTURE.md) | Data flow, mode → source mapping, design decisions |
 | [API.md](shareholders/API.md) | 5 modes: shareholders, free_float, equity_structure, summary, dashboard |
 | [CHANGELOG.md](shareholders/CHANGELOG.md) | Version history (v1.0 → v1.1) |
+| [ROADMAP.md](shareholders/ROADMAP.md) | Backlog + priorities |
 | [INSTRUCTIONS.md](shareholders/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-29 (v1.1 — modular split + dashboard mode).*
+*Last updated: 2026-08-04 (v1.2 — dashboard overhaul with sidebar groups + company header + price chart + freshness footer; see CHANGELOG.md).*

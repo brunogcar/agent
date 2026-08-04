@@ -54,13 +54,15 @@ def _staleness_note(data_referencia: str, threshold_days: int = 730) -> str:
 # Mirrors the _EQUITY_CODES list from tools/report_ops/adapters/shareholders.py
 # so the dashboard's Equity tab labels match the existing equity_structure
 # adapter column headers exactly.
+# [v3] Added tooltip description per BPP code — surfaced as a cell-level
+# tooltip on the "Componente" column of the Equity Structure tab.
 _EQUITY_CODES = [
-    ("2.03",    "PL Total"),
-    ("2.03.01", "Capital Social"),
-    ("2.03.02", "Reservas de Capital"),
-    ("2.03.04", "Reservas de Lucros"),
-    ("2.03.05", "Lucros Acumulados"),
-    ("2.03.09", "Minority Interest"),
+    ("2.03",    "PL Total",           "2.03 = Patrimônio Líquido Total (soma de 2.03.01 a 2.03.09)."),
+    ("2.03.01", "Capital Social",     "2.03.01 = Capital Social realizado pelos acionistas."),
+    ("2.03.02", "Reservas de Capital","2.03.02 = Reservas de Capital (ágio na emissão de ações, etc.)."),
+    ("2.03.04", "Reservas de Lucros", "2.03.04 = Reservas de Lucros (legal, estatutária, contingências)."),
+    ("2.03.05", "Lucros Acumulados",  "2.03.05 = Lucros Acumulados de exercícios anteriores."),
+    ("2.03.09", "Minority Interest",  "2.03.09 = Participação de Acionistas Não Controladores."),
 ]
 
 
@@ -98,6 +100,15 @@ def _kpi(label: str, value: Any, spec: str, unit: str) -> dict:
     if value is None:
         return {"label": label, "value": "—", "unit": unit}
     return {"label": label, "value": _fmt(value, spec), "unit": unit}
+
+
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
 
 
 def _ok(result: dict) -> bool:
@@ -336,16 +347,18 @@ def build_equity_section(summary_result: dict) -> dict:
     Columns: Componente, Valor BRL
     One row per BPP 2.03.* code present in sections['equity']['components'].
     Component labels come from _EQUITY_CODES (2.03=PL Total, etc.).
+
+    [v3] The "Componente" column cell is now a dict cell carrying a tooltip
+    with the BPP code + description (e.g. "2.03.02 = Reservas de Capital").
     """
     eq = _section(summary_result, "equity")
     components = eq.get("components") or {}
-    label_map = dict(_EQUITY_CODES)
 
     columns = ["Componente", "Valor BRL"]
     rows = []
-    for code, label in _EQUITY_CODES:
+    for code, label, tooltip in _EQUITY_CODES:
         if code in components:
-            rows.append([label, _num(components.get(code))])
+            rows.append([_cell(label, tooltip), _num(components.get(code))])
 
     formats = {
         "Componente": "text",
@@ -414,6 +427,10 @@ def build_shareholder_doughnut(top_shareholders: Any) -> dict | None:
 
     return {
         "title": "Top Shareholders Distribution",
+        "description": (
+            "Distribuição percentual dos principais acionistas por % total "
+            "de ações."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "doughnut",
@@ -466,7 +483,7 @@ def build_equity_structure_bar(equity_data: Any) -> dict | None:
 
     labels: list[str] = []
     values: list[float] = []
-    for code, label in _EQUITY_CODES:
+    for code, label, _tooltip in _EQUITY_CODES:
         if code not in components:
             continue
         val = components.get(code)
@@ -484,6 +501,10 @@ def build_equity_structure_bar(equity_data: Any) -> dict | None:
 
     return {
         "title": "Equity Structure Components",
+        "description": (
+            "Componentes do Patrimônio Líquido (BPP 2.03.*) em BRL — "
+            "Capital Social, Reservas, Lucros Acumulados e Minority Interest."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "bar",

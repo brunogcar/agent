@@ -64,8 +64,9 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12).
 | [ARCHITECTURE.md](screener/ARCHITECTURE.md) | Data flow, median computation, comparison logic |
 | [API.md](screener/API.md) | 3 modes: sector, compare, dashboard |
 | [CHANGELOG.md](screener/CHANGELOG.md) | Version history + roadmap |
+| [ROADMAP.md](screener/ROADMAP.md) | Backlog + priorities |
 | [INSTRUCTIONS.md](screener/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
 
 ---
 
-*Last updated: 2026-07-29 (v1.4 — modular split + dashboard mode).*
+*Last updated: 2026-08-04 (v1.2 — dashboard overhaul with sidebar groups + company header + price chart + freshness footer; see CHANGELOG.md).*

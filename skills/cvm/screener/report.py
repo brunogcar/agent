@@ -19,6 +19,11 @@ from typing import Any
 
 from tools.report_ops.formats import apply_fmt
 
+# [v3] Shared tooltip registry — provides PT-BR formula explanations for
+# standard financial metrics (P/L, P/VPA, EV/EBITDA, ROE, ...). Custom
+# screener-specific tooltips (e.g. for Cresc. Receita) are inlined below.
+from skills.cvm._shared_report.tooltips import get_tooltip as _get_tooltip
+
 
 # ── Brand colors for chart builders ──────────────────────────────────────────
 _TEAL = "#0d9488"
@@ -38,6 +43,17 @@ def _fmt(value: Any, spec: str) -> str:
         return apply_fmt(value, spec)
     except Exception:
         return str(value)
+
+
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged. Used by the Comparison
+    tab metric-name column so the dashboard template can render a tooltip
+    with the formula/explanation for each metric.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
 
 
 def _num(v: Any) -> Any:
@@ -226,19 +242,23 @@ def build_peers_section(sector_result: dict) -> dict:
 
 # ── Comparison tab section (my vs sector table) ──────────────────────────────
 
-# (display_label, comparison_key, format_spec_for_my_value_and_median)
+# (display_label, comparison_key, format_spec_for_my_value_and_median, tooltip_key)
 # Mirrors the metric order from helpers._build_comparison (valuation_multiples
 # then quality_metrics) so the dashboard's Comparison tab matches the
 # screener compare() result's iteration order.
-_COMP_METRICS: list[tuple[str, str, str]] = [
-    ("P/L",            "p_l",            "num"),
-    ("P/VPA",          "p_vpa",          "num"),
-    ("EV/EBITDA",      "ev_ebitda",      "num"),
-    ("Dívida/PL",      "divida_pl",      "num"),
-    ("ROE",            "roe",            "pct"),
-    ("Div Yield",      "dividend_yield", "pct"),
-    ("ROA",            "roa",            "pct"),
-    ("Marg. Líquida",  "margem_liquida", "pct"),
+# [v3] Added tooltip_key — looked up via _get_tooltip for the standard
+# financial metrics registry. For screener-only metrics (e.g. Marg. Líquida,
+# Dívida/PL) we fall back to inline tooltip strings.
+_COMP_METRICS: list[tuple[str, str, str, str]] = [
+    ("P/L",            "p_l",            "num", _get_tooltip("lpa")),
+    ("P/VPA",          "p_vpa",          "num", _get_tooltip("vpa")),
+    ("EV/EBITDA",      "ev_ebitda",      "num", _get_tooltip("ev_ebitda")),
+    ("Dívida/PL",      "divida_pl",      "num",
+     "Dívida/PL = Dívida Bruta / Patrimônio Líquido. Menor = menos alavancado."),
+    ("ROE",            "roe",            "pct", _get_tooltip("roe")),
+    ("Div Yield",      "dividend_yield", "pct", _get_tooltip("dpa")),
+    ("ROA",            "roa",            "pct", _get_tooltip("roa")),
+    ("Marg. Líquida",  "margem_liquida", "pct", _get_tooltip("net_margin")),
 ]
 
 
@@ -247,19 +267,22 @@ def build_comparison_section(compare_result: dict) -> dict:
 
     Columns: Metric, My Value, Sector Median, Delta %, vs Sector.
     One row per metric in the comparison dict.
+
+    [v3] The Metric column is now a dict cell carrying a tooltip with the
+    formula/explanation for each metric (P/L, P/VPA, EV/EBITDA, ROE, ...).
     """
     comp = (compare_result.get("comparison") if _ok(compare_result) else {}) or {}
 
     columns = ["Metric", "My Value", "Sector Median", "Delta %", "vs Sector"]
     rows = []
-    for label, key, spec in _COMP_METRICS:
+    for label, key, spec, tooltip in _COMP_METRICS:
         entry = comp.get(key) or {}
         my_val = entry.get("my_value")
         med_val = entry.get("sector_median")
         delta = entry.get("delta_pct")
         vs = entry.get("vs_sector", "n/a")
         rows.append([
-            label,
+            _cell(label, tooltip),
             _fmt(my_val, spec) if my_val is not None else "—",
             _fmt(med_val, spec) if med_val is not None else "—",
             _fmt(delta, "pct") if delta is not None else "—",
@@ -286,6 +309,97 @@ def build_comparison_section(compare_result: dict) -> dict:
             "above/below = métricas de qualidade (maior = melhor). "
             "n/a = valor indisponível ou mediana zero."
         ),
+    }
+
+
+# ── My Value vs Sector Median chart (v3) ─────────────────────────────────────
+
+def build_comparison_chart(compare_result: dict) -> dict | None:
+    """Build a grouped bar chart comparing ``My Value`` vs ``Sector Median``
+    for each metric in the Comparison tab.
+
+    One pair of bars per metric (My Value + Sector Median). Pct-kind metrics
+    (ROE, Div Yield, ROA, Marg. Líquida) are scaled by 100 so the chart
+    reads naturally as %; multiples (P/L, P/VPA, EV/EBITDA, Dívida/PL) are
+    plotted as raw multiples.
+
+    Returns None when the comparison dict is empty OR no metric has both a
+    my_value AND a sector_median (the chart needs at least one pair to be
+    meaningful).
+    """
+    comp = (compare_result.get("comparison") if _ok(compare_result) else {}) or {}
+    if not comp:
+        return None
+
+    labels: list[str] = []
+    my_values: list[float] = []
+    med_values: list[float] = []
+    for label, key, spec, _tooltip in _COMP_METRICS:
+        entry = comp.get(key) or {}
+        my_val = entry.get("my_value")
+        med_val = entry.get("sector_median")
+        if my_val is None and med_val is None:
+            continue
+        # Scale pct-kind metrics by 100 (stored as fraction 0.185 = 18.5%).
+        scale = 100.0 if spec == "pct" else 1.0
+        try:
+            my_v = float(my_val) * scale if my_val is not None else 0.0
+        except (TypeError, ValueError):
+            my_v = 0.0
+        try:
+            med_v = float(med_val) * scale if med_val is not None else 0.0
+        except (TypeError, ValueError):
+            med_v = 0.0
+        labels.append(label)
+        my_values.append(round(my_v, 2))
+        med_values.append(round(med_v, 2))
+
+    if not labels:
+        return None
+
+    return {
+        "title": "My Value vs Sector Median (per metric)",
+        "description": (
+            "Barras agrupadas mostrando o valor do ticker (teal) contra a "
+            "mediana do setor (laranja) para cada métrica. Métricas em % "
+            "estão escaladas (0.185 → 18.5); múltiplos em ×."
+        ),
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "My Value",
+                        "data": my_values,
+                        "backgroundColor": _TEAL,
+                        "borderColor": _TEAL,
+                        "borderWidth": 1,
+                    },
+                    {
+                        "label": "Sector Median",
+                        "data": med_values,
+                        "backgroundColor": _ORANGE,
+                        "borderColor": _ORANGE,
+                        "borderWidth": 1,
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "My Value vs Sector Median (per metric)"},
+                },
+                "scales": {
+                    "x": {"grid": {"display": False}},
+                    "y": {"grid": {"color": "rgba(128,128,128,0.1)"}},
+                },
+            },
+        },
     }
 
 
@@ -366,6 +480,12 @@ def build_top_companies_chart(peers_data: dict | list,
     bar_color = _ORANGE if direction == "desc" else _TEAL
 
     return {
+        "title": f"Top {len(labels)} Companies by {label}",
+        "description": (
+            f"Empresas ordenadas por {label}. Múltiplos de valuation "
+            f"(P/L, P/VPA, EV/EBITDA): menor = mais barato. Métricas de "
+            f"qualidade (ROE, Div Yield): maior = melhor."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "bar",

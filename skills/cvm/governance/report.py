@@ -31,6 +31,27 @@ def _fmt(value: Any, spec: str) -> str:
         return str(value)
 
 
+def _cell(label: str, tooltip: str = "") -> dict | str:
+    """Wrap a label in a dict cell carrying a tooltip when non-empty.
+
+    Returns ``{"text": label, "tooltip": tooltip}`` when ``tooltip`` is
+    truthy, otherwise returns ``label`` unchanged.
+    """
+    return {"text": label, "tooltip": tooltip} if tooltip else label
+
+
+# ── Governance practice adoption tooltips (v3) ──────────────────────────────
+# Maps the raw CGVN ``Pratica_Adotada`` value to a PT-BR explanation of what
+# the adoption level means. Used as cell-level tooltip on the "Adotada"
+# column of the Practices tab so the user can hover to see the meaning of
+# Sim / Parcialmente / Não.
+_ADOPTED_TOOLTIPS: dict[str, str] = {
+    "Sim":          "Sim = prática totalmente adotada pela companhia.",
+    "Parcialmente": "Parcialmente = prática adotada em parte; alguns critérios atendidos.",
+    "Não":          "Não = prática não adotada pela companhia.",
+}
+
+
 def _num(v: Any) -> Any:
     """Coerce numeric strings/values to int or float (passthrough None)."""
     if v is None:
@@ -172,6 +193,10 @@ def build_practices_section(practices_result: dict) -> dict:
     """Build the Practices tab table from the practices() result.
 
     Columns: Item, Capítulo, Princípio, Prática Recomendada, Adotada, Explicação
+
+    [v3] The "Adotada" column cell is now a dict cell carrying a tooltip
+    that explains what each adoption level means (Sim = fully adopted,
+    Parcialmente = partial, Não = not adopted).
     """
     practices_list = (practices_result.get("practices")
                       if _ok(practices_result) else []) or []
@@ -180,12 +205,13 @@ def build_practices_section(practices_result: dict) -> dict:
                "Prática Recomendada", "Adotada", "Explicação"]
     rows = []
     for p in practices_list:
+        adopted = p.get("Pratica_Adotada", "") or "—"
         rows.append([
             p.get("ID_Item", "") or "—",
             p.get("Capitulo", "") or "—",
             p.get("Principio", "") or "—",
             p.get("Pratica_Recomendada", "") or "—",
-            p.get("Pratica_Adotada", "") or "—",
+            _cell(adopted, _ADOPTED_TOOLTIPS.get(adopted, "")),
             p.get("Explicacao", "") or "—",
         ])
 
@@ -240,6 +266,85 @@ def build_by_chapter_section(by_chapter_result: dict) -> dict:
         "rows": rows,
         "formats": formats,
         "note": "Práticas agrupadas por capítulo (Capitulo) com contagens de adoção.",
+    }
+
+
+# ── By Chapter horizontal bar chart (v3) ─────────────────────────────────────
+
+def build_by_chapter_chart(by_chapter_result: dict) -> dict | None:
+    """Build a horizontal bar chart showing Score % by Chapter.
+
+    Each chapter is a row; the bar length is the % of fully-adopted practices
+    (Adopted / Total). Bars are colored by compliance level: teal for
+    Alto (>=80%), orange for Médio (50–80%), red for Baixo (<50%).
+
+    Returns None when there are no chapters or no chapter has a positive
+    Total count.
+    """
+    chapters = (by_chapter_result.get("by_chapter")
+                if _ok(by_chapter_result) else []) or []
+    if not chapters:
+        return None
+
+    labels: list[str] = []
+    values: list[float] = []
+    colors: list[str] = []
+    for ch in chapters:
+        total = ch.get("total", 0) or 0
+        adopted = ch.get("adopted", 0) or 0
+        if total <= 0:
+            continue
+        score_pct = (adopted / total) * 100.0  # 0..100
+        labels.append(ch.get("Capitulo", "") or "—")
+        values.append(round(score_pct, 2))
+        if score_pct >= 80.0:
+            colors.append(_TEAL)
+        elif score_pct >= 50.0:
+            colors.append(_ORANGE)
+        else:
+            colors.append(_RED)
+
+    if not labels:
+        return None
+
+    return {
+        "title": "Governance Score % by Chapter",
+        "description": (
+            "Percentual de práticas totalmente adotadas (Sim) por capítulo. "
+            "Barras em teal (Alto ≥ 80%), laranja (Médio 50–80%) ou "
+            "vermelha (Baixo < 50%). Quanto mais longa a barra, maior a "
+            "adesão às práticas recomendadas do capítulo."
+        ),
+        "type": "chart",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Score % (Adotadas / Total)",
+                    "data": values,
+                    "backgroundColor": colors,
+                    "borderColor": colors,
+                    "borderWidth": 1,
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "indexAxis": "y",  # horizontal bar chart (chapter names on Y)
+                "plugins": {
+                    "legend": {"display": True, "position": "bottom"},
+                    "title": {"display": True,
+                              "text": "Governance Score % by Chapter"},
+                },
+                "scales": {
+                    "x": {"min": 0, "max": 100,
+                          "grid": {"color": "rgba(128,128,128,0.1)"},
+                          "ticks": {"callback": "function(v){return v+'%'}"}},
+                    "y": {"grid": {"display": False}},
+                },
+            },
+        },
     }
 
 
@@ -327,6 +432,10 @@ def build_practices_doughnut(practices_data: Any) -> dict | None:
 
     return {
         "title": "Practices Compliance Distribution",
+        "description": (
+            "Distribuição das práticas de governança por nível de adoção "
+            "(Adequado / Parcialmente / Não Adequado)."
+        ),
         "type": "chart",
         "chart_data": {
             "type": "doughnut",
