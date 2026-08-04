@@ -32,6 +32,7 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+import sys
 import time
 import zipfile
 from datetime import datetime, date
@@ -53,6 +54,7 @@ def sync(
     full_history: bool = False,
     force: bool = False,
     trace_id: str = "",
+    verbose: bool = True,
 ) -> dict:
     """Download DFP ZIPs and populate dfp.db.
 
@@ -61,6 +63,7 @@ def sync(
         full_history: Sync all years from FIRST_YEAR (2010) to current.
         force: Re-download even if already synced.
         trace_id: Tracer ID for logging.
+        verbose: Print progress to stderr (download, parse, store per year).
 
     Returns:
         Dict with sync status, years synced, row counts.
@@ -76,6 +79,11 @@ def sync(
     else:
         years_to_sync = [current_year]
 
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[dfp] {msg}", file=sys.stderr, flush=True)
+
+    _log(f"Starting DFP sync — {len(years_to_sync)} year(s): {years_to_sync[0]}..{years_to_sync[-1]}")
     tracer.step(tid, "dfp_sync", f"Starting DFP sync for years: {years_to_sync}")
 
     # Open DB for writing
@@ -83,8 +91,10 @@ def sync(
 
     results = {"synced": [], "skipped": [], "errors": []}
     total_rows = 0
+    sync_start = time.time()
 
-    for year in years_to_sync:
+    for idx, year in enumerate(years_to_sync, 1):
+        _log(f"[{idx}/{len(years_to_sync)}] Year {year} ...")
         # Check if already synced (unless force)
         if not force:
             existing = conn.execute(
@@ -92,19 +102,28 @@ def sync(
                 (year,),
             ).fetchone()
             if existing:
+                _log(f"  skip (already synced, use force=True to re-download)")
                 results["skipped"].append(year)
                 continue
 
         url = URL_PATTERN.format(year=year)
+        _log(f"  downloading {url}")
         tracer.step(tid, "dfp_sync", f"Downloading DFP {year}: {url}")
 
         try:
+            t0 = time.time()
             raw = _download_zip(url)
+            dl_secs = time.time() - t0
             if not raw:
+                _log(f"  FAILED: empty response")
                 results["errors"].append({"year": year, "error": "Download failed (empty response)"})
                 continue
+            _log(f"  downloaded {len(raw) / 1024 / 1024:.1f} MB in {dl_secs:.1f}s")
 
-            row_count = _parse_and_store(conn, raw, year, tid)
+            t1 = time.time()
+            row_count = _parse_and_store(conn, raw, year, tid, verbose=verbose)
+            parse_secs = time.time() - t1
+            _log(f"  parsed + stored {row_count:,} rows in {parse_secs:.1f}s")
             total_rows += row_count
 
             # Record sync state
@@ -119,10 +138,13 @@ def sync(
             tracer.step(tid, "dfp_sync", f"DFP {year}: {row_count} rows stored")
 
         except Exception as e:
+            _log(f"  FAILED: {e}")
             results["errors"].append({"year": year, "error": str(e)})
             tracer.warning(tid, "dfp_sync", f"DFP {year} failed: {e}")
 
     conn.close()
+    elapsed = time.time() - sync_start
+    _log(f"Done in {elapsed:.1f}s — {total_rows:,} total rows, {len(results['errors'])} errors")
 
     return {
         "status": "ok" if not results["errors"] else "partial",
@@ -141,7 +163,7 @@ def _download_zip(url: str, timeout: int = 120) -> bytes:
     return resp.content
 
 
-def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) -> int:
+def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str, verbose: bool = True) -> int:
     """Parse a DFP ZIP and store all rows into the DB.
 
     Returns the number of contas rows stored.
@@ -150,10 +172,13 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) 
     empresa_cache: dict[str, int] = {}  # (cnpj, ano) → empresa_id
     versao_cache: dict[str, int] = {}   # (cnpj, ano) → max versao seen
 
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[dfp]   {msg}", file=sys.stderr, flush=True)
+
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-        for info in zf.infolist():
-            if not info.filename.endswith(".csv"):
-                continue
+        csv_files = [f for f in zf.infolist() if f.filename.endswith(".csv")]
+        for fidx, info in enumerate(csv_files, 1):
             # Skip META/dicionario files
             lower = info.filename.lower()
             if "meta_" in lower or "dicion" in lower:
@@ -163,6 +188,7 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) 
             if "dmpl" in lower:
                 continue
 
+            _log(f"parsing [{fidx}/{len(csv_files)}] {info.filename}")
             # Read CSV (ISO-8859-1 encoding, semicolon-delimited)
             raw_csv = zf.read(info.filename)
             text = raw_csv.decode(CSV_ENCODING, errors="replace")
@@ -172,10 +198,13 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str) 
             if not reader.fieldnames:
                 continue
 
+            file_rows = 0
             for row in reader:
-                row_count += _process_row(
+                file_rows += _process_row(
                     conn, row, year, empresa_cache, versao_cache,
                 )
+            row_count += file_rows
+            _log(f"  {file_rows:,} rows stored")
 
     return row_count
 
@@ -238,7 +267,12 @@ def _process_row(
     except ValueError:
         versao = 1
 
-    cache_key = f"{cnpj}_{ano}"
+    # VERSAO dedup — keyed on (cnpj, ano, dt_fim) NOT (cnpj, ano).
+    # Each quarter (Q1/Q2/Q3) is a separate filing with its own VERSAO number.
+    # Keying on just (cnpj, ano) caused Q1/Q3 rows (VERSAO=1) to be dropped
+    # when a restated Q2 (VERSAO=2) was processed — silently deleting
+    # current-period data.
+    cache_key = f"{cnpj}_{ano}_{dt_fim}"
     if cache_key in versao_cache and versao < versao_cache[cache_key]:
         return 0  # a higher version was already stored
     versao_cache[cache_key] = max(versao_cache.get(cache_key, 0), versao)

@@ -34,11 +34,11 @@ from data_sources.cvm._db import cnpj_digits, dfp_db_path, itr_db_path, bridge_d
 
 _TICKER_RE = re.compile(r"^[A-Z]{4}\d{1,2}$")
 
-# [v1.2.1] SQL expression to normalize CNPJ on-the-fly during comparison.
-# DFP/ITR sync engines historically stored CNPJ raw (formatted like "33.000.167/0001-01")
-# instead of normalized ("33000167000101"). This REPLACE chain handles both formats
-# so the resolver works with existing data without requiring a re-sync.
-# FRE/IPE sync engines already use cnpj_digits() (normalized), so this is a no-op for them.
+# [v1.3.0] CNPJ is now normalized to 14 plain digits at the data level
+# (via scripts/cvm_normalize_cnpj.py one-time repair + cnpj_digits() at ingest
+# since v1.2.1). Direct equality on the cnpj column uses the UNIQUE(cnpj, ano)
+# index. The old REPLACE chain is kept only as a defensive fallback for any
+# DB that hasn't been repaired yet — it's a no-op when CNPJ is already normalized.
 _CNPJ_NORM = "REPLACE(REPLACE(REPLACE(cnpj, '.', ''), '/', ''), '-', '')"
 
 

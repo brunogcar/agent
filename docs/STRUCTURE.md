@@ -2,7 +2,7 @@
 
 > Canonical map of the MCP Agent Stack repo. This is the reference for "where does X live?" — the README is a summary, this is the full layout.
 
-Last updated: 2026-07-16
+Last updated: 2026-08-04
 
 ---
 
@@ -187,6 +187,7 @@ data_sources/
 │   ├── _bridge.py             # Shared: resolve_company() — ticker → CNPJ → empresa_ids
 │   ├── _freshness.py          # Shared: data freshness (sync timestamps for all DBs)
 │   ├── _meses.py              # Shared: rapinav2-compatible meses computation
+│   ├── _repair/               # One-time repair scripts (purge, normalize, verify) — v1.1.0
 │   ├── dfp/                   # Annual financial statements
 │   ├── itr/                   # Quarterly financial statements
 │   ├── fre/                   # Governance + ownership (Formulário de Referência)
@@ -205,6 +206,11 @@ data_sources/
 ```
 
 **Each sub-domain has:** `__init__.py` (MANIFEST + route), `catalog.py` (schema), `sync_engine.py` (download), `query_engine.py` (read), `status_reporter.py` (stats).
+
+**`_repair/` subpackage (v1.1.0):** One-time data repair scripts for CVM databases. Auto-skipped by `__init__.py` discovery (underscore prefix). Run as modules:
+- `python -m data_sources.cvm._repair.purge_penultimo --vacuum` — delete legacy PENÚLTIMO rows
+- `python -m data_sources.cvm._repair.normalize_cnpj` — normalize CNPJ to 14 digits + merge duplicates
+- `python -m data_sources.cvm._repair.verify` — 6-check data integrity verifier (recurring health check)
 
 ---
 
@@ -345,4 +351,4 @@ tests/
 
 ---
 
-*Last updated: 2026-07-25. This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
+*Last updated: 2026-08-04. This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
