@@ -20,6 +20,18 @@ from tests.skills.cvm.screener.conftest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_seen_cnpjs():
+    """Reset the module-level _seen_cnpjs set before each test.
+
+    The screener's concurrent sector mode uses a module-level set for CNPJ
+    dedup (shared across worker threads). Without resetting it, CNPJs from
+    one test leak into the next, causing subsequent tests to find 0 peers.
+    """
+    from skills.cvm.screener.modes import sector as sector_mod
+    sector_mod._seen_cnpjs.clear()
+
+
 class TestSectorMode:
     def test_basic_shape(self, mock_all, monkeypatch):
         mock_all(monkeypatch, CAD_COMPANIES,

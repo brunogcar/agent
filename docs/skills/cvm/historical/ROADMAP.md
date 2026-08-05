@@ -6,12 +6,13 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | H1 — Trend line charts | Line chart per metric showing 5Y time series |
-| P3 | H2 — More metrics | Add leverage, efficiency, growth to dashboard |
+| Done | H1 — Trend line charts | Done (already had `build_trend_line_chart`, now applied to all metric categories in v1.16) |
+| Done | H2 — More metrics | Done (leverage/efficiency/growth added v1.16 — debt_equity, net_debt_ebitda, interest_coverage, asset_turnover, inventory_turnover, revenue_growth_3m, net_income_growth_3m) |
 | P3 | H3 — Export to xlsx | Export percentile + trend tables to Excel |
-| P3 | H4 — Beta (5Y) | Rolling regression of stock returns vs IBOV. Needs COTAHIST + IBOV index series. Different architecture (regression, not ratio). Belongs here, not in calculations. |
-| P3 | H5 — BCB SGS macro indicators | Selic, CDI, IPCA, IGP-M via BCB SGS API. For real returns + COE. Blocks on new data source. |
+| Done | H4 — Beta (5Y) | Done (built in calculations v1.13, not historical — 5Y rolling OLS regression vs IBOV fits the engine registry pattern there) |
+| Done | H5 — BCB SGS macro indicators | Done (BCB SGS built v1.0 — Selic via series 11 already wired into calculations `selic` engine + COE metric in v1.13) |
 | Done | v1.14 dashboard reorg | 3→5 tabs: subtabs by category, F7 speed fix, charts, ratio_grid |
+| Done | v1.16 dashboard expansion | 5→7 tabs: added Liquidez e Alavancagem + Eficiência e Crescimento tabs with subtabs + per-metric 5Y charts |
 | Done | Sync guard (v1.14) | required_sources wired via make_route() |
 | Done | F7 engine cache (v1.9) | Inherited from calculations skill |
 | Done | Subtabs by category (v1.14) | Valuation / Profitability subtab split |
@@ -67,4 +68,4 @@ each tab to a sheet.
 
 ---
 
-*Last updated: 2026-08-01. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-05. See [CHANGELOG.md](CHANGELOG.md) for version history.*

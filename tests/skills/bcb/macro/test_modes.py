@@ -27,9 +27,25 @@ def _mock_last_value(code):
 
 
 def _patch_query(monkeypatch):
+    """Patch query_engine functions at ALL module namespaces that import them.
+
+    The rates/dashboard/inflation/fx modes import last_value + series at
+    module level (from data_sources.bcb.sgs.query_engine import ...),
+    creating local references. Patching only the source module doesn't
+    affect these local refs. We must patch at each calling module too.
+    """
     import data_sources.bcb.sgs.query_engine as qe
     monkeypatch.setattr(qe, "series", _mock_series)
     monkeypatch.setattr(qe, "last_value", _mock_last_value)
+
+    # Patch at calling module namespaces (local refs bound at import time)
+    from skills.bcb.macro.modes import rates, dashboard, inflation, fx
+    monkeypatch.setattr(rates, "query_series", _mock_series)
+    monkeypatch.setattr(rates, "last_value", _mock_last_value)
+    monkeypatch.setattr(dashboard, "query_series", _mock_series)
+    monkeypatch.setattr(dashboard, "last_value", _mock_last_value)
+    monkeypatch.setattr(inflation, "query_series", _mock_series)
+    monkeypatch.setattr(fx, "query_series", _mock_series)
 
 
 def test_rates_mode(monkeypatch):

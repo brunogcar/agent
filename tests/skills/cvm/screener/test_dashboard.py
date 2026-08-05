@@ -17,7 +17,21 @@ The mock VAL_* data + `mock_all` fixture come from the screener conftest.
 """
 from __future__ import annotations
 
+import pytest
+
 from skills.cvm.screener import MANIFEST, route
+
+
+@pytest.fixture(autouse=True)
+def _reset_seen_cnpjs():
+    """Reset the module-level _seen_cnpjs set before each test.
+
+    The screener's concurrent sector mode uses a module-level set for CNPJ
+    dedup. dashboard() calls compare() which calls sector() internally,
+    so the same leak applies.
+    """
+    from skills.cvm.screener.modes import sector as sector_mod
+    sector_mod._seen_cnpjs.clear()
 from skills.cvm.screener.modes.dashboard import dashboard
 from tests.skills.cvm.screener.conftest import (
     CAD_COMPANIES, BRIDGE_SUZB3, BRIDGE_KLBN11, VAL_SUZB3, VAL_KLBN11,

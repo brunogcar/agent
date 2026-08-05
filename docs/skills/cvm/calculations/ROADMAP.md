@@ -6,9 +6,9 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | BCB SGS data source + COE metric | Selic/CDI/IPCA/IGP-M + Cost of Equity (Rf + β × (Rm − Rf)). COE blocks on SGS. One unit of work. |
+| Done | BCB SGS data source + COE metric | Done (BCB SGS built v1.0; COE built v1.13 — CAPM `Rf + β × ERP`, Rf = Selic, β from beta engine, ERP default 5.5% Damodaran emerging markets) |
 | Done | Performance: brapi batching | Screener + comparison now use ThreadPoolExecutor(max_workers=5) — 5-7x speedup (v1.3 screener/comparison + brapi v1.1 thread safety) |
-| P3 | Beta (5Y) — belongs in historical, not calculations | Rolling regression of stock returns vs IBOV. Needs COTAHIST + IBOV index series. Different architecture (regression, not ratio). |
+| Done | Beta (5Y) | Done (built v1.13 in calculations — 5Y rolling OLS regression vs IBOV; stock returns from COTAHIST, IBOV from brapi `^BVSP` since COTAHIST doesn't store index levels). Originally roadmap'd for historical but built here because it fits the existing `@register_engine` + `@engine_cached` pattern, not a regression-with-chart layer. |
 | P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
@@ -63,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-08-05 (v1.12). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-05 (v1.13). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*

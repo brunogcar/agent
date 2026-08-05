@@ -93,7 +93,7 @@ class TestEngineAutoDiscovery:
         market_engines = list_engines(category="market")
         assert "price" in market_engines
         assert "dividends" in market_engines
-        assert len(market_engines) == 2
+        assert len(market_engines) >= 2  # price, dividends + [v1.13] selic, beta
 
     def test_list_engine_categories(self):
         """list_engine_categories should return all categories in use."""

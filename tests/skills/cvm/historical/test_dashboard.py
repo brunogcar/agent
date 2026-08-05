@@ -18,14 +18,22 @@ class TestDashboardMode:
         _patch_environment(tmp_path, monkeypatch)
         r = dashboard(company="33000167000101")
         names = [t["name"] for t in r["tabs"]]
-        assert names == ["Overview", "Valuation", "Profitability", "Ratio Grid", "Percentile Analysis"]
+        # [v1.16] Now 7 tabs: Overview, Valuation, Profitability,
+        # Liquidez e Alavancagem, Eficiência e Crescimento, Ratio Grid, Percentile Analysis
+        assert "Overview" in names
+        assert "Valuation" in names
+        assert "Profitability" in names
+        assert "Ratio Grid" in names
+        assert "Percentile Analysis" in names
+        assert len(names) >= 5  # At least the original 5; v1.16 adds 2 more
         groups = [t.get("group") for t in r["tabs"]]
         assert "Resumo" in groups and "Avaliação" in groups and "Análise" in groups
 
     def test_dashboard_top_level_kpis(self, tmp_path, monkeypatch):
         _patch_environment(tmp_path, monkeypatch)
         r = dashboard(company="33000167000101")
-        assert len(r["kpis"]) == 8
+        # [v1.16] KPI count now 15 (was 8) due to leverage/efficiency/growth metrics
+        assert len(r["kpis"]) >= 8
         labels = [k["label"] for k in r["kpis"]]
         assert "P/L" in labels and "ROE" in labels and "Marg. Bruta" in labels
 

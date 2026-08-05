@@ -22,6 +22,16 @@ _METRIC_DEFS = [
     ("dpa", "Div Yield", "pct", "profitability"),
     ("gross_margin", "Marg. Bruta", "pct", "profitability"),
     ("net_margin", "Marg. Líquida", "pct", "profitability"),
+    # [v1.16] Leverage metrics
+    ("debt_equity", "Dívida/PL", "ratio", "leverage"),
+    ("net_debt_ebitda", "Dív. Líq./EBITDA", "ratio", "leverage"),
+    ("interest_coverage", "Cobertura Juros", "ratio", "leverage"),
+    # [v1.16] Efficiency metrics
+    ("asset_turnover", "Giro Ativo", "ratio", "efficiency"),
+    ("inventory_turnover", "Giro Estoque", "ratio", "efficiency"),
+    # [v1.16] Growth metrics
+    ("revenue_growth_3m", "Cresc. Receita", "pct", "growth"),
+    ("net_income_growth_3m", "Cresc. Lucro", "pct", "growth"),
 ]
 _METRIC_DEFS_3 = [(m, l, u) for m, l, u, _ in _METRIC_DEFS]
 
@@ -131,6 +141,44 @@ def dashboard(company: str = "") -> dict:
     fc = build_percentile_chart(summaries, quartiles, _METRIC_DEFS_3)
     if fc: pct_sections.append(fc)
 
+    # [v1.16] Leverage tab
+    print(f"[historical]   Leverage...", flush=True)
+    lev_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "leverage"]
+    lev_s = {m: summaries.get(m, {}) for m, _, _ in lev_metrics}
+    lev_q = {m: quartiles.get(m) for m, _, _ in lev_metrics}
+    lev_subtabs = [
+        {"name": "Percentil", "sections": [build_percentile_section(lev_s, lev_q, lev_metrics)]},
+        {"name": "Tendência", "sections": [build_trend_section(lev_s, lev_metrics)]},
+    ]
+    lc_chart = build_percentile_chart(lev_s, lev_q, lev_metrics)
+    if lc_chart: lev_subtabs.insert(1, {"name": "Gráfico", "sections": [lc_chart]})
+    for mn, label, _ in lev_metrics:
+        try:
+            spec = resolve_metric(mn)
+            lc = build_trend_line_chart(series_data.get(mn), label, spec.ratio_key)
+            if lc: lev_subtabs.append({"name": f"{label} 5A", "sections": [lc]})
+        except: pass
+    leverage_sections = [{"type": "subtabs", "tabs": lev_subtabs}] if lev_metrics else []
+
+    # [v1.16] Efficiency + Growth tab
+    print(f"[historical]   Efficiency & Growth...", flush=True)
+    eg_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c in ("efficiency", "growth")]
+    eg_s = {m: summaries.get(m, {}) for m, _, _ in eg_metrics}
+    eg_q = {m: quartiles.get(m) for m, _, _ in eg_metrics}
+    eg_subtabs = [
+        {"name": "Percentil", "sections": [build_percentile_section(eg_s, eg_q, eg_metrics)]},
+        {"name": "Tendência", "sections": [build_trend_section(eg_s, eg_metrics)]},
+    ]
+    eg_chart = build_percentile_chart(eg_s, eg_q, eg_metrics)
+    if eg_chart: eg_subtabs.insert(1, {"name": "Gráfico", "sections": [eg_chart]})
+    for mn, label, _ in eg_metrics:
+        try:
+            spec = resolve_metric(mn)
+            lc = build_trend_line_chart(series_data.get(mn), label, spec.ratio_key)
+            if lc: eg_subtabs.append({"name": f"{label} 5A", "sections": [lc]})
+        except: pass
+    eg_sections = [{"type": "subtabs", "tabs": eg_subtabs}] if eg_metrics else []
+
     # Freshness footer
     freshness_footer = ""
     try:
@@ -145,9 +193,14 @@ def dashboard(company: str = "") -> dict:
         {"name": "Overview", "group": "Resumo", "sections": overview_sections},
         {"name": "Valuation", "group": "Avaliação", "sections": valuation_sections},
         {"name": "Profitability", "group": "Avaliação", "sections": profitability_sections},
-        {"name": "Ratio Grid", "group": "Análise", "sections": grid_sections},
-        {"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections},
     ]
+    if leverage_sections:
+        tabs.append({"name": "Liquidez e Alavancagem", "group": "Análise", "sections": leverage_sections})
+    if eg_sections:
+        tabs.append({"name": "Eficiência e Crescimento", "group": "Análise", "sections": eg_sections})
+    tabs.append({"name": "Ratio Grid", "group": "Análise", "sections": grid_sections})
+    tabs.append({"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections})
+
     print(f"[historical] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {"status": "ok", "company": company, "company_header": company_header,
             "tabs": tabs, "kpis": kpis, "freshness_footer": freshness_footer}
