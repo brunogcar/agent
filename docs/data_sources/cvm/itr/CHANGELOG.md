@@ -8,6 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.2.0 | 2026-08-05 | **DELETE-before-INSERT + VERSAO dedup regression test.** Added per-period DELETE-before-INSERT to prevent ghost rows (rapinav2 pattern). Added regression test `test_sync_versao_dedup.py` covering the P0 bug scenario. Review fixes from collective LLM review. |
 | v1.1.0 | 2026-08-04 | **VERSAO dedup fix + sync progress + one-time data repair.** Fixed critical VERSAO dedup bug: cache key was `cnpj_ano` but each quarter has its own VERSAO, so restated Q2 (VERSAO=2) silently dropped Q1/Q3 (VERSAO=1). Changed to `cnpj_ano_dt_fim`. Added `verbose=True` to `sync()` for progress output. ITR database purged and re-synced from scratch (12,979,222 rows, 2011-2026). Repair scripts added to `data_sources/cvm/_repair/`. |
 | v1.0.1 | 2026-07-23 | **Claude review fixes.** DMPL excluded (P0). ITR FIRST_YEAR 2015→2011 (P2 — CVM has ITR from 2011). st_conta_fixa added to schema. |
 | v1.0 | 2026-07-23 | **Initial implementation.** Split from DFP as a separate sub-domain with its own DB. Same sync fixes as DFP (meses, ano, ORDEM_EXERC, VERSAO, data_ini_exerc). Returns RAW cumulative values (meses=3/6/9) — standalone quarter computation belongs in the skills/ layer. 11 ITR query tests. |

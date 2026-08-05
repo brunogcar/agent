@@ -34,12 +34,32 @@ from data_sources.cvm._db import cnpj_digits, dfp_db_path, itr_db_path, bridge_d
 
 _TICKER_RE = re.compile(r"^[A-Z]{4}\d{1,2}$")
 
-# [v1.3.0] CNPJ is now normalized to 14 plain digits at the data level
-# (via scripts/cvm_normalize_cnpj.py one-time repair + cnpj_digits() at ingest
-# since v1.2.1). Direct equality on the cnpj column uses the UNIQUE(cnpj, ano)
-# index. The old REPLACE chain is kept only as a defensive fallback for any
-# DB that hasn't been repaired yet — it's a no-op when CNPJ is already normalized.
+# [v1.4] CNPJ is normalized to 14 plain digits at the data level (all 8 sync
+# engines use cnpj_digits() at ingest since v1.1). _find_empresa_ids() now tries
+# direct equality first (uses UNIQUE(cnpj, ano) index — fast), falling back to
+# the REPLACE chain only if no results (covers any DB not yet repaired).
 _CNPJ_NORM = "REPLACE(REPLACE(REPLACE(cnpj, '.', ''), '/', ''), '-', '')"
+
+
+def _find_empresa_ids(conn, cnpj: str) -> list:
+    """Find empresa IDs by CNPJ — direct equality first (index), REPLACE fallback.
+
+    Tries `WHERE cnpj = ?` first (uses the UNIQUE(cnpj, ano) index — <1ms).
+    Falls back to the REPLACE(REPLACE(REPLACE(...))) chain only if no results,
+    covering any DB that hasn't been through the normalize_cnpj repair script.
+    """
+    # Fast path: direct equality (uses index)
+    rows = conn.execute(
+        "SELECT id, nome FROM empresas WHERE cnpj = ? ORDER BY ano DESC",
+        (cnpj,),
+    ).fetchall()
+    if rows:
+        return rows
+    # Fallback: REPLACE chain for un-repaired legacy DBs
+    return conn.execute(
+        f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
+        (cnpj,),
+    ).fetchall()
 
 
 def looks_like_ticker(s: str) -> bool:
@@ -285,12 +305,9 @@ def resolve_company(
     if looks_like_ticker(query):
         cnpj, cd_cvm = _resolve_via_bridge(query)
         # 1a. Try CNPJ first (preferred join key)
-        # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
+        # [v1.4] Uses _find_empresa_ids() — direct equality (index) + REPLACE fallback
         if cnpj:
-            rows = conn.execute(
-                f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
-                (cnpj,),
-            ).fetchall()
+            rows = _find_empresa_ids(conn, cnpj)
             if rows:
                 ids = [r["id"] for r in rows]
                 return ids, rows[0]["nome"]
@@ -316,10 +333,7 @@ def resolve_company(
             if synced:
                 cnpj, cd_cvm = _resolve_via_bridge(query)
                 if cnpj:
-                    rows = conn.execute(
-                        f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
-                        (cnpj,),
-                    ).fetchall()
+                    rows = _find_empresa_ids(conn, cnpj)
                     if rows:
                         ids = [r["id"] for r in rows]
                         return ids, rows[0]["nome"]
@@ -333,25 +347,19 @@ def resolve_company(
                         return ids, rows[0]["nome"]
 
     # Step 2: CNPJ (14 digits)
-    # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
+    # [v1.4] Uses _find_empresa_ids() — direct equality (index) + REPLACE fallback
     cnpj = cnpj_digits(query)
     if cnpj:
-        rows = conn.execute(
-            f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
-            (cnpj,),
-        ).fetchall()
+        rows = _find_empresa_ids(conn, cnpj)
         if rows:
             ids = [r["id"] for r in rows]
             return ids, rows[0]["nome"]
 
     # Step 3a: [v1.0.1] Name → CAD (cad.db) → single CNPJ → DB
-    # [v1.2.1] Use _CNPJ_NORM to handle formatted CNPJs in dfp.db/itr.db
+    # [v1.4] Uses _find_empresa_ids() — direct equality (index) + REPLACE fallback
     cad_cnpj, cad_name = _resolve_via_cad(query)
     if cad_cnpj:
-        rows = conn.execute(
-            f"SELECT id, nome FROM empresas WHERE {_CNPJ_NORM} = ? ORDER BY ano DESC",
-            (cad_cnpj,),
-        ).fetchall()
+        rows = _find_empresa_ids(conn, cad_cnpj)
         if rows:
             ids = [r["id"] for r in rows]
             return ids, rows[0]["nome"]

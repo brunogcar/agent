@@ -109,29 +109,54 @@ def check_no_duplicates(conn, label: str):
 
 
 def check_spot_companies(conn, label: str):
-    if label != "ITR":
-        return
-    separator(f"{label}: Spot-check companies (2025 quarters)")
-    for ticker, cnpj in SPOT_CHECK_COMPANIES.items():
-        rows = conn.execute(
-            "SELECT c.data_fim_exerc, c.meses, c.ordem_exerc, COUNT(*) as rows "
-            "FROM contas c JOIN empresas e ON c.id_empresa = e.id "
-            "WHERE e.cnpj = ? AND c.data_fim_exerc LIKE '2025%' "
-            "GROUP BY c.data_fim_exerc, c.meses, c.ordem_exerc "
-            "ORDER BY c.data_fim_exerc, c.meses",
-            (cnpj,),
-        ).fetchall()
-        print(f"\n  {ticker} ({cnpj}):")
-        if not rows:
-            print("    [WARN] No 2025 data found")
-            continue
-        for r in rows:
-            ordem_tag = r["ordem_exerc"] or "(empty)"
-            status = "OK" if r["ordem_exerc"] == "ÚLTIMO" else "FAIL"
-            print(
-                f"    [{status}] {r['data_fim_exerc']} meses={r['meses']:2d} "
-                f"ordem={ordem_tag:10s} rows={r['rows']:>5}"
-            )
+    """Spot-check major companies' data.
+
+    For ITR: checks quarterly data (meses=3/6/9/12 at quarter-ends).
+    For DFP: checks annual data (meses=12 per year).
+    """
+    if label == "ITR":
+        separator(f"{label}: Spot-check companies (2025 quarters)")
+        for ticker, cnpj in SPOT_CHECK_COMPANIES.items():
+            rows = conn.execute(
+                "SELECT c.data_fim_exerc, c.meses, c.ordem_exerc, COUNT(*) as rows "
+                "FROM contas c JOIN empresas e ON c.id_empresa = e.id "
+                "WHERE e.cnpj = ? AND c.data_fim_exerc LIKE '2025%' "
+                "GROUP BY c.data_fim_exerc, c.meses, c.ordem_exerc "
+                "ORDER BY c.data_fim_exerc, c.meses",
+                (cnpj,),
+            ).fetchall()
+            print(f"\n  {ticker} ({cnpj}):")
+            if not rows:
+                print("    [WARN] No 2025 data found")
+                continue
+            for r in rows:
+                ordem_tag = r["ordem_exerc"] or "(empty)"
+                status = "OK" if r["ordem_exerc"] == "ÚLTIMO" else "FAIL"
+                print(
+                    f"    [{status}] {r['data_fim_exerc']} meses={r['meses']:2d} "
+                    f"ordem={ordem_tag:10s} rows={r['rows']:>5}"
+                )
+    elif label == "DFP":
+        separator(f"{label}: Spot-check companies (recent years)")
+        for ticker, cnpj in SPOT_CHECK_COMPANIES.items():
+            rows = conn.execute(
+                "SELECT c.data_fim_exerc, c.meses, COUNT(*) as rows "
+                "FROM contas c JOIN empresas e ON c.id_empresa = e.id "
+                "WHERE e.cnpj = ? AND c.data_fim_exerc >= '2023-01-01' "
+                "GROUP BY c.data_fim_exerc, c.meses "
+                "ORDER BY c.data_fim_exerc DESC LIMIT 5",
+                (cnpj,),
+            ).fetchall()
+            print(f"\n  {ticker} ({cnpj}):")
+            if not rows:
+                print("    [WARN] No recent DFP data found")
+                continue
+            for r in rows:
+                status = "OK" if r["meses"] == 12 else "WARN"
+                print(
+                    f"    [{status}] {r['data_fim_exerc']} meses={r['meses']:2d} "
+                    f"rows={r['rows']:>5}"
+                )
 
 
 def check_year_meses(conn, label: str):

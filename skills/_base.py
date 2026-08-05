@@ -645,19 +645,23 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
     prev_year = current_year - 1
 
     # (module_path, fn_name, kwargs_fn) — kwargs_fn builds the kwargs dict
+    # [v1.2] verbose=False for auto-syncs — ensure_fresh() runs during normal
+    # skill use, so we don't want sync progress spam in stderr. Users who run
+    # sync manually (python -c "from ... import sync; sync(...)") get verbose=True
+    # by default.
     sync_map = {
         "dfp":          ("data_sources.cvm.dfp.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
         "itr":          ("data_sources.cvm.itr.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
         "fre":          ("data_sources.cvm.fre.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
         "ipe":          ("data_sources.cvm.ipe.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id}),
+                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
         "fca":          ("data_sources.cvm.fca.sync_engine", "sync",
                          lambda: {"year": current_year, "force": True}),
         "cad":          ("data_sources.cvm.cad.sync_engine", "sync",
-                         lambda: {"force": True, "trace_id": trace_id}),
+                         lambda: {"force": True, "trace_id": trace_id, "verbose": False}),
         "vlmo":         ("data_sources.cvm.vlmo.sync_engine", "sync",
                          lambda: {"year": current_year, "force": True}),
         "cgvn":         ("data_sources.cvm.cgvn.sync_engine", "sync",

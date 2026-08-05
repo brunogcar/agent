@@ -93,44 +93,80 @@ def normalize_db(db_path, label: str, dry_run: bool = False):
     # UNIQUE constraint on (id_empresa, codigo, consolidado, data_ini_exerc, data_fim_exerc).
     # Fix: delete rows from dup that already exist in primary (identical data anyway),
     # then move the remaining non-colliding rows.
+    #
+    # [v1.2] Reviewer concern (Claude 2): when both primary and dup have a row
+    # with the same PK, we should prefer the one with the higher VERSAO (more
+    # recent restatement). If the dup has higher VERSAO than primary, we delete
+    # primary's stale row first, then move dup's row over. This prevents keeping
+    # stale data from an older sync run when the dup has the correct restated value.
+    #
+    # [v1.2] Explicit transaction wrapping — if the script crashes mid-merge,
+    # the entire merge is rolled back (no partial state). The script is
+    # idempotent so re-running fixes it, but explicit BEGIN/COMMIT is safer.
+    conn.execute("BEGIN")
     merged_count = 0
     contas_deleted_colliding = 0
     contas_moved = 0
-    for (norm, ano), ids in dup_groups.items():
-        ids.sort()
-        primary_id = ids[0]
-        duplicate_ids = ids[1:]
+    contas_versao_overrides = 0  # rows where dup had higher VERSAO than primary
+    try:
+        for (norm, ano), ids in dup_groups.items():
+            ids.sort()
+            primary_id = ids[0]
+            duplicate_ids = ids[1:]
 
-        for dup_id in duplicate_ids:
-            # Step 2a: Delete colliding rows from dup (they already exist in primary)
-            deleted = conn.execute(
-                """DELETE FROM contas WHERE id_empresa = ?
-                   AND EXISTS (
-                       SELECT 1 FROM contas c2
-                       WHERE c2.id_empresa = ?
-                         AND c2.codigo = contas.codigo
-                         AND c2.consolidado = contas.consolidado
-                         AND COALESCE(c2.data_ini_exerc, '') = COALESCE(contas.data_ini_exerc, '')
-                         AND c2.data_fim_exerc = contas.data_fim_exerc
-                   )""",
-                (dup_id, primary_id),
-            ).rowcount
-            contas_deleted_colliding += deleted
+            for dup_id in duplicate_ids:
+                # Step 2a-i: For colliding rows where dup has higher VERSAO, delete
+                # primary's stale row first so dup's restated value can replace it.
+                overrides = conn.execute(
+                    """DELETE FROM contas WHERE id_empresa = ?
+                       AND EXISTS (
+                           SELECT 1 FROM contas c2
+                           WHERE c2.id_empresa = ?
+                             AND c2.codigo = contas.codigo
+                             AND c2.consolidado = contas.consolidado
+                             AND COALESCE(c2.data_ini_exerc, '') = COALESCE(contas.data_ini_exerc, '')
+                             AND c2.data_fim_exerc = contas.data_fim_exerc
+                             AND c2.versao > COALESCE(contas.versao, 0)
+                       )""",
+                    (primary_id, dup_id),
+                ).rowcount
+                contas_versao_overrides += overrides
 
-            # Step 2b: Move remaining (non-colliding) rows to primary
-            moved = conn.execute(
-                "UPDATE contas SET id_empresa = ? WHERE id_empresa = ?",
-                (primary_id, dup_id),
-            ).rowcount
-            contas_moved += moved
+                # Step 2a-ii: Delete colliding rows from dup that already exist in
+                # primary (now with the correct VERSAO winner kept).
+                deleted = conn.execute(
+                    """DELETE FROM contas WHERE id_empresa = ?
+                       AND EXISTS (
+                           SELECT 1 FROM contas c2
+                           WHERE c2.id_empresa = ?
+                             AND c2.codigo = contas.codigo
+                             AND c2.consolidado = contas.consolidado
+                             AND COALESCE(c2.data_ini_exerc, '') = COALESCE(contas.data_ini_exerc, '')
+                             AND c2.data_fim_exerc = contas.data_fim_exerc
+                       )""",
+                    (dup_id, primary_id),
+                ).rowcount
+                contas_deleted_colliding += deleted
 
-            # Step 2c: Delete the now-empty duplicate empresa row
-            conn.execute("DELETE FROM empresas WHERE id = ?", (dup_id,))
-            merged_count += 1
+                # Step 2b: Move remaining (non-colliding) rows to primary
+                moved = conn.execute(
+                    "UPDATE contas SET id_empresa = ? WHERE id_empresa = ?",
+                    (primary_id, dup_id),
+                ).rowcount
+                contas_moved += moved
 
-    conn.commit()
+                # Step 2c: Delete the now-empty duplicate empresa row
+                conn.execute("DELETE FROM empresas WHERE id = ?", (dup_id,))
+                merged_count += 1
+
+        conn.execute("COMMIT")
+    except Exception as e:
+        conn.execute("ROLLBACK")
+        print(f"  ERROR during merge: {e} (rolled back)")
+        raise
     print(f"  Merged {merged_count:,} duplicate empresa rows")
     print(f"  Deleted {contas_deleted_colliding:,} colliding contas (already in primary)")
+    print(f"  VERSAO overrides (dup had higher): {contas_versao_overrides:,}")
     print(f"  Moved {contas_moved:,} contas rows to primary empresa")
 
     # --- Step 3: Normalize CNPJ format on remaining rows ---

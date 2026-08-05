@@ -170,7 +170,13 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str, 
     """
     row_count = 0
     empresa_cache: dict[str, int] = {}  # (cnpj, ano) → empresa_id
-    versao_cache: dict[str, int] = {}   # (cnpj, ano) → max versao seen
+    versao_cache: dict[str, int] = {}   # (cnpj, ano, dt_fim) → max versao seen
+    # [v1.2] Track which (empresa_id, dt_fim) periods have been cleared in this
+    # sync run. Prevents ghost rows: if a restated filing (VERSAO=2) has fewer
+    # rows than the original (VERSAO=1), INSERT OR REPLACE won't delete the
+    # stale VERSAO=1 rows. DELETE-before-INSERT per period fixes this.
+    # Matches rapinav2's DELETE-then-INSERT pattern (scoped to period, not empresa).
+    cleared_periods: set[str] = set()
 
     def _log(msg: str) -> None:
         if verbose:
@@ -201,7 +207,7 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str, 
             file_rows = 0
             for row in reader:
                 file_rows += _process_row(
-                    conn, row, year, empresa_cache, versao_cache,
+                    conn, row, year, empresa_cache, versao_cache, cleared_periods,
                 )
             row_count += file_rows
             _log(f"  {file_rows:,} rows stored")
@@ -215,6 +221,7 @@ def _process_row(
     filing_year: int,
     empresa_cache: dict[str, int],
     versao_cache: dict[str, int],
+    cleared_periods: set[str],
 ) -> int:
     """Process a single CSV row. Returns 1 if stored, 0 if skipped.
 
@@ -303,6 +310,19 @@ def _process_row(
         else:
             return 0
     empresa_id = empresa_cache[empresa_key]
+
+    # [v1.2] DELETE-before-INSERT per period — prevents ghost rows.
+    # If a restated filing (VERSAO=2) has fewer rows than the original
+    # (VERSAO=1), INSERT OR REPLACE won't delete the stale rows. This
+    # DELETE clears the period once per sync run, so only the current
+    # filing's rows remain. Matches rapinav2's DELETE-then-INSERT pattern.
+    period_key = f"{empresa_id}_{dt_fim}"
+    if period_key not in cleared_periods:
+        conn.execute(
+            "DELETE FROM contas WHERE id_empresa = ? AND data_fim_exerc = ?",
+            (empresa_id, dt_fim),
+        )
+        cleared_periods.add(period_key)
 
     # ── Upsert conta ─────────────────────────────────────────────────────────
     conn.execute(
