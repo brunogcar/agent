@@ -1,6 +1,6 @@
 # 📊 Data Sources
 
-Data sources are external data connectors that sync from APIs (CVM, B3) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
+Data sources are external data connectors that sync from APIs (CVM, B3, BCB) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
 
 **vs skills/**: Data sources handle raw data storage + retrieval. The skills/ layer handles domain reasoning that combines multiple data sources (e.g., computing standalone quarters from DFP + ITR, or valuation ratios). See [SKILLS.md](SKILLS.md).
 
@@ -10,6 +10,7 @@ Data sources are external data connectors that sync from APIs (CVM, B3) into loc
 |--------|------|--------------|
 | **CVM** | Brazilian SEC data: DFP (annual), ITR (quarterly), FRE (governance), IPE (events), CAD (register), Bridge (ticker→CNPJ) | [CVM.md](data_sources/CVM.md) |
 | **B3** | Brazilian stock exchange: API (instruments, trades, derivatives), Dividends (corporate actions), BRAPI (quotes/OHLCV), COTAHIST (historical) | [B3.md](data_sources/B3.md) |
+| **BCB** | Brazilian Central Bank: SGS (12 curated macro series - Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo). Public API, no auth. | [BCB.md](data_sources/BCB.md) |
 
 ## 🏗️ Architecture
 
@@ -29,12 +30,21 @@ data_sources/
 │   ├── cad/                       # Company register → cad.db
 │   └── bridge/                    # B3-CVM identity bridge → bridge.db + isin_index.db
 │
-└── b3/                            # B3 domain
+├── b3/                            # B3 domain
+│   ├── __init__.py                # Domain hub
+│   ├── api/                       # Market data (instruments, trades, derivatives)
+│   ├── brapi/                     # brapi.dev API (quotes, OHLCV, tickers)
+│   ├── cotahist/                  # B3 official historical trade data (COTAHIST)
+│   └── dividends/                 # Corporate actions (cash/stock dividends, subscriptions)
+│
+└── bcb/                           # BCB domain (Brazilian Central Bank)
     ├── __init__.py                # Domain hub
-    ├── api/                       # Market data (instruments, trades, derivatives)
-    ├── brapi/                     # brapi.dev API (quotes, OHLCV, tickers)
-    ├── cotahist/                  # B3 official historical trade data (COTAHIST)
-    └── dividends/                 # Corporate actions (cash/stock dividends, subscriptions)
+    └── sgs/                       # SGS (Sistema Gerenciador de Series Temporais) → sgs.db
+        ├── catalog.py             # 12 curated series + schema
+        ├── fetcher.py             # Thread-safe HTTP (Semaphore(5), 5-min cache)
+        ├── sync_engine.py         # sync_series / sync_all / sync_series_range
+        ├── query_engine.py        # series / last / search / summary
+        └── status_reporter.py     # DB stats
 ```
 
 ## 🚀 Quick Start
@@ -54,13 +64,16 @@ D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.brapi.sync_engine 
 D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.dividends.sync_engine import sync; print(sync(ticker='PETR4'))"
 D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.api.sync_engine import sync; print(sync(table='trades'))"
 D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.cotahist.sync_engine import sync_full_history; print(sync_full_history())"
+
+# BCB — sync all 12 macro series (Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo)
+python3 -c "from data_sources.bcb.sgs.sync_engine import sync_all; print(sync_all())"
 ```
 
-See [CVM.md](data_sources/CVM.md) and [B3.md](data_sources/B3.md) for full sync commands per sub-domain.
+See [CVM.md](data_sources/CVM.md), [B3.md](data_sources/B3.md), and [BCB.md](data_sources/BCB.md) for full sync commands per sub-domain.
 
 ## 🔧 Configuration
 
-Data sources store data in `cfg.memory_root / "<domain>/"` (e.g., `memory_db/cvm/dfp.db`).
+Data sources store data in `cfg.memory_root / "<domain>/"` (e.g., `memory_db/cvm/dfp.db`, `memory_db/bcb/sgs.db`).
 
 No env vars required — data sources use the existing `cfg.memory_root` from `core/config`.
 
