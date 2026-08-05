@@ -534,3 +534,108 @@ def _fetch_complete_quarterly(company, codes, grupo_filter, consolidado, periods
         "note": "Values are cumulative (not standalone) for flow statements.",
         "periods": result_periods,
     }
+
+
+# ── Single-fetch: ALL statements in ONE SQL query ──────────────────────────
+
+def _fetch_all_statements_annual(company, consolidado, periods) -> dict[str, dict]:
+    """[v1.2] Fetch ALL statement codes in ONE SQL query, partition by grupo.
+
+    Replaces 5 separate _fetch_complete_annual() calls (BPA/BPP/DRE/DFC/DVA)
+    with a single query that fetches all key codes at once, then partitions
+    the results by grupo in Python.
+
+    Returns: {"BPA": {complete result}, "BPP": {complete result}, ...}
+    Each value has the same structure as _fetch_complete_annual()'s return.
+    """
+    from skills.cvm.financials.metrics import KEY_CODES_BY_GRUPO
+
+    # Build union of all codes + reverse lookup (code → grupo)
+    all_codes: list[str] = []
+    code_to_grupo: dict[str, str] = {}
+    for grupo, codes in KEY_CODES_BY_GRUPO.items():
+        for code in codes:
+            if code not in code_to_grupo:
+                all_codes.append(code)
+                code_to_grupo[code] = grupo
+
+    conn = connect_dfp(read_only=True)
+    try:
+        empresa_ids, company_name = resolve_company(conn, company)
+        if not empresa_ids:
+            return {"status": "not_found", "error": f"Company '{company}' not found in DFP"}
+
+        emp_ph = ",".join("?" * len(empresa_ids))
+        code_ph = ",".join("?" * len(all_codes))
+
+        # Query 1: discover target years (1 round-trip)
+        year_rows = conn.execute(
+            f"""SELECT DISTINCT data_fim_exerc FROM contas
+                WHERE id_empresa IN ({emp_ph})
+                AND codigo IN ({code_ph})
+                AND meses=12 AND consolidado=?
+                ORDER BY data_fim_exerc DESC LIMIT ?""",
+            (*empresa_ids, *all_codes, consolidado, periods),
+        ).fetchall()
+
+        if not year_rows:
+            return {"status": "not_found", "error": f"No data found for '{company}'"}
+
+        target_dates = [r["data_fim_exerc"] for r in year_rows]
+        date_ph = ",".join("?" * len(target_dates))
+
+        # Query 2: fetch ALL rows for ALL grupos (1 round-trip — replaces 5)
+        rows = conn.execute(
+            f"""SELECT codigo, descricao, grupo, data_fim_exerc, valor, escala
+                FROM contas
+                WHERE id_empresa IN ({emp_ph})
+                AND codigo IN ({code_ph})
+                AND meses=12 AND consolidado=?
+                AND data_fim_exerc IN ({date_ph})
+                ORDER BY data_fim_exerc DESC, codigo""",
+            (*empresa_ids, *all_codes, consolidado, *target_dates),
+        ).fetchall()
+
+        # Partition by grupo (using code_to_grupo mapping)
+        by_grupo: dict[str, dict[str, list]] = {}
+        for r in rows:
+            grupo = code_to_grupo.get(r["codigo"])
+            if not grupo:
+                continue
+            year_key = r["data_fim_exerc"][:4]
+            if grupo not in by_grupo:
+                by_grupo[grupo] = {}
+            if year_key not in by_grupo[grupo]:
+                by_grupo[grupo][year_key] = []
+            escala = parse_escala(r["escala"])
+            by_grupo[grupo][year_key].append({
+                "codigo": r["codigo"],
+                "descricao": r["descricao"],
+                "grupo": r["grupo"],
+                "valor_brl": float(r["valor"] or 0) * escala,
+            })
+
+        # Build complete-result dicts per grupo (same structure as _fetch_complete_annual)
+        result: dict[str, dict] = {}
+        for grupo, by_year in by_grupo.items():
+            result[grupo] = {
+                "status": "ok",
+                "company": company_name,
+                "period_type": "annual",
+                "grupo_filter": grupo,
+                "periods": [
+                    {"year": y, "data_fim_exerc": f"{y}-12-31", "accounts": by_year[y]}
+                    for y in sorted(by_year.keys(), reverse=True)
+                ],
+            }
+
+        # Ensure all 5 grupos are present (even if empty)
+        for grupo in KEY_CODES_BY_GRUPO:
+            if grupo not in result:
+                result[grupo] = {"status": "not_found", "error": f"No {grupo} data for '{company}'"}
+
+        return result
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+    finally:
+        conn.close()

@@ -9,12 +9,21 @@ Registered as "sector" in skills.cvm.screener._registry.MODES via the
 """
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from skills.cvm.screener._registry import register_mode
 from skills.cvm.screener.helpers import (
     _roe_from_ratios,
     _pct_change,
     _compute_medians,
 )
+
+# Lock guarding the seen_cnpjs dedup set shared across worker threads.
+# Each worker checks + adds its CNPJ atomically to avoid double-fetching
+# PETR3/PETR4 (which share a CNPJ).
+_seen_cnpjs_lock = threading.Lock()
+_seen_cnpjs: set[str] = set()
 
 
 @register_mode(
@@ -55,125 +64,38 @@ def sector(setor: str = "", limit: int = 20) -> dict:
                 "error": f"No active companies found in sector '{setor}'"}
 
     # 2. For each company: resolve ticker via bridge reverse-lookup, get valuation + financials
-    from data_sources.cvm.bridge.query_engine import lookup as bridge_lookup
-    from skills.cvm.valuation.modes.ratios import ratios as val_ratios
-    from skills.cvm.financials.modes.annual import annual as fin_annual
-    from skills._base import engine_cache_scope
-
+    # NOTE: engine_cache_scope() was REMOVED here. The cache is backed by a
+    # ContextVar, which is thread-local — wrapping the worker loop in
+    # engine_cache_scope() at the top level would NOT share the cache across
+    # worker threads. Each worker thread would get its own (None = passthrough)
+    # cache, which is fine — the concurrency speedup comes from parallel HTTP,
+    # not cache sharing. Keeping the wrapper would only add overhead + false
+    # hope of cross-thread cache hits.
+    consolidado = 1
     peers: list[dict] = []
     errors: list[str] = []
-    seen_cnpjs: set[str] = set()  # deduplicate by CNPJ (PETR3/PETR4 share CNPJ)
     total = min(len(companies), limit)
 
-    print(f"[screener] Fetching ratios for {total} sector peers (with F7 cache)...", flush=True)
+    print(f"[screener] Fetching ratios for {total} sector peers (concurrent, max_workers=5)...",
+          flush=True)
 
-    # [v1.3 speed fix] Wrap the entire peer loop in engine_cache_scope so
-    # shared engines (earnings, pl, shares, etc.) are cached across peers.
-    # Without this, each peer's val_ratios() call re-queries DFP/ITR/FRE
-    # from scratch — but many peers share the same fiscal year data.
-    with engine_cache_scope() as cache:
-        for i, comp in enumerate(companies):
-            if len(peers) >= limit:
-                break
+    # Fetch extra to account for skipped duplicates / no-ticker companies.
+    fetch_targets = companies[: limit * 2]
 
-            cd_cvm = comp.get("CD_CVM", "")
-            cnpj = comp.get("CNPJ_CIA", "")
-            name = comp.get("DENOM_COMERC") or comp.get("DENOM_SOCIAL") or ""
-
-            # Deduplicate by CNPJ (PETR3 + PETR4 share the same CNPJ → same company)
-            if cnpj and cnpj in seen_cnpjs:
-                continue
-            if cnpj:
-                seen_cnpjs.add(cnpj)
-
-            # Bridge reverse-lookup: CD_CVM -> ticker
-            ticker = None
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_comp = {
+            executor.submit(_fetch_peer, comp, limit, consolidado): comp
+            for comp in fetch_targets
+        }
+        for future in as_completed(future_to_comp):
+            comp = future_to_comp[future]
             try:
-                br = bridge_lookup(cd_cvm=cd_cvm)
-                if br.get("status") == "ok":
-                    ticker = br.get("ticker")
-            except Exception:
-                pass
-
-            if not ticker:
-                continue
-
-            print(f"[screener]   {len(peers)+1}/{limit}: {ticker}...", flush=True, end="")
-
-            # Get valuation ratios (best-effort)
-            peer: dict = {"ticker": ticker, "name": name, "cnpj": cnpj}
-            try:
-                vr = val_ratios(company=ticker)
-                if vr.get("status") == "ok":
-                    r = vr.get("ratios", {})
-                    peer.update({
-                        "price": r.get("price"),
-                        "market_cap": r.get("market_cap"),
-                        "p_l": r.get("p_l"),
-                        "p_vpa": r.get("p_vpa"),
-                        "ev_ebitda": r.get("ev_ebitda"),
-                        "roe": _roe_from_ratios(r),
-                        "dividend_yield": r.get("dividend_yield"),
-                        # [v1.2] New metrics from calculations engines via valuation.ratios()
-                        "roa": r.get("roa"),
-                        "margem_liquida": r.get("margem_liquida"),
-                        "divida_pl": r.get("divida_pl"),
-                        # [v1.4] New v1.3 metrics — liquidity, cash flow, efficiency
-                        "quick_ratio": r.get("quick_ratio"),
-                        "cash_ratio": r.get("cash_ratio"),
-                        "ocf_margin": r.get("ocf_margin"),
-                        "fcf_margin": r.get("fcf_margin"),
-                        "interest_coverage": r.get("interest_coverage"),
-                        "cash_flow_to_debt": r.get("cash_flow_to_debt"),
-                        "ev_sales": r.get("ev_sales"),
-                        "ev_fcf": r.get("ev_fcf"),
-                        "p_tangible_book": r.get("p_tangible_book"),
-                    })
-                else:
-                    errors.append(f"{ticker}: valuation {vr.get('status')}")
+                peer = future.result()
+                if peer and len(peers) < limit:
+                    peers.append(peer)
             except Exception as e:
-                errors.append(f"{ticker}: valuation {e}")
-
-            # [v1.1] Get financials (best-effort) — revenue, EBITDA, margins, growth
-            try:
-                fr = fin_annual(company=ticker, periods=2)
-                if fr.get("status") == "ok" and fr.get("periods"):
-                    periods = fr["periods"]
-                    latest = periods[0]
-                    m = latest.get("metrics", {}) or {}
-                    ratios = latest.get("ratios", {}) or {}
-                    peer.update({
-                        "receita_liquida": m.get("receita_liquida"),
-                        "ebitda": m.get("ebitda"),
-                        "lucro_liquido": m.get("lucro_liquido"),
-                        "marg_ebitda": ratios.get("marg_ebitda"),
-                        "marg_liquida": ratios.get("marg_liquida"),
-                        "payout": ratios.get("payout"),
-                    })
-                    # Revenue growth: latest vs prior year (if 2+ periods)
-                    if len(periods) >= 2:
-                        prior_rev = (periods[1].get("metrics") or {}).get("receita_liquida")
-                        curr_rev = m.get("receita_liquida")
-                        peer["receita_growth"] = _pct_change(curr_rev, prior_rev)
-                    else:
-                        peer["receita_growth"] = None
-                else:
-                    errors.append(f"{ticker}: financials {fr.get('status')}")
-            except Exception as e:
-                errors.append(f"{ticker}: financials {e}")
-
-            # [v1.2] Get listing segment from Fca (Novo Mercado, Nível 1, etc.)
-            try:
-                from data_sources.cvm._bridge import _resolve_via_fca_segmento
-                peer["segmento"] = _resolve_via_fca_segmento(ticker) or ""
-            except Exception:
-                peer["segmento"] = ""
-
-            peers.append(peer)
-            print(" done.", flush=True)
-
-        stats = cache.stats
-        print(f"[screener] F7 cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+                name = comp.get("DENOM_COMERC") or comp.get("DENOM_SOCIAL") or "unknown"
+                errors.append(f"{name}: {e}")
 
     if not peers:
         return {"status": "not_found",
@@ -195,3 +117,125 @@ def sector(setor: str = "", limit: int = 20) -> dict:
         "peers": peers,
         "errors": errors,
     }
+
+
+# ── Internal: per-peer fetch (runs inside a worker thread) ───────────────────
+
+def _fetch_peer(comp: dict, limit: int, consolidado: int):
+    """Fetch valuation + financials for a single CAD company.
+
+    Runs inside a ThreadPoolExecutor worker thread. Best-effort: never raises
+    (errors are returned as None and recorded by the caller). Returns None when
+    the company is a duplicate (same CNPJ as a peer already processed) or when
+    no ticker can be resolved for it.
+
+    Args:
+        comp: CAD company dict (CD_CVM, CNPJ_CIA, DENOM_COMERC, ...).
+        limit: Max peers (used only for progress display).
+        consolidado: 1=consolidated financials, 0=individual.
+    """
+    # Lazily imported here so the import happens once per worker thread, not
+    # once per call (Python caches modules, so this is effectively free after
+    # the first call).
+    from data_sources.cvm.bridge.query_engine import lookup as bridge_lookup
+    from skills.cvm.valuation.modes.ratios import ratios as val_ratios
+    from skills.cvm.financials.modes.annual import annual as fin_annual
+
+    cd_cvm = comp.get("CD_CVM", "")
+    cnpj = comp.get("CNPJ_CIA", "")
+    name = comp.get("DENOM_COMERC") or comp.get("DENOM_SOCIAL") or ""
+
+    # Deduplicate by CNPJ (PETR3 + PETR4 share the same CNPJ → same company).
+    # Use the shared lock so the check+add is atomic across worker threads.
+    if cnpj:
+        with _seen_cnpjs_lock:
+            if cnpj in _seen_cnpjs:
+                return None
+            _seen_cnpjs.add(cnpj)
+
+    # Bridge reverse-lookup: CD_CVM -> ticker
+    ticker = None
+    try:
+        br = bridge_lookup(cd_cvm=cd_cvm)
+        if br.get("status") == "ok":
+            ticker = br.get("ticker")
+    except Exception:
+        pass
+
+    if not ticker:
+        return None
+
+    print(f"[screener]   {ticker}...", flush=True, end="")
+
+    peer: dict = {"ticker": ticker, "name": name, "cnpj": cnpj}
+
+    # Get valuation ratios (best-effort)
+    try:
+        vr = val_ratios(company=ticker)
+        if vr.get("status") == "ok":
+            r = vr.get("ratios", {})
+            peer.update({
+                "price": r.get("price"),
+                "market_cap": r.get("market_cap"),
+                "p_l": r.get("p_l"),
+                "p_vpa": r.get("p_vpa"),
+                "ev_ebitda": r.get("ev_ebitda"),
+                "roe": _roe_from_ratios(r),
+                "dividend_yield": r.get("dividend_yield"),
+                # [v1.2] New metrics from calculations engines via valuation.ratios()
+                "roa": r.get("roa"),
+                "margem_liquida": r.get("margem_liquida"),
+                "divida_pl": r.get("divida_pl"),
+                # [v1.4] New v1.3 metrics — liquidity, cash flow, efficiency
+                "quick_ratio": r.get("quick_ratio"),
+                "cash_ratio": r.get("cash_ratio"),
+                "ocf_margin": r.get("ocf_margin"),
+                "fcf_margin": r.get("fcf_margin"),
+                "interest_coverage": r.get("interest_coverage"),
+                "cash_flow_to_debt": r.get("cash_flow_to_debt"),
+                "ev_sales": r.get("ev_sales"),
+                "ev_fcf": r.get("ev_fcf"),
+                "p_tangible_book": r.get("p_tangible_book"),
+            })
+        else:
+            print(f" valuation {vr.get('status')};", flush=True, end="")
+    except Exception:
+        print(" valuation error;", flush=True, end="")
+
+    # [v1.1] Get financials (best-effort) — revenue, EBITDA, margins, growth
+    try:
+        fr = fin_annual(company=ticker, periods=2, consolidado=consolidado)
+        if fr.get("status") == "ok" and fr.get("periods"):
+            periods = fr["periods"]
+            latest = periods[0]
+            m = latest.get("metrics", {}) or {}
+            ratios = latest.get("ratios", {}) or {}
+            peer.update({
+                "receita_liquida": m.get("receita_liquida"),
+                "ebitda": m.get("ebitda"),
+                "lucro_liquido": m.get("lucro_liquido"),
+                "marg_ebitda": ratios.get("marg_ebitda"),
+                "marg_liquida": ratios.get("marg_liquida"),
+                "payout": ratios.get("payout"),
+            })
+            # Revenue growth: latest vs prior year (if 2+ periods)
+            if len(periods) >= 2:
+                prior_rev = (periods[1].get("metrics") or {}).get("receita_liquida")
+                curr_rev = m.get("receita_liquida")
+                peer["receita_growth"] = _pct_change(curr_rev, prior_rev)
+            else:
+                peer["receita_growth"] = None
+        else:
+            print(f" financials {fr.get('status')};", flush=True, end="")
+    except Exception:
+        print(" financials error;", flush=True, end="")
+
+    # [v1.2] Get listing segment from Fca (Novo Mercado, Nível 1, etc.)
+    try:
+        from data_sources.cvm._bridge import _resolve_via_fca_segmento
+        peer["segmento"] = _resolve_via_fca_segmento(ticker) or ""
+    except Exception:
+        peer["segmento"] = ""
+
+    print(" done.", flush=True)
+    return peer

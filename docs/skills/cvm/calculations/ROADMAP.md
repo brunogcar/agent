@@ -6,15 +6,15 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | DVA generation-side engines (7.01-7.06) | Receitas, Insumos, V.A. Bruto, V.A. Recebido — completes DVA statement |
 | P2 | BCB SGS data source + COE metric | Selic/CDI/IPCA/IGP-M + Cost of Equity (Rf + β × (Rm − Rf)). COE blocks on SGS. One unit of work. |
-| P2 | Performance: statement mode single-fetch | Dashboard calls 7 statement modes separately — single `complete(grupo="")` + Python filter eliminates 6 redundant SQL round-trips |
-| P2 | Performance: brapi batching | Screener fetches brapi sequentially for 20 peers — batch or concurrent |
+| Done | Performance: brapi batching | Screener + comparison now use ThreadPoolExecutor(max_workers=5) — 5-7x speedup (v1.3 screener/comparison + brapi v1.1 thread safety) |
 | P3 | Beta (5Y) — belongs in historical, not calculations | Rolling regression of stock returns vs IBOV. Needs COTAHIST + IBOV index series. Different architecture (regression, not ratio). |
 | P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Future | Technical analysis skill | FIBO, Swing, BTC, Termo — separate skill, not calculations-layer |
+| Done | DVA generation-side engines (v1.12) | 6 new engines (7.01, 7.03, 7.04, 7.05, 7.06, 7.07) — completes DVA statement (was distribution-only) |
+| Done | Performance: statement mode single-fetch (v1.12) | Financials dashboard now uses `_fetch_all_statements_annual()` — single SQL query replaces 5 separate statement fetches (80% round-trip reduction). See [financials CHANGELOG](../financials/CHANGELOG.md) v1.17. |
 | Done | Magic Number (v1.11) | EV/EBITDA × ROIC — Greenblatt-inspired cheapness × quality metric |
 | Done | EV/EBIT + DL/EBIT + CAGR (v1.10) | 2 new metrics + CAGR function + margem_ebit alias |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
@@ -63,4 +63,4 @@
 
 ---
 
-*Last updated: 2026-08-01 (v1.11). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-05 (v1.12). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*

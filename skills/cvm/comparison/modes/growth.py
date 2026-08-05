@@ -10,8 +10,18 @@ _pct_change). This module just orchestrates the fetch + section assembly.
 
 Registered as "growth" in skills.cvm.comparison._registry.MODES via the
 @register_mode decorator. Auto-discovered by __init__.py.
+
+Concurrency:
+    Per-ticker quarterly fetches run concurrently in a ThreadPoolExecutor
+    (max_workers=5) via _fetch_one_growth(). We do NOT wrap the executor in
+    engine_cache_scope(): that cache is backed by a ContextVar (thread-local),
+    so wrapping it at the top level would NOT share the cache across worker
+    threads. Each worker gets its own (None = passthrough) cache, which is
+    fine — the speedup comes from parallel HTTP, not from cache sharing.
 """
 from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from skills.cvm.comparison._registry import register_mode
 from skills.cvm.comparison.helpers import _GROWTH_COLS, _compute_growth
@@ -52,21 +62,28 @@ def growth(tickers: list = None, consolidado: int = 1) -> dict:
         return {"status": "error", "error": "need at least 2 tickers to compare"}
     tickers = [t.strip().upper() for t in tickers]
 
-    from skills.cvm.financials.modes.quarterly import quarterly as fin_quarterly
+    # Fetch all tickers concurrently — preserve input order in the result.
+    growth_by_ticker: dict[str, dict] = {}
+    errors: list[str] = []
 
-    growth_data = []
-    errors = []
-    for ticker in tickers:
-        try:
-            r = fin_quarterly(company=ticker, periods=8, consolidado=consolidado)
-            if r.get("status") == "ok":
-                growth_data.append(_compute_growth(r))
-            else:
-                growth_data.append({})
-                errors.append(f"{ticker}: financials: {r.get('error', r.get('status', ''))}")
-        except Exception as e:
-            growth_data.append({})
-            errors.append(f"{ticker}: financials: {e}")
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_ticker = {
+            executor.submit(_fetch_one_growth, t, consolidado): t
+            for t in tickers
+        }
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                growth_dict, err = future.result()
+                growth_by_ticker[ticker] = growth_dict
+                if err:
+                    errors.append(err)
+            except Exception as e:
+                growth_by_ticker[ticker] = {}
+                errors.append(f"{ticker}: financials: {e}")
+
+    # Rebuild growth_data aligned with input tickers order (for _build_section).
+    growth_data = [growth_by_ticker.get(t, {}) for t in tickers]
 
     section = _build_section("Growth Metrics (QoQ + YoY + TTM)", _GROWTH_COLS,
                              growth_data, tickers)
@@ -81,3 +98,30 @@ def growth(tickers: list = None, consolidado: int = 1) -> dict:
         "sections": [section],
         "errors": errors,
     }
+
+
+# ── Internal: per-ticker quarterly fetch (runs inside a worker thread) ───────
+
+def _fetch_one_growth(ticker: str, consolidado: int) -> tuple[dict, str]:
+    """Fetch quarterly financials for one ticker + compute growth metrics.
+
+    Runs inside a ThreadPoolExecutor worker thread. Best-effort: never raises
+    (errors are returned as the second tuple element).
+
+    Args:
+        ticker: B3 ticker.
+        consolidado: 1=consolidated, 0=individual.
+
+    Returns:
+        (growth_dict, error_string_or_None). growth_dict is {} on error.
+    """
+    from skills.cvm.financials.modes.quarterly import quarterly as fin_quarterly
+
+    try:
+        r = fin_quarterly(company=ticker, periods=8, consolidado=consolidado)
+        if r.get("status") == "ok":
+            return _compute_growth(r), None
+        err = f"{ticker}: financials: {r.get('error', r.get('status', ''))}"
+        return {}, err
+    except Exception as e:
+        return {}, f"{ticker}: financials: {e}"

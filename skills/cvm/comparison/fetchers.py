@@ -13,43 +13,140 @@ Two responsibilities:
 
 Sector resolution (_fetch_sectors) is included here because it shares the
 bridge → CAD lookup path with the financials fetcher.
+
+Concurrency:
+    Both _fetch_all() and _fetch_sectors() use a ThreadPoolExecutor with
+    max_workers=5 to fetch all tickers concurrently. The per-ticker work is
+    extracted into _fetch_one_ticker() / _fetch_one_sector() so the executor
+    just calls those.
+    We do NOT wrap the executor in engine_cache_scope(): that cache is backed
+    by a ContextVar, which is thread-local — wrapping it at the top level
+    would NOT share the cache across worker threads. Each worker gets its own
+    (None = passthrough) cache, which is fine; the speedup comes from parallel
+    HTTP, not from cache sharing.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 
 # ── Internal: fetch sectors from CAD ─────────────────────────────────────────
+
+def _fetch_one_sector(ticker: str) -> tuple[str, str]:
+    """Resolve one ticker's sector (SETOR_ATIV) from CAD via bridge → CNPJ.
+
+    Runs inside a worker thread. Returns (ticker, sector_string). Missing
+    sectors are returned as "".
+    """
+    try:
+        from data_sources.cvm.cad.query_engine import lookup as cad_lookup
+        from data_sources.cvm._bridge import _resolve_via_bridge
+    except ImportError:
+        return (ticker, "")
+
+    try:
+        cnpj, _ = _resolve_via_bridge(ticker)
+        if not cnpj:
+            return (ticker, "")
+        r = cad_lookup(cnpj=cnpj)
+        if r.get("status") == "ok":
+            sector = (r.get("company") or {}).get("SETOR_ATIV", "") or ""
+            return (ticker, sector)
+        return (ticker, "")
+    except Exception:
+        return (ticker, "")
+
 
 def _fetch_sectors(tickers: list[str]) -> dict[str, str]:
     """Resolve each ticker's sector (SETOR_ATIV) from CAD via bridge → CNPJ.
 
     Returns {ticker: sector_string}. Best-effort — missing sectors are "".
     """
-    sectors = {}
-    try:
-        from data_sources.cvm.cad.query_engine import lookup as cad_lookup
-        from data_sources.cvm._bridge import _resolve_via_bridge
-    except ImportError:
-        return {t: "" for t in tickers}
+    sectors: dict[str, str] = {t: "" for t in tickers}
 
-    for ticker in tickers:
-        try:
-            cnpj, _ = _resolve_via_bridge(ticker)
-            if not cnpj:
-                sectors[ticker] = ""
-                continue
-            r = cad_lookup(cnpj=cnpj)
-            if r.get("status") == "ok":
-                sectors[ticker] = (r.get("company") or {}).get("SETOR_ATIV", "") or ""
-            else:
-                sectors[ticker] = ""
-        except Exception:
-            sectors[ticker] = ""
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_ticker = {
+            executor.submit(_fetch_one_sector, t): t
+            for t in tickers
+        }
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                t, sector = future.result()
+                sectors[t] = sector
+            except Exception:
+                # Leave the default "" in place
+                pass
     return sectors
 
 
 # ── Internal: fetch all 3 skills per ticker (best-effort) ────────────────────
+
+def _fetch_one_ticker(ticker: str, consolidado: int) -> dict[str, Any]:
+    """Call the 3 skills for one ticker best-effort. Never raises.
+
+    Runs inside a worker thread. Returns:
+        {ticker, valuation: {}, financials: {}, dividends: {}, error: str?}
+    Each metric dict may be partial (missing keys = None downstream).
+    """
+    from skills.cvm.financials.modes.summary import summary as fin_summary
+    from skills.cvm.valuation.modes.ratios import ratios as val_ratios
+    from skills.cvm.dividends.modes.summary import summary as div_summary
+
+    entry: dict[str, Any] = {
+        "ticker": ticker,
+        "valuation": {},
+        "financials": {},
+        "dividends": {},
+        "error": "",
+    }
+
+    # 1. Valuation (ratios mode)
+    try:
+        r = val_ratios(company=ticker)
+        if r.get("status") == "ok":
+            entry["valuation"] = r.get("ratios", {}) or {}
+        else:
+            entry["error"] = f"valuation: {r.get('error', r.get('status',''))}"
+    except Exception as e:
+        entry["error"] = f"valuation: {e}"
+
+    # 2. Financials (summary mode -> latest_annual metrics + ratios)
+    try:
+        r = fin_summary(company=ticker, consolidado=consolidado)
+        if r.get("status") == "ok":
+            sections = r.get("sections", {}) or {}
+            latest_annual = sections.get("latest_annual") or {}
+            if latest_annual.get("status") == "ok" or latest_annual.get("metrics"):
+                m = latest_annual.get("metrics", {}) or {}
+                ratios = latest_annual.get("ratios", {}) or {}
+                # Flatten metrics + ratios into one dict for column lookup
+                entry["financials"] = {**m, **ratios}
+            else:
+                if not entry["error"]:
+                    entry["error"] = f"financials: {latest_annual.get('error','no data')}"
+        else:
+            if not entry["error"]:
+                entry["error"] = f"financials: {r.get('error', r.get('status',''))}"
+    except Exception as e:
+        if not entry["error"]:
+            entry["error"] = f"financials: {e}"
+
+    # 3. Dividends (summary mode)
+    try:
+        r = div_summary(company=ticker)
+        if r.get("status") == "ok":
+            entry["dividends"] = _extract_dividend_metrics(r.get("sections", {}) or {})
+        else:
+            if not entry["error"]:
+                entry["error"] = f"dividends: {r.get('error', r.get('status',''))}"
+    except Exception as e:
+        if not entry["error"]:
+            entry["error"] = f"dividends: {e}"
+
+    return entry
+
 
 def _fetch_all(tickers: list[str], consolidado: int) -> list[dict]:
     """For each ticker, call the 3 skills best-effort. Never raises.
@@ -58,65 +155,30 @@ def _fetch_all(tickers: list[str], consolidado: int) -> list[dict]:
         {ticker, valuation: {}, financials: {}, dividends: {}, error: str?}
     Each metric dict may be partial (missing keys = None downstream).
     """
-    from skills.cvm.financials.modes.summary import summary as fin_summary
-    from skills.cvm.valuation.modes.ratios import ratios as val_ratios
-    from skills.cvm.dividends.modes.summary import summary as div_summary
+    # Fetch concurrently — preserve input order in the returned list.
+    results_by_ticker: dict[str, dict] = {}
 
-    out = []
-    for ticker in tickers:
-        entry: dict[str, Any] = {
-            "ticker": ticker,
-            "valuation": {},
-            "financials": {},
-            "dividends": {},
-            "error": "",
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_ticker = {
+            executor.submit(_fetch_one_ticker, t, consolidado): t
+            for t in tickers
         }
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                results_by_ticker[ticker] = future.result()
+            except Exception as e:
+                # Should never happen (_fetch_one_ticker swallows everything),
+                # but be defensive — downstream code expects one entry per ticker.
+                results_by_ticker[ticker] = {
+                    "ticker": ticker,
+                    "valuation": {},
+                    "financials": {},
+                    "dividends": {},
+                    "error": f"fetch: {e}",
+                }
 
-        # 1. Valuation (ratios mode)
-        try:
-            r = val_ratios(company=ticker)
-            if r.get("status") == "ok":
-                entry["valuation"] = r.get("ratios", {}) or {}
-            else:
-                entry["error"] = f"valuation: {r.get('error', r.get('status',''))}"
-        except Exception as e:
-            entry["error"] = f"valuation: {e}"
-
-        # 2. Financials (summary mode -> latest_annual metrics + ratios)
-        try:
-            r = fin_summary(company=ticker, consolidado=consolidado)
-            if r.get("status") == "ok":
-                sections = r.get("sections", {}) or {}
-                latest_annual = sections.get("latest_annual") or {}
-                if latest_annual.get("status") == "ok" or latest_annual.get("metrics"):
-                    m = latest_annual.get("metrics", {}) or {}
-                    ratios = latest_annual.get("ratios", {}) or {}
-                    # Flatten metrics + ratios into one dict for column lookup
-                    entry["financials"] = {**m, **ratios}
-                else:
-                    if not entry["error"]:
-                        entry["error"] = f"financials: {latest_annual.get('error','no data')}"
-            else:
-                if not entry["error"]:
-                    entry["error"] = f"financials: {r.get('error', r.get('status',''))}"
-        except Exception as e:
-            if not entry["error"]:
-                entry["error"] = f"financials: {e}"
-
-        # 3. Dividends (summary mode)
-        try:
-            r = div_summary(company=ticker)
-            if r.get("status") == "ok":
-                entry["dividends"] = _extract_dividend_metrics(r.get("sections", {}) or {})
-            else:
-                if not entry["error"]:
-                    entry["error"] = f"dividends: {r.get('error', r.get('status',''))}"
-        except Exception as e:
-            if not entry["error"]:
-                entry["error"] = f"dividends: {e}"
-
-        out.append(entry)
-    return out
+    return [results_by_ticker[t] for t in tickers]
 
 
 def _extract_dividend_metrics(sections: dict) -> dict:

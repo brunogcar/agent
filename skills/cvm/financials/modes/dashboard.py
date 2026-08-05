@@ -136,18 +136,14 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         except Exception as e:
             ratios_payload["error"] = str(e)
 
-        # ── Standalone statement modes (4 periods for richer tables) ──────
-        print(f"[financials] Fetching statement modes (BPA/BPP/DRE/DFC/DVA)...", flush=True)
-        bpa_result = _safe_call(_call_bpa, company, consolidado)
-        print(f"[financials]   Fetching BPA... done.", flush=True)
-        bpp_result = _safe_call(_call_bpp, company, consolidado)
-        print(f"[financials]   Fetching BPP... done.", flush=True)
-        dre_result = _safe_call(_call_dre, company, consolidado)
-        print(f"[financials]   Fetching DRE... done.", flush=True)
-        dfc_result = _safe_call(_call_dfc, company, consolidado)
-        print(f"[financials]   Fetching DFC... done.", flush=True)
-        dva_result = _safe_call(_call_dva, company, consolidado)
-        print(f"[financials]   Fetching DVA... done.", flush=True)
+        # ── Standalone statement modes (single-fetch optimization) ────────
+        # [v1.2] Single-fetch: ONE SQL query for ALL 5 statements (BPA/BPP/DRE/DFC/DVA)
+        # instead of 5 separate queries. 80% fewer SQL round-trips (~180-360ms saved).
+        print(f"[financials] Fetching all statements (single-query)...", flush=True)
+        bpa_result, bpp_result, dre_result, dfc_result, dva_result = _fetch_all_statements(
+            company, consolidado
+        )
+        print(f"[financials]   BPA/BPP/DRE/DFC/DVA fetched.", flush=True)
 
         # ── TTM series ──────────────────────────────────────────────────────
         print(f"[financials] Fetching TTM series...", flush=True)
@@ -334,28 +330,41 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     }
 
 
-# ── Statement-mode call helpers (4 periods for richer tables) ────────────────
+# ── Statement-mode call helpers ──────────────────────────────────────────────
 
-def _call_bpa(company: str, consolidado: int) -> dict:
-    from skills.cvm.financials.modes.bpa import bpa
-    return bpa(company=company, period="annual", consolidado=consolidado, periods=4)
+def _fetch_all_statements(company: str, consolidado: int) -> tuple:
+    """[v1.2] Single-fetch: get ALL 5 statements in ONE SQL query, then reshape.
 
+    Replaces 5 separate _call_bpa/_call_bpp/_call_dre/_call_dfc/_call_dva calls
+    (each doing 3 SQL round-trips = 15 total) with a single fetch (3 round-trips).
 
-def _call_bpp(company: str, consolidado: int) -> dict:
-    from skills.cvm.financials.modes.bpp import bpp
-    return bpp(company=company, period="annual", consolidado=consolidado, periods=4)
+    Returns: (bpa_result, bpp_result, dre_result, dfc_result, dva_result)
+    Each result has the same structure as the corresponding mode function.
+    """
+    from skills.cvm.financials.fetchers import _fetch_all_statements_annual
+    from skills.cvm.financials.modes._statement_sections import (
+        bpa_section_for, bpp_section_for, dre_section_for,
+        dfc_section_for, dva_section_for, reshape_statement_periods,
+    )
 
+    all_data = _fetch_all_statements_annual(company, consolidado, periods=4)
 
-def _call_dre(company: str, consolidado: int) -> dict:
-    from skills.cvm.financials.modes.dre import dre
-    return dre(company=company, period="annual", consolidado=consolidado, periods=4)
+    # If the fetch itself failed (not_found/not_synced), return error for all 5
+    if all_data.get("status") != "ok" and "status" in all_data:
+        err = all_data
+        return err, err, err, err, err
 
+    # Reshape each statement (same as the mode functions do)
+    bpa_raw = all_data.get("BPA", {"status": "not_found"})
+    bpp_raw = all_data.get("BPP", {"status": "not_found"})
+    dre_raw = all_data.get("DRE", {"status": "not_found"})
+    dfc_raw = all_data.get("DFC_MI", {"status": "not_found"})
+    dva_raw = all_data.get("DVA", {"status": "not_found"})
 
-def _call_dfc(company: str, consolidado: int) -> dict:
-    from skills.cvm.financials.modes.dfc import dfc
-    return dfc(company=company, period="annual", consolidado=consolidado, periods=4)
+    bpa_result = reshape_statement_periods(bpa_raw, section_fn=bpa_section_for, statement_label="BPA") if bpa_raw.get("status") == "ok" else bpa_raw
+    bpp_result = reshape_statement_periods(bpp_raw, section_fn=bpp_section_for, statement_label="BPP") if bpp_raw.get("status") == "ok" else bpp_raw
+    dre_result = reshape_statement_periods(dre_raw, section_fn=dre_section_for, statement_label="DRE") if dre_raw.get("status") == "ok" else dre_raw
+    dfc_result = reshape_statement_periods(dfc_raw, section_fn=dfc_section_for, statement_label="DFC") if dfc_raw.get("status") == "ok" else dfc_raw
+    dva_result = reshape_statement_periods(dva_raw, section_fn=dva_section_for, statement_label="DVA") if dva_raw.get("status") == "ok" else dva_raw
 
-
-def _call_dva(company: str, consolidado: int) -> dict:
-    from skills.cvm.financials.modes.dva import dva
-    return dva(company=company, period="annual", consolidado=consolidado, periods=4)
+    return bpa_result, bpp_result, dre_result, dfc_result, dva_result
