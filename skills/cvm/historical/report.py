@@ -173,12 +173,16 @@ def build_ratio_grid_section(summaries, metric_defs):
         except: continue
         cur = s.get("current", {}).get(spec.ratio_key)
         avgs = s.get("averages", {})
-        sc = 100.0 if unit == "pct" else 1.0
+        # [new commit] Fix double-multiplication: was _scaled(cur, 100) then
+        # _fmt(..., "pct") which multiplies by 100 AGAIN → 2647% instead of 26.47%.
+        # Now pass the RAW fraction to _fmt with "pct" spec (single scaling,
+        # matching build_overview_kpis pattern). For "num" metrics, pass raw
+        # with "num" spec (no scaling).
         ss = "pct" if unit == "pct" else "num"
         cl = _GRID_CATS.get(unit, unit.capitalize())
         cats.setdefault(cl, []).append([_cell(label, _tip(mn)),
-            _fmt(_scaled(cur, sc), ss), _fmt(_scaled(avgs.get("1y"), sc), ss),
-            _fmt(_scaled(avgs.get("3y"), sc), ss), _fmt(_scaled(avgs.get("5y"), sc), ss)])
+            _fmt(cur, ss), _fmt(avgs.get("1y"), ss),
+            _fmt(avgs.get("3y"), ss), _fmt(avgs.get("5y"), ss)])
     for cl, rows in cats.items():
         sections.append({"title": f"{cl} — Atual vs Médias", "description": "Comparação com 1, 3 e 5 anos.",
                          "type": "table", "columns": ["Métrica", "Atual", "1A", "3A", "5A"], "rows": rows})

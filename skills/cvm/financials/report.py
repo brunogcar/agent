@@ -64,28 +64,50 @@ def build_overview_kpis(
     roe_val: float | None,
     roic_val: float | None,
     net_debt_ebitda_val: float | None,
+    ttm_result: dict | None = None,
 ) -> list[dict]:
     """Build 6 KPI cards with pre-formatted values.
 
-    Per the v1.12 dashboard spec: Receita (TTM), EBITDA, Lucro Líquido,
-    ROE, ROIC, Dívida Líquida/EBITDA. Values are pre-formatted strings;
-    `unit` is kept for the adapter to know which spec was used (so the
-    adapter can re-format raw numbers if needed).
+    [new commit] F9 fix: "Receita (TTM)" now shows ACTUAL TTM data (from
+    ttm_result), not the annual DFP value. Was calling annual_metric() which
+    returns the latest annual period — only equals TTM on Dec 31. Now
+    prefers ttm_result["periods"][-1]["metrics"] with annual fallback for
+    new filers (<4 quarters of ITR history).
     """
+    # [new commit] Extract TTM metrics if available, fall back to annual.
+    ttm_metrics: dict = {}
+    if ttm_result and isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
+        ttm_periods = ttm_result.get("periods") or []
+        if ttm_periods:
+            ttm_metrics = ttm_periods[0].get("metrics") or {}
+
+    # Receita: prefer TTM, fall back to annual
+    receita_val = ttm_metrics.get("receita_liquida")
+    if receita_val is None:
+        receita_val = annual_metric(latest_annual_period, "receita_liquida")
+    # EBITDA: prefer TTM, fall back to annual
+    ebitda_val = ttm_metrics.get("ebitda")
+    if ebitda_val is None:
+        ebitda_val = annual_metric(latest_annual_period, "ebitda")
+    # Lucro Líquido: prefer TTM, fall back to annual
+    lucro_val = ttm_metrics.get("lucro_liquido")
+    if lucro_val is None:
+        lucro_val = annual_metric(latest_annual_period, "lucro_liquido")
+
     return [
         {
             "label": "Receita (TTM)",
-            "value": _fmt(annual_metric(latest_annual_period, "receita_liquida"), "brl"),
+            "value": _fmt(receita_val, "brl"),
             "unit": "BRL",
         },
         {
-            "label": "EBITDA",
-            "value": _fmt(annual_metric(latest_annual_period, "ebitda"), "brl"),
+            "label": "EBITDA (TTM)",
+            "value": _fmt(ebitda_val, "brl"),
             "unit": "BRL",
         },
         {
-            "label": "Lucro Líquido",
-            "value": _fmt(annual_metric(latest_annual_period, "lucro_liquido"), "brl"),
+            "label": "Lucro Líquido (TTM)",
+            "value": _fmt(lucro_val, "brl"),
             "unit": "BRL",
         },
         {
@@ -244,6 +266,13 @@ _RATIO_PCT_KEYS = {
     "dpa", "effective_tax_rate",
 }
 
+# [new commit] Metrics to EXCLUDE from the Indicadores tab — these are raw
+# BRL numbers (not ratios), so showing them alongside ratios is misleading.
+# "working_capital" = Ativo Circulante - Passivo Circulante (R$), not a %.
+# User feedback: "remove Capital de Giro from Liquidez — it's raw number,
+# not ratio, metric, etc".
+_INDICADORES_EXCLUDE = {"working_capital"}
+
 # Ratio-grid category labels (registry category -> pretty PT-BR label).
 _RATIO_CATEGORY_LABELS = {
     "profitability": "Rentabilidade",
@@ -262,18 +291,18 @@ _INDICADORES_CATEGORIES = [
     "leverage", "efficiency", "growth", "tax",
 ]
 
-def _group_metrics_by_prefix(items: list[dict]) -> list[dict]:
+def _group_metrics_by_prefix(items: list[dict], category_label: str = "") -> list[dict]:
     """Group metric items by their label prefix (EV/, P/, ROE, etc.).
 
     Items with labels starting with "EV/" go into "EV" group.
     Items with labels starting with "P/" go into "P/" group.
     Growth items split by underlying metric (Receita/Lucro Líq./Resultado Bruto).
-    Everything else goes into a "Outros" group.
-    Returns a list of {"label": group_name, "items": [...]} dicts.
+    Everything else goes into a group named after the category (e.g. "Liquidez",
+    "Endividamento") instead of the generic "Outros".
 
-    [v1.16] Added growth-specific prefixes so the Crescimento subtab
-    splits into Receita / Lucro Líquido / Resultado Bruto / Outros
-    instead of dumping all 11 growth metrics into a single "Outros".
+    [new commit] The "Outros" bucket is now named after the category_label
+    parameter (e.g. "Liquidez", "Endividamento", "Tributos"). User feedback:
+    "box Outros - should be liquidez". For growth, keeps "Outros Crescimento".
     """
     groups: dict[str, list[dict]] = {}
     for item in items:
@@ -297,7 +326,8 @@ def _group_metrics_by_prefix(items: list[dict]) -> list[dict]:
         elif label.startswith("Crescimento"):
             gname = "Outros Crescimento"
         else:
-            gname = "Outros"
+            # [new commit] Use the category label instead of generic "Outros"
+            gname = category_label if category_label else "Outros"
         groups.setdefault(gname, []).append(item)
 
     # Return in a sensible order
@@ -343,6 +373,9 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                 continue
             items: list[dict] = []
             for metric_name in metrics_in_cat:
+                # [new commit] Exclude raw-number metrics from "Todas" too
+                if metric_name in _INDICADORES_EXCLUDE:
+                    continue
                 spec = METRICS.get(metric_name)
                 if not spec:
                     continue
@@ -377,6 +410,10 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                 continue
             items: list[dict] = []
             for metric_name in metrics_in_cat:
+                # [new commit] Exclude raw-number metrics (working_capital)
+                # from Indicadores — they're not ratios.
+                if metric_name in _INDICADORES_EXCLUDE:
+                    continue
                 spec = METRICS.get(metric_name)
                 if not spec:
                     continue
@@ -396,7 +433,9 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
             if items:
                 cat_label = _RATIO_CATEGORY_LABELS.get(category, category.capitalize())
                 # [v1.16] Sub-group by prefix within each category
-                grouped = _group_metrics_by_prefix(items)
+                # [new commit] Pass cat_label so "Outros" bucket is named
+                # after the category (e.g. "Liquidez", "Endividamento").
+                grouped = _group_metrics_by_prefix(items, category_label=cat_label)
                 sub_sections: list[dict] = [{
                     "title": f"{cat_label} (as of {today})",
                     "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
@@ -411,6 +450,12 @@ def build_indicadores_section(today: str, ratios_payload: dict) -> dict:
                 for item in items:
                     raw = item.get("value_raw")
                     if raw is not None:
+                        # [new commit] F15 fix: scale 0-1 fractions to 0-100
+                        # for chart display (ROE 0.26 → 26). Was showing raw
+                        # 0.26 on the y-axis instead of 26. Matches the
+                        # pattern used in build_crescimento_sections + valuation.
+                        if abs(raw) < 1:
+                            raw = raw * 100
                         chart_labels.append(item["label"])
                         chart_values.append(raw)
                 if len(chart_labels) >= 2:
@@ -512,82 +557,43 @@ def build_crescimento_sections(
     latest_annual_period: dict | None,
     annual_periods: list[dict],
     quarterly_periods: list[dict] | None = None,
+    ratios_payload: dict | None = None,
 ) -> list[dict]:
     """Build the Crescimento tab: 3M/1Y/5Y growth table + bar chart.
 
-    [v1.7 review-fix] Growth now uses ``growth_helpers.growth_at()`` with
-    period-specific gap tolerance (1.5x for 3M/1Y, 1.2x for 5Y).  This
-    handles missing annual periods gracefully: if a company skipped a
-    filing year, the helper finds the closest period within the tolerance
-    window instead of blindly indexing ``sorted_periods[N]``.
-
-    [v1.16] Now accepts ``quarterly_periods`` to compute 3M growth from
-    the latest two standalone quarters. Previously 3M was always "—"
-    because only annual data was available. Also added chart title +
-    description, and the table now shows a note when 3M is derived
-    from quarterly data.
-
-    Growth metrics (Revenue / Gross Profit / Net Income) are derived from
-    the annual periods list when available; otherwise the table shows "—"
-    and the chart is skipped.
+    [new commit] MAJOR REWRITE — delegates to ratios_payload (computed via
+    the calculations registry + FIXED growth_at anchoring). This eliminates:
+      - F8: lexicographic quarter sort bug (no longer sorts quarters)
+      - F10: duplicate growth logic (now uses same path as Indicadores)
+      - F19: zero-guard too strict (delegated to growth_helpers)
+    The old implementation called growth_at() on ANNUAL periods + had its
+    own _qoq_growth with the lexicographic sort bug. Now both 3M/1Y/5Y
+    come from ratios_payload which uses TTM periods + the anchored prior
+    search (consistent with the historical dashboard).
     """
-    from skills.cvm.calculations.growth_helpers import (
-        growth_at, LOOKBACK_1Y, LOOKBACK_5Y,
-    )
-
     sections: list[dict] = []
 
-    # Determine the "current" date: latest annual period's data_fim_exerc.
-    sorted_periods = sorted(
-        [p for p in annual_periods if p.get("period")],
-        key=lambda p: str(p.get("period")),
-        reverse=True,
-    )
-    latest = sorted_periods[0] if sorted_periods else latest_annual_period
-    if not latest:
+    rp = ratios_payload or {}
+    # Pull growth values from ratios_payload (computed by compute_all_ratios
+    # with the FIXED growth_at anchoring on curr_p date, not target_date).
+    rev_3m = rp.get("revenue_growth_3m")
+    rev_1y = rp.get("revenue_growth_1y")
+    rev_5y = rp.get("revenue_growth_5y")
+    gp_3m = rp.get("gross_profit_growth_3m")
+    gp_1y = rp.get("gross_profit_growth_1y")
+    gp_5y = rp.get("gross_profit_growth_5y")
+    ni_3m = rp.get("net_income_growth_3m")
+    ni_1y = rp.get("net_income_growth_1y")
+    ni_5y = rp.get("net_income_growth_5y")
+
+    # If ALL values are None, show unavailable message.
+    all_vals = [rev_3m, rev_1y, rev_5y, gp_3m, gp_1y, gp_5y, ni_3m, ni_1y, ni_5y]
+    if all(v is None for v in all_vals):
         sections.append({
             "type": "text",
-            "text": "Crescimento indisponível — sem períodos anuais.",
+            "text": "Crescimento indisponível — sem dados de receita/lucro TTM.",
         })
         return sections
-    target_date = _period_date(latest)
-
-    # Build per-metric period lists for growth_helpers.
-    rev_periods = _build_metric_periods(annual_periods, "receita_liquida")
-    gp_periods = _build_metric_periods(annual_periods, "lucro_bruto")
-    ni_periods = _build_metric_periods(annual_periods, "lucro_liquido")
-
-    rev_1y = growth_at(rev_periods, target_date, LOOKBACK_1Y)
-    rev_5y = growth_at(rev_periods, target_date, LOOKBACK_5Y)
-    gp_1y = growth_at(gp_periods, target_date, LOOKBACK_1Y)
-    gp_5y = growth_at(gp_periods, target_date, LOOKBACK_5Y)
-    ni_1y = growth_at(ni_periods, target_date, LOOKBACK_1Y)
-    ni_5y = growth_at(ni_periods, target_date, LOOKBACK_5Y)
-
-    # [v1.16] 3M growth from quarterly data: compare the latest standalone
-    # quarter vs the immediately preceding quarter. If quarterly_periods
-    # is missing or has < 2 entries, 3M stays "—".
-    def _qoq_growth(metric_key: str) -> float | None:
-        if not quarterly_periods or len(quarterly_periods) < 2:
-            return None
-        # quarterly_periods are newest-first (from _build_quarterly_summary).
-        # Take the first two entries.
-        sorted_q = sorted(
-            [p for p in quarterly_periods if p.get("period")],
-            key=lambda p: str(p.get("period")),
-            reverse=True,
-        )
-        if len(sorted_q) < 2:
-            return None
-        curr = (sorted_q[0].get("metrics") or {}).get(metric_key)
-        prev = (sorted_q[1].get("metrics") or {}).get(metric_key)
-        if curr is None or prev is None or prev == 0:
-            return None
-        return (curr - prev) / abs(prev)
-
-    rev_3m = _qoq_growth("receita_liquida")
-    gp_3m = _qoq_growth("lucro_bruto")
-    ni_3m = _qoq_growth("lucro_liquido")
 
     rows = [
         ["Receita Líquida",   _fmt(rev_3m, "pct"), _fmt(rev_1y, "pct"), _fmt(rev_5y, "pct")],
@@ -597,22 +603,21 @@ def build_crescimento_sections(
     sections.append({
         "title": "Crescimento (3M / 1Y / 5Y)",
         "description": (
-            "Crescimento de Receita, Lucro Bruto e Lucro Líquido. 3M = "
-            "trimestre vs trimestre anterior (QoQ); 1Y e 5Y usam período "
-            "anual com tolerância de gap (1.5x / 1.2x)."
+            "Crescimento de Receita, Lucro Bruto e Lucro Líquido baseado "
+            "em TTM (trailing twelve months). 3M = TTM atual vs TTM há 3 "
+            "meses; 1Y e 5Y usam janelas de 1 e 5 anos com tolerância de gap."
         ),
         "type": "table",
         "columns": ["Métrica", "3M", "1Y", "5Y"],
         "rows": rows,
         "note": (
-            "3M = crescimento trimestral (QoQ) derivado de ITR. "
-            "1Y/5Y usam períodos anuais com tolerância de gap — um ano "
-            "de relatório ausente é compensado se houver período dentro "
-            "da janela de tolerância."
+            "Valores calculados via calculations registry (growth_at com "
+            "anchoring no período atual). Consistente com o dashboard "
+            "histórico."
         ),
     })
 
-    # Bar chart: 1Y + 5Y for each metric (3M excluded — usually missing).
+    # Bar chart: 3M + 1Y + 5Y for each metric.
     chart_data_1y = [rev_1y, gp_1y, ni_1y]
     chart_data_5y = [rev_5y, gp_5y, ni_5y]
     chart_data_3m = [rev_3m, gp_3m, ni_3m]
@@ -620,7 +625,7 @@ def build_crescimento_sections(
         datasets = []
         if any(v is not None for v in chart_data_3m):
             datasets.append({
-                "label": "3M (QoQ)",
+                "label": "3M (QoQ TTM)",
                 "data": [(_v * 100 if _v is not None else None) for _v in chart_data_3m],
                 "backgroundColor": "#a855f7",
             })
@@ -701,13 +706,32 @@ def _statement_table_section(title: str, accounts_dict: dict) -> dict:
 def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
     """Build the Balanço tab as a `type: "subtabs"` section with BPA + BPP.
 
-    Each sub-tab has a single `type: "table"` section showing the latest
-    period's accounts grouped by section.
+    [new commit] Added "Completo" sub-tab (first) showing BPA + BPP combined
+    in one table. User feedback: "add first tab being full bpa+bpp".
     """
     sub_tabs: list[dict] = []
 
-    # BPA sub-tab
     bpa_periods = (bpa_result or {}).get("periods") or []
+    bpp_periods = (bpp_result or {}).get("periods") or []
+
+    # [new commit] First sub-tab: "Completo" — BPA + BPP combined
+    if bpa_periods and bpp_periods:
+        latest_bpa = bpa_periods[0]
+        latest_bpp = bpp_periods[0]
+        bpa_accounts = latest_bpa.get("accounts") or {}
+        bpp_accounts = latest_bpp.get("accounts") or {}
+        if bpa_accounts and bpp_accounts:
+            # Merge into a single table with Ativo section first, then Passivo
+            merged_section = _statement_table_section(
+                f"Balanço Completo — {latest_bpa.get('period') or 'Latest'}",
+                {**bpa_accounts, **bpp_accounts},
+            )
+            sub_tabs.append({
+                "name": "Completo",
+                "sections": [merged_section],
+            })
+
+    # BPA sub-tab
     if bpa_periods:
         latest_bpa = bpa_periods[0]
         accounts = latest_bpa.get("accounts") or {}
@@ -719,7 +743,7 @@ def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
                     accounts,
                 )],
             })
-    if not sub_tabs or not bpa_periods:
+    if not any(st["name"] == "BPA" for st in sub_tabs):
         sub_tabs.append({
             "name": "BPA",
             "sections": [{
@@ -729,7 +753,6 @@ def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
         })
 
     # BPP sub-tab
-    bpp_periods = (bpp_result or {}).get("periods") or []
     if bpp_periods:
         latest_bpp = bpp_periods[0]
         accounts = latest_bpp.get("accounts") or {}
@@ -741,7 +764,7 @@ def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
                     accounts,
                 )],
             })
-    if len(sub_tabs) < 2 or not bpp_periods:
+    if not any(st["name"] == "BPP" for st in sub_tabs):
         sub_tabs.append({
             "name": "BPP",
             "sections": [{
@@ -1289,27 +1312,39 @@ def build_yoy_chart(groups: list[dict]) -> dict | None:
         if not periods:
             continue
 
-        years = []
-        growths = []
+        # [new commit] F16 fix: build year→growth dict so datasets align
+        # with the global labels list. Was appending growths sequentially,
+        # which misaligned when groups had different year coverage (e.g.,
+        # Q1 has 4 years, Q2 has 3 — Q2's data plotted at wrong labels).
+        year_to_growth: dict[int, float | None] = {}
         for p in periods:
             year = p.get("year")
             yoy = p.get("yoy_growth") or {}
             growth = yoy.get("receita_liquida")
             if year is not None:
-                years.append(str(year))
                 all_years.add(year)
-                growths.append(_num_or_none(growth) * 100 if growth is not None else None)
+                year_to_growth[year] = (
+                    _num_or_none(growth) * 100 if growth is not None else None
+                )
 
-        if years:
+        if year_to_growth:
             datasets.append({
                 "label": q_label,
-                "data": growths,
+                "data": year_to_growth,  # dict — will be aligned below
             })
 
     if not datasets:
         return None
 
     labels = sorted(str(y) for y in all_years)
+
+    # [new commit] Align each dataset with the global labels list.
+    # Convert year→growth dicts to ordered lists matching `labels`.
+    for ds in datasets:
+        year_to_growth = ds.pop("data")
+        ds["data"] = [
+            year_to_growth.get(int(yr)) for yr in labels
+        ]
 
     return {
         "type": "chart",
@@ -1340,48 +1375,60 @@ def build_yoy_chart(groups: list[dict]) -> dict | None:
 
 
 def build_yoy_table(groups: list[dict]) -> list[dict]:
-    """Build per-year tables showing same-quarter YoY comparison.
+    """Build per-quarter tables showing YoY comparison across years.
 
-    [v1.18] Restructured to return ONE TABLE PER YEAR (was a single table
-    sorted by year). Each year gets its own section with a title like
-    "2026" and a table showing all 4 quarters for that year.
+    [new commit] MAJOR REWRITE — now groups by QUARTER (was by year).
+    User feedback: "its grouped by year, should be by quarter, to see the
+    differences of 4t26 and 4t25 and so on". Each quarter (Q1/Q2/Q3/Q4)
+    gets its own table showing all available years for that quarter,
+    newest year first. This lets you compare 4T2026 vs 4T2025 vs 4T2024
+    directly.
 
-    Returns a list of section dicts (one per year), newest year first.
+    Returns a list of section dicts (one per quarter), in Q4→Q1 order.
     """
-    columns = ["Trimestre", "Receita", "EBITDA", "Lucro Líq.", "Receita YoY %"]
+    columns = ["Ano", "Receita", "EBITDA", "Lucro Líq.", "Receita YoY %"]
 
-    # Flatten all periods across groups, collect by year.
-    by_year: dict[int, list[dict]] = {}
+    # Flatten all periods across groups, collect by quarter number.
+    by_quarter: dict[int, list[dict]] = {}
+    quarter_labels: dict[int, str] = {}
     for g in groups:
         q_label = g.get("quarter", "")
         for p in g.get("periods") or []:
             year = p.get("year")
+            qnum = p.get("quarter", 0)
             if year is None:
                 continue
-            by_year.setdefault(year, []).append({
+            by_quarter.setdefault(qnum, []).append({
+                "year": year,
                 "quarter": q_label,
-                "qnum": p.get("quarter", 0),
                 "receita": (p.get("metrics") or {}).get("receita_liquida"),
                 "ebitda": (p.get("metrics") or {}).get("ebitda"),
                 "lucro": (p.get("metrics") or {}).get("lucro_liquido"),
                 "yoy": (p.get("yoy_growth") or {}).get("receita_liquida"),
             })
+            quarter_labels[qnum] = q_label
 
     sections: list[dict] = []
-    for year in sorted(by_year.keys(), reverse=True):
-        periods = sorted(by_year[year], key=lambda x: x["qnum"])
+    # Q4 first (most relevant for full-year comparison), then Q3, Q2, Q1
+    for qnum in sorted(by_quarter.keys(), reverse=True):
+        periods = sorted(by_quarter[qnum], key=lambda x: x["year"], reverse=True)
         rows = []
         for p in periods:
             rows.append([
-                p["quarter"],
+                str(p["year"]),
                 _fmt(p["receita"], "brl"),
                 _fmt(p["ebitda"], "brl"),
                 _fmt(p["lucro"], "brl"),
                 _fmt(p["yoy"], "pct"),
             ])
+        q_label = quarter_labels.get(qnum, f"Q{qnum}")
         sections.append({
-            "title": str(year),
-            "description": f"Trimestres de {year}. YoY % = (atual - anterior) / |anterior|.",
+            "title": f"{q_label} — YoY por Ano",
+            "description": (
+                f"Comparação year-over-year do {q_label}. "
+                "YoY % = (atual - ano anterior) / |ano anterior|. "
+                "Mostra a evolução deste trimestre específico ao longo dos anos."
+            ),
             "type": "table",
             "columns": columns,
             "rows": rows,
@@ -1389,7 +1436,7 @@ def build_yoy_table(groups: list[dict]) -> list[dict]:
 
     if not sections:
         return [{
-            "title": "Comparação YoY por Ano",
+            "title": "Comparação YoY por Trimestre",
             "type": "text",
             "text": "Sem dados trimestrais disponíveis.",
         }]
@@ -1489,18 +1536,21 @@ def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
 
 
 def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
-    """Build a stacked bar chart showing Ativo vs Passivo+PL over annual periods.
+    """Build the accounting equation chart: Ativo = Passivo + PL over years.
 
-    [v1.16] New chart for the Balanço tab — visualizes the balance sheet
-    structure over time. Each year has two bars: Ativo (Caixa + Outros)
-    and Passivo+PL (Dívida + PL).
+    [new commit] MAJOR REWRITE per user feedback:
+    - Chart now shows Ativo Total vs (Passivo Total + PL) as two lines
+      to visualize the accounting equation Ativo = Passivo + PL.
+    - Note added explaining this is not the default display.
+    - Removed dead `caixa` variable (F18).
+    - Added two new charts: Ativo decomposition (Circ + Não Circ) and
+      Passivo decomposition (Circ + Não Circ + PL).
     """
     bpa_periods = (bpa_result or {}).get("periods") or []
     bpp_periods = (bpp_result or {}).get("periods") or []
     if not bpa_periods or not bpp_periods:
         return None
 
-    # Build a year → accounts dict for BPA and BPP.
     bpa_by_year: dict[str, dict] = {}
     for p in bpa_periods:
         period_label = p.get("period") or p.get("data_fim_exerc") or ""
@@ -1513,10 +1563,8 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
         if period_label:
             bpp_by_year[str(period_label)] = p.get("accounts") or {}
 
-    # Use the intersection of years, sorted oldest-first.
     years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
     if len(years) < 2:
-        # Fall back to union if intersection is too small.
         years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
     if len(years) < 2:
         return None
@@ -1531,30 +1579,54 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
                     pass
         return None
 
-    caixa, ativo_total, passivo_total, pl = [], [], [], []
+    ativo_total, passivo_total, pl = [], [], []
+    ativo_circ, ativo_ncirc = [], []
+    passivo_circ, passivo_ncirc = [], []
     for year in years:
         bpa_acc = bpa_by_year.get(year, {})
         bpp_acc = bpp_by_year.get(year, {})
         ativo_total.append(_num_or_none(_val(bpa_acc, "1")))
+        ativo_circ.append(_num_or_none(_val(bpa_acc, "1.01")))
+        ativo_ncirc.append(_num_or_none(_val(bpa_acc, "1.02")))
         pl.append(_num_or_none(_val(bpp_acc, "2.03")))
         passivo_total.append(_num_or_none(_val(bpp_acc, "2")))
+        passivo_circ.append(_num_or_none(_val(bpp_acc, "2.01")))
+        passivo_ncirc.append(_num_or_none(_val(bpp_acc, "2.02")))
+
+    # Chart 1: Accounting equation — Ativo vs (Passivo + PL)
+    # [new commit] Two overlapping lines to visualize Ativo = Passivo + PL.
+    passivo_mais_pl = []
+    for i in range(len(years)):
+        p = passivo_total[i] if i < len(passivo_total) else None
+        e = pl[i] if i < len(pl) else None
+        if p is not None and e is not None:
+            passivo_mais_pl.append(p + e)
+        else:
+            passivo_mais_pl.append(None)
 
     return {
         "type": "chart",
-        "title": "Estrutura do Balanço (Anual)",
+        "title": "Equação Contábil: Ativo = Passivo + PL (Anual)",
         "description": (
-            "Ativo Total, Passivo Total e Patrimônio Líquido ao longo dos "
-            "anos. Mostra a estrutura de capital e a equação contábil "
-            "Ativo = Passivo + PL."
+            "Visualização da equação contábil fundamental: Ativo Total vs "
+            "(Passivo Total + Patrimônio Líquido). As linhas devem se "
+            "sobrepor quando a equação é válida."
+        ),
+        "note": (
+            "Nota: esta não é a exibição padrão (3 barras separadas). "
+            "Aqui sobrepondo Ativo com (Passivo+PL) para validar a "
+            "equação contábil. Para ver a decomposição, veja os gráficos "
+            "abaixo."
         ),
         "chart_data": {
             "type": "bar",
             "data": {
                 "labels": years,
                 "datasets": [
-                    {"label": "Ativo Total", "data": ativo_total, "backgroundColor": "#0d9488"},
-                    {"label": "Passivo Total", "data": passivo_total, "backgroundColor": "#ef4444"},
-                    {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": "#3b82f6"},
+                    {"label": "Ativo Total", "data": ativo_total, "backgroundColor": "#0d9488",
+                     "borderColor": "#0d9488", "type": "line", "fill": False, "tension": 0.1},
+                    {"label": "Passivo + PL", "data": passivo_mais_pl, "backgroundColor": "#f59e0b",
+                     "borderColor": "#f59e0b", "type": "line", "fill": False, "tension": 0.1},
                 ],
             },
             "options": {
@@ -1563,11 +1635,114 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
                 "scales": {"y": {"ticks": {},
                                  "title": {"display": True, "text": "R$"}}},
                 "plugins": {
-                    "title": {"display": True, "text": "Estrutura do Balanço Patrimonial"},
+                    "title": {"display": True, "text": "Ativo vs Passivo + PL"},
                 },
             },
         },
     }
+
+
+def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict]:
+    """Build decomposition charts: Ativo = Circ + Não Circ, Passivo = Circ + Não Circ + PL.
+
+    [new commit] New function per user feedback:
+    "add chart to Ativo Total = Ativo Circulante + Ativo Não Circulante
+    and same to passivo total = passivo c + passivo n c, then pl"
+    """
+    bpa_periods = (bpa_result or {}).get("periods") or []
+    bpp_periods = (bpp_result or {}).get("periods") or []
+    if not bpa_periods or not bpp_periods:
+        return []
+
+    bpa_by_year: dict[str, dict] = {}
+    for p in bpa_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpa_by_year[str(period_label)] = p.get("accounts") or {}
+
+    bpp_by_year: dict[str, dict] = {}
+    for p in bpp_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpp_by_year[str(period_label)] = p.get("accounts") or {}
+
+    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
+    if len(years) < 2:
+        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
+    if len(years) < 2:
+        return []
+
+    def _val(accounts: dict, *codes: str) -> float | None:
+        for code in codes:
+            acc = accounts.get(code)
+            if acc and acc.get("valor_brl") is not None:
+                try:
+                    return float(acc["valor_brl"])
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    ativo_circ, ativo_ncirc = [], []
+    passivo_circ, passivo_ncirc, pl = [], [], []
+    for year in years:
+        bpa_acc = bpa_by_year.get(year, {})
+        bpp_acc = bpp_by_year.get(year, {})
+        ativo_circ.append(_num_or_none(_val(bpa_acc, "1.01")))
+        ativo_ncirc.append(_num_or_none(_val(bpa_acc, "1.02")))
+        passivo_circ.append(_num_or_none(_val(bpp_acc, "2.01")))
+        passivo_ncirc.append(_num_or_none(_val(bpp_acc, "2.02")))
+        pl.append(_num_or_none(_val(bpp_acc, "2.03")))
+
+    charts: list[dict] = []
+
+    # Chart: Ativo Total = Ativo Circulante + Ativo Não Circulante
+    charts.append({
+        "type": "chart",
+        "title": "Ativo Total = Circulante + Não Circulante",
+        "description": "Decomposição do Ativo Total em circulante e não circulante.",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": years,
+                "datasets": [
+                    {"label": "Ativo Circulante", "data": ativo_circ, "backgroundColor": "#0d9488"},
+                    {"label": "Ativo Não Circulante", "data": ativo_ncirc, "backgroundColor": "#14b8a6"},
+                ],
+            },
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "ticks": {},
+                    "title": {"display": True, "text": "R$"}}},
+                "plugins": {"title": {"display": True, "text": "Composição do Ativo"}},
+            },
+        },
+    })
+
+    # Chart: Passivo Total = Circ + Não Circ + PL
+    charts.append({
+        "type": "chart",
+        "title": "Passivo + PL = Circulante + Não Circulante + PL",
+        "description": "Decomposição do Passivo + Patrimônio Líquido.",
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": years,
+                "datasets": [
+                    {"label": "Passivo Circulante", "data": passivo_circ, "backgroundColor": "#ef4444"},
+                    {"label": "Passivo Não Circulante", "data": passivo_ncirc, "backgroundColor": "#f97316"},
+                    {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": "#3b82f6"},
+                ],
+            },
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "ticks": {},
+                    "title": {"display": True, "text": "R$"}}},
+                "plugins": {"title": {"display": True, "text": "Composição do Passivo + PL"}},
+            },
+        },
+    })
+
+    return charts
 
 
 def build_period_chart(periods: list[dict], label: str) -> dict | None:

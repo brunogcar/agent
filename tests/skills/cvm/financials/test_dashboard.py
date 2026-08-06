@@ -58,11 +58,13 @@ class TestDashboardMode:
         assert "kpis" in result
         assert len(result["kpis"]) == 6
         labels = [k["label"] for k in result["kpis"]]
-        # The 6 KPI labels per the v1.12 spec — exact-match to lock the contract.
+        # [new commit] KPI labels updated — EBITDA + Lucro Líquido now show
+        # "(TTM)" suffix to match the Receita (TTM) label (was misleading:
+        # label said TTM but value was annual). F9 fix.
         assert labels == [
             "Receita (TTM)",
-            "EBITDA",
-            "Lucro Líquido",
+            "EBITDA (TTM)",
+            "Lucro Líquido (TTM)",
             "ROE",
             "ROIC",
             "Dívida Líquida/EBITDA",
@@ -118,7 +120,9 @@ class TestDashboardMode:
         sec = balanco_tab["sections"][0]
         assert sec["type"] == "subtabs"
         sub_names = [t["name"] for t in sec["tabs"]]
-        assert sub_names == ["BPA", "BPP"]
+        # [new commit] Balanço now has 3 subtabs: Completo (BPA+BPP combined),
+        # BPA, BPP. User feedback: "add first tab being full bpa+bpp".
+        assert sub_names == ["Completo", "BPA", "BPP"]
         # [v1.16] When 2+ annual periods exist, a chart section follows.
         if len(balanco_tab["sections"]) >= 2:
             assert balanco_tab["sections"][1].get("type") == "chart"

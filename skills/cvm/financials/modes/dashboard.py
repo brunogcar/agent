@@ -50,6 +50,7 @@ from skills.cvm.financials.report import (
     build_crescimento_sections,
     build_balanco_section,
     build_balanco_chart,
+    build_balanco_decomp_charts,
     build_dre_sections,
     build_dfc_sections,
     build_dva_sections,
@@ -169,7 +170,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     net_debt_ebitda_val = ratios_payload.get("net_debt_ebitda")
 
     kpis = build_overview_kpis(latest_annual_period, roe_val, roic_val,
-                               net_debt_ebitda_val)
+                               net_debt_ebitda_val, ttm_result=ttm_result)
     # [v1.16.1] Company info card at the TOP of the Overview tab.
     # This pattern (company info + price chart at top of first tab) will be
     # reused by valuation/historical/governance dashboards — financials is
@@ -202,21 +203,29 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     indicadores_section = build_indicadores_section(today, ratios_payload)
 
     # Tab 3: Crescimento
-    # [v1.16] Pass quarterly_periods so 3M (QoQ) growth can be computed.
+    # [new commit] Pass ratios_payload so growth values come from the
+    # calculations registry (FIXED growth_at anchoring), consistent with
+    # the historical dashboard. Eliminates F8 (sort bug) + F10 (duplication).
     crescimento_sections = build_crescimento_sections(
-        latest_annual_period, annual_periods, quarterly_periods)
+        latest_annual_period, annual_periods, quarterly_periods,
+        ratios_payload=ratios_payload)
 
     # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
         balanco_section = build_balanco_section(bpa_result, bpp_result)
         # [v1.16] Add a balance-sheet structure chart (Caixa/Ativo/Dívida/PL).
         balanco_chart = build_balanco_chart(bpa_result, bpp_result)
-        # The Balanço tab is a single subtabs section; append the chart as
-        # a top-level section after the subtabs so it renders below.
+        # [new commit] Add decomposition charts: Ativo = Circ + Não Circ,
+        # Passivo = Circ + Não Circ + PL. User feedback: "add chart to
+        # Ativo Total = Ativo Circulante + Ativo Não Circulante and same
+        # to passivo total = passivo c + passivo n c, then pl".
+        balanco_decomp = build_balanco_decomp_charts(bpa_result, bpp_result)
+        # The Balanço tab is a single subtabs section; append the charts as
+        # top-level sections after the subtabs so they render below.
+        balanco_sections = [balanco_section]
         if balanco_chart:
-            balanco_sections = [balanco_section, balanco_chart]
-        else:
-            balanco_sections = [balanco_section]
+            balanco_sections.append(balanco_chart)
+        balanco_sections.extend(balanco_decomp)
     else:
         balanco_sections = [build_error_section("Balanço", "BPA/BPP indisponível")]
 

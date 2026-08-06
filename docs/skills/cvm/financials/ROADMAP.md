@@ -6,9 +6,9 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P0 | F8 — Fix Crescimento quarter sort | Sort by (year, quarter) not lexicographic "1T2025" string. Confirmed by Claude 2 + Qwen. |
-| P0 | F9 — Fix "Receita (TTM)" KPI | Shows annual data, not TTM. Wire to ttm_result or relabel "Receita (Anual)". Confirmed by Claude 2. |
-| P1 | F10 — Delegate Crescimento to calculations registry | Remove _qoq_growth + _build_metric_periods; use ratios_payload growth values. Eliminates F8/F9 duplication. |
+| Done | F8 — Fix Crescimento quarter sort (v1.19) | Sort by (year, quarter) not lexicographic "1T2025" string. Confirmed by Claude 2 + Qwen. |
+| Done | F9 — Fix "Receita (TTM)" KPI (v1.19) | Shows annual data, not TTM. Wire to ttm_result or relabel "Receita (Anual)". Confirmed by Claude 2. |
+| Done | F10 — Delegate Crescimento to calculations registry (v1.19) | Remove _qoq_growth + _build_metric_periods; use ratios_payload growth values. Eliminates F8/F9 duplication. |
 | P1 | F11 — DVA generation-side decomposition chart | Waterfall/stacked-bar: 7.01 Receitas → 7.03 VAB → 7.05 VAL → 7.07 Total → 7.08 Distribuição split. Codes in KEY_CODES_BY_GRUPO["DVA"]. |
 | P1 | F12 — DFC quality analysis | FCF_true = FCO − Capex (new Capex engine); Cash Conversion = FCO/Lucro Líquido; FCO vs NI 5Y divergence (earnings quality red flag). |
 | P1 | F13 — Dividend sustainability | Payout ratio, Dividend Coverage = LL/(JCP+Div), 5Y dividend trend, Div Yield vs Net Debt/EBITDA scatter. |

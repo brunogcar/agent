@@ -402,4 +402,4 @@ Historical uses `resolve_metric()` (canonical name + alias resolution) for `rati
 
 ---
 
-*Last updated: 2026-08-06 (v1.19 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/API.md](../calculations/API.md) for engine/metric/registry API.*
+*Last updated: 2026-08-06 (v1.20 — `skills/_base.py` extraction; modes + params + return shapes unchanged). See [ARCHITECTURE.md](ARCHITECTURE.md) for the updated source code reference, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/API.md](../calculations/API.md) for engine/metric/registry API.*

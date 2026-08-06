@@ -475,4 +475,4 @@ tests/skills/cvm/
 
 ---
 
-*Last updated: 2026-08-06 (v1.19 — `skills/_base.py` extraction; `_auto_register_metric_history_modes()` preserved — see CHANGELOG.md). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for engine/metric library architecture.*
+*Last updated: 2026-08-06 (v1.20 — `skills/_base.py` extraction; `_auto_register_metric_history_modes()` preserved — see CHANGELOG.md). See [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules, [calculations/ARCHITECTURE.md](../calculations/ARCHITECTURE.md) for engine/metric library architecture.*
