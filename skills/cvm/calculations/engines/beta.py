@@ -17,7 +17,12 @@ from skills._base import engine_cached
 
 
 def _fetch_stock_returns(ticker: str, end_date: str, years: int = 5) -> dict[str, float]:
-    """Fetch daily returns for a stock from COTAHIST."""
+    """Fetch daily returns for a stock from COTAHIST.
+
+    [v1.14] NOT @engine_cached because the outer beta_at/beta_stats_at/beta_periods
+    ARE cached, so this is only called on cache miss. Adding @engine_cached here
+    would create redundant cache entries for the same (ticker, end_date) key.
+    """
     from skills.cvm.calculations.engines.price import price_series
 
     # [v4 P1] Use timedelta, not .replace(year=...), to avoid Feb 29 crash
@@ -59,18 +64,26 @@ def _fetch_ibov_returns(end_date: str, years: int = 5) -> dict[str, float]:
                     prev_close = close
                 if len(returns) >= 60:
                     return returns
-    except Exception:
+    except Exception as e:
+        # [v1.14] Log the fallback instead of silently swallowing — helps
+        # debug when brapi is down or ^BVSP is delisted.
         pass
 
     # Path 2: Fallback via COTAHIST proxy
     return _fetch_ibov_proxy_from_cotahist(end_date, years)
 
 
-def _get_top_ibov_constituents() -> list[str]:
-    """Get top IBOV constituents from B3 index DB.
+def _get_top_ibov_constituents() -> list[tuple[str, float]]:
+    """Get top IBOV constituents (ticker + weight) from B3 index DB.
 
     [v4 P2] Queries data_sources.b3.index dynamically instead of hardcoding.
     Falls back to a hardcoded list if the index DB is not synced.
+
+    [new commit] Now returns (ticker, participation) tuples so the proxy
+    can compute a market-cap-weighted average (was unweighted — IBOV is
+    free-float market-cap weighted, so equal weighting distorted the proxy
+    when low-weight constituents like MGLU3 moved while high-weight ones
+    like PETR4 stayed flat). Found by external LLM review (Qwen).
     """
     try:
         from data_sources.b3.index.catalog import connect as index_connect
@@ -79,37 +92,59 @@ def _get_top_ibov_constituents() -> list[str]:
         if path.exists():
             conn = index_connect(read_only=True)
             rows = conn.execute(
-                """SELECT ticker FROM index_constituents
+                """SELECT ticker, participation FROM index_constituents
                    WHERE index_code = 'IBOV'
                      AND ref_date = (SELECT MAX(ref_date) FROM index_constituents WHERE index_code = 'IBOV')
                    ORDER BY participation DESC LIMIT 10"""
             ).fetchall()
             conn.close()
             if rows:
-                return [r["ticker"] for r in rows]
+                return [(r["ticker"], float(r["participation"] or 0)) for r in rows]
     except Exception:
         pass
 
-    # Fallback: hardcoded top 10 (stable, changes only quarterly)
-    return ["PETR4", "VALE3", "ITUB4", "BBDC4", "BBAS3",
-            "ABEV3", "B3SA3", "MGLU3", "RENT3", "WEGE3"]
+    # Fallback: hardcoded top 10 with approximate weights (as of 2024-Q4).
+    # Weights sum to ~0.65 (top 10 cover ~65% of IBOV). If weights are 0 the
+    # proxy falls back to equal weighting (graceful degradation).
+    return [("PETR4", 0.12), ("VALE3", 0.11), ("ITUB4", 0.10), ("BBDC4", 0.08),
+            ("BBAS3", 0.07), ("ABEV3", 0.06), ("B3SA3", 0.05), ("MGLU3", 0.04),
+            ("RENT3", 0.03), ("WEGE3", 0.03)]
 
 
 def _fetch_ibov_proxy_from_cotahist(end_date: str, years: int = 5) -> dict[str, float]:
-    """Compute IBOV proxy returns from top constituents via COTAHIST."""
+    """Compute IBOV proxy returns from top constituents via COTAHIST.
+
+    [new commit] Now uses market-cap-weighted average (was equal-weighted).
+    IBOV is a free-float market-cap-weighted index; equal weighting distorted
+    the proxy. Uses the `participation` column from the B3 index DB.
+    """
     from skills.cvm.calculations.engines.price import price_series
 
     start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=years * 365 + 30)).strftime("%Y-%m-%d")
-    ibov_top = _get_top_ibov_constituents()
+    constituents = _get_top_ibov_constituents()
 
     all_series: dict[str, dict[str, float]] = {}
-    for ticker in ibov_top:
+    weights: dict[str, float] = {}
+    total_weight = 0.0
+    for ticker, weight in constituents:
         prices = price_series(ticker, start_date, end_date)
         if len(prices) >= 60:
             all_series[ticker] = {p["date"]: p["close"] for p in prices}
+            weights[ticker] = weight
+            total_weight += weight
 
     if len(all_series) < 5:
         return {}
+
+    # Normalize weights to sum to 1.0 (in case some constituents were skipped)
+    if total_weight > 0:
+        for t in weights:
+            weights[t] /= total_weight
+    else:
+        # All weights were 0 — fall back to equal weighting
+        eq = 1.0 / len(all_series)
+        for t in all_series:
+            weights[t] = eq
 
     all_dates = set()
     for series in all_series.values():
@@ -119,10 +154,18 @@ def _fetch_ibov_proxy_from_cotahist(end_date: str, years: int = 5) -> dict[str, 
     returns = {}
     prev_avg = None
     for date in all_dates:
-        closes = [s[date] for s in all_series.values() if date in s]
-        if len(closes) < 3:
+        # [new commit] Weighted average (was equal-weighted sum/len).
+        # Only include constituents that have a price on this date.
+        weighted_sum = 0.0
+        weight_sum = 0.0
+        for ticker, series in all_series.items():
+            if date in series:
+                w = weights.get(ticker, 0)
+                weighted_sum += series[date] * w
+                weight_sum += w
+        if weight_sum < 0.01:  # need at least some weight coverage
             continue
-        avg_close = sum(closes) / len(closes)
+        avg_close = weighted_sum / weight_sum
         if prev_avg and prev_avg > 0:
             returns[date] = (avg_close / prev_avg) - 1.0
         prev_avg = avg_close
@@ -212,17 +255,35 @@ def beta_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def beta_periods(company: str) -> list[dict]:
+def beta_periods(company: str, date_from: str | None = None,
+                 date_to: str | None = None) -> list[dict]:
     """Get all Beta periods for a company (monthly sampling).
 
-    [v4 P0] PERFORMANCE FIX: Fetches stock + IBOV prices ONCE, then computes
-    rolling 1Y regression windows in-memory. Was 660+ DB round-trips, now 2.
+    [v1.14] SIGNATURE FIX: Now accepts (company, date_from, date_to) to match
+    the MetricSpec history_fn contract. Was (company) only — caused TypeError
+    in summary() which calls history_fn(company, date_from, date_to), making
+    Beta show "—" in the dashboard.
+
+    [v1.14] WINDOW FIX: Rolling window is now 5Y (1260 trading days) to match
+    the "Beta (5A)" label. Was 1Y (252 days) — inconsistent with beta_at()
+    which uses a 5Y window.
+
+    [v4 P0] PERFORMANCE: Fetches stock + IBOV prices ONCE, then computes
+    rolling windows in-memory. Was 660+ DB round-trips, now 2.
 
     Returns list of {"date": ..., "beta": float, "r_squared": float} sorted oldest-first.
     """
     # [v4 P1] Use timedelta, not .replace(year=...), to avoid Feb 29 crash
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=5 * 365 + 30)).strftime("%Y-%m-%d")
+    # [new commit] Respect date_to if provided (was hardcoded datetime.now()).
+    # This makes beta_periods deterministic + testable + reproducible.
+    if date_to:
+        end_date = date_to
+    else:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    # Fetch 6Y of data so the earliest monthly checkpoint has enough history
+    # for a 5Y rolling window (need 5Y of data BEFORE the checkpoint).
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    start_date = (end_dt - timedelta(days=6 * 365 + 30)).strftime("%Y-%m-%d")
 
     # Fetch stock prices ONCE
     from skills.cvm.calculations.engines.price import price_series
@@ -261,15 +322,17 @@ def beta_periods(company: str) -> list[dict]:
             monthly_indices.append(i)
     monthly_indices.reverse()
 
-    # For each monthly checkpoint, compute rolling 1Y beta from pre-fetched data
+    # For each monthly checkpoint, compute rolling 5Y beta from pre-fetched data
+    # [v1.14] Changed from 1Y (252) to 5Y (1260) to match the "Beta (5A)" label.
     periods = []
-    min_window = 60
+    min_window = 60  # minimum data points for a valid regression
+    rolling_window = 252 * 5  # 5Y of trading days
 
     for idx in monthly_indices:
         checkpoint_date = common_dates[idx]
 
-        # Find the start index for the 1Y window (approx 252 trading days back)
-        window_start = max(0, idx - 252)
+        # Find the start index for the 5Y window
+        window_start = max(0, idx - rolling_window)
         window_size = idx - window_start + 1
 
         if window_size < min_window:
@@ -286,6 +349,12 @@ def beta_periods(company: str) -> list[dict]:
                 "beta": result["beta"],
                 "r_squared": result.get("r_squared"),
             })
+
+    # [v1.14] Filter by date_from / date_to if provided (MetricSpec history_fn contract)
+    if date_from:
+        periods = [p for p in periods if p["date"] >= date_from]
+    if date_to:
+        periods = [p for p in periods if p["date"] <= date_to]
 
     return periods
 

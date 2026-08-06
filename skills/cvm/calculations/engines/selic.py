@@ -67,10 +67,18 @@ def selic_at(company: str, date: str) -> float | None:
         if not row or row["value"] is None:
             return None
 
-        # Annualize: daily rate * 252 trading days
+        # Annualize: compound (geometric) annualization on base 252.
+        # [new commit] Was simple multiplication (daily_rate * 252), which
+        # underestimates the annual rate. BCB series 11 is the daily accrued
+        # rate (% a.d.) — the correct annualization is compound:
+        #   annual = ((1 + daily/100)^252 - 1) * 100
+        # Example: daily=0.041% → simple=10.33% → compound=10.88% (55bps diff).
+        # Found by external LLM review (Qwen). O(1) math, no perf impact.
         daily_rate = float(row["value"])
-        return daily_rate * 252.0
-    except (FileNotFoundError, Exception):
+        daily_frac = daily_rate / 100.0
+        annual_frac = (1.0 + daily_frac) ** 252 - 1.0
+        return annual_frac * 100.0
+    except Exception:
         return None
 
 

@@ -538,42 +538,8 @@ SYNC_FRESHNESS_HOURS = 24
 def _source_last_sync(source: str) -> str:
     """Get the last-sync timestamp for a data source (ISO string, or "").
 
-    Delegates to skills.cvm._freshness.get_freshness() for CVM/B3 sources.
-    For BCB SGS + B3 index, checks their own sync_state tables directly.
+    Delegates to skills.cvm._freshness.get_freshness() for CVM sources.
     """
-    # BCB SGS — check sgs.db sync_state
-    if source == "sgs":
-        try:
-            from data_sources.bcb.sgs.catalog import db_path as sgs_db_path
-            import sqlite3
-            path = sgs_db_path()
-            if path.exists():
-                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-                row = conn.execute("SELECT MAX(synced_at) as ts FROM sync_state").fetchone()
-                conn.close()
-                if row and row[0]:
-                    return str(row[0])
-        except Exception:
-            pass
-        return ""
-
-    # B3 index — check index.db sync_state
-    if source == "index":
-        try:
-            from data_sources.b3.index.catalog import db_path as index_db_path
-            import sqlite3
-            path = index_db_path()
-            if path.exists():
-                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-                row = conn.execute("SELECT MAX(synced_at) as ts FROM sync_state").fetchone()
-                conn.close()
-                if row and row[0]:
-                    return str(row[0])
-        except Exception:
-            pass
-        return ""
-
-    # CVM + B3 (cotahist, brapi, dividends) — delegate to freshness helper
     try:
         from skills.cvm._freshness import get_freshness
         fresh = get_freshness()
@@ -708,10 +674,13 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
                          lambda: {"force": True, "trace_id": trace_id}),
         "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",
                          lambda: {"force": True}),
+        # [new commit] BCB SGS sync — REQUIRED_SOURCES in historical includes "sgs"
+        # but sync_map had no entry, so every dashboard run failed the sgs sync
+        # silently with "unknown source 'sgs'". This meant Selic/CDI/IPCA data
+        # could go stale indefinitely. sync_all(force=False) re-fetches only
+        # stale series (uses internal TTL).
         "sgs":          ("data_sources.bcb.sgs.sync_engine", "sync_all",
-                         lambda: {"force": True, "verbose": False}),
-        "index":        ("data_sources.b3.index.sync_engine", "sync_all",
-                         lambda: {"force": True, "verbose": False}),
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:

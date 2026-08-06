@@ -38,7 +38,7 @@ Returns:
 }
 ```
 
-**v3 fixes:**
+**Fixes:**
 - Tab field is `name` (was `label`).
 - KPIs are at top level (was per-tab).
 - CDI KPI shows daily rate `% a.d.` (was annualized).
@@ -104,4 +104,4 @@ Daily series produces: 1 KPI card (latest + min/max/mean) + 1 chart + 1 table (l
 
 ---
 
-*Last updated: 2026-08-06 (v3.1).*
+*Last updated: 2026-08-06 (v1.1).*

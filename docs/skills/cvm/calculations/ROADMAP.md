@@ -6,13 +6,16 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| Done | BCB SGS data source + COE metric | Done (BCB SGS built v1.0; COE built v1.13 — CAPM `Rf + β × ERP`, Rf = Selic, β from beta engine, ERP default 5.5% Damodaran emerging markets) |
-| Done | Performance: brapi batching | Screener + comparison now use ThreadPoolExecutor(max_workers=5) — 5-7x speedup (v1.3 screener/comparison + brapi v1.1 thread safety) |
-| Done | Beta (5Y) | Done (built v1.13 in calculations — 5Y rolling OLS regression vs IBOV; stock returns from COTAHIST, IBOV from brapi `^BVSP` since COTAHIST doesn't store index levels). Originally roadmap'd for historical but built here because it fits the existing `@register_engine` + `@engine_cached` pattern, not a regression-with-chart layer. |
+| P1 | C1 — WACC engine | COE × E/(D+E) + after-tax Kd × D/(D+E). Reuses coe_at + debt + cash + pl + tax + ebit. Blocks on historical H6 (DCF). |
+| P1 | C2 — FCF_true engine (FCO − Capex) | New Capex engine for DFC code 6.01.02.04. Needed for financials F12 (DFC quality) + dividend sustainability. |
+| P2 | C3 — Signature validation at registration | `register_metric` should `inspect.signature(spec.history_fn)` + assert ≥3 positional params. Would catch beta_periods-style bugs at import time. Suggested by Claude 1. |
+| P2 | C4 — Registry-wide history_fn smoke test | Call `summary(metric=...)` for EVERY registered metric in a test (not mocked). Catches signature drift + history_fn contract violations. Suggested by Claude 1. |
 | P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Future | Technical analysis skill | FIBO, Swing, BTC, Termo — separate skill, not calculations-layer |
+| Done | BCB SGS + COE + Beta (v1.13/v1.14) | Selic/CDI/IPCA + COE (CAPM) + Beta (5Y OLS) — all wired |
+| Done | Performance: brapi batching | Screener + comparison now use ThreadPoolExecutor(max_workers=5) — 5-7x speedup (v1.3 screener/comparison + brapi v1.1 thread safety) |
 | Done | DVA generation-side engines (v1.12) | 6 new engines (7.01, 7.03, 7.04, 7.05, 7.06, 7.07) — completes DVA statement (was distribution-only) |
 | Done | Performance: statement mode single-fetch (v1.12) | Financials dashboard now uses `_fetch_all_statements_annual()` — single SQL query replaces 5 separate statement fetches (80% round-trip reduction). See [financials CHANGELOG](../financials/CHANGELOG.md) v1.17. |
 | Done | Magic Number (v1.11) | EV/EBITDA × ROIC — Greenblatt-inspired cheapness × quality metric |
@@ -63,4 +66,4 @@
 
 ---
 
-*Last updated: 2026-08-05 (v1.13). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-05 (v1.12). Items will be promoted to P1/P0 as consumer skills demand them. See [CHANGELOG.md](CHANGELOG.md) for version history.*

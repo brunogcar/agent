@@ -6,6 +6,13 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
+| P0 | F8 — Fix Crescimento quarter sort | Sort by (year, quarter) not lexicographic "1T2025" string. Confirmed by Claude 2 + Qwen. |
+| P0 | F9 — Fix "Receita (TTM)" KPI | Shows annual data, not TTM. Wire to ttm_result or relabel "Receita (Anual)". Confirmed by Claude 2. |
+| P1 | F10 — Delegate Crescimento to calculations registry | Remove _qoq_growth + _build_metric_periods; use ratios_payload growth values. Eliminates F8/F9 duplication. |
+| P1 | F11 — DVA generation-side decomposition chart | Waterfall/stacked-bar: 7.01 Receitas → 7.03 VAB → 7.05 VAL → 7.07 Total → 7.08 Distribuição split. Codes in KEY_CODES_BY_GRUPO["DVA"]. |
+| P1 | F12 — DFC quality analysis | FCF_true = FCO − Capex (new Capex engine); Cash Conversion = FCO/Lucro Líquido; FCO vs NI 5Y divergence (earnings quality red flag). |
+| P1 | F13 — Dividend sustainability | Payout ratio, Dividend Coverage = LL/(JCP+Div), 5Y dividend trend, Div Yield vs Net Debt/EBITDA scatter. |
+| P2 | F14 — Accounting red flags | BPA 1 ≠ 1.01+1.02, DRE 3.03 ≠ 3.01−3.02, BPP 2 ≠ 2.01+2.02+2.03, DVA 7.08 ≠ Σ(7.08.0x), ROE with negative PL, FCO declining 3Y. |
 | P2 | F1 — Chart serialization test | Regression test for JSON-serializable chart_data |
 | P2 | F2 — Comparison tab | Company vs sector medians (needs reusable sector-median computation) |
 | P2 | F3 — Price history overlay | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
@@ -153,4 +160,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-08-01 (v1.16.1). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-06. Feature suggestions F8-F14 sourced from external LLM review (Claude 2, Qwen, Mistral) of commits e8f8962 + e7763c2. See [CHANGELOG.md](CHANGELOG.md) for version history.*

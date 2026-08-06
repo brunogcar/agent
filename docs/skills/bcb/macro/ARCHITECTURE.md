@@ -76,4 +76,4 @@ returns {"status":"ok", "tabs":[...], "kpis":[...]}
 
 ---
 
-*Last updated: 2026-08-06 (v3.1).*
+*Last updated: 2026-08-06 (v1.1).*

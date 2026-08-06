@@ -65,6 +65,14 @@ def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:
     if beta_result is None or beta_result.get("beta") is None:
         return None
 
+    # [new commit] Quality check: reject low-R² regressions. A beta with R²<0.3
+    # means the stock's returns are poorly explained by IBOV — the regression
+    # slope (beta) is statistically unreliable. Using it for CAPM would produce
+    # a misleading COE. Found by external LLM review (Mistral).
+    r_squared = beta_result.get("r_squared")
+    if r_squared is not None and r_squared < 0.3:
+        return None
+
     beta = beta_result["beta"]
 
     # ERP in fraction
@@ -147,5 +155,6 @@ register_metric(MetricSpec(
     engines=["selic", "beta"],
     category="market",
     aliases=["cost_of_equity", "capm", "ke"],
+    allow_negative=True,
     tooltip="COE = Rf + Beta × ERP. Custo de Oportunidade do Capital Próprio (CAPM). Rf=Selic, ERP=5.5% (Damodaran).",
 ))

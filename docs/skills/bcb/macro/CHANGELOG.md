@@ -2,7 +2,7 @@
 
 # 📋 Macro Changelog
 
-## v3.1 — 2026-08-06
+## v1.1 — 2026-08-06
 
 **Finetune: range selector + default window + CDI mock fix.**
 
@@ -13,9 +13,9 @@
 - **CDI KPI mock fix** — `_batch_last_values()` (batched SQL) bypassed the test mock for `last_value`, causing `test_dashboard_cdi_kpi_is_daily` to fail when a real BCB DB existed. Replaced with direct `last_value()` calls (mockable, still efficient on local SQLite).
 - **Resumo as TABLE** (was text section) — renders properly in the dashboard template.
 
-## v3.0 — 2026-07-24
+## v1.0 — 2026-07-24
 
-**Fixes ALL dashboard issues from v2.**
+**Initial dashboard release.**
 
 ### Required Summary
 
@@ -26,7 +26,7 @@
 - **Table rows as list of lists** (was list of dicts) — `[["2024-01-02", "0.001234"], ...]` so the template's `data_table` macro can iterate cells directly.
 - **helpers.py syntax fixed** — `monthly_values[max(0, i - 11): i + 1]` (v1 had `monthly_valuesax(0, i - 11): i + 1]`).
 - **5 descriptive PT-BR tab names** — Resumo, Juros, Inflacao, Cambio, Atividade (per user request: "on side bar - menu, just generic names").
-- **TR (226) added to rates mode** — was dropped in v2.
+- **TR (226) added to rates mode** — was dropped in the initial draft.
 
 ### Dashboard Tabs (5)
 
@@ -40,9 +40,9 @@
 
 ### KPI Cards (4, top-level)
 
-| KPI | Series | Unit | v3 fix |
+| KPI | Series | Unit | fix |
 |-----|--------|------|--------|
-| Selic (anualizada) | 11 | % a.a. | (unchanged from v2) |
+| Selic (anualizada) | 11 | % a.a. | (unchanged from the initial draft) |
 | CDI (diaria) | 12 | % a.d. | **daily, NOT annualized** |
 | IPCA (mes) | 433 | % | (unchanged) |
 | USD/BRL (ptax) | 1 | R$ | (unchanged) |
@@ -53,10 +53,4 @@ dashboard, rates, inflation, fx.
 
 ---
 
-## v2.0 — 2026-07-23
-
-(Replaced by v3 — see v2 zip for details. Key issues: `label` instead of `name`, per-tab KPIs, separate `labels`/`values` arrays instead of `chart_data`, list-of-dicts table rows, CDI annualized, missing TR 226, helpers.py syntax error.)
-
----
-
-*Last updated: 2026-07-24 (v3.0).*
+*Last updated: 2026-08-06 (v1.1).*

@@ -11,7 +11,8 @@ from skills.cvm.historical.modes.summary import summary
 from skills.cvm.historical.report import (
     build_overview_kpis, build_overview_section, build_percentile_section,
     build_percentile_chart, build_trend_section, build_trend_line_chart,
-    build_ratio_grid_section, fetch_quartiles, fetch_series, _fmt, _tip, _ok,
+    build_ratio_grid_section, fetch_quartiles, fetch_series,
+    compute_quartiles, _fmt, _tip, _ok,
 )
 from skills.cvm.calculations._registry import resolve_metric
 
@@ -51,14 +52,28 @@ def dashboard(company: str = "") -> dict:
     summaries, quartiles, series_data = {}, {}, {}
     total = len(_METRIC_DEFS)
     print(f"[historical] Fetching {total} summaries (F7 cache, parallel)...", flush=True)
+    # [v1.14] F7 cache scope wraps the WHOLE dashboard (main thread + workers).
+    # Each worker ALSO enters its own engine_cache_scope() because Python's
+    # ThreadPoolExecutor does NOT propagate ContextVar values to worker threads
+    # — without the per-worker scope, @engine_cached becomes a passthrough in
+    # all 17 parallel summaries (F7 hits=0 in workers).
     with engine_cache_scope() as cache:
         # [v1.17] Parallelize metric summary fetching (Mistral suggestion)
         from concurrent.futures import ThreadPoolExecutor, as_completed
         def _fetch_summary(mn):
-            try:
-                return mn, summary(company=company, metric=mn)
-            except Exception as e:
-                return mn, {"status": "error", "error": str(e)}
+            # [v1.14] Each worker gets its own F7 cache scope (ContextVar is
+            # per-thread). This lets metrics sharing the same engine (e.g.,
+            # earnings used by 5+ metrics) deduplicate within the worker.
+            with engine_cache_scope():
+                try:
+                    return mn, summary(company=company, metric=mn)
+                except Exception as e:
+                    # [new commit] Include exception type name so signature-
+                    # mismatch bugs (e.g. TypeError from beta_periods) are
+                    # immediately visible in the dashboard output, not just
+                    # the message string. Found by external LLM review (Claude 1).
+                    return mn, {"status": "error",
+                                "error": f"{type(e).__name__}: {e}"}
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(_fetch_summary, mn): mn for mn, _, _, _ in _METRIC_DEFS}
@@ -67,13 +82,37 @@ def dashboard(company: str = "") -> dict:
                 summaries[mn] = result
                 print(f"[historical]   {mn}... done.", flush=True)
 
-        print(f"[historical] Fetching quartiles + series...", flush=True)
-        for mn, _, _, _ in _METRIC_DEFS:
-            s = summaries.get(mn) or {}
-            if s.get("status") != "ok":
-                quartiles[mn] = None; series_data[mn] = None; continue
-            quartiles[mn] = fetch_quartiles(company, mn, 60)
-            series_data[mn] = fetch_series(company, mn, 60)
+        print(f"[historical] Fetching quartiles + series (parallel)...", flush=True)
+        # [v2 fix] PERF: fetch_series calls history_fn once; compute_quartiles
+        # is done IN-MEMORY from the same series (was calling history_fn TWICE
+        # — once in fetch_quartiles, once in fetch_series = 34 sequential calls).
+        # Also parallelized like the summaries above.
+        # IMPORTANT: uses the module-level fetch_series (NOT spec.history_fn
+        # directly) so test mocks are respected. v1 called spec.history_fn
+        # directly which bypassed the mock, making test_dashboard take minutes
+        # (real DB calls for 17 metrics).
+        def _fetch_series(mn):
+            try:
+                spec = resolve_metric(mn)
+                s_data = fetch_series(company, mn, 60)
+                q_data = compute_quartiles(s_data, spec.ratio_key,
+                                            allow_negative=getattr(spec, "allow_negative", False))
+                return mn, q_data, s_data
+            except Exception:
+                return mn, None, None
+
+        with engine_cache_scope():
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(_fetch_series, mn): mn for mn, _, _, _ in _METRIC_DEFS}
+                for future in as_completed(futures):
+                    mn, q, s = future.result()
+                    # Only store if summary was ok (consistent with old behavior)
+                    if (summaries.get(mn) or {}).get("status") == "ok":
+                        quartiles[mn] = q
+                        series_data[mn] = s
+                    else:
+                        quartiles[mn] = None
+                        series_data[mn] = None
         stats = cache.stats
         print(f"[historical] F7: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
 

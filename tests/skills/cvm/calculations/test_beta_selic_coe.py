@@ -19,7 +19,9 @@ def test_selic_at_returns_annualized(mock_connect):
     from skills.cvm.calculations.engines.selic import selic_at
     result = selic_at("PETR4", "2024-07-01")
     assert result is not None
-    assert abs(result - 0.04 * 252) < 0.01  # 0.04 * 252 = 10.08
+    # [new commit] Compound annualization: ((1 + 0.04/100)^252 - 1) * 100
+    expected = ((1.0 + 0.04 / 100.0) ** 252 - 1.0) * 100.0
+    assert abs(result - expected) < 0.01  # ~= 10.88%
 
 
 @patch("skills.cvm.calculations.engines.selic._connect")
@@ -113,3 +115,62 @@ def test_coe_at_none_when_beta_missing(mock_selic, mock_beta):
 
     from skills.cvm.calculations.metrics.coe import coe_at
     assert coe_at("PETR4", "2024-06-30") is None
+
+
+# ── beta_periods signature contract (v1.14 fix) ────────────────────────────
+
+@patch("skills.cvm.calculations.engines.beta._fetch_stock_returns")
+@patch("skills.cvm.calculations.engines.beta._fetch_ibov_returns")
+def test_beta_periods_accepts_3_args(mock_ibov, mock_stock):
+    """[v1.14] beta_periods must accept (company, date_from, date_to) to match
+    the MetricSpec history_fn contract.
+
+    Before the fix, beta_periods(company) took only 1 arg, so
+    summary(metric='beta') -> spec.history_fn(company, date_from, date_to)
+    raised TypeError -> Beta showed '-' in the dashboard.
+    """
+    mock_stock.return_value = {}
+    mock_ibov.return_value = {}
+    from skills.cvm.calculations.engines.beta import beta_periods
+    # Must not raise TypeError — accepts 3 positional args
+    result = beta_periods("PETR4", "2020-01-01", "2025-01-01")
+    assert isinstance(result, list)
+
+
+@patch("skills.cvm.calculations.engines.beta._fetch_stock_returns")
+@patch("skills.cvm.calculations.engines.beta._fetch_ibov_returns")
+def test_beta_periods_filters_by_date_range(mock_ibov, mock_stock):
+    """[v1.14] beta_periods respects date_from / date_to filtering."""
+    mock_stock.return_value = {}
+    mock_ibov.return_value = {}
+    from skills.cvm.calculations.engines.beta import beta_periods
+    result = beta_periods("PETR4", date_from="2023-01-01", date_to="2025-01-01")
+    assert result == []
+
+
+def test_beta_periods_registered_as_history_fn():
+    """[v1.14] Verify the MetricSpec for 'beta' uses beta_periods as history_fn
+    AND that it accepts 3 args (the history_fn contract). Regression guard.
+    """
+    import inspect
+    from skills.cvm.calculations._registry import resolve_metric
+    spec = resolve_metric("beta")
+    assert spec.history_fn.__name__ == "beta_periods"
+    sig = inspect.signature(spec.history_fn)
+    params = list(sig.parameters.keys())
+    assert params == ["company", "date_from", "date_to"], \
+        f"beta_periods must accept (company, date_from, date_to), got {params}"
+
+
+def test_summary_rounds_to_4_decimals_not_2():
+    """[v1.14] summary() must round to 4 decimals (not 2) to preserve percentage
+    precision. round(0.0269, 2) = 0.03 -> '3,00%' (loses .69%).
+    round(0.0269, 4) = 0.0269 -> '2,69%' (correct).
+    """
+    import inspect
+    from skills.cvm.historical.modes.summary import summary
+    source = inspect.getsource(summary)
+    assert "round(current_ratio, 2)" not in source, \
+        "summary() must use round(x, 4) not round(x, 2) for ratio values"
+    assert "round(current_ratio, 4)" in source, \
+        "summary() must use round(current_ratio, 4)"

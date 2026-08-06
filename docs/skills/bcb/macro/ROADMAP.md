@@ -29,7 +29,7 @@
 
 ---
 
-## Done (v3.0)
+## Done (v1.0)
 
 - ✅ 12 series in catalog (TR 226 restored from v1).
 - ✅ v1 sync_state schema (series_code / last_date / synced_at / row_count) with DROP TABLE migration.
@@ -44,4 +44,4 @@
 
 ---
 
-*Last updated: 2026-07-24 (v3.0).*
+*Last updated: 2026-07-24 (v1.0).*

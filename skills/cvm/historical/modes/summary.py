@@ -126,9 +126,12 @@ def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
         interpretation = "unknown"
 
     # Build current block — includes ratio + per-share value (if applicable) + components
+    # [v1.14] round(x, 4) NOT round(x, 2) — rounding the fraction to 2 decimals
+    # destroys precision after ×100 percentage conversion (0.0269 → 0.03 → "3,00%"
+    # instead of "2,69%"). round(x, 4) preserves 2 decimals of percentage precision.
     current_block = {
         "date": current_date,
-        spec.ratio_key: round(current_ratio, 2),
+        spec.ratio_key: round(current_ratio, 4),
     }
     # Add per-share value if this metric has one (None for fundamental ratios)
     if spec.per_share_key:
@@ -152,13 +155,15 @@ def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
         "ratio_label": spec.ratio_label,
         "current": current_block,
         "averages": {
-            "1y": round(avg_1y, 2) if avg_1y else None,
-            "3y": round(avg_3y, 2) if avg_3y else None,
-            "5y": round(avg_5y, 2) if avg_5y else None,
+            # [v1.14] round(x, 4) + `is not None` check (was `if avg_1y else None`
+            # which treated 0.0 as falsy → zero-growth averages showed as "—").
+            "1y": round(avg_1y, 4) if avg_1y is not None else None,
+            "3y": round(avg_3y, 4) if avg_3y is not None else None,
+            "5y": round(avg_5y, 4) if avg_5y is not None else None,
         },
         "range": {
-            "min": round(min_value, 2),
-            "max": round(max_value, 2),
+            "min": round(min_value, 4),
+            "max": round(max_value, 4),
         },
         "percentile": percentile,
         "interpretation": interpretation,
