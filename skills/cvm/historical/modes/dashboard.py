@@ -32,6 +32,9 @@ _METRIC_DEFS = [
     # [v1.16] Growth metrics
     ("revenue_growth_3m", "Cresc. Receita", "pct", "growth"),
     ("net_income_growth_3m", "Cresc. Lucro", "pct", "growth"),
+    # [v1.17] Market risk metrics (from BCB SGS + COTAHIST + brapi)
+    ("coe", "COE (CAPM)", "pct", "market"),
+    ("beta", "Beta (5A)", "ratio", "market"),
 ]
 _METRIC_DEFS_3 = [(m, l, u) for m, l, u, _ in _METRIC_DEFS]
 
@@ -47,13 +50,23 @@ def dashboard(company: str = "") -> dict:
 
     summaries, quartiles, series_data = {}, {}, {}
     total = len(_METRIC_DEFS)
-    print(f"[historical] Fetching {total} summaries (F7 cache)...", flush=True)
+    print(f"[historical] Fetching {total} summaries (F7 cache, parallel)...", flush=True)
     with engine_cache_scope() as cache:
-        for i, (mn, label, _, _) in enumerate(_METRIC_DEFS, 1):
-            print(f"[historical]   {i}/{total}: {label}...", flush=True, end="")
-            try: summaries[mn] = summary(company=company, metric=mn)
-            except Exception as e: summaries[mn] = {"status": "error", "error": str(e)}
-            print(" done.", flush=True)
+        # [v1.17] Parallelize metric summary fetching (Mistral suggestion)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _fetch_summary(mn):
+            try:
+                return mn, summary(company=company, metric=mn)
+            except Exception as e:
+                return mn, {"status": "error", "error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(_fetch_summary, mn): mn for mn, _, _, _ in _METRIC_DEFS}
+            for future in as_completed(futures):
+                mn, result = future.result()
+                summaries[mn] = result
+                print(f"[historical]   {mn}... done.", flush=True)
+
         print(f"[historical] Fetching quartiles + series...", flush=True)
         for mn, _, _, _ in _METRIC_DEFS:
             s = summaries.get(mn) or {}
@@ -179,6 +192,25 @@ def dashboard(company: str = "") -> dict:
         except: pass
     eg_sections = [{"type": "subtabs", "tabs": eg_subtabs}] if eg_metrics else []
 
+    # [v1.17] Market risk tab (COE + Beta)
+    print(f"[historical]   Market Risk...", flush=True)
+    mkt_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "market"]
+    mkt_s = {m: summaries.get(m, {}) for m, _, _ in mkt_metrics}
+    mkt_q = {m: quartiles.get(m) for m, _, _ in mkt_metrics}
+    mkt_subtabs = [
+        {"name": "Percentil", "sections": [build_percentile_section(mkt_s, mkt_q, mkt_metrics)]},
+        {"name": "Tendencia", "sections": [build_trend_section(mkt_s, mkt_metrics)]},
+    ]
+    mkt_chart = build_percentile_chart(mkt_s, mkt_q, mkt_metrics)
+    if mkt_chart: mkt_subtabs.insert(1, {"name": "Grafico", "sections": [mkt_chart]})
+    for mn, label, _ in mkt_metrics:
+        try:
+            spec = resolve_metric(mn)
+            lc = build_trend_line_chart(series_data.get(mn), label, spec.ratio_key)
+            if lc: mkt_subtabs.append({"name": f"{label} 5A", "sections": [lc]})
+        except: pass
+    mkt_sections = [{"type": "subtabs", "tabs": mkt_subtabs}] if mkt_metrics else []
+
     # Freshness footer
     freshness_footer = ""
     try:
@@ -197,8 +229,10 @@ def dashboard(company: str = "") -> dict:
     if leverage_sections:
         tabs.append({"name": "Liquidez e Alavancagem", "group": "Análise", "sections": leverage_sections})
     if eg_sections:
-        tabs.append({"name": "Eficiência e Crescimento", "group": "Análise", "sections": eg_sections})
-    tabs.append({"name": "Ratio Grid", "group": "Análise", "sections": grid_sections})
+        tabs.append({"name": "Eficiencia e Crescimento", "group": "Analise", "sections": eg_sections})
+    if mkt_sections:
+        tabs.append({"name": "Risco de Mercado", "group": "Analise", "sections": mkt_sections})
+    tabs.append({"name": "Ratio Grid", "group": "Analise", "sections": grid_sections})
     tabs.append({"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections})
 
     print(f"[historical] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)

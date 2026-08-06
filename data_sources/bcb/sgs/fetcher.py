@@ -64,15 +64,18 @@ def _normalize_date(dmy: str) -> str:
 def _parse_value(raw) -> float | None:
     """Parse BCB `valor` (string, comma decimal) -> float.
 
-    BCB returns Portuguese-formatted numbers like "10,234567". We replace
-    comma with dot and float()-parse. Returns None on failure.
+    [v3] Uses core.br_validator.parse_brl() for consistency.
     """
     if raw is None or raw == "":
         return None
     try:
-        return float(str(raw).replace(",", "."))
-    except (ValueError, TypeError):
-        return None
+        from core.br_validator import parse_brl
+        return parse_brl(str(raw))
+    except Exception:
+        try:
+            return float(str(raw).replace(",", "."))
+        except (ValueError, TypeError):
+            return None
 
 
 def fetch_series(code: int, start: str = "", end: str = "",

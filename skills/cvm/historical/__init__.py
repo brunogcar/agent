@@ -50,7 +50,7 @@ auto_discover_modes(__name__)
 
 # [v2.0] Data sources this skill needs. The route() wrapper checks freshness
 # before each dispatch and triggers force-sync if any source is stale.
-REQUIRED_SOURCES = ["dfp", "itr", "cotahist", "bridge"]
+REQUIRED_SOURCES = ["dfp", "itr", "cotahist", "bridge", "sgs"]
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {

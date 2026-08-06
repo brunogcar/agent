@@ -110,6 +110,10 @@ def build_chart_section(title: str, observations: list[dict],
                 },
             },
         },
+        # [v3] Time range selector - same as price chart (Tudo/5A/1A/1M)
+        "price_range_selector": True,
+        "price_full_labels": labels,
+        "price_full_data": data,
     }
 
 
