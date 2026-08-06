@@ -145,6 +145,7 @@ register_metric(MetricSpec(
     ratio_fn=coe_at,
     history_fn=coe_history,
     engines=["selic", "beta"],
-    category="valuation",
+    category="market",
     aliases=["cost_of_equity", "capm", "ke"],
+    tooltip="COE = Rf + Beta × ERP. Custo de Oportunidade do Capital Próprio (CAPM). Rf=Selic, ERP=5.5% (Damodaran).",
 ))

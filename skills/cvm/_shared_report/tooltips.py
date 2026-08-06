@@ -66,6 +66,19 @@ _METRIC_TOOLTIPS = {
     "rps": "PSR = Preço / Receita por Ação.",
     # tax
     "effective_tax_rate": "Taxa de Tributo Efetiva = Imposto / Lucro Antes de Impostos.",
+    # [v1.13] growth metrics (also set via MetricSpec.tooltip)
+    "revenue_growth_3m": "Cresc. Receita 3M = (Receita TTM atual - Receita TTM há 3 meses) / |anterior|. Variação trimestral da receita.",
+    "revenue_growth_1y": "Cresc. Receita 1A = (Receita TTM atual - Receita TTM há 1 ano) / |anterior|. Variação anual da receita.",
+    "revenue_growth_5y": "Cresc. Receita 5A = (Receita TTM atual - Receita TTM há 5 anos) / |anterior|. Variação quinquenal da receita.",
+    "net_income_growth_3m": "Cresc. Lucro 3M = (Lucro TTM atual - Lucro TTM há 3 meses) / |anterior|. Variação trimestral do lucro.",
+    "net_income_growth_1y": "Cresc. Lucro 1A = (Lucro TTM atual - Lucro TTM há 1 ano) / |anterior|. Variação anual do lucro.",
+    "net_income_growth_5y": "Cresc. Lucro 5A = (Lucro TTM atual - Lucro TTM há 5 anos) / |anterior|. Variação quinquenal do lucro.",
+    "gross_profit_growth_3m": "Cresc. Resultado Bruto 3M = (Lucro Bruto TTM atual - há 3 meses) / |anterior|. Variação trimestral.",
+    "gross_profit_growth_1y": "Cresc. Resultado Bruto 1A = (Lucro Bruto TTM atual - há 1 ano) / |anterior|. Variação anual.",
+    "gross_profit_growth_5y": "Cresc. Resultado Bruto 5A = (Lucro Bruto TTM atual - há 5 anos) / |anterior|. Variação quinquenal.",
+    # [v1.13] market risk metrics
+    "coe": "COE = Rf + Beta × ERP. Custo de Oportunidade do Capital Próprio (CAPM). Rf=Selic, ERP=5.5% (Damodaran).",
+    "beta": "Beta = Cov(Retorno ação, Retorno IBOV) / Var(IBOV). Sensibilidade ao mercado. >1 mais volátil, <1 menos volátil, <0 anticíclico.",
 }
 
 

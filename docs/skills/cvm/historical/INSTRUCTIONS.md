@@ -121,4 +121,4 @@ If you're creating a new consumer skill (like historical) that wraps calculation
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; `_auto_register_metric_history_modes()` preserved). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*
+*Last updated: 2026-08-06 (v1.18 — `skills/_base.py` extraction; `_auto_register_metric_history_modes()` preserved). See [ARCHITECTURE.md](ARCHITECTURE.md) for file maps, [API.md](API.md) for mode details, [CHANGELOG.md](CHANGELOG.md) for version history, [calculations/INSTRUCTIONS.md](../calculations/INSTRUCTIONS.md) for engine/metric/registry editing rules.*

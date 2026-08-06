@@ -2,6 +2,17 @@
 
 # 📋 Macro Changelog
 
+## v3.1 — 2026-08-06
+
+**Finetune: range selector + default window + CDI mock fix.**
+
+### Required Summary
+
+- **Default windows expanded** — `days=365` (was 30), `months=24` (was 12) for meaningful trends.
+- **`price_range_selector`** on all chart sections — adds Tudo/5A/1A/1M time-range buttons. `price_full_labels` + `price_full_data` carry the full series; the JS frontend slices client-side.
+- **CDI KPI mock fix** — `_batch_last_values()` (batched SQL) bypassed the test mock for `last_value`, causing `test_dashboard_cdi_kpi_is_daily` to fail when a real BCB DB existed. Replaced with direct `last_value()` calls (mockable, still efficient on local SQLite).
+- **Resumo as TABLE** (was text section) — renders properly in the dashboard template.
+
 ## v3.0 — 2026-07-24
 
 **Fixes ALL dashboard issues from v2.**

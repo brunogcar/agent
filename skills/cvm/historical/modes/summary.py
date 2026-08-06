@@ -65,10 +65,17 @@ def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
         return {"status": "not_found",
                 "error": f"No price data for '{company}'"}
 
-    # Extract ratio values (filter None and <= 0) — percentile based on RATIO
+    # Extract ratio values — percentile based on RATIO
+    # [v1.13] allow_negative: growth/beta metrics accept negative values
+    # (declining revenue, countercyclical beta). Default (valuation ratios)
+    # filters <= 0 because negative P/L etc. are meaningless.
     ratio_key = spec.ratio_key
-    ratio_values = [s[ratio_key] for s in series
-                    if s.get(ratio_key) is not None and s[ratio_key] > 0]
+    if getattr(spec, "allow_negative", False):
+        ratio_values = [s[ratio_key] for s in series
+                        if s.get(ratio_key) is not None]
+    else:
+        ratio_values = [s[ratio_key] for s in series
+                        if s.get(ratio_key) is not None and s[ratio_key] > 0]
 
     if not ratio_values:
         return {"status": "not_found",
@@ -79,11 +86,17 @@ def summary(company: str = "", metric: str = "lpa", months: int = 60) -> dict:
     current_date = series[-1]["date"]
 
     # Compute averages for different windows (based on ratio)
+    # [v1.13] Respect allow_negative for growth/beta metrics
+    _allow_neg = getattr(spec, "allow_negative", False)
     def _avg(window_days: int) -> float | None:
         cutoff = (datetime.now() - timedelta(days=window_days)).strftime("%Y-%m-%d")
-        vals = [s[ratio_key] for s in series
-                if s.get(ratio_key) is not None and s[ratio_key] > 0
-                and s["date"] >= cutoff]
+        if _allow_neg:
+            vals = [s[ratio_key] for s in series
+                    if s.get(ratio_key) is not None and s["date"] >= cutoff]
+        else:
+            vals = [s[ratio_key] for s in series
+                    if s.get(ratio_key) is not None and s[ratio_key] > 0
+                    and s["date"] >= cutoff]
         return sum(vals) / len(vals) if vals else None
 
     avg_1y = _avg(365)

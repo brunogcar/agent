@@ -80,8 +80,10 @@ def test_coe_at_capm_formula(mock_stock_ret, mock_ibov_ret):
     mock_stock_ret.return_value = dict(zip(dates, stock_returns_list))
     mock_ibov_ret.return_value = dict(zip(dates, ibov_returns_list))
 
-    # Mock Selic
-    with patch("skills.cvm.calculations.engines.selic.selic_at", return_value=10.0):
+    # Mock Selic — patch at the CALLING module namespace (coe.selic_at), not the
+    # source module (selic.selic_at). coe.py does `from ...selic import selic_at`
+    # which binds a local ref at import time; patching the source doesn't affect it.
+    with patch("skills.cvm.calculations.metrics.coe.selic_at", return_value=10.0):
         from skills.cvm.calculations.metrics.coe import coe_at
         result = coe_at("PETR4", "2024-06-30")
 

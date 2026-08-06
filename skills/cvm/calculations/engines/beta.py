@@ -292,7 +292,9 @@ def beta_periods(company: str) -> list[dict]:
 
 # -- Register with the engine registry ---------------------------------------
 
-from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
+from skills.cvm.calculations._registry import (  # noqa: E402
+    EngineSpec, MetricSpec, register_engine, register_metric,
+)
 register_engine(EngineSpec(
     name="beta",
     quantity="beta",
@@ -300,4 +302,23 @@ register_engine(EngineSpec(
     periods_fn=beta_periods,
     source="COTAHIST (stock prices) + brapi ^BVSP (IBOV) -> 5Y rolling OLS regression",
     category="market",
+))
+
+# [v1.13] Register Beta as a METRIC so resolve_metric("beta") works in the
+# historical dashboard's summary() call. Before this, beta was only registered
+# as an EngineSpec, so summary(metric="beta") raised ValueError and the
+# dashboard silently skipped it (showed no data).
+# allow_negative=True: countercyclical stocks can have negative beta.
+register_metric(MetricSpec(
+    name="beta",
+    per_share_label=None, per_share_key=None, per_share_fn=None,
+    ratio_label="Beta (5A)",
+    ratio_key="beta",
+    ratio_fn=beta_at,
+    history_fn=beta_periods,
+    engines=["beta"],
+    category="market",
+    aliases=["beta_5y", "market_beta"],
+    allow_negative=True,
+    tooltip="Beta = Cov(Retorno ação, Retorno IBOV) / Var(IBOV). Sensibilidade ao mercado. >1 mais volátil, <1 menos volátil, <0 anticíclico.",
 ))

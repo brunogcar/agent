@@ -164,6 +164,51 @@ class TestGrowthAt:
         periods = [{"date": "2025-06-30", "value": 100.0}]
         assert growth_at(periods, "2024-12-31", LOOKBACK_1Y) is None
 
+    def test_target_beyond_latest_does_not_yield_zero(self):
+        """[v1.13 fix] When target_date is far beyond the latest period, the
+        prior-lookup window must NOT include the current period itself.
+
+        Before the fix, growth_at anchored the prior search on target_date.
+        For target="2026-08-06" + 3M (90d, 1.5x gap), the window was
+        [2026-03-24, 2026-06-07] which includes the latest period 2026-03-31,
+        so prior == curr → growth = 0.0 (false "no growth").
+
+        The fix anchors the prior search on the CURRENT period's date, so the
+        prior is always an earlier, distinct period.
+        """
+        periods = [
+            {"date": "2025-12-31", "value": 100.0},
+            {"date": "2026-03-31", "value": 110.0},  # latest; QoQ +10%
+        ]
+        # target far beyond latest — must return the real QoQ growth, NOT 0.0.
+        result = growth_at(periods, "2026-08-06", LOOKBACK_3M)
+        assert result is not None
+        assert result == pytest.approx(0.10)
+
+    def test_target_beyond_latest_1y(self):
+        """[v1.13 fix] Same anchoring fix for 1Y window.
+
+        target=2026-08-06, latest period=2025-12-31 (annual).  Anchoring the
+        prior on the current period (2025-12-31) finds 2024-12-31 exactly 1Y
+        back.  Anchoring on target would look in [2025-07-14, 2026-03-22]
+        which contains NO period → None (wrong; real YoY growth exists).
+        """
+        periods = [
+            {"date": "2024-12-31", "value": 100.0},
+            {"date": "2025-12-31", "value": 120.0},
+        ]
+        result = growth_at(periods, "2026-08-06", LOOKBACK_1Y)
+        assert result is not None
+        assert result == pytest.approx(0.20)
+
+    def test_target_beyond_latest_no_prior_returns_none(self):
+        """[v1.13 fix] If there's genuinely no prior period, still None
+        (not 0.0)."""
+        periods = [
+            {"date": "2026-03-31", "value": 100.0},  # only one period
+        ]
+        assert growth_at(periods, "2026-08-06", LOOKBACK_3M) is None
+
 
 # ── growth_history ───────────────────────────────────────────────────────────
 

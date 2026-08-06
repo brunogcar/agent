@@ -24,34 +24,46 @@ from skills.cvm.calculations._registry import MetricSpec, register_metric
 _VALUE_KEY = "ttm_gp"
 
 
+def _normalize_periods(company: str) -> list[dict]:
+    """Fetch gross profit periods and normalize to {date, value} format for growth_helpers."""
+    raw = gross_profit_periods(company)
+    return [{"date": p["date"], "value": p.get(_VALUE_KEY)} for p in raw]
+
+
 def gross_profit_growth_3m_at(company: str, date: str) -> float | None:
     """Gross profit growth over 3 months (90 days)."""
-    return growth_at(company, date, gross_profit_periods, _VALUE_KEY, 90)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 90)
 
 
 def gross_profit_growth_3m_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    return growth_history(company, date_from, date_to,
-                          gross_profit_periods, _VALUE_KEY, 90, "gross_profit_growth_3m")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 90, date_from, date_to)
+    return [{**r, "gross_profit_growth_3m": r.get("growth")} for r in result]
 
 
 def gross_profit_growth_1y_at(company: str, date: str) -> float | None:
     """Gross profit growth over 1 year (365 days)."""
-    return growth_at(company, date, gross_profit_periods, _VALUE_KEY, 365)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 365)
 
 
 def gross_profit_growth_1y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    return growth_history(company, date_from, date_to,
-                          gross_profit_periods, _VALUE_KEY, 365, "gross_profit_growth_1y")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 365, date_from, date_to)
+    return [{**r, "gross_profit_growth_1y": r.get("growth")} for r in result]
 
 
 def gross_profit_growth_5y_at(company: str, date: str) -> float | None:
     """Gross profit growth over 5 years (1825 days)."""
-    return growth_at(company, date, gross_profit_periods, _VALUE_KEY, 1825)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 1825)
 
 
 def gross_profit_growth_5y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    return growth_history(company, date_from, date_to,
-                          gross_profit_periods, _VALUE_KEY, 1825, "gross_profit_growth_5y")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 1825, date_from, date_to)
+    return [{**r, "gross_profit_growth_5y": r.get("growth")} for r in result]
 
 
 register_metric(MetricSpec(
@@ -64,6 +76,8 @@ register_metric(MetricSpec(
     engines=["gross_profit"],
     category="growth",
     aliases=["cresc_rb_3m", "crescimento_resultado_bruto_3m", "gp_growth_3m"],
+    allow_negative=True,
+    tooltip="Cresc. Resultado Bruto 3M = (Lucro Bruto TTM atual - há 3 meses) / |anterior|. Variação trimestral.",
 ))
 
 register_metric(MetricSpec(
@@ -76,6 +90,8 @@ register_metric(MetricSpec(
     engines=["gross_profit"],
     category="growth",
     aliases=["cresc_rb_1a", "crescimento_resultado_bruto_1ano", "gp_growth_1y"],
+    allow_negative=True,
+    tooltip="Cresc. Resultado Bruto 1A = (Lucro Bruto TTM atual - há 1 ano) / |anterior|. Variação anual.",
 ))
 
 register_metric(MetricSpec(
@@ -88,4 +104,6 @@ register_metric(MetricSpec(
     engines=["gross_profit"],
     category="growth",
     aliases=["cresc_rb_5a", "crescimento_resultado_bruto_5anos", "gp_growth_5y"],
+    allow_negative=True,
+    tooltip="Cresc. Resultado Bruto 5A = (Lucro Bruto TTM atual - há 5 anos) / |anterior|. Variação quinquenal.",
 ))

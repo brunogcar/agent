@@ -39,6 +39,12 @@ from skills.cvm.calculations._registry import MetricSpec, register_metric
 _VALUE_KEY = "ttm_rev"
 
 
+def _normalize_periods(company: str) -> list[dict]:
+    """Fetch revenue periods and normalize to {date, value} format for growth_helpers."""
+    raw = revenue_periods(company)
+    return [{"date": p["date"], "value": p.get(_VALUE_KEY)} for p in raw]
+
+
 # ── 3-month growth (QoQ TTM change) ──────────────────────────────────────────
 
 def revenue_growth_3m_at(company: str, date: str) -> float | None:
@@ -47,13 +53,15 @@ def revenue_growth_3m_at(company: str, date: str) -> float | None:
     Compares TTM revenue at `date` vs TTM revenue 90 days earlier.
     Returns growth as a fraction (0.05 = 5%), or None if data is missing.
     """
-    return growth_at(company, date, revenue_periods, _VALUE_KEY, 90)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 90)
 
 
 def revenue_growth_3m_history(company: str, date_from: str, date_to: str) -> list[dict]:
     """Revenue 3M growth time series."""
-    return growth_history(company, date_from, date_to,
-                          revenue_periods, _VALUE_KEY, 90, "revenue_growth_3m")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 90, date_from, date_to)
+    return [{**r, "revenue_growth_3m": r.get("growth")} for r in result]
 
 
 # ── 1-year growth (YoY) ──────────────────────────────────────────────────────
@@ -64,13 +72,15 @@ def revenue_growth_1y_at(company: str, date: str) -> float | None:
     Compares TTM revenue at `date` vs TTM revenue 365 days earlier.
     Returns growth as a fraction (0.05 = 5%), or None if data is missing.
     """
-    return growth_at(company, date, revenue_periods, _VALUE_KEY, 365)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 365)
 
 
 def revenue_growth_1y_history(company: str, date_from: str, date_to: str) -> list[dict]:
     """Revenue 1Y growth time series."""
-    return growth_history(company, date_from, date_to,
-                          revenue_periods, _VALUE_KEY, 365, "revenue_growth_1y")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 365, date_from, date_to)
+    return [{**r, "revenue_growth_1y": r.get("growth")} for r in result]
 
 
 # ── 5-year growth ────────────────────────────────────────────────────────────
@@ -81,13 +91,15 @@ def revenue_growth_5y_at(company: str, date: str) -> float | None:
     Compares TTM revenue at `date` vs TTM revenue 5 years earlier.
     Returns growth as a fraction (1.0 = 100% growth), or None if data is missing.
     """
-    return growth_at(company, date, revenue_periods, _VALUE_KEY, 1825)
+    periods = _normalize_periods(company)
+    return growth_at(periods, date, 1825)
 
 
 def revenue_growth_5y_history(company: str, date_from: str, date_to: str) -> list[dict]:
     """Revenue 5Y growth time series."""
-    return growth_history(company, date_from, date_to,
-                          revenue_periods, _VALUE_KEY, 1825, "revenue_growth_5y")
+    periods = _normalize_periods(company)
+    result = growth_history(periods, 1825, date_from, date_to)
+    return [{**r, "revenue_growth_5y": r.get("growth")} for r in result]
 
 
 # ── Register 3 metrics ───────────────────────────────────────────────────────
@@ -102,6 +114,8 @@ register_metric(MetricSpec(
     engines=["revenue"],
     category="growth",
     aliases=["cresc_receita_3m", "crescimento_receita_3m", "rev_growth_3m"],
+    allow_negative=True,
+    tooltip="Cresc. Receita 3M = (Receita TTM atual - Receita TTM há 3 meses) / |anterior|. Variação trimestral da receita.",
 ))
 
 register_metric(MetricSpec(
@@ -114,6 +128,8 @@ register_metric(MetricSpec(
     engines=["revenue"],
     category="growth",
     aliases=["cresc_receita_1a", "crescimento_receita_1ano", "rev_growth_1y"],
+    allow_negative=True,
+    tooltip="Cresc. Receita 1A = (Receita TTM atual - Receita TTM há 1 ano) / |anterior|. Variação anual da receita.",
 ))
 
 register_metric(MetricSpec(
@@ -126,4 +142,6 @@ register_metric(MetricSpec(
     engines=["revenue"],
     category="growth",
     aliases=["cresc_receita_5a", "crescimento_receita_5anos", "rev_growth_5y"],
+    allow_negative=True,
+    tooltip="Cresc. Receita 5A = (Receita TTM atual - Receita TTM há 5 anos) / |anterior|. Variação quinquenal da receita.",
 ))

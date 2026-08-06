@@ -58,44 +58,6 @@ def _safe_call(fn, **kwargs):
                 "kpis": [], "sections": []}
 
 
-def _batch_last_values(codes: list[int]) -> dict[int, dict]:
-    """[v3] Batch query: get latest value for multiple series in ONE SQL query."""
-    try:
-        from data_sources.bcb.sgs.catalog import connect, SERIES_CATALOG
-        conn = connect(read_only=True)
-        ph = ",".join("?" * len(codes))
-        rows = conn.execute(
-            f"""SELECT series_code, ref_date, value FROM series_observations
-                WHERE series_code IN ({ph}) AND value IS NOT NULL
-                GROUP BY series_code
-                HAVING ref_date = MAX(ref_date)""",
-            codes
-        ).fetchall()
-        conn.close()
-
-        result = {}
-        for r in rows:
-            code = r["series_code"]
-            cat = SERIES_CATALOG.get(code, ("", "", "", "", ""))
-            result[code] = {
-                "value": r["value"],
-                "ref_date": r["ref_date"],
-                "unit": cat[2] if len(cat) > 2 else "",
-            }
-        return result
-    except Exception:
-        result = {}
-        for code in codes:
-            lv = last_value(code=code)
-            if lv.get("status") == "ok":
-                result[code] = {
-                    "value": lv.get("value"),
-                    "ref_date": lv.get("ref_date", ""),
-                    "unit": lv.get("unit", ""),
-                }
-        return result
-
-
 def _build_resumo_kpis() -> list[dict]:
     """Build the 4 top-level KPI cards.
 
@@ -103,21 +65,16 @@ def _build_resumo_kpis() -> list[dict]:
     annualized. Selic stays annualized (% a.a.). IPCA shows the latest
     monthly variation. USD/BRL shows the latest ptax venda.
 
-    [v3] BATCHED: Single query for all 4 KPI series instead of 4 separate
-    last_value() calls.
+    [v3.1] Removed _batch_last_values() (direct DB SQL query) — it bypassed
+    the test mock for last_value(), causing test_dashboard_cdi_kpi_is_daily
+    to fail when a real BCB DB existed. Reverted to direct last_value()
+    calls (mockable, still efficient on local SQLite).
     """
     kpis = []
 
-    kpi_codes = [SELIC_DAILY, CDI_DAILY, IPCA_MENSAL, USD_BRL]
-    latest = _batch_last_values(kpi_codes)
-
-    selic = latest.get(SELIC_DAILY, {})
-    cdi = latest.get(CDI_DAILY, {})
-    ipca = latest.get(IPCA_MENSAL, {})
-    usd = latest.get(USD_BRL, {})
-
     # Selic - annualized (% a.a.)
-    if selic.get("value") is not None:
+    selic = last_value(code=SELIC_DAILY)
+    if selic.get("status") == "ok" and selic.get("value") is not None:
         kpis.append(build_kpi_card(
             "Selic (anualizada)", annualize_rate(selic["value"]), "% a.a.",
             subtitle=f"diaria: {format_value(selic['value'], '% a.d.')}",
@@ -125,8 +82,9 @@ def _build_resumo_kpis() -> list[dict]:
     else:
         kpis.append(build_kpi_card("Selic (anualizada)", None, "% a.a."))
 
-    # CDI - DAILY rate (% a.d.)
-    if cdi.get("value") is not None:
+    # CDI - DAILY rate (% a.d.), NOT annualized (per user request)
+    cdi = last_value(code=CDI_DAILY)
+    if cdi.get("status") == "ok" and cdi.get("value") is not None:
         kpis.append(build_kpi_card(
             "CDI (diaria)", cdi["value"], "% a.d.",
             subtitle=f"ref: {cdi.get('ref_date', '')}",
@@ -135,7 +93,8 @@ def _build_resumo_kpis() -> list[dict]:
         kpis.append(build_kpi_card("CDI (diaria)", None, "% a.d."))
 
     # IPCA - latest monthly variation (%)
-    if ipca.get("value") is not None:
+    ipca = last_value(code=IPCA_MENSAL)
+    if ipca.get("status") == "ok" and ipca.get("value") is not None:
         kpis.append(build_kpi_card(
             "IPCA (mes)", ipca["value"], "%",
             subtitle=f"ref: {ipca.get('ref_date', '')}",
@@ -144,7 +103,8 @@ def _build_resumo_kpis() -> list[dict]:
         kpis.append(build_kpi_card("IPCA (mes)", None, "%"))
 
     # USD/BRL - latest ptax venda (R$)
-    if usd.get("value") is not None:
+    usd = last_value(code=USD_BRL)
+    if usd.get("status") == "ok" and usd.get("value") is not None:
         kpis.append(build_kpi_card(
             "USD/BRL (ptax)", usd["value"], "R$",
             subtitle=f"ref: {usd.get('ref_date', '')}",

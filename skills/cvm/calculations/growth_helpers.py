@@ -231,9 +231,25 @@ def growth_at(
         return None
     curr_val = float(curr_val)
 
+    # Anchor the prior search on the CURRENT period's date, not target_date.
+    # When target_date is far beyond the latest available period (e.g. calling
+    # growth_at("PETR4", "2026-08-06", 90) when the latest ITR is 2026-03-31),
+    # anchoring on target_date makes the symmetric gap window
+    # [target - lookback*mult, target - lookback/mult] potentially include the
+    # current period itself (2026-03-31 ∈ [2026-03-24, 2026-06-07]).  That would
+    # make prior == curr → growth = 0.0 (a false "no growth" reading).
+    #
+    # Anchoring on curr_p's date guarantees the prior window's upper bound
+    # (curr_date - lookback/mult) is strictly before curr_date, so the prior is
+    # always an earlier, distinct period — giving the true QoQ/YoY change.
+    curr_date = _parse_date(curr_p["date"])
     prior_p = _find_prior_within_gap(
-        periods, target, lookback_days, max_gap_multiplier)
+        periods, curr_date, lookback_days, max_gap_multiplier)
     if prior_p is None:
+        return None
+    # Defensive: prior must be strictly before current (should always hold
+    # given the anchoring above, but guard against edge-case equality).
+    if _parse_date(prior_p["date"]) >= curr_date:
         return None
     prior_val = prior_p.get("value")
     if prior_val is None or prior_val == 0:

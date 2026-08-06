@@ -167,6 +167,12 @@ class MetricSpec:
     # Centralizing here means any skill using compute_all_ratios() gets tooltips
     # for free — no per-skill maintenance.
     tooltip: str | None = None
+    # [v1.13] When True, summary()/compute_quartiles() accept NEGATIVE ratio
+    # values (growth metrics can be negative = declining; Beta can be negative
+    # = countercyclical). When False (default), values <= 0 are filtered out
+    # (preserves correct behavior for valuation ratios like P/L where negative
+    # earnings make the ratio meaningless).
+    allow_negative: bool = False
 
 
 # ── Registries ───────────────────────────────────────────────────────────────

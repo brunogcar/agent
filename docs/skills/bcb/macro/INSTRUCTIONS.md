@@ -64,4 +64,4 @@ Rules for AI agents editing the BCB macro skill. Follow these to avoid breaking 
 
 ---
 
-*Last updated: 2026-07-24 (v3.0).*
+*Last updated: 2026-08-06 (v3.1).*

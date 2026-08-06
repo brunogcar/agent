@@ -40,9 +40,13 @@ def _change(c, a):
     if c is None or a is None or a == 0: return None
     return round((c - a) / a, 4)
 
-def compute_quartiles(series, ratio_key):
+def compute_quartiles(series, ratio_key, allow_negative=False):
     if not series: return None
-    vals = sorted(s[ratio_key] for s in series if s.get(ratio_key) is not None and s[ratio_key] > 0)
+    # [v1.13] allow_negative: growth/beta metrics accept negative values
+    if allow_negative:
+        vals = sorted(s[ratio_key] for s in series if s.get(ratio_key) is not None)
+    else:
+        vals = sorted(s[ratio_key] for s in series if s.get(ratio_key) is not None and s[ratio_key] > 0)
     if not vals: return None
     n = len(vals)
     def _pct(p): return vals[min(int(round(p/100*(n-1))), n-1)]
@@ -52,7 +56,8 @@ def fetch_quartiles(company, metric_name, months=60):
     try:
         spec = resolve_metric(metric_name)
         series = spec.history_fn(company, _months_ago(max(months, 60)), datetime.now().strftime("%Y-%m-%d"))
-        return compute_quartiles(series, spec.ratio_key)
+        return compute_quartiles(series, spec.ratio_key,
+                                  allow_negative=getattr(spec, "allow_negative", False))
     except: return None
 
 def fetch_series(company, metric_name, months=60):
