@@ -86,12 +86,12 @@ def test_coe_at_capm_formula(mock_stock_ret, mock_ibov_ret):
         result = coe_at("PETR4", "2024-06-30")
 
     assert result is not None
-    # COE = 10 + beta * 5.5. Beta should be ~1.2, so COE ~= 10 + 1.2*5.5 = 16.6
+    # [v4 P2] COE now returns FRACTION (was percent). COE ~= 10% + 1.2 * 5.5% = 16.6% = 0.166
     # Allow tolerance for regression noise
-    assert 15.0 < result < 18.0
+    assert 0.15 < result < 0.18
 
 
-@patch("skills.cvm.calculations.metrics.coe.beta_at")
+@patch("skills.cvm.calculations.metrics.coe.beta_stats_at")
 @patch("skills.cvm.calculations.metrics.coe.selic_at")
 def test_coe_at_none_when_selic_missing(mock_selic, mock_beta):
     """COE should return None when Selic is unavailable."""
@@ -102,7 +102,7 @@ def test_coe_at_none_when_selic_missing(mock_selic, mock_beta):
     assert coe_at("PETR4", "2024-06-30") is None
 
 
-@patch("skills.cvm.calculations.metrics.coe.beta_at")
+@patch("skills.cvm.calculations.metrics.coe.beta_stats_at")
 @patch("skills.cvm.calculations.metrics.coe.selic_at")
 def test_coe_at_none_when_beta_missing(mock_selic, mock_beta):
     """COE should return None when Beta is unavailable."""

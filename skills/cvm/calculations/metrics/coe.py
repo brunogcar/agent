@@ -2,37 +2,35 @@
 
 COE = Rf + Beta * (Rm - Rf)
 
-where:
-  Rf = Risk-free rate (Selic annualized, from BCB SGS)
-  Beta = 5Y rolling regression vs IBOV (from beta engine)
-  Rm - Rf = Market risk premium
+[v4] REVIEW FIXES:
+  - P0: Uses beta_stats_at() (returns dict) instead of beta_at() (returns float).
+    beta_at() is now the EngineSpec-registered function returning float|None.
+  - P2: Returns FRACTION (0.166) not percent (16.6) for cross-metric consistency
+    with ROE (0.35), ROIC (0.18), etc.
 
 MARKET RISK PREMIUM DESIGN DECISION:
   The equity risk premium (Rm - Rf) for Brazil is typically 5-7% based on
   academic studies (Damodaran, IPEA). We use a configurable default of 5.5%
   (the midpoint of the commonly cited range for emerging markets).
 
-  Alternative considered: compute Rm from IBOV annual return. Rejected because:
-  1. IBOV annual return is volatile (can be -20% or +30% in a single year)
-  2. The CAPM premium is a forward-looking expectation, not a realized return
-  3. Academic literature uses long-run averages or survey-based estimates
-
-  The premium can be overridden by passing a custom value to coe_at().
+  Default ERP is in PERCENT (5.5 = 5.5%). Internally we convert to fraction
+  (0.055) for the CAPM formula, then return the result as a fraction.
 
 Engines composed: selic + beta
 
 Usage:
     from skills.cvm.calculations.metrics.coe import coe_at
-    c = coe_at("PETR4", "2024-06-30")  # -> 12.5 (percent)
+    c = coe_at("PETR4", "2024-06-30")  # -> 0.166 (fraction, = 16.6%)
 """
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.selic import selic_at, selic_periods
-from skills.cvm.calculations.engines.beta import beta_at, beta_periods
+from skills.cvm.calculations.engines.beta import beta_stats_at, beta_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
 # Default equity risk premium for Brazil (Damodaran 2024: ~5.5% for emerging markets)
+# In PERCENT (5.5 = 5.5%). Converted to fraction internally.
 DEFAULT_RISK_PREMIUM = 5.5
 
 
@@ -41,33 +39,39 @@ def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:
 
     COE = Rf + Beta * (Rm - Rf)
 
+    [v4 P2] Returns FRACTION (0.166 = 16.6%) for cross-metric consistency.
+
     Args:
         company: B3 ticker (PETR4).
         date: YYYY-MM-DD.
-        risk_premium: Market risk premium Rm - Rf in percent (default: 5.5%).
+        risk_premium: Market risk premium Rm - Rf in PERCENT (default: 5.5).
 
     Returns:
-        COE as a PERCENT (e.g., 12.5 for 12.5%), or None if:
+        COE as a FRACTION (e.g., 0.166 for 16.6%), or None if:
         - Selic not available (BCB SGS not synced)
         - Beta not available (insufficient price history)
     """
     if risk_premium is None:
         risk_premium = DEFAULT_RISK_PREMIUM
 
-    # Rf = Selic annualized (% a.a.)
-    rf = selic_at(company, date)
-    if rf is None:
+    # Rf = Selic annualized (% a.a.) -> convert to fraction
+    rf_pct = selic_at(company, date)
+    if rf_pct is None:
         return None
+    rf = rf_pct / 100.0  # Convert percent to fraction
 
-    # Beta from 5Y regression
-    beta_result = beta_at(company, date)
+    # [v4 P0] Use beta_stats_at() for full regression stats
+    beta_result = beta_stats_at(company, date)
     if beta_result is None or beta_result.get("beta") is None:
         return None
 
     beta = beta_result["beta"]
 
-    # COE = Rf + Beta * (Rm - Rf)
-    coe = rf + beta * risk_premium
+    # ERP in fraction
+    erp = risk_premium / 100.0
+
+    # COE = Rf + Beta * (Rm - Rf), result in fraction
+    coe = rf + beta * erp
     return coe
 
 
@@ -75,14 +79,16 @@ def coe_history(company: str, date_from: str, date_to: str,
                 risk_premium: float = None) -> list[dict]:
     """Compute COE time series for a date range.
 
-    COE changes when Selic changes (daily) or Beta changes (monthly).
-    Uses the union of Selic + Beta period dates.
+    [v4 P2] Returns COE as fraction (was percent).
 
     Returns:
         List of {"date", "coe", "selic", "beta"} sorted oldest-first.
+        coe + selic are fractions; beta is the regression coefficient.
     """
     if risk_premium is None:
         risk_premium = DEFAULT_RISK_PREMIUM
+
+    erp = risk_premium / 100.0
 
     selic_data = selic_periods(company)
     beta_data = beta_periods(company)
@@ -103,12 +109,13 @@ def coe_history(company: str, date_from: str, date_to: str,
     result = []
 
     for date in sorted_dates:
-        # Find most recent Selic <= date
-        selic = None
+        # Find most recent Selic <= date (selic is in percent -> convert to fraction)
+        selic_pct = None
         for s in reversed(selic_data):
             if s["date"] <= date:
-                selic = s["selic"]
+                selic_pct = s["selic"]
                 break
+        selic_frac = selic_pct / 100.0 if selic_pct is not None else None
 
         # Find most recent Beta <= date
         beta_val = None
@@ -118,10 +125,10 @@ def coe_history(company: str, date_from: str, date_to: str,
                 break
 
         coe = None
-        if selic is not None and beta_val is not None:
-            coe = selic + beta_val * risk_premium
+        if selic_frac is not None and beta_val is not None:
+            coe = selic_frac + beta_val * erp
 
-        result.append({"date": date, "coe": coe, "selic": selic, "beta": beta_val})
+        result.append({"date": date, "coe": coe, "selic": selic_frac, "beta": beta_val})
 
     return result
 

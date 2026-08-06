@@ -106,7 +106,9 @@ def fetch_series(code: int, start: str = "", end: str = "",
     if not end:
         end = now.strftime("%Y-%m-%d")
     if not start:
-        start = (now.replace(year=now.year - 5)).strftime("%Y-%m-%d")
+        # [v4 P1] Use timedelta, not .replace(year=...), to avoid Feb 29 crash
+        from datetime import timedelta
+        start = (now - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
     params = {
         "formato": "json",
         "dataInicial": datetime.strptime(start, "%Y-%m-%d").strftime("%d/%m/%Y"),

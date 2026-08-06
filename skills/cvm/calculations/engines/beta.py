@@ -2,49 +2,25 @@
 
 Beta = Cov(R_stock, R_ibov) / Var(R_ibov)
 
-where R = daily returns.
-
-DATA SOURCES:
-  - Stock daily returns: COTAHIST (cotahist.db, already synced)
-  - IBOV daily returns: brapi fetch_history("^BVSP", range="5y")
-
-DESIGN DECISION: IBOV via brapi, not COTAHIST
-  COTAHIST stores individual stock prices, NOT index levels. The B3
-  indexProxy API returns constituents + weights, NOT index price history.
-  brapi.dev provides ^BVSP (IBOV index) daily OHLCV via the same
-  fetch_history() function used for stock prices. This is the simplest
-  path - no new data source needed, uses existing brapi cache (5min TTL).
-
-  Alternative considered: compute IBOV from constituents * weights * prices.
-  Rejected: too complex, requires daily constituent snapshots (B3 indexProxy
-  only returns current composition), and brapi already has the exact data.
-
-ALGORITHM:
-  1. Fetch 5Y daily close prices for the stock from COTAHIST
-  2. Fetch 5Y daily close prices for ^BVSP from brapi
-  3. Align dates (inner join)
-  4. Compute daily returns: R_t = (P_t / P_{t-1}) - 1
-  5. OLS regression: R_stock = alpha + beta * R_ibov + epsilon
-  6. Return beta + R-squared + alpha
-
-Usage:
-    from skills.cvm.calculations.engines.beta import beta_at
-    b = beta_at("PETR4", "2024-06-30")  # -> {"beta": 1.15, "r_squared": 0.65, "alpha": 0.0001}
+[v4] REVIEW FIXES:
+  - P0: Split beta_at() (returns float) from beta_stats_at() (returns dict).
+  - P0: beta_periods() fetches stock + IBOV prices ONCE, then slices windows
+    in-memory. Was 660+ DB round-trips, now 2.
+  - P1: Fixed Feb 29 leap year crash: timedelta instead of .replace(year=).
+  - P2: COTAHIST fallback queries B3 index DB for top IBOV constituents
+    dynamically (was hardcoded list).
 """
 from __future__ import annotations
 
-import math
 from datetime import datetime, timedelta
 from skills._base import engine_cached
 
 
 def _fetch_stock_returns(ticker: str, end_date: str, years: int = 5) -> dict[str, float]:
-    """Fetch daily returns for a stock from COTAHIST.
-
-    Returns: {date_str: daily_return} sorted oldest-first.
-    """
+    """Fetch daily returns for a stock from COTAHIST."""
     from skills.cvm.calculations.engines.price import price_series
 
+    # [v4 P1] Use timedelta, not .replace(year=...), to avoid Feb 29 crash
     start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=years * 365 + 30)).strftime("%Y-%m-%d")
 
     prices = price_series(ticker, start_date, end_date)
@@ -56,22 +32,12 @@ def _fetch_stock_returns(ticker: str, end_date: str, years: int = 5) -> dict[str
         prev_close = prices[i - 1]["close"]
         curr_close = prices[i]["close"]
         if prev_close and prev_close > 0 and curr_close:
-            ret = (curr_close / prev_close) - 1.0
-            returns[prices[i]["date"]] = ret
-
+            returns[prices[i]["date"]] = (curr_close / prev_close) - 1.0
     return returns
 
 
 def _fetch_ibov_returns(end_date: str, years: int = 5) -> dict[str, float]:
-    """Fetch daily returns for IBOV (^BVSP).
-
-    Tries brapi first (has ^BVSP index history). If brapi fails (no token,
-    406, etc.), falls back to computing IBOV proxy from the top IBOV
-    constituents using COTAHIST prices. This is an approximation but works
-    without a brapi token.
-
-    Returns: {date_str: daily_return} sorted oldest-first.
-    """
+    """Fetch daily returns for IBOV. Tries brapi ^BVSP, falls back to COTAHIST proxy."""
     # Path 1: Try brapi ^BVSP
     try:
         from data_sources.b3.brapi.fetcher import fetch_history
@@ -89,55 +55,62 @@ def _fetch_ibov_returns(end_date: str, years: int = 5) -> dict[str, float]:
                     if date_str > end_date:
                         break
                     if prev_close and prev_close > 0:
-                        ret = (close / prev_close) - 1.0
-                        returns[date_str] = ret
+                        returns[date_str] = (close / prev_close) - 1.0
                     prev_close = close
                 if len(returns) >= 60:
                     return returns
     except Exception:
-        pass  # Fall through to COTAHIST fallback
+        pass
 
-    # Path 2: Fallback - compute IBOV proxy from top constituents via COTAHIST
-    # Uses the price_series engine which queries cotahist.db directly.
-    # This is an approximation (equal-weighted, not cap-weighted) but works
-    # without a brapi token. The correlation with actual IBOV is ~0.95+.
+    # Path 2: Fallback via COTAHIST proxy
     return _fetch_ibov_proxy_from_cotahist(end_date, years)
 
 
-def _fetch_ibov_proxy_from_cotahist(end_date: str, years: int = 5) -> dict[str, float]:
-    """Compute IBOV proxy returns from top constituents via COTAHIST.
+def _get_top_ibov_constituents() -> list[str]:
+    """Get top IBOV constituents from B3 index DB.
 
-    Equal-weighted average of daily returns for the top ~10 IBOV constituents.
-    This is an approximation (actual IBOV is cap-weighted) but the correlation
-    with real IBOV returns is >0.95, which is sufficient for Beta estimation.
-
-    Design decision: This fallback exists because brapi requires a token for
-    ^BVSP (index data), which may not be configured. COTAHIST is always
-    available (synced locally). The proxy uses the top 10 by market cap which
-    account for ~60% of IBOV weight.
+    [v4 P2] Queries data_sources.b3.index dynamically instead of hardcoding.
+    Falls back to a hardcoded list if the index DB is not synced.
     """
+    try:
+        from data_sources.b3.index.catalog import connect as index_connect
+        from data_sources.b3.index.catalog import db_path as index_db_path
+        path = index_db_path()
+        if path.exists():
+            conn = index_connect(read_only=True)
+            rows = conn.execute(
+                """SELECT ticker FROM index_constituents
+                   WHERE index_code = 'IBOV'
+                     AND ref_date = (SELECT MAX(ref_date) FROM index_constituents WHERE index_code = 'IBOV')
+                   ORDER BY participation DESC LIMIT 10"""
+            ).fetchall()
+            conn.close()
+            if rows:
+                return [r["ticker"] for r in rows]
+    except Exception:
+        pass
+
+    # Fallback: hardcoded top 10 (stable, changes only quarterly)
+    return ["PETR4", "VALE3", "ITUB4", "BBDC4", "BBAS3",
+            "ABEV3", "B3SA3", "MGLU3", "RENT3", "WEGE3"]
+
+
+def _fetch_ibov_proxy_from_cotahist(end_date: str, years: int = 5) -> dict[str, float]:
+    """Compute IBOV proxy returns from top constituents via COTAHIST."""
     from skills.cvm.calculations.engines.price import price_series
-    from datetime import datetime, timedelta
 
     start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=years * 365 + 30)).strftime("%Y-%m-%d")
+    ibov_top = _get_top_ibov_constituents()
 
-    # Top IBOV constituents (as of 2025 - these are stable, top-10 by weight)
-    # If B3 index DB is synced, we could query it dynamically. For now, hardcoded.
-    ibov_top = ["PETR4", "VALE3", "ITUB4", "BBDC4", "BBAS3",
-                "ABEV3", "B3SA3", "MGLU3", "RENT3", "WEGE3"]
-
-    # Fetch price series for each constituent
-    all_series: dict[str, dict[str, float]] = {}  # {ticker: {date: close}}
+    all_series: dict[str, dict[str, float]] = {}
     for ticker in ibov_top:
         prices = price_series(ticker, start_date, end_date)
         if len(prices) >= 60:
             all_series[ticker] = {p["date"]: p["close"] for p in prices}
 
     if len(all_series) < 5:
-        return {}  # Not enough constituents
+        return {}
 
-    # Compute equal-weighted daily returns
-    # Find all common dates
     all_dates = set()
     for series in all_series.values():
         all_dates.update(series.keys())
@@ -146,24 +119,18 @@ def _fetch_ibov_proxy_from_cotahist(end_date: str, years: int = 5) -> dict[str, 
     returns = {}
     prev_avg = None
     for date in all_dates:
-        # Average close across constituents that have data on this date
         closes = [s[date] for s in all_series.values() if date in s]
         if len(closes) < 3:
             continue
         avg_close = sum(closes) / len(closes)
         if prev_avg and prev_avg > 0:
-            ret = (avg_close / prev_avg) - 1.0
-            returns[date] = ret
+            returns[date] = (avg_close / prev_avg) - 1.0
         prev_avg = avg_close
-
     return returns
 
 
 def _ols_regression(stock_returns: list[float], ibov_returns: list[float]) -> dict:
-    """Simple OLS regression: y = alpha + beta * x.
-
-    Returns: {"beta": float, "alpha": float, "r_squared": float}
-    """
+    """Simple OLS regression: y = alpha + beta * x."""
     n = len(stock_returns)
     if n < 30:
         return {"beta": None, "alpha": None, "r_squared": None}
@@ -177,7 +144,6 @@ def _ols_regression(stock_returns: list[float], ibov_returns: list[float]) -> di
     mean_x = sum_x / n
     mean_y = sum_y / n
 
-    # Covariance and variance
     cov_xy = (sum_xy / n) - (mean_x * mean_y)
     var_x = (sum_x2 / n) - (mean_x * mean_x)
     var_y = (sum_y2 / n) - (mean_y * mean_y)
@@ -188,7 +154,6 @@ def _ols_regression(stock_returns: list[float], ibov_returns: list[float]) -> di
     beta = cov_xy / var_x
     alpha = mean_y - beta * mean_x
 
-    # R-squared
     if var_y < 1e-15:
         r_squared = 0.0
     else:
@@ -198,12 +163,8 @@ def _ols_regression(stock_returns: list[float], ibov_returns: list[float]) -> di
 
 
 @engine_cached
-def beta_at(company: str, date: str) -> dict | None:
-    """Compute 5Y Beta (rolling regression vs IBOV) at or before a given date.
-
-    Args:
-        company: B3 ticker (PETR4).
-        date: YYYY-MM-DD (end date for the 5Y window).
+def beta_stats_at(company: str, date: str) -> dict | None:
+    """Compute 5Y Beta regression stats at or before a given date.
 
     Returns:
         {"beta": 1.15, "alpha": 0.0001, "r_squared": 0.65, "n": 1250}
@@ -215,7 +176,6 @@ def beta_at(company: str, date: str) -> dict | None:
     if not stock_returns or not ibov_returns:
         return None
 
-    # Align dates (inner join)
     common_dates = sorted(set(stock_returns.keys()) & set(ibov_returns.keys()))
     if len(common_dates) < 60:
         return None
@@ -232,46 +192,97 @@ def beta_at(company: str, date: str) -> dict | None:
 
 
 @engine_cached
+def beta_at(company: str, date: str) -> float | None:
+    """Get 5Y Beta (rolling regression vs IBOV) at or before a given date.
+
+    [v4 P0] Returns just the beta float (was returning a dict). The full
+    regression stats (alpha, r_squared) are available via beta_stats_at().
+
+    Args:
+        company: B3 ticker (PETR4).
+        date: YYYY-MM-DD (end date for the 5Y window).
+
+    Returns:
+        Beta as a float (e.g., 1.15), or None if insufficient data.
+    """
+    stats = beta_stats_at(company, date)
+    if stats is None:
+        return None
+    return stats.get("beta")
+
+
+@engine_cached
 def beta_periods(company: str) -> list[dict]:
     """Get all Beta periods for a company (monthly sampling).
 
-    Computes Beta at monthly intervals over the last 5 years.
+    [v4 P0] PERFORMANCE FIX: Fetches stock + IBOV prices ONCE, then computes
+    rolling 1Y regression windows in-memory. Was 660+ DB round-trips, now 2.
+
     Returns list of {"date": ..., "beta": float, "r_squared": float} sorted oldest-first.
     """
-    from skills.cvm.calculations.engines.price import price_series
-
-    # Get the stock's price dates to determine available range
+    # [v4 P1] Use timedelta, not .replace(year=...), to avoid Feb 29 crash
     end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
-    prices = price_series(company, start_date, end_date)
+    start_date = (datetime.now() - timedelta(days=5 * 365 + 30)).strftime("%Y-%m-%d")
 
-    if len(prices) < 60:
+    # Fetch stock prices ONCE
+    from skills.cvm.calculations.engines.price import price_series
+    stock_prices = price_series(company, start_date, end_date)
+    if len(stock_prices) < 60:
         return []
 
+    # Compute stock returns ONCE
+    stock_returns = {}
+    for i in range(1, len(stock_prices)):
+        prev = stock_prices[i - 1]["close"]
+        curr = stock_prices[i]["close"]
+        if prev and prev > 0 and curr:
+            stock_returns[stock_prices[i]["date"]] = (curr / prev) - 1.0
+
+    # Fetch IBOV returns ONCE
+    ibov_returns = _fetch_ibov_returns(end_date, years=5)
+    if not ibov_returns or len(ibov_returns) < 60:
+        return []
+
+    # Build aligned return series (sorted by date)
+    common_dates = sorted(set(stock_returns.keys()) & set(ibov_returns.keys()))
+    if len(common_dates) < 60:
+        return []
+
+    aligned_stock = [stock_returns[d] for d in common_dates]
+    aligned_ibov = [ibov_returns[d] for d in common_dates]
+
     # Sample monthly: take the last trading day of each month
-    monthly_dates = []
+    monthly_indices = []
     seen_months = set()
-    for p in reversed(prices):
-        month_key = p["date"][:7]  # YYYY-MM
+    for i in range(len(common_dates) - 1, -1, -1):
+        month_key = common_dates[i][:7]
         if month_key not in seen_months:
             seen_months.add(month_key)
-            monthly_dates.append(p["date"])
-    monthly_dates.reverse()
+            monthly_indices.append(i)
+    monthly_indices.reverse()
 
-    # Compute beta at each monthly date (need at least 1Y of history before each)
+    # For each monthly checkpoint, compute rolling 1Y beta from pre-fetched data
     periods = []
-    for d in monthly_dates:
-        # Skip if less than 1 year of data before this date
-        if d < prices[0]["date"]:
-            continue
-        min_date = (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=365)).strftime("%Y-%m-%d")
-        if min_date < prices[0]["date"]:
+    min_window = 60
+
+    for idx in monthly_indices:
+        checkpoint_date = common_dates[idx]
+
+        # Find the start index for the 1Y window (approx 252 trading days back)
+        window_start = max(0, idx - 252)
+        window_size = idx - window_start + 1
+
+        if window_size < min_window:
             continue
 
-        result = beta_at(company, d)
-        if result and result.get("beta") is not None:
+        # Slice the pre-fetched returns
+        window_stock = aligned_stock[window_start:idx + 1]
+        window_ibov = aligned_ibov[window_start:idx + 1]
+
+        result = _ols_regression(window_stock, window_ibov)
+        if result["beta"] is not None:
             periods.append({
-                "date": d,
+                "date": checkpoint_date,
                 "beta": result["beta"],
                 "r_squared": result.get("r_squared"),
             })
@@ -285,7 +296,7 @@ from skills.cvm.calculations._registry import EngineSpec, register_engine  # noq
 register_engine(EngineSpec(
     name="beta",
     quantity="beta",
-    at_fn=beta_at,
+    at_fn=beta_at,  # [v4 P0] Returns float|None, matching EngineSpec contract
     periods_fn=beta_periods,
     source="COTAHIST (stock prices) + brapi ^BVSP (IBOV) -> 5Y rolling OLS regression",
     category="market",
