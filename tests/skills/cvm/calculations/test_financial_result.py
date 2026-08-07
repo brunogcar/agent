@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import financial_result as fr_engine
+from skills.cvm.calculations.engines.dre import financial_result as fr_engine
 
 
 # -- Mock data ---------------------------------------------------------------

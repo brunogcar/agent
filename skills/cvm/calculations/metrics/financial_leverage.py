@@ -26,8 +26,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.total_assets import total_assets_at, total_assets_periods
-from skills.cvm.calculations.engines.pl import pl_at, pl_periods
+from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, total_assets_periods
+from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

@@ -60,13 +60,13 @@ from __future__ import annotations
 # skills.cvm.calculations._registry auto-discovery (globs engines/*.py +
 # metrics/*.py). Tests set PLANNER_MODEL=test at conftest import time, so
 # this is safe in test environments.
-from skills.cvm.calculations.engines.ebit import ebit_at
-from skills.cvm.calculations.engines.da import da_at
-from skills.cvm.calculations.engines.revenue import revenue_at
-from skills.cvm.calculations.engines.earnings import ttm_earnings_at
-from skills.cvm.calculations.engines.operating_cf import operating_cf_at
-from skills.cvm.calculations.engines.investing_cf import investing_cf_at
-from skills.cvm.calculations.engines.financing_cf import financing_cf_at
+from skills.cvm.calculations.engines.dre.ebit import ebit_at
+from skills.cvm.calculations.engines.dfc.da import da_at
+from skills.cvm.calculations.engines.dre.revenue import revenue_at
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at
+from skills.cvm.calculations.engines.dfc.financing_cf import financing_cf_at
 
 
 # ── Key account codes for summary metrics ────────────────────────────────────

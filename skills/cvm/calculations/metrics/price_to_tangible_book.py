@@ -46,8 +46,8 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at, price_series
-from skills.cvm.calculations.engines.pl import pl_at, pl_periods
-from skills.cvm.calculations.engines.intangibles import intangibles_at, intangibles_periods
+from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
+from skills.cvm.calculations.engines.bpa.intangibles import intangibles_at, intangibles_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 

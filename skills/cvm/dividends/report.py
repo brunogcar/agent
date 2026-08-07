@@ -22,7 +22,7 @@ from tools.report_ops.formats import apply_fmt
 # These are used by build_overview_kpis to fetch Div Yield + Payout Ratio.
 from skills.cvm.calculations.engines.dividends import dividends_at
 from skills.cvm.calculations.engines.price import price_at
-from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
 from skills.cvm.calculations.engines.shares import shares_at
 
 

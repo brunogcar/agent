@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import inventory as inventory_engine
+from skills.cvm.calculations.engines.bpa import inventory as inventory_engine
 
 
 # -- Mock data ---------------------------------------------------------------

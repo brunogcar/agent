@@ -213,7 +213,7 @@ _auto_discover()  # run at import time
 ```
 
 ```python
-# calculations/engines/da.py — self-registration at module level (dfc category)
+# calculations/engines/dfc/da.py — self-registration at module level (dfc category)
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 
 register_engine(EngineSpec(

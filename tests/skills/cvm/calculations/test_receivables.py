@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import receivables as receivables_engine
+from skills.cvm.calculations.engines.bpa import receivables as receivables_engine
 
 
 # -- Mock data ---------------------------------------------------------------

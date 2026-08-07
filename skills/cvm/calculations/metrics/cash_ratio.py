@@ -24,8 +24,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.cash import cash_at, cash_periods
-from skills.cvm.calculations.engines.current_liabilities import (
+from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
+from skills.cvm.calculations.engines.bpp.current_liabilities import (
     current_liabilities_at,
     current_liabilities_periods,
 )

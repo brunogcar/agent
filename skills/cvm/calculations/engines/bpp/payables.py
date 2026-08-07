@@ -1,42 +1,43 @@
-"""engines/intangibles.py -- Intangível (intangibles) snapshot engine.
+"""engines/bpp/payables.py -- Fornecedores (suppliers payables) snapshot engine.
 
-Gets consolidated Intangível at any historical date from DFP + ITR.
+Gets consolidated Fornecedores at any historical date from DFP + ITR.
 
-Intangibles is a SNAPSHOT (point-in-time balance), not a flow. So this
-engine is simpler than earnings.py -- no TTM derivation. We just find the
-most recent BPA snapshot with data_fim_exerc <= date.
+Payables (Fornecedores) is a SNAPSHOT (point-in-time balance), not a flow.
+So this engine is simpler than earnings.py -- no TTM derivation. We just
+find the most recent BPP snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPA (Balanço Patrimonial Ativo), codigo 1.02.04 = "Intangível"
-  - Net intangible assets (goodwill, software, trademarks, patents, etc.)
-    net of amortization, within Ativo Não Circulante (codigo 1.02).
+DFP BPP (Balanço Patrimonial Passivo), codigo 2.01.01 = "Fornecedores"
+  - The suppliers/trade payables line within Passivo Circulante (codigo
+    2.01) -- obligations to suppliers for goods/services received, due
+    within 12 months.
   - Annual snapshot at Dec 31 (meses=12)
-ITR BPA, same codigo 1.02.04
+ITR BPP, same codigo 2.01.01
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
-Together: ~4 snapshots per year. Between snapshots, intangibles is
-constant.
+Together: ~4 snapshots per year. Between snapshots, payables is constant.
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual)
 ITR: 2011-present (quarterly)
-Intangibles snapshots computable from: 2010 onwards.
+Payables snapshots computable from: 2010 onwards.
 
-NOTE: codigo 1.02.04 is Intangível Líquido (net of amortization). This is
-the line item added to the BPA in 2010 when CVM adopted IFRS — goodwill
-from acquisitions lives here. Companies with no M&A history often have a
-zero or absent line; the engine returns None in that case.
+NOTE: codigo 2.01.01 is Fornecedores Nacionais + Estrangeiros (the short-
+term portion only, within Passivo Circulante). Long-term supplier
+obligations live under codigo 2.02.01 -- this engine covers the current
+(short-term) portion, which is what working-capital metrics
+(accounts-payable-turnover, DPO) typically use.
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.intangibles import (
-        intangibles_at, intangibles_periods,
+    from skills.cvm.calculations.engines.bpp.payables import (
+        payables_at, payables_periods,
     )
-    v = intangibles_at("PETR4", "2024-06-30")        # -> 60e9 (BRL)
-    ps = intangibles_periods("PETR4")                # -> [{date, intangibles}, ...]
+    v = payables_at("PETR4", "2024-06-30")        # -> 30e9 (BRL)
+    ps = payables_periods("PETR4")                # -> [{date, payables}, ...]
 """
 
 from __future__ import annotations
@@ -47,14 +48,14 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Intangível Consolidado (BPA line within Ativo Não Circulante)
-INTANGIVEL_CODE = "1.02.04"
+# CVM account code for Fornecedores Consolidado (BPP line within Passivo Circulante)
+FORNECEDORES_CODE = "2.01.01"
 
 
-def _get_dfp_intangibles(company: str) -> dict[str, dict]:
-    """Get all annual intangibles snapshots from DFP (codigo 1.02.04, meses=12, BPA).
+def _get_dfp_payables(company: str) -> dict[str, dict]:
+    """Get all annual payables snapshots from DFP (codigo 2.01.01, meses=12, BPP).
 
-    Returns: {"2024-12-31": {"value": 60e9, "year": 2024}, ...}
+    Returns: {"2024-12-31": {"value": 30e9, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_dfp(read_only=True)
@@ -68,7 +69,7 @@ def _get_dfp_intangibles(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{INTANGIVEL_CODE}'
+                 AND c.codigo = '{FORNECEDORES_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -87,10 +88,10 @@ def _get_dfp_intangibles(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_intangibles(company: str) -> dict[str, dict]:
-    """Get all quarterly intangibles snapshots from ITR (codigo 1.02.04, meses 3/6/9, BPA).
+def _get_itr_payables(company: str) -> dict[str, dict]:
+    """Get all quarterly payables snapshots from ITR (codigo 2.01.01, meses 3/6/9, BPP).
 
-    Returns: {"2024-06-30": {"value": 58e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 28e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_itr(read_only=True)
@@ -104,7 +105,7 @@ def _get_itr_intangibles(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{INTANGIVEL_CODE}'
+                 AND c.codigo = '{FORNECEDORES_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -125,23 +126,23 @@ def _get_itr_intangibles(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def intangibles_at(company: str, date: str) -> float | None:
-    """Get Intangível closest to date (most recent snapshot <= date).
+def payables_at(company: str, date: str) -> float | None:
+    """Get Fornecedores (payables) closest to date (most recent snapshot <= date).
 
-    Intangibles is a point-in-time balance, so we just find the most
-    recent BPA snapshot at or before the requested date. No TTM
-    derivation needed.
+    Payables is a point-in-time balance, so we just find the most recent
+    BPP snapshot at or before the requested date. No TTM derivation
+    needed.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        Intangibles (net book value) in BRL, or None if no snapshot
-        available at or before date.
+        Payables in BRL, or None if no snapshot available at or before
+        date.
     """
-    dfp = _get_dfp_intangibles(company)
-    itr = _get_itr_intangibles(company)
+    dfp = _get_dfp_payables(company)
+    itr = _get_itr_payables(company)
 
     # Merge all snapshots (DFP + ITR), find most recent <= date
     all_dates = sorted(
@@ -158,17 +159,17 @@ def intangibles_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def intangibles_periods(company: str) -> list[dict]:
-    """Get all intangibles snapshot periods for a company.
+def payables_periods(company: str) -> list[dict]:
+    """Get all payables snapshot periods for a company.
 
-    Returns: [{"date": "2024-06-30", "intangibles": 58e9}, ...]
-    Sorted oldest-first. Each entry is a point where intangibles changed
-    (new BPA snapshot filed). Deduplicated by date.
+    Returns: [{"date": "2024-06-30", "payables": 28e9}, ...]
+    Sorted oldest-first. Each entry is a point where payables changed
+    (new BPP snapshot filed). Deduplicated by date.
 
-    Useful for building step-function intangibles overlays on price charts.
+    Useful for building step-function payables overlays on price charts.
     """
-    dfp = _get_dfp_intangibles(company)
-    itr = _get_itr_intangibles(company)
+    dfp = _get_dfp_payables(company)
+    itr = _get_itr_payables(company)
 
     # Merge and dedupe by date (ITR takes precedence if same date -- same value anyway)
     by_date: dict[str, float] = {}
@@ -177,17 +178,17 @@ def intangibles_periods(company: str) -> list[dict]:
     for d, v in itr.items():
         by_date[d] = v["value"]
 
-    return [{"date": d, "intangibles": by_date[d]} for d in sorted(by_date.keys())]
+    return [{"date": d, "payables": by_date[d]} for d in sorted(by_date.keys())]
 
 
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="intangibles",
-    quantity="intangibles",
-    at_fn=intangibles_at,
-    periods_fn=intangibles_periods,
-    source="DFP + ITR BPA codigo 1.02.04 (Intangível snapshot)",
-    category="bpa",
+    name="payables",
+    quantity="payables",
+    at_fn=payables_at,
+    periods_fn=payables_periods,
+    source="DFP + ITR BPP codigo 2.01.01 (Fornecedores snapshot)",
+    category="bpp",
 ))

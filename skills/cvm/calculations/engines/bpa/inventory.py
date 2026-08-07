@@ -1,39 +1,41 @@
-"""engines/ppe.py -- Imobilizado (Property, Plant & Equipment) snapshot engine.
+"""engines/bpa/inventory.py -- Estoques (inventory) snapshot engine.
 
-Gets consolidated Imobilizado (PP&E) at any historical date from DFP + ITR.
+Gets consolidated Estoques at any historical date from DFP + ITR.
 
-PP&E is a SNAPSHOT (point-in-time balance), not a flow. So this engine is
-simpler than earnings.py -- no TTM derivation. We just find the most
-recent BPA snapshot with data_fim_exerc <= date.
+Inventory is a SNAPSHOT (point-in-time balance), not a flow. So this
+engine is simpler than earnings.py -- no TTM derivation. We just find the
+most recent BPA snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPA (Balanço Patrimonial Ativo), codigo 1.02.03 = "Imobilizado"
-  - Property, Plant & Equipment (net of accumulated depreciation), within
-    Ativo Não Circulante (codigo 1.02).
+DFP BPA (Balanço Patrimonial Ativo), codigo 1.01.04 = "Estoques"
+  - The inventory line within Ativo Circulante (raw materials + work in
+    progress + finished goods).
   - Annual snapshot at Dec 31 (meses=12)
-ITR BPA, same codigo 1.02.03
+ITR BPA, same codigo 1.01.04
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
-Together: ~4 snapshots per year. Between snapshots, PP&E is constant.
+Together: ~4 snapshots per year. Between snapshots, inventory is constant.
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual)
 ITR: 2011-present (quarterly)
-PP&E snapshots computable from: 2010 onwards.
+Inventory snapshots computable from: 2010 onwards.
 
-NOTE: codigo 1.02.03 is Imobilizado Líquido (net of accumulated
-depreciation + impairments). For gross PP&E, a separate engine querying
-codigo 1.02.03.01 (Imobilizado em Operação - custo) would be needed --
-this is the net book value, which is what most balance-sheet ratios use.
+NOTE: codigo 1.01.04 is the consolidated Estoques line WITHIN Ativo
+Circulante (codigo 1.01). Service companies / financial-sector filers
+typically have no inventory (line is absent) -- the engine returns None
+in that case, which is the correct behavior.
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.ppe import ppe_at, ppe_periods
-    v = ppe_at("PETR4", "2024-06-30")        # -> 400e9 (BRL)
-    ps = ppe_periods("PETR4")                # -> [{date, ppe}, ...]
+    from skills.cvm.calculations.engines.bpa.inventory import (
+        inventory_at, inventory_periods,
+    )
+    v = inventory_at("PETR4", "2024-06-30")        # -> 25e9 (BRL)
+    ps = inventory_periods("PETR4")                # -> [{date, inventory}, ...]
 """
 
 from __future__ import annotations
@@ -44,14 +46,14 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Imobilizado Consolidado (BPA line within Ativo Não Circulante)
-IMOBILIZADO_CODE = "1.02.03"
+# CVM account code for Estoques Consolidado (BPA line within Ativo Circulante)
+ESTOQUES_CODE = "1.01.04"
 
 
-def _get_dfp_ppe(company: str) -> dict[str, dict]:
-    """Get all annual PP&E snapshots from DFP (codigo 1.02.03, meses=12, BPA).
+def _get_dfp_inventory(company: str) -> dict[str, dict]:
+    """Get all annual inventory snapshots from DFP (codigo 1.01.04, meses=12, BPA).
 
-    Returns: {"2024-12-31": {"value": 400e9, "year": 2024}, ...}
+    Returns: {"2024-12-31": {"value": 25e9, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_dfp(read_only=True)
@@ -65,7 +67,7 @@ def _get_dfp_ppe(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{IMOBILIZADO_CODE}'
+                 AND c.codigo = '{ESTOQUES_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -84,10 +86,10 @@ def _get_dfp_ppe(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_ppe(company: str) -> dict[str, dict]:
-    """Get all quarterly PP&E snapshots from ITR (codigo 1.02.03, meses 3/6/9, BPA).
+def _get_itr_inventory(company: str) -> dict[str, dict]:
+    """Get all quarterly inventory snapshots from ITR (codigo 1.01.04, meses 3/6/9, BPA).
 
-    Returns: {"2024-06-30": {"value": 395e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 23e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_itr(read_only=True)
@@ -101,7 +103,7 @@ def _get_itr_ppe(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{IMOBILIZADO_CODE}'
+                 AND c.codigo = '{ESTOQUES_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -122,22 +124,22 @@ def _get_itr_ppe(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def ppe_at(company: str, date: str) -> float | None:
-    """Get Imobilizado (PP&E) closest to date (most recent snapshot <= date).
+def inventory_at(company: str, date: str) -> float | None:
+    """Get Estoques closest to date (most recent snapshot <= date).
 
-    PP&E is a point-in-time balance, so we just find the most recent BPA
-    snapshot at or before the requested date. No TTM derivation needed.
+    Inventory is a point-in-time balance, so we just find the most
+    recent BPA snapshot at or before the requested date. No TTM derivation
+    needed.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        PP&E (net book value) in BRL, or None if no snapshot available at
-        or before date.
+        Inventory in BRL, or None if no snapshot available at or before date.
     """
-    dfp = _get_dfp_ppe(company)
-    itr = _get_itr_ppe(company)
+    dfp = _get_dfp_inventory(company)
+    itr = _get_itr_inventory(company)
 
     # Merge all snapshots (DFP + ITR), find most recent <= date
     all_dates = sorted(
@@ -154,17 +156,17 @@ def ppe_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def ppe_periods(company: str) -> list[dict]:
-    """Get all PP&E snapshot periods for a company.
+def inventory_periods(company: str) -> list[dict]:
+    """Get all inventory snapshot periods for a company.
 
-    Returns: [{"date": "2024-06-30", "ppe": 395e9}, ...]
-    Sorted oldest-first. Each entry is a point where PP&E changed (new BPA
-    snapshot filed). Deduplicated by date.
+    Returns: [{"date": "2024-06-30", "inventory": 23e9}, ...]
+    Sorted oldest-first. Each entry is a point where inventory changed
+    (new BPA snapshot filed). Deduplicated by date.
 
-    Useful for building step-function PP&E overlays on price charts.
+    Useful for building step-function inventory overlays on price charts.
     """
-    dfp = _get_dfp_ppe(company)
-    itr = _get_itr_ppe(company)
+    dfp = _get_dfp_inventory(company)
+    itr = _get_itr_inventory(company)
 
     # Merge and dedupe by date (ITR takes precedence if same date -- same value anyway)
     by_date: dict[str, float] = {}
@@ -173,17 +175,17 @@ def ppe_periods(company: str) -> list[dict]:
     for d, v in itr.items():
         by_date[d] = v["value"]
 
-    return [{"date": d, "ppe": by_date[d]} for d in sorted(by_date.keys())]
+    return [{"date": d, "inventory": by_date[d]} for d in sorted(by_date.keys())]
 
 
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="ppe",
-    quantity="ppe",
-    at_fn=ppe_at,
-    periods_fn=ppe_periods,
-    source="DFP + ITR BPA codigo 1.02.03 (Imobilizado snapshot)",
+    name="inventory",
+    quantity="inventory",
+    at_fn=inventory_at,
+    periods_fn=inventory_periods,
+    source="DFP + ITR BPA codigo 1.01.04 (Estoques snapshot)",
     category="bpa",
 ))

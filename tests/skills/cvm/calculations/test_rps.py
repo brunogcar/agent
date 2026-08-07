@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 from skills.cvm.calculations.metrics import rps as rps_metric
-from skills.cvm.calculations.engines import revenue as revenue_engine
+from skills.cvm.calculations.engines.dre import revenue as revenue_engine
 
 
 # -- Mock data ---------------------------------------------------------------

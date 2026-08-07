@@ -10,32 +10,32 @@
 | `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ + `compute_all_ratios()` (wraps loop in `engine_cache_scope()`) |
 | `skills/cvm/calculations/engines/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/calculations/engines/price.py` | COTAHIST daily close: `price_at()`, `price_series()` |
-| `skills/cvm/calculations/engines/earnings.py` | TTM earnings: `ttm_earnings_at()`, `ttm_earnings_periods()` |
+| `skills/cvm/calculations/engines/dre/earnings.py` | TTM earnings: `ttm_earnings_at()`, `ttm_earnings_periods()` |
 | `skills/cvm/calculations/engines/shares.py` | FRE shares (+ investsite fallback): `shares_at()`, `shares_periods()` |
-| `skills/cvm/calculations/engines/pl.py` | PL snapshot (BPP 2.03): `pl_at()`, `pl_periods()` |
+| `skills/cvm/calculations/engines/bpp/pl.py` | PL snapshot (BPP 2.03): `pl_at()`, `pl_periods()` |
 | `skills/cvm/calculations/engines/dividends.py` | DPA TTM (B3 cash_dividends): `dividends_at()`, `dividends_periods()` |
-| `skills/cvm/calculations/engines/revenue.py` | TTM revenue (DRE 3.01): `revenue_at()`, `revenue_periods()` |
-| `skills/cvm/calculations/engines/gross_profit.py` | TTM gross profit (DRE 3.03): `gross_profit_at()`, `gross_profit_periods()` |
-| `skills/cvm/calculations/engines/ebit.py` | TTM EBIT (DRE 3.05): `ebit_at()`, `ebit_periods()` |
-| `skills/cvm/calculations/engines/ebt.py` | TTM EBT (DRE 3.07, with description-search fallback): `ebt_at()`, `ebt_periods()` |
-| `skills/cvm/calculations/engines/tax.py` | TTM income tax (DRE 3.08): `tax_at()`, `tax_periods()` |
-| `skills/cvm/calculations/engines/cogs.py` | TTM COGS (DRE 3.02): `cogs_at()`, `cogs_periods()` |
-| `skills/cvm/calculations/engines/financial_result.py` | TTM financial result (DRE 3.06, net): `financial_result_at()`, `financial_result_periods()` |
-| `skills/cvm/calculations/engines/current_assets.py` | Current assets snapshot (BPA 1.01): `current_assets_at()`, `current_assets_periods()` |
-| `skills/cvm/calculations/engines/cash.py` | Cash snapshot (BPA 1.01.01): `cash_at()`, `cash_periods()` |
-| `skills/cvm/calculations/engines/total_assets.py` | Total assets snapshot (BPA 1): `total_assets_at()`, `total_assets_periods()` |
-| `skills/cvm/calculations/engines/receivables.py` | Receivables snapshot (BPA 1.01.03): `receivables_at()`, `receivables_periods()` |
-| `skills/cvm/calculations/engines/inventory.py` | Inventory snapshot (BPA 1.01.04): `inventory_at()`, `inventory_periods()` |
-| `skills/cvm/calculations/engines/ppe.py` | PP&E snapshot (BPA 1.02.03): `ppe_at()`, `ppe_periods()` |
-| `skills/cvm/calculations/engines/intangibles.py` | Intangibles snapshot (BPA 1.02.04): `intangibles_at()`, `intangibles_periods()` |
-| `skills/cvm/calculations/engines/debt.py` | Debt snapshot (BPP 2.01.04+2.02.01, sum): `debt_at()`, `debt_periods()` |
-| `skills/cvm/calculations/engines/current_liabilities.py` | Current liabilities snapshot (BPP 2.01): `current_liabilities_at()`, `current_liabilities_periods()` |
-| `skills/cvm/calculations/engines/payables.py` | Payables snapshot (BPP 2.01.01): `payables_at()`, `payables_periods()` |
-| `skills/cvm/calculations/engines/da.py` | D&A TTM (DFC description search): `da_at()`, `da_periods()` |
-| `skills/cvm/calculations/engines/capex.py` | CapEx TTM (DFC description search): `capex_at()`, `capex_periods()` |
-| `skills/cvm/calculations/engines/operating_cf.py` | TTM operating cash flow (DFC 6.01): `operating_cf_at()`, `operating_cf_periods()` |
-| `skills/cvm/calculations/engines/investing_cf.py` | TTM investing cash flow (DFC 6.02): `investing_cf_at()`, `investing_cf_periods()` |
-| `skills/cvm/calculations/engines/financing_cf.py` | TTM financing cash flow (DFC 6.03): `financing_cf_at()`, `financing_cf_periods()` |
+| `skills/cvm/calculations/engines/dre/revenue.py` | TTM revenue (DRE 3.01): `revenue_at()`, `revenue_periods()` |
+| `skills/cvm/calculations/engines/dre/gross_profit.py` | TTM gross profit (DRE 3.03): `gross_profit_at()`, `gross_profit_periods()` |
+| `skills/cvm/calculations/engines/dre/ebit.py` | TTM EBIT (DRE 3.05): `ebit_at()`, `ebit_periods()` |
+| `skills/cvm/calculations/engines/dre/ebt.py` | TTM EBT (DRE 3.07, with description-search fallback): `ebt_at()`, `ebt_periods()` |
+| `skills/cvm/calculations/engines/dre/tax.py` | TTM income tax (DRE 3.08): `tax_at()`, `tax_periods()` |
+| `skills/cvm/calculations/engines/dre/cogs.py` | TTM COGS (DRE 3.02): `cogs_at()`, `cogs_periods()` |
+| `skills/cvm/calculations/engines/dre/financial_result.py` | TTM financial result (DRE 3.06, net): `financial_result_at()`, `financial_result_periods()` |
+| `skills/cvm/calculations/engines/bpa/current_assets.py` | Current assets snapshot (BPA 1.01): `current_assets_at()`, `current_assets_periods()` |
+| `skills/cvm/calculations/engines/bpa/cash.py` | Cash snapshot (BPA 1.01.01): `cash_at()`, `cash_periods()` |
+| `skills/cvm/calculations/engines/bpa/total_assets.py` | Total assets snapshot (BPA 1): `total_assets_at()`, `total_assets_periods()` |
+| `skills/cvm/calculations/engines/bpa/receivables.py` | Receivables snapshot (BPA 1.01.03): `receivables_at()`, `receivables_periods()` |
+| `skills/cvm/calculations/engines/bpa/inventory.py` | Inventory snapshot (BPA 1.01.04): `inventory_at()`, `inventory_periods()` |
+| `skills/cvm/calculations/engines/bpa/ppe.py` | PP&E snapshot (BPA 1.02.03): `ppe_at()`, `ppe_periods()` |
+| `skills/cvm/calculations/engines/bpa/intangibles.py` | Intangibles snapshot (BPA 1.02.04): `intangibles_at()`, `intangibles_periods()` |
+| `skills/cvm/calculations/engines/bpp/debt.py` | Debt snapshot (BPP 2.01.04+2.02.01, sum): `debt_at()`, `debt_periods()` |
+| `skills/cvm/calculations/engines/bpp/current_liabilities.py` | Current liabilities snapshot (BPP 2.01): `current_liabilities_at()`, `current_liabilities_periods()` |
+| `skills/cvm/calculations/engines/bpp/payables.py` | Payables snapshot (BPP 2.01.01): `payables_at()`, `payables_periods()` |
+| `skills/cvm/calculations/engines/dfc/da.py` | D&A TTM (DFC description search): `da_at()`, `da_periods()` |
+| `skills/cvm/calculations/engines/dfc/capex.py` | CapEx TTM (DFC description search): `capex_at()`, `capex_periods()` |
+| `skills/cvm/calculations/engines/dfc/operating_cf.py` | TTM operating cash flow (DFC 6.01): `operating_cf_at()`, `operating_cf_periods()` |
+| `skills/cvm/calculations/engines/dfc/investing_cf.py` | TTM investing cash flow (DFC 6.02): `investing_cf_at()`, `investing_cf_periods()` |
+| `skills/cvm/calculations/engines/dfc/financing_cf.py` | TTM financing cash flow (DFC 6.03): `financing_cf_at()`, `financing_cf_periods()` |
 | `skills/cvm/calculations/engines/interest_paid.py` | TTM interest paid (DVA grupo='DVA' codigo 8.3): `interest_paid_at()`, `interest_paid_periods()` |
 | `skills/cvm/calculations/engines/total_tax.py` | TTM total tax burden (DVA grupo='DVA' codigo 8.2): `total_tax_at()`, `total_tax_periods()` |
 | `skills/cvm/calculations/engines/value_added.py` | TTM total value added (DVA grupo='DVA' codigo 7): `value_added_at()`, `value_added_periods()` |
@@ -253,4 +253,4 @@ scope and doesn't install a new one).
 
 ---
 
-*Last updated: 2026-08-07 (v1.16)) — force sync guard). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-08-07 (v1.17))) — force sync guard). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

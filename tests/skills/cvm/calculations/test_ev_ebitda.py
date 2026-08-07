@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 from skills.cvm.calculations.metrics import ev_ebitda as ev_metric
-from skills.cvm.calculations.engines import cash as cash_engine
-from skills.cvm.calculations.engines import da as da_engine
+from skills.cvm.calculations.engines.bpa import cash as cash_engine
+from skills.cvm.calculations.engines.dfc import da as da_engine
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -277,7 +277,7 @@ class TestRoicCashUpdate:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return 50e9
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: 50e9)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: 50e9)
         # effective_tax_rate = 15e9 / 90e9 = 1/6
         # NOPAT = 70e9 × (1 - 1/6) = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 - 50e9 = 400e9 (v1.9: cash subtracted)
@@ -298,7 +298,7 @@ class TestRoicCashUpdate:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
         # Mock cash_at to return None
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         # effective_tax_rate = 15e9 / 90e9 = 1/6
         # NOPAT = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 = 450e9 (fallback, no cash)

@@ -8,7 +8,7 @@ This library is the **pattern template** for central auto-discovery + registry a
 
 ## ❌ NEVER DO
 
-1. **Never import a metric from an engine** — Engines are below metrics in the dependency graph. A metric imports engines; never the reverse. Violating this creates circular dependencies. Example: `engines/da.py` must NOT import `from skills.cvm.calculations.metrics.ebitda_margin import ebitda_margin_at`.
+1. **Never import a metric from an engine** — Engines are below metrics in the dependency graph. A metric imports engines; never the reverse. Violating this creates circular dependencies. Example: `engines/dfc/da.py` must NOT import `from skills.cvm.calculations.metrics.ebitda_margin import ebitda_margin_at`.
 2. **Never query CVM/B3 directly from a metric** — That's the engine's job. Metrics compose engines; they don't fetch data. If you need a new data source, add an ENGINE first, then import it from the metric. Example: `metrics/ev_ebitda.py` must NOT call `connect_dfp()` directly — it imports `ebit_at()` and `da_at()`.
 3. **Never name an engine after a ratio** — `engines/vpa.py` is WRONG. VPA is a ratio (metric), not a raw quantity. The engine produces PL (a raw quantity); the metric computes VPA from it. See naming convention below.
 4. **Never name a metric after a raw quantity** — `metrics/pl.py` is WRONG. PL is a raw quantity (engine). The metric computes a ratio from PL. Use the per-share quantity name: `metrics/vpa.py` (VPA = PL/shares).
@@ -160,7 +160,7 @@ calculations/_registry.py  (CENTRAL: EngineSpec + MetricSpec + auto-discovery + 
 ### v1.2 — Engine/metric name confusion (from v1.1)
 > - **What happened:** The original stub was named `metrics/pvpa.py`, but when implementing it, the instinct was to create `engines/vpa.py`. This mixes the layers — VPA is a ratio (metric), not a raw quantity. The raw quantity is PL (Patrimônio Líquido).
 > - **Why it matters:** If engines and metrics share names, the dependency graph becomes ambiguous. Future contributors won't know whether `vpa` refers to the engine or the metric. The backtest skill reuses engines — it needs to import `pl_at()`, not `vpa_at()` (which is a ratio requiring price + shares too).
-> - **Fix:** Engine produces PL → `engines/pl.py` with `pl_at()` / `pl_periods()`. Metric computes P/VPA → `metrics/vpa.py` with `vpa_at()` / `pvpa_at()` / `vpa_history()`. Clear separation. Documented the naming convention.
+> - **Fix:** Engine produces PL → `engines/bpp/pl.py` with `pl_at()` / `pl_periods()`. Metric computes P/VPA → `metrics/vpa.py` with `vpa_at()` / `pvpa_at()` / `vpa_history()`. Clear separation. Documented the naming convention.
 
 ---
 

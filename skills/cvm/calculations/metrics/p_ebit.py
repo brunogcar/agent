@@ -32,7 +32,7 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at, price_series
-from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
+from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 

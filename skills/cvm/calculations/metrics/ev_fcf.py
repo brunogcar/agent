@@ -44,10 +44,10 @@ from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
-from skills.cvm.calculations.engines.debt import debt_at, debt_periods
-from skills.cvm.calculations.engines.cash import cash_at, cash_periods
-from skills.cvm.calculations.engines.operating_cf import operating_cf_periods
-from skills.cvm.calculations.engines.investing_cf import investing_cf_periods
+from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
+from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_periods
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

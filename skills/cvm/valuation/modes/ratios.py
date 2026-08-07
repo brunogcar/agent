@@ -36,16 +36,16 @@ from core.br_validator import validate_ticker
 # Each engine fetches ONE raw quantity at any date; we compose them in ratios().
 # Engines are imported at module top (not lazy) -- they are now the core
 # dependency of this skill.
-from skills.cvm.calculations.engines.earnings import ttm_earnings_at
-from skills.cvm.calculations.engines.revenue import revenue_at
-from skills.cvm.calculations.engines.ebit import ebit_at
-from skills.cvm.calculations.engines.pl import pl_at
-from skills.cvm.calculations.engines.debt import debt_at
-from skills.cvm.calculations.engines.cash import cash_at
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
+from skills.cvm.calculations.engines.dre.revenue import revenue_at
+from skills.cvm.calculations.engines.dre.ebit import ebit_at
+from skills.cvm.calculations.engines.bpp.pl import pl_at
+from skills.cvm.calculations.engines.bpp.debt import debt_at
+from skills.cvm.calculations.engines.bpa.cash import cash_at
 from skills.cvm.calculations.engines.shares import shares_at
-from skills.cvm.calculations.engines.da import da_at
-from skills.cvm.calculations.engines.operating_cf import operating_cf_at
-from skills.cvm.calculations.engines.investing_cf import investing_cf_at
+from skills.cvm.calculations.engines.dfc.da import da_at
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at
 from skills.cvm.calculations.engines.dividends import dividends_at
 
 # [v1.5] Single entry point for all calculations-backed metrics.

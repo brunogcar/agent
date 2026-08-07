@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import cogs as cogs_engine
+from skills.cvm.calculations.engines.dre import cogs as cogs_engine
 
 
 # -- Mock data ---------------------------------------------------------------

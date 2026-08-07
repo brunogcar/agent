@@ -1,4 +1,4 @@
-"""engines/da.py -- TTM (trailing twelve months) Depreciação e Amortização (D&A) engine.
+"""engines/dfc/da.py -- TTM (trailing twelve months) Depreciação e Amortização (D&A) engine.
 
 This is the most complex historical engine because D&A does not have a single
 standardized CVM account code in the DFC. Different filers use different
@@ -54,7 +54,7 @@ fallbacks — so it does NOT depend on 6.01.04. Real DFP row counts confirm:
 This engine (da_at) is unaffected by the v1.11 trim — it never used 6.01.04.
 
 Usage:
-    from skills.cvm.calculations.engines.da import da_at
+    from skills.cvm.calculations.engines.dfc.da import da_at
     d = da_at("PETR4", "2024-06-30")  # -> 15_000_000_000.0
 """
 

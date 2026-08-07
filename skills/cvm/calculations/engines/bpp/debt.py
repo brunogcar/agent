@@ -1,4 +1,4 @@
-"""engines/debt.py -- Total debt (Empréstimos e Financiamentos) snapshot engine.
+"""engines/bpp/debt.py -- Total debt (Empréstimos e Financiamentos) snapshot engine.
 
 Gets consolidated total debt at any historical date from DFP + ITR.
 Debt is the sum of two BPP accounts:
@@ -27,7 +27,7 @@ Debt snapshots computable from: 2010 onwards.
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.debt import debt_at, debt_periods
+    from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
     d = debt_at("PETR4", "2024-06-30")        # -> 250e9 (BRL)
     ps = debt_periods("PETR4")                # -> [{date, debt}, ...]
 """

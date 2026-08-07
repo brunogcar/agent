@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import payables as payables_engine
+from skills.cvm.calculations.engines.bpp import payables as payables_engine
 
 
 # -- Mock data ---------------------------------------------------------------

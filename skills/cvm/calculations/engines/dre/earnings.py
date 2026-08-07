@@ -1,22 +1,21 @@
-"""engines/revenue.py -- TTM (trailing twelve months) net revenue engine.
+"""engines/dre/earnings.py — TTM (trailing twelve months) earnings engine.
 
-Mirrors engines/earnings.py with one change: CVM account code 3.01
-(Receita Liquida) instead of 3.11 (Lucro Liquido). The TTM derivation
-algorithm is identical.
+The core innovation of the historical skill. Derives TTM earnings at any
+historical date by combining DFP annual + ITR quarterly cumulative data.
 
 DESCRIPTION-SEARCH FALLBACK
 ---------------------------
-For commercial/industrial filers, codigo 3.01 is "Receita de Venda de Bens
-e/ou Serviços" (net revenue). For financial-sector filers (banks/insurers),
-however, the DRE uses a different template that does NOT have codigo 3.01 --
-instead, the top revenue line is "Receitas de Intermediação Financeira"
-(codigo 3.* with a different position). The reference implementation
-(rapinav2) handles this with a wildcard + mandatory description match:
-codigo '3.*' + descricao 'Receita Liquida' (or 'Receitas de Intermediação
-Financeira' for banks).  We mirror that approach as a FALLBACK: the fast
-path tries the exact 3.01 code (works for the vast majority of filers and
-is O(1) on the codigo index), and only if that returns nothing do we fall
-back to the description search within the 3.* DRE range.
+For commercial/industrial filers, codigo 3.11 is "Lucro Líquido do Período".
+For financial-sector filers (banks/insurers), however, the DRE template
+uses a different bottom-line label like "Lucro do Período" or "Resultado
+Líquido Consolidado", and may shift the position to a different 3.* slot.
+The reference implementation (rapinav2) handles this with a wildcard +
+mandatory description match: codigo '3.*' + descricao LIKE '%Lucro
+Liquido%' (or '%Lucro do Periodo%' / '%Resultado Líquido Consolidado%').
+We mirror that approach as a FALLBACK: the fast path tries the exact 3.11
+code (works for the vast majority of filers and is O(1) on the codigo
+index), and only if that returns nothing do we fall back to the
+description search within the 3.* DRE range.
 
 TTM ALGORITHM
 -------------
@@ -25,25 +24,27 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 revenue
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 revenue
-  DFP 2023 (meses=12)   = full year 2023 revenue
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 earnings
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 earnings
+  DFP 2023 (meses=12)   = full year 2023 earnings
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM revenue computable from: ~2012 onwards (need 2 years of ITR)
+TTM earnings computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.revenue import revenue_at
-    r = revenue_at("PETR4", "2024-06-30")  # -> 280000000000.0
+    from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
+    e = ttm_earnings_at("PETR4", "2024-06-30")  # → 134000000000.0
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from core.br_validator import parse_escala
 from data_sources.cvm._db import connect_dfp, connect_itr
@@ -51,45 +52,46 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for net revenue (Receita Liquida). Standard position in
-# the DRE for commercial/industrial filers. Banks/insurers use a different
-# DRE template (their top-line revenue is "Receitas de Intermediação
-# Financeira"), so we fall back to a description-based search within the
-# 3.* DRE range when 3.01 returns nothing.
-RECEITA_LIQUIDA_CODE = "3.01"
+# CVM account code for net income (lucro líquido). Standard position in the
+# DRE for commercial/industrial filers. Banks/insurers use a different DRE
+# template (their bottom-line may be labeled "Lucro do Período" or
+# "Resultado Líquido Consolidado" at a different 3.* position), so we fall
+# back to a description-based search within the 3.* DRE range when 3.11
+# returns nothing.
+LUCRO_LIQUIDO_CODE = "3.11"
 
 # Description stems used for the fallback search.  We match on partial
 # stems (not the full string) so minor wording variations across filers
-# are caught.  Banks use "Receitas de Intermediação Financeira" instead
-# of "Receita Liquida".
-_RECEITA_DESC_STEMS = (
-    "Receita Liquida",
-    "Receitas de Intermediacao Financeira",
-    "Receita de Intermediacao Financeira",
+# are caught.  Banks/insurers may use "Lucro do Periodo" or
+# "Resultado Líquido Consolidado" instead of "Lucro Liquido".
+_EARNINGS_DESC_STEMS = (
+    "Lucro Liquido",
+    "Lucro do Periodo",
+    "Resultado Liquido Consolidado",
 )
 
 
-def _get_dfp_revenue(company: str) -> dict[str, dict]:
-    """Get all annual net revenue from DFP (codigo 3.01, meses=12).
+def _get_dfp_earnings(company: str) -> dict[str, dict]:
+    """Get all annual earnings from DFP (codigo 3.11, meses=12).
 
     Falls back to a description-based search within the DRE (codigo LIKE '3.%')
-    if the exact 3.01 code returns nothing -- handles banks/insurers whose
-    DRE structure uses "Receitas de Intermediação Financeira" instead of
-    "Receita Liquida".
+    if the exact 3.11 code returns nothing -- handles banks/insurers whose
+    DRE structure uses "Lucro do Período" or "Resultado Líquido Consolidado"
+    instead of "Lucro Líquido".
 
-    Returns: {"2024": {"value": 280e9, "date": "2024-12-31"}, ...}
+    Returns: {"2024": {"value": 134e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied).
     """
-    result = _get_dfp_revenue_by_code(company, RECEITA_LIQUIDA_CODE)
+    result = _get_dfp_earnings_by_code(company, LUCRO_LIQUIDO_CODE)
     if result:
         return result
-    # Fallback: description search within DRE (3.*) for banks/insurers where
-    # 3.01 doesn't land on the revenue line.
-    return _get_dfp_revenue_by_desc(company)
+    # Fallback: description search within DRE (3.*) for filers where 3.11
+    # doesn't land on net income (banks/insurers, non-standard DRE filers).
+    return _get_dfp_earnings_by_desc(company)
 
 
-def _get_dfp_revenue_by_code(company: str, code: str) -> dict[str, dict]:
-    """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
+def _get_dfp_earnings_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.11). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -120,10 +122,10 @@ def _get_dfp_revenue_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
-    """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems.
+def _get_dfp_earnings_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by earnings description stems.
 
-    Used when the exact 3.01 code doesn't match (banks/insurers, non-standard
+    Used when the exact 3.11 code doesn't match (banks/insurers, non-standard
     DRE filers). Mirrors rapinav2's wildcard + description-match approach.
     """
     conn = connect_dfp(read_only=True)
@@ -133,7 +135,7 @@ def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         desc_clause = " OR ".join(
-            f"c.descricao LIKE '%{stem}%'" for stem in _RECEITA_DESC_STEMS
+            f"c.descricao LIKE '%{stem}%'" for stem in _EARNINGS_DESC_STEMS
         )
         rows = conn.execute(
             f"""SELECT c.valor, c.escala, c.data_fim_exerc, e.ano, c.descricao
@@ -165,23 +167,23 @@ def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_revenue(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative net revenue from ITR (codigo 3.01, meses 3/6/9).
+def _get_itr_earnings(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative earnings from ITR (codigo 3.11, meses 3/6/9).
 
     Falls back to a description-based search within the DRE (codigo LIKE '3.%')
-    if the exact 3.01 code returns nothing -- mirrors the DFP fallback.
+    if the exact 3.11 code returns nothing -- mirrors the DFP fallback.
 
-    Returns: {"2024-06-30": {"value": 140e9, "meses": 6, "year": 2024}, ...}
-    Values are in BRL (escala applied). Cumulative (Jan->period end).
+    Returns: {"2024-06-30": {"value": 67e9, "meses": 6, "year": 2024}, ...}
+    Values are in BRL (escala applied). Cumulative (Jan→period end).
     """
-    result = _get_itr_revenue_by_code(company, RECEITA_LIQUIDA_CODE)
+    result = _get_itr_earnings_by_code(company, LUCRO_LIQUIDO_CODE)
     if result:
         return result
-    return _get_itr_revenue_by_desc(company)
+    return _get_itr_earnings_by_desc(company)
 
 
-def _get_itr_revenue_by_code(company: str, code: str) -> dict[str, dict]:
-    """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
+def _get_itr_earnings_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.11). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -213,8 +215,8 @@ def _get_itr_revenue_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
-    """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems."""
+def _get_itr_earnings_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by earnings description stems."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -222,7 +224,7 @@ def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         desc_clause = " OR ".join(
-            f"c.descricao LIKE '%{stem}%'" for stem in _RECEITA_DESC_STEMS
+            f"c.descricao LIKE '%{stem}%'" for stem in _EARNINGS_DESC_STEMS
         )
         rows = conn.execute(
             f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, e.ano, c.descricao
@@ -255,18 +257,18 @@ def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def revenue_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months net revenue ending at or before date.
+def ttm_earnings_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months earnings ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM net revenue in BRL, or None if data not available.
+        TTM earnings in BRL, or None if data not available.
     """
-    dfp = _get_dfp_revenue(company)
-    itr = _get_itr_revenue(company)
+    dfp = _get_dfp_earnings(company)
+    itr = _get_itr_earnings(company)
 
     if not itr and not dfp:
         return None
@@ -274,7 +276,7 @@ def revenue_at(company: str, date: str) -> float | None:
     # Find the most recent ITR period <= date
     itr_dates = sorted([d for d in itr.keys() if d <= date], reverse=True)
     if not itr_dates:
-        # No ITR data before this date -- try DFP annual
+        # No ITR data before this date — try DFP annual
         dfp_years = sorted([y for y in dfp.keys() if dfp[y]["date"] <= date], reverse=True)
         if dfp_years:
             return dfp[dfp_years[0]]["value"]
@@ -301,26 +303,26 @@ def revenue_at(company: str, date: str) -> float | None:
         ttm = prior_dfp["value"] - itr[prior_itr_date]["value"] + current["value"]
         return ttm
     elif prior_dfp and not prior_itr_date:
-        # No ITR for prior year same period -- use DFP directly as approximation
+        # No ITR for prior year same period — use DFP directly as approximation
         return prior_dfp["value"]
     elif current and not prior_dfp:
-        # No DFP for prior year -- can't derive TTM
+        # No DFP for prior year — can't derive TTM
         return None
     else:
         return None
 
 
 @engine_cached
-def revenue_periods(company: str) -> list[dict]:
-    """Get all TTM revenue periods for a company.
+def ttm_earnings_periods(company: str) -> list[dict]:
+    """Get all TTM earnings periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_rev": value} sorted oldest-first.
-    Each entry represents a point where TTM revenue changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm": value} sorted oldest-first.
+    Each entry represents a point where TTM earnings changed (new ITR/DFP filed).
 
-    Useful for building step-function revenue overlays on price charts.
+    Useful for building step-function earnings overlays on price charts.
     """
-    dfp = _get_dfp_revenue(company)
-    itr = _get_itr_revenue(company)
+    dfp = _get_dfp_earnings(company)
+    itr = _get_itr_earnings(company)
 
     if not itr and not dfp:
         return []
@@ -330,18 +332,14 @@ def revenue_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = revenue_at(company, itr_date)
+        ttm = ttm_earnings_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_rev": ttm})
+            periods.append({"date": itr_date, "ttm": ttm})
 
-    # [new commit] Include ALL DFP annual dates, not just those before the
-    # first ITR. Brazilian companies file ITR for Q1/Q2/Q3 but DFP for the
-    # full year (Q4) — they don't file ITR Q4. So recent DFP annual dates
-    # (e.g., 2025-12-31) were missing from the periods list, causing 3M
-    # growth to return None (prior period not found in the 90-day window).
-    # The dedup step below handles overlaps (ITR Q4 = DFP annual for same year).
+    # [new commit] Include ALL DFP annual dates (same fix as revenue.py).
+    # See revenue.py for full explanation of the 3M growth bug this fixes.
     for year, data in sorted(dfp.items()):
-        periods.append({"date": data["date"], "ttm_rev": data["value"]})
+        periods.append({"date": data["date"], "ttm": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -355,14 +353,15 @@ def revenue_periods(company: str) -> list[dict]:
     return result
 
 
-# -- Register with the engine registry ---------------------------------------
+# ── Register with the engine registry ────────────────────────────────────────
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
+
 register_engine(EngineSpec(
-    name="revenue",
-    quantity="ttm_rev",
-    at_fn=revenue_at,
-    periods_fn=revenue_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.01 -- Receita Liquida TTM (with description-search fallback for non-standard filers)",
+    name="earnings",
+    quantity="ttm",
+    at_fn=ttm_earnings_at,
+    periods_fn=ttm_earnings_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.11 — TTM derivation (with description-search fallback for non-standard filers)",
     category="dre",
 ))

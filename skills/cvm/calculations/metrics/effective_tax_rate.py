@@ -24,8 +24,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.tax import tax_at, tax_periods
-from skills.cvm.calculations.engines.ebt import ebt_at, ebt_periods
+from skills.cvm.calculations.engines.dre.tax import tax_at, tax_periods
+from skills.cvm.calculations.engines.dre.ebt import ebt_at, ebt_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

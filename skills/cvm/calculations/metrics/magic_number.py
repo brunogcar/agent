@@ -28,12 +28,12 @@ from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at
 from skills.cvm.calculations.engines.shares import shares_at
-from skills.cvm.calculations.engines.debt import debt_at
-from skills.cvm.calculations.engines.cash import cash_at
-from skills.cvm.calculations.engines.ebit import ebit_at
-from skills.cvm.calculations.engines.da import da_at
-from skills.cvm.calculations.engines.pl import pl_at
-from skills.cvm.calculations.engines.tax import tax_at
+from skills.cvm.calculations.engines.bpp.debt import debt_at
+from skills.cvm.calculations.engines.bpa.cash import cash_at
+from skills.cvm.calculations.engines.dre.ebit import ebit_at
+from skills.cvm.calculations.engines.dfc.da import da_at
+from skills.cvm.calculations.engines.bpp.pl import pl_at
+from skills.cvm.calculations.engines.dre.tax import tax_at
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
@@ -102,12 +102,12 @@ def magic_number_history(company: str, date_from: str, date_to: str) -> list[dic
     """Magic Number time series — union of all 8 engine period dates."""
     from skills.cvm.calculations.engines.price import price_series
     from skills.cvm.calculations.engines.shares import shares_periods
-    from skills.cvm.calculations.engines.debt import debt_periods
-    from skills.cvm.calculations.engines.cash import cash_periods
-    from skills.cvm.calculations.engines.ebit import ebit_periods
-    from skills.cvm.calculations.engines.da import da_periods
-    from skills.cvm.calculations.engines.pl import pl_periods
-    from skills.cvm.calculations.engines.tax import tax_periods
+    from skills.cvm.calculations.engines.bpp.debt import debt_periods
+    from skills.cvm.calculations.engines.bpa.cash import cash_periods
+    from skills.cvm.calculations.engines.dre.ebit import ebit_periods
+    from skills.cvm.calculations.engines.dfc.da import da_periods
+    from skills.cvm.calculations.engines.bpp.pl import pl_periods
+    from skills.cvm.calculations.engines.dre.tax import tax_periods
 
     all_dates = set()
     for periods in [shares_periods(company), debt_periods(company),

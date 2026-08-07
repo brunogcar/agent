@@ -27,8 +27,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.operating_cf import operating_cf_at, operating_cf_periods
-from skills.cvm.calculations.engines.revenue import revenue_at, revenue_periods
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
+from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

@@ -1,27 +1,8 @@
-"""engines/financial_result.py -- TTM (trailing twelve months) Financial Result engine.
+"""engines/dre/gross_profit.py -- TTM (trailing twelve months) gross profit engine.
 
-Mirrors engines/revenue.py with one change: CVM account code 3.06
-(Resultado Financeiro) instead of 3.01 (Receita Liquida). The TTM
-derivation algorithm is identical.
-
-NOTE: Financial Result is the NET figure = financial income - financial
-expenses. It can be positive (net financial income) or negative (net
-financial expense). This engine returns the RAW value from the database
--- callers handle the sign as needed.
-
-For Interest Coverage Ratio, a more granular interest-expense engine would
-be needed (the DRE splits Resultado Financeiro into Receitas Financeiras
-+ Despesas Financeiras at codes 3.06.01 + 3.06.02). That split is a
-ROADMAP item -- this engine returns only the net figure.
-
-NO DESCRIPTION-SEARCH FALLBACK
-------------------------------
-Unlike revenue.py (which needs a description-search fallback for banks/
-insurers whose top-line revenue is "Receitas de Intermediação Financeira"
-instead of "Receita Liquida"), codigo 3.06 (Resultado Financeiro) is a
-standard DRE line that exists uniformly across commercial, industrial,
-AND financial filers. So this engine uses a single direct codigo-3.06
-query path -- no fallback.
+Mirrors engines/dre/revenue.py with one change: CVM account code 3.03
+(Lucro Bruto) instead of 3.01 (Receita Liquida). The TTM derivation
+algorithm is identical.
 
 TTM ALGORITHM
 -------------
@@ -30,22 +11,22 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 financial result
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 financial result
-  DFP 2023 (meses=12)   = full year 2023 financial result
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 gross profit
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 gross profit
+  DFP 2023 (meses=12)   = full year 2023 gross profit
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM financial result computable from: ~2012 onwards (need 2 years of ITR)
+TTM gross profit computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.financial_result import financial_result_at
-    r = financial_result_at("PETR4", "2024-06-30")  # -> -5e9 (net expense)
+    from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_at
+    r = gross_profit_at("PETR4", "2024-06-30")  # -> 280000000000.0
 """
 
 from __future__ import annotations
@@ -56,16 +37,15 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Resultado Financeiro (Financial Result = financial
-# income - financial expenses, net figure).
-RESULTADO_FINANCEIRO_CODE = "3.06"
+# CVM account code for gross profit (Lucro Bruto)
+LUCRO_BRUTO_CODE = "3.03"
 
 
-def _get_dfp_financial_result(company: str) -> dict[str, dict]:
-    """Get all annual financial result from DFP (codigo 3.06, meses=12).
+def _get_dfp_gross_profit(company: str) -> dict[str, dict]:
+    """Get all annual gross profit from DFP (codigo 3.03, meses=12).
 
-    Returns: {"2024": {"value": -5e9, "date": "2024-12-31"}, ...}
-    Values are in BRL (escala applied). Sign preserved (net: + income, - expense).
+    Returns: {"2024": {"value": 280e9, "date": "2024-12-31"}, ...}
+    Values are in BRL (escala applied).
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -78,7 +58,7 @@ def _get_dfp_financial_result(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{RESULTADO_FINANCEIRO_CODE}'
+                 AND c.codigo = '{LUCRO_BRUTO_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -97,12 +77,11 @@ def _get_dfp_financial_result(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_financial_result(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative financial result from ITR (codigo 3.06, meses 3/6/9).
+def _get_itr_gross_profit(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative gross profit from ITR (codigo 3.03, meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": -2.5e9, "meses": 6, "year": 2024}, ...}
-    Values are in BRL (escala applied). Cumulative (Jan -> period end).
-    Sign preserved (net: + income, - expense).
+    Returns: {"2024-06-30": {"value": 140e9, "meses": 6, "year": 2024}, ...}
+    Values are in BRL (escala applied). Cumulative (Jan->period end).
     """
     conn = connect_itr(read_only=True)
     try:
@@ -115,7 +94,7 @@ def _get_itr_financial_result(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{RESULTADO_FINANCEIRO_CODE}'
+                 AND c.codigo = '{LUCRO_BRUTO_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -136,19 +115,18 @@ def _get_itr_financial_result(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def financial_result_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months financial result ending at or before date.
+def gross_profit_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months gross profit ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM financial result in BRL (net: + income, - expense; sign
-        preserved from DRE), or None if data not available.
+        TTM gross profit in BRL, or None if data not available.
     """
-    dfp = _get_dfp_financial_result(company)
-    itr = _get_itr_financial_result(company)
+    dfp = _get_dfp_gross_profit(company)
+    itr = _get_itr_gross_profit(company)
 
     if not itr and not dfp:
         return None
@@ -193,17 +171,16 @@ def financial_result_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def financial_result_periods(company: str) -> list[dict]:
-    """Get all TTM financial result periods for a company.
+def gross_profit_periods(company: str) -> list[dict]:
+    """Get all TTM gross profit periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_financial_result": value}
-    sorted oldest-first. Each entry represents a point where TTM financial
-    result changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm_gp": value} sorted oldest-first.
+    Each entry represents a point where TTM gross profit changed (new ITR/DFP filed).
 
-    Useful for building step-function financial-result overlays on price charts.
+    Useful for building step-function gross profit overlays on price charts.
     """
-    dfp = _get_dfp_financial_result(company)
-    itr = _get_itr_financial_result(company)
+    dfp = _get_dfp_gross_profit(company)
+    itr = _get_itr_gross_profit(company)
 
     if not itr and not dfp:
         return []
@@ -213,14 +190,13 @@ def financial_result_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = financial_result_at(company, itr_date)
+        ttm = gross_profit_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_financial_result": ttm})
+            periods.append({"date": itr_date, "ttm_gp": ttm})
 
-    # Also add DFP-only periods (for years before ITR data)
+    # [new commit] Include ALL DFP annual dates (same fix as revenue.py).
     for year, data in sorted(dfp.items()):
-        if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_financial_result": data["value"]})
+        periods.append({"date": data["date"], "ttm_gp": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -238,10 +214,10 @@ def financial_result_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="financial_result",
-    quantity="ttm_financial_result",
-    at_fn=financial_result_at,
-    periods_fn=financial_result_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.06 -- Resultado Financeiro TTM",
+    name="gross_profit",
+    quantity="ttm_gp",
+    at_fn=gross_profit_at,
+    periods_fn=gross_profit_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.03 -- Lucro Bruto TTM",
     category="dre",
 ))

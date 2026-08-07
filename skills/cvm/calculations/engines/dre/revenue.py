@@ -1,33 +1,22 @@
-"""engines/ebt.py -- TTM (trailing twelve months) EBT (Earnings Before Tax) engine.
+"""engines/dre/revenue.py -- TTM (trailing twelve months) net revenue engine.
 
-Mirrors engines/ebit.py with one change: CVM account code 3.07
-(EBT / Resultado Antes dos Tributos) instead of 3.05 (EBIT). The TTM
-derivation algorithm is identical, AND the description-search fallback
-pattern is identical (banks/insurers use a different DRE template that
-doesn't follow the commercial 3.01-3.11 chart, so we fall back to a
-`codigo LIKE '3.%' AND descricao LIKE '%<stem>%'` search when the exact
-3.07 code returns nothing).
+Mirrors engines/dre/earnings.py with one change: CVM account code 3.01
+(Receita Liquida) instead of 3.11 (Lucro Liquido). The TTM derivation
+algorithm is identical.
 
-EBT (Resultado Antes dos Tributos / Earnings Before Tax) = pre-tax income.
-This is the bottom-line income BEFORE income tax (IR + CSLL) is deducted,
-i.e., the line on the DRE immediately above codigo 3.08 (Imposto de Renda
-e Contribuição Social). Used for:
-  - Effective tax rate = tax_expense / EBT (see metrics/effective_tax_rate.py)
-  - Correct NOPAT formula: NOPAT = EBIT × (1 - effective_tax_rate), where
-    the effective tax rate must be computed on EBT (not on EBIT, since tax
-    is levied on pre-tax income, which includes financial results that EBIT
-    excludes).
-  - ROIC's tax-rate component (see metrics/roic.py v2.0 update).
-
-For banks/insurers, the DRE position for "Resultado Antes dos Tributos"
-may shift to a different codigo under the 3.* range (these filers use a
-completely different DRE template that doesn't follow the commercial
-3.01-3.11 chart). The reference implementation (rapinav2) handles this
-with a wildcard + mandatory description match: codigo '3.*' + descricao
-'Resultado Antes dos Tributos'.  We mirror that approach as a FALLBACK:
-the fast path tries the exact 3.07 code (works for the vast majority of
-filers and is O(1) on the codigo index), and only if that returns nothing
-do we fall back to the description search within the 3.* DRE range.
+DESCRIPTION-SEARCH FALLBACK
+---------------------------
+For commercial/industrial filers, codigo 3.01 is "Receita de Venda de Bens
+e/ou Serviços" (net revenue). For financial-sector filers (banks/insurers),
+however, the DRE uses a different template that does NOT have codigo 3.01 --
+instead, the top revenue line is "Receitas de Intermediação Financeira"
+(codigo 3.* with a different position). The reference implementation
+(rapinav2) handles this with a wildcard + mandatory description match:
+codigo '3.*' + descricao 'Receita Liquida' (or 'Receitas de Intermediação
+Financeira' for banks).  We mirror that approach as a FALLBACK: the fast
+path tries the exact 3.01 code (works for the vast majority of filers and
+is O(1) on the codigo index), and only if that returns nothing do we fall
+back to the description search within the 3.* DRE range.
 
 TTM ALGORITHM
 -------------
@@ -36,22 +25,22 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 EBT
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 EBT
-  DFP 2023 (meses=12)   = full year 2023 EBT
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 revenue
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 revenue
+  DFP 2023 (meses=12)   = full year 2023 revenue
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM EBT computable from: ~2012 onwards (need 2 years of ITR)
+TTM revenue computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.ebt import ebt_at
-    r = ebt_at("PETR4", "2024-06-30")  # -> 90000000000.0
+    from skills.cvm.calculations.engines.dre.revenue import revenue_at
+    r = revenue_at("PETR4", "2024-06-30")  # -> 280000000000.0
 """
 
 from __future__ import annotations
@@ -62,51 +51,45 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for EBT (Resultado Antes dos Tributos).
-# This is the standard position in the DRE for commercial/industrial filers
-# (immediately above the 3.08 IR+CSLL tax line). However, EBT's position can
-# shift for filers with extra revenue/expense line breakdowns, and
-# financial-sector filers (banks/insurers) use a completely different DRE
-# template that doesn't follow the commercial 3.01-3.11 chart at all.
-#
-# The reference implementation (rapinav2) handles this with a wildcard +
-# mandatory description match: codigo '3.*' + descricao 'Resultado Antes
-# dos Tributos'.  We mirror that approach as a FALLBACK: the fast path
-# tries the exact 3.07 code (works for the vast majority of filers and
-# is O(1) on the codigo index), and only if that returns nothing do we
-# fall back to the description search within the 3.* DRE range.
-EBT_CODE = "3.07"
+# CVM account code for net revenue (Receita Liquida). Standard position in
+# the DRE for commercial/industrial filers. Banks/insurers use a different
+# DRE template (their top-line revenue is "Receitas de Intermediação
+# Financeira"), so we fall back to a description-based search within the
+# 3.* DRE range when 3.01 returns nothing.
+RECEITA_LIQUIDA_CODE = "3.01"
 
-# Description stems used for the fallback search.  We match on a partial
-# stem (not the full string) so minor wording variations across filers
-# are caught (e.g. "dos Tributos" vs "De Tributos" casing/spacing).
-_EBT_DESC_STEMS = (
-    "Resultado Antes dos Tributos",
-    "Resultado Antes De Tributos",
+# Description stems used for the fallback search.  We match on partial
+# stems (not the full string) so minor wording variations across filers
+# are caught.  Banks use "Receitas de Intermediação Financeira" instead
+# of "Receita Liquida".
+_RECEITA_DESC_STEMS = (
+    "Receita Liquida",
+    "Receitas de Intermediacao Financeira",
+    "Receita de Intermediacao Financeira",
 )
 
 
-def _get_dfp_ebt(company: str) -> dict[str, dict]:
-    """Get all annual EBT from DFP (codigo 3.07, meses=12).
+def _get_dfp_revenue(company: str) -> dict[str, dict]:
+    """Get all annual net revenue from DFP (codigo 3.01, meses=12).
 
     Falls back to a description-based search within the DRE (codigo LIKE '3.%')
-    if the exact 3.07 code returns nothing -- handles filers whose DRE
-    structure shifts EBT to a different position (e.g. banks, insurers, or
-    filers with extra line-item breakdowns).
+    if the exact 3.01 code returns nothing -- handles banks/insurers whose
+    DRE structure uses "Receitas de Intermediação Financeira" instead of
+    "Receita Liquida".
 
-    Returns: {"2024": {"value": 90e9, "date": "2024-12-31"}, ...}
+    Returns: {"2024": {"value": 280e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied).
     """
-    result = _get_dfp_ebt_by_code(company, EBT_CODE)
+    result = _get_dfp_revenue_by_code(company, RECEITA_LIQUIDA_CODE)
     if result:
         return result
-    # Fallback: description search within DRE (3.*) for filers where 3.07
-    # doesn't land on EBT (non-standard DRE structure).
-    return _get_dfp_ebt_by_desc(company)
+    # Fallback: description search within DRE (3.*) for banks/insurers where
+    # 3.01 doesn't land on the revenue line.
+    return _get_dfp_revenue_by_desc(company)
 
 
-def _get_dfp_ebt_by_code(company: str, code: str) -> dict[str, dict]:
-    """Fast path: exact codigo match (3.07). Returns {} if nothing found."""
+def _get_dfp_revenue_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -137,11 +120,11 @@ def _get_dfp_ebt_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_dfp_ebt_by_desc(company: str) -> dict[str, dict]:
-    """Fallback: search DRE (codigo LIKE '3.%') by EBT description stems.
+def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems.
 
-    Used when the exact 3.07 code doesn't match (non-standard DRE filers).
-    Mirrors rapinav2's wildcard + description-match approach.
+    Used when the exact 3.01 code doesn't match (banks/insurers, non-standard
+    DRE filers). Mirrors rapinav2's wildcard + description-match approach.
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -150,7 +133,7 @@ def _get_dfp_ebt_by_desc(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         desc_clause = " OR ".join(
-            f"c.descricao LIKE '%{stem}%'" for stem in _EBT_DESC_STEMS
+            f"c.descricao LIKE '%{stem}%'" for stem in _RECEITA_DESC_STEMS
         )
         rows = conn.execute(
             f"""SELECT c.valor, c.escala, c.data_fim_exerc, e.ano, c.descricao
@@ -182,23 +165,23 @@ def _get_dfp_ebt_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_ebt(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative EBT from ITR (codigo 3.07, meses 3/6/9).
+def _get_itr_revenue(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative net revenue from ITR (codigo 3.01, meses 3/6/9).
 
     Falls back to a description-based search within the DRE (codigo LIKE '3.%')
-    if the exact 3.07 code returns nothing -- mirrors the DFP fallback.
+    if the exact 3.01 code returns nothing -- mirrors the DFP fallback.
 
-    Returns: {"2024-06-30": {"value": 45e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 140e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan->period end).
     """
-    result = _get_itr_ebt_by_code(company, EBT_CODE)
+    result = _get_itr_revenue_by_code(company, RECEITA_LIQUIDA_CODE)
     if result:
         return result
-    return _get_itr_ebt_by_desc(company)
+    return _get_itr_revenue_by_desc(company)
 
 
-def _get_itr_ebt_by_code(company: str, code: str) -> dict[str, dict]:
-    """Fast path: exact codigo match (3.07). Returns {} if nothing found."""
+def _get_itr_revenue_by_code(company: str, code: str) -> dict[str, dict]:
+    """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -230,8 +213,8 @@ def _get_itr_ebt_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_ebt_by_desc(company: str) -> dict[str, dict]:
-    """Fallback: search DRE (codigo LIKE '3.%') by EBT description stems."""
+def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
+    """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems."""
     conn = connect_itr(read_only=True)
     try:
         empresa_ids, _ = resolve_company(conn, company)
@@ -239,7 +222,7 @@ def _get_itr_ebt_by_desc(company: str) -> dict[str, dict]:
             return {}
         emp_ph = ",".join("?" * len(empresa_ids))
         desc_clause = " OR ".join(
-            f"c.descricao LIKE '%{stem}%'" for stem in _EBT_DESC_STEMS
+            f"c.descricao LIKE '%{stem}%'" for stem in _RECEITA_DESC_STEMS
         )
         rows = conn.execute(
             f"""SELECT c.valor, c.escala, c.data_fim_exerc, c.meses, e.ano, c.descricao
@@ -272,18 +255,18 @@ def _get_itr_ebt_by_desc(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def ebt_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months EBT ending at or before date.
+def revenue_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months net revenue ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM EBT in BRL, or None if data not available.
+        TTM net revenue in BRL, or None if data not available.
     """
-    dfp = _get_dfp_ebt(company)
-    itr = _get_itr_ebt(company)
+    dfp = _get_dfp_revenue(company)
+    itr = _get_itr_revenue(company)
 
     if not itr and not dfp:
         return None
@@ -328,16 +311,16 @@ def ebt_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def ebt_periods(company: str) -> list[dict]:
-    """Get all TTM EBT periods for a company.
+def revenue_periods(company: str) -> list[dict]:
+    """Get all TTM revenue periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_ebt": value} sorted oldest-first.
-    Each entry represents a point where TTM EBT changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm_rev": value} sorted oldest-first.
+    Each entry represents a point where TTM revenue changed (new ITR/DFP filed).
 
-    Useful for building step-function EBT overlays on price charts.
+    Useful for building step-function revenue overlays on price charts.
     """
-    dfp = _get_dfp_ebt(company)
-    itr = _get_itr_ebt(company)
+    dfp = _get_dfp_revenue(company)
+    itr = _get_itr_revenue(company)
 
     if not itr and not dfp:
         return []
@@ -347,14 +330,18 @@ def ebt_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = ebt_at(company, itr_date)
+        ttm = revenue_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_ebt": ttm})
+            periods.append({"date": itr_date, "ttm_rev": ttm})
 
-    # Also add DFP-only periods (for years before ITR data)
+    # [new commit] Include ALL DFP annual dates, not just those before the
+    # first ITR. Brazilian companies file ITR for Q1/Q2/Q3 but DFP for the
+    # full year (Q4) — they don't file ITR Q4. So recent DFP annual dates
+    # (e.g., 2025-12-31) were missing from the periods list, causing 3M
+    # growth to return None (prior period not found in the 90-day window).
+    # The dedup step below handles overlaps (ITR Q4 = DFP annual for same year).
     for year, data in sorted(dfp.items()):
-        if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_ebt": data["value"]})
+        periods.append({"date": data["date"], "ttm_rev": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -372,10 +359,10 @@ def ebt_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="ebt",
-    quantity="ttm_ebt",
-    at_fn=ebt_at,
-    periods_fn=ebt_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.07 -- EBT TTM (with description-search fallback for non-standard filers)",
+    name="revenue",
+    quantity="ttm_rev",
+    at_fn=revenue_at,
+    periods_fn=revenue_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DRE 3.01 -- Receita Liquida TTM (with description-search fallback for non-standard filers)",
     category="dre",
 ))

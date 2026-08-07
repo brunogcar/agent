@@ -10,7 +10,7 @@ price_at(ticker: str, date: str) -> float | None
 price_series(ticker: str, date_from: str, date_to: str) -> list[dict]
 ```
 
-### `engines/earnings.py`
+### `engines/dre/earnings.py`
 ```python
 ttm_earnings_at(company: str, date: str) -> float | None
 ttm_earnings_periods(company: str) -> list[dict]
@@ -22,7 +22,7 @@ shares_at(company: str, date: str) -> int | None
 shares_periods(company: str) -> list[dict]
 ```
 
-### `engines/pl.py`
+### `engines/bpp/pl.py`
 ```python
 pl_at(company: str, date: str) -> float | None
 pl_periods(company: str) -> list[dict]
@@ -34,133 +34,133 @@ dividends_at(ticker: str, date: str) -> float | None
 dividends_periods(ticker: str) -> list[dict]
 ```
 
-### `engines/revenue.py`
+### `engines/dre/revenue.py`
 ```python
 revenue_at(company: str, date: str) -> float | None
 revenue_periods(company: str) -> list[dict]
 ```
 
-### `engines/gross_profit.py`
+### `engines/dre/gross_profit.py`
 ```python
 gross_profit_at(company: str, date: str) -> float | None
 gross_profit_periods(company: str) -> list[dict]
 ```
 
-### `engines/ebit.py`
+### `engines/dre/ebit.py`
 ```python
 ebit_at(company: str, date: str) -> float | None
 ebit_periods(company: str) -> list[dict]
 ```
 
-### `engines/ebt.py`
+### `engines/dre/ebt.py`
 ```python
 ebt_at(company: str, date: str) -> float | None       # TTM EBT (DRE 3.07, with description-search fallback)
 ebt_periods(company: str) -> list[dict]
 ```
 
-### `engines/tax.py`
+### `engines/dre/tax.py`
 ```python
 tax_at(company: str, date: str) -> float | None
 tax_periods(company: str) -> list[dict]
 ```
 
-### `engines/current_assets.py`
+### `engines/bpa/current_assets.py`
 ```python
 current_assets_at(company: str, date: str) -> float | None      # BPA 1.01 (Ativo Circulante)
 current_assets_periods(company: str) -> list[dict]
 ```
 
-### `engines/cash.py`
+### `engines/bpa/cash.py`
 ```python
 cash_at(company: str, date: str) -> float | None
 cash_periods(company: str) -> list[dict]
 ```
 
-### `engines/total_assets.py`
+### `engines/bpa/total_assets.py`
 ```python
 total_assets_at(company: str, date: str) -> float | None
 total_assets_periods(company: str) -> list[dict]
 ```
 
-### `engines/debt.py`
+### `engines/bpp/debt.py`
 ```python
 debt_at(company: str, date: str) -> float | None
 debt_periods(company: str) -> list[dict]
 ```
 
-### `engines/current_liabilities.py`
+### `engines/bpp/current_liabilities.py`
 ```python
 current_liabilities_at(company: str, date: str) -> float | None
 current_liabilities_periods(company: str) -> list[dict]
 ```
 
-### `engines/da.py`
+### `engines/dfc/da.py`
 ```python
 da_at(company: str, date: str) -> float | None
 da_periods(company: str) -> list[dict]
 ```
 
-### `engines/capex.py`
+### `engines/dfc/capex.py`
 ```python
 capex_at(company: str, date: str) -> float | None
 capex_periods(company: str) -> list[dict]
 ```
 
-### `engines/operating_cf.py`
+### `engines/dfc/operating_cf.py`
 ```python
 operating_cf_at(company: str, date: str) -> float | None       # TTM FCO (DFC 6.01)
 operating_cf_periods(company: str) -> list[dict]
 ```
 
-### `engines/investing_cf.py`
+### `engines/dfc/investing_cf.py`
 ```python
 investing_cf_at(company: str, date: str) -> float | None       # TTM FCI (DFC 6.02)
 investing_cf_periods(company: str) -> list[dict]
 ```
 
-### `engines/financing_cf.py`
+### `engines/dfc/financing_cf.py`
 ```python
 financing_cf_at(company: str, date: str) -> float | None       # TTM FCF (DFC 6.03, Financing CF -- not Free CF)
 financing_cf_periods(company: str) -> list[dict]
 ```
 
-### `engines/cogs.py`
+### `engines/dre/cogs.py`
 ```python
 cogs_at(company: str, date: str) -> float | None              # TTM COGS (DRE 3.02, typically NEGATIVE)
 cogs_periods(company: str) -> list[dict]
 ```
 
-### `engines/financial_result.py`
+### `engines/dre/financial_result.py`
 ```python
 financial_result_at(company: str, date: str) -> float | None # TTM Resultado Financeiro (DRE 3.06, net: income - expense, sign preserved)
 financial_result_periods(company: str) -> list[dict]
 ```
 
-### `engines/receivables.py`
+### `engines/bpa/receivables.py`
 ```python
 receivables_at(company: str, date: str) -> float | None      # BPA 1.01.03 (Contas a Receber) snapshot
 receivables_periods(company: str) -> list[dict]
 ```
 
-### `engines/inventory.py`
+### `engines/bpa/inventory.py`
 ```python
 inventory_at(company: str, date: str) -> float | None        # BPA 1.01.04 (Estoques) snapshot
 inventory_periods(company: str) -> list[dict]
 ```
 
-### `engines/ppe.py`
+### `engines/bpa/ppe.py`
 ```python
 ppe_at(company: str, date: str) -> float | None              # BPA 1.02.03 (Imobilizado líquido) snapshot
 ppe_periods(company: str) -> list[dict]
 ```
 
-### `engines/intangibles.py`
+### `engines/bpa/intangibles.py`
 ```python
 intangibles_at(company: str, date: str) -> float | None      # BPA 1.02.04 (Intangível) snapshot
 intangibles_periods(company: str) -> list[dict]
 ```
 
-### `engines/payables.py`
+### `engines/bpp/payables.py`
 ```python
 payables_at(company: str, date: str) -> float | None         # BPP 2.01.01 (Fornecedores) snapshot
 payables_periods(company: str) -> list[dict]

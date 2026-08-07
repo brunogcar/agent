@@ -48,7 +48,7 @@ v1.11 actions:
 3. Updated the `test_metrics.py` + `test_financials.py` regression tests:
    `TestDFCMDFallback.test_da_direct_method_alt_fallback` now asserts
    `da is None` when only `6.01.04` is provided (was `da == 2000.0`).
-4. Added an audit note to `skills/cvm/calculations/engines/da.py` clarifying
+4. Added an audit note to `skills/cvm/calculations/engines/dfc/da.py` clarifying
    that the `da_at` engine itself never used `6.01.04` — it relies on
    `descricao LIKE '%deprec%' OR '%amort%'` search, scoped to
    `codigo LIKE '6.01.%'` (operating section).
@@ -121,7 +121,7 @@ Codes 6.xx are unique to DFC so no overlap with BPA/BPP/DRE/DVA.
 
 ### `da_at` engine (uses `descricao LIKE '%deprec%' OR '%amort%'`)
 
-The `da_at` engine in `skills/cvm/calculations/engines/da.py` does NOT
+The `da_at` engine in `skills/cvm/calculations/engines/dfc/da.py` does NOT
 use code-level fallbacks — it searches by `descricao` (with section
 scoping `codigo LIKE '6.01.%'` and accent-normalized exclusion of
 financing lines like "Amortização de Empréstimos"). v1.11 audit confirms

@@ -35,8 +35,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.earnings import ttm_earnings_periods
-from skills.cvm.calculations.engines.pl import pl_periods
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_periods
+from skills.cvm.calculations.engines.bpp.pl import pl_periods
 from skills.cvm.calculations.engines.dividends import dividends_periods
 from skills.cvm.calculations.metrics.roe import roe_at
 from skills.cvm.calculations.metrics.retention_ratio import retention_ratio_at

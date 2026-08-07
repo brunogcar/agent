@@ -23,8 +23,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
-from skills.cvm.calculations.engines.revenue import revenue_at, revenue_periods
+from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
+from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

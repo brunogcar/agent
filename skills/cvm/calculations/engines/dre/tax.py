@@ -1,6 +1,6 @@
-"""engines/tax.py -- TTM income tax (IR + CSLL) engine.
+"""engines/dre/tax.py -- TTM income tax (IR + CSLL) engine.
 
-Mirrors engines/revenue.py with CVM account code 3.08 (Imposto de Renda e
+Mirrors engines/dre/revenue.py with CVM account code 3.08 (Imposto de Renda e
 Contribuição Social sobre o Lucro). The TTM derivation algorithm is identical.
 
 Tax is a FLOW (cumulative over the year, like earnings/revenue). We derive
@@ -40,7 +40,7 @@ TTM tax computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.tax import tax_at
+    from skills.cvm.calculations.engines.dre.tax import tax_at
     t = tax_at("PETR4", "2024-06-30")  # -> -35e9 (negative = expense)
 """
 from __future__ import annotations

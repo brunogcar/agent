@@ -17,7 +17,7 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.gross_profit import gross_profit_periods
+from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_periods
 from skills.cvm.calculations.growth_helpers import growth_at, growth_history
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 

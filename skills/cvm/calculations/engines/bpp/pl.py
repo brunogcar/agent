@@ -1,4 +1,4 @@
-"""engines/pl.py — Patrimônio Líquido (equity) snapshot engine.
+"""engines/bpp/pl.py — Patrimônio Líquido (equity) snapshot engine.
 
 Gets consolidated Patrimônio Líquido at any historical date from DFP + ITR.
 
@@ -51,7 +51,7 @@ PL snapshots computable from: 2010 onwards.
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.pl import pl_at, pl_periods
+    from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
     v = pl_at("PETR4", "2024-06-30")        # → 380e9 (BRL)
     ps = pl_periods("PETR4")                # → [{date, pl}, ...]
 """

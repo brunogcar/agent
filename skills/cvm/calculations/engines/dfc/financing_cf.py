@@ -1,12 +1,30 @@
-"""engines/investing_cf.py -- TTM (trailing twelve months) investing cash flow engine.
+"""engines/dfc/financing_cf.py -- TTM (trailing twelve months) financing cash flow engine.
 
-Mirrors engines/revenue.py with one change: CVM account code 6.02
-(Fluxo de Caixa de Investimento / FCI) instead of 3.01 (Receita Liquida).
-The TTM derivation algorithm is identical.
+Mirrors engines/dfc/operating_cf.py with one change: CVM account code 6.03
+(Fluxo de Caixa de Financiamento / FCF) instead of 6.01 (FCO). The TTM
+derivation algorithm is identical.
 
-FCI lives in the DFC (Demonstração do Fluxo de Caixa) statement group,
-but the SQL filters by `codigo` directly (same as revenue/ebit), which
-works across all statement groups. No `grupo` filter needed.
+NOTE: "FCF" here is "Fluxo de Caixa de Financiamento" (Financing Cash
+Flow), NOT "Free Cash Flow". The quantity key is `ttm_fcf` to mirror the
+engine name -- callers should remember this is *financing* CF, not free CF.
+(Free CF is composed elsewhere as FCO + FCI; see metrics/p_fcf.py.)
+
+FCF (Financing CF) covers the financing section of the DFC:
+  - Debt issuance (inflow, positive)
+  - Debt repayment (outflow, negative)
+  - Dividends paid (outflow, negative)
+  - Share buybacks (outflow, negative)
+  - Capital injections / equity issuance (inflow, positive)
+
+Values can be either POSITIVE (net issuance -- company raised more capital
+than it returned) or NEGATIVE (net distribution -- company returned more
+capital to debt/equity holders than it raised). Mature, cash-generating
+companies typically show NEGATIVE FCF (they pay dividends + buy back shares
++ repay debt > new issuance).
+
+FCF lives in the DFC (Demonstração do Fluxo de Caixa) statement group,
+but the SQL filters by `codigo` directly (same as operating_cf/investing_cf),
+which works across all statement groups. No `grupo` filter needed.
 
 TTM ALGORITHM
 -------------
@@ -15,26 +33,22 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 FCI
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 FCI
-  DFP 2023 (meses=12)   = full year 2023 FCI
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 FCF
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 FCF
+  DFP 2023 (meses=12)   = full year 2023 FCF
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM FCI computable from: ~2012 onwards (need 2 years of ITR)
-
-FCI values are typically NEGATIVE (cash spent on investments / capex).
-This is normal: a healthy company invests in capex, acquisitions, etc.,
-which are cash OUTFLOWS in the investing section of the DFC.
+TTM FCF computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.investing_cf import investing_cf_at
-    r = investing_cf_at("PETR4", "2024-06-30")  # -> -80000000000.0
+    from skills.cvm.calculations.engines.dfc.financing_cf import financing_cf_at
+    r = financing_cf_at("PETR4", "2024-06-30")  # -> -40000000000.0 (net distribution)
 """
 
 from __future__ import annotations
@@ -45,15 +59,20 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for FCI (Fluxo de Caixa de Investimento)
-FCI_CODE = "6.02"
+# CVM account code for FCF (Fluxo de Caixa de Financiamento).
+# NOTE: This is Financing Cash Flow, NOT Free Cash Flow. The quantity key
+# `ttm_fcf` mirrors the engine name (financing_cf -> ttm_fcf) but does NOT
+# represent Free Cash Flow (which is composed as FCO + FCI in metrics/p_fcf).
+FINANCING_CF_CODE = "6.03"
 
 
-def _get_dfp_investing_cf(company: str) -> dict[str, dict]:
-    """Get all annual FCI from DFP (codigo 6.02, meses=12).
+def _get_dfp_financing_cf(company: str) -> dict[str, dict]:
+    """Get all annual FCF from DFP (codigo 6.03, meses=12).
 
-    Returns: {"2024": {"value": -80e9, "date": "2024-12-31"}, ...}
-    Values are in BRL (escala applied). Typically negative (cash outflow).
+    Returns: {"2024": {"value": -40e9, "date": "2024-12-31"}, ...}
+    Values are in BRL (escala applied). Typically negative (net distribution)
+    for mature companies, but can be positive if the company is net-raising
+    capital (debt issuance > repayments + dividends).
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -66,7 +85,7 @@ def _get_dfp_investing_cf(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FCI_CODE}'
+                 AND c.codigo = '{FINANCING_CF_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -85,12 +104,11 @@ def _get_dfp_investing_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_investing_cf(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative FCI from ITR (codigo 6.02, meses 3/6/9).
+def _get_itr_financing_cf(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative FCF from ITR (codigo 6.03, meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": -40e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": -20e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan->period end).
-    Typically negative (cash outflow).
     """
     conn = connect_itr(read_only=True)
     try:
@@ -103,7 +121,7 @@ def _get_itr_investing_cf(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FCI_CODE}'
+                 AND c.codigo = '{FINANCING_CF_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -124,18 +142,19 @@ def _get_itr_investing_cf(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def investing_cf_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months FCI ending at or before date.
+def financing_cf_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months FCF ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM FCI in BRL (typically negative), or None if data not available.
+        TTM FCF (Financing CF) in BRL -- positive for net issuance, negative
+        for net distribution -- or None if data not available.
     """
-    dfp = _get_dfp_investing_cf(company)
-    itr = _get_itr_investing_cf(company)
+    dfp = _get_dfp_financing_cf(company)
+    itr = _get_itr_financing_cf(company)
 
     if not itr and not dfp:
         return None
@@ -180,16 +199,16 @@ def investing_cf_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def investing_cf_periods(company: str) -> list[dict]:
-    """Get all TTM FCI periods for a company.
+def financing_cf_periods(company: str) -> list[dict]:
+    """Get all TTM FCF periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_fci": value} sorted oldest-first.
-    Each entry represents a point where TTM FCI changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm_fcf": value} sorted oldest-first.
+    Each entry represents a point where TTM FCF changed (new ITR/DFP filed).
 
-    Useful for building step-function FCI overlays on price charts.
+    Useful for building step-function FCF overlays on price charts.
     """
-    dfp = _get_dfp_investing_cf(company)
-    itr = _get_itr_investing_cf(company)
+    dfp = _get_dfp_financing_cf(company)
+    itr = _get_itr_financing_cf(company)
 
     if not itr and not dfp:
         return []
@@ -199,14 +218,14 @@ def investing_cf_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = investing_cf_at(company, itr_date)
+        ttm = financing_cf_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_fci": ttm})
+            periods.append({"date": itr_date, "ttm_fcf": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_fci": data["value"]})
+            periods.append({"date": data["date"], "ttm_fcf": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -224,10 +243,10 @@ def investing_cf_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="investing_cf",
-    quantity="ttm_fci",
-    at_fn=investing_cf_at,
-    periods_fn=investing_cf_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DFC 6.02 -- FCI TTM",
+    name="financing_cf",
+    quantity="ttm_fcf",
+    at_fn=financing_cf_at,
+    periods_fn=financing_cf_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DFC 6.03 -- FCF (Financing CF) TTM",
     category="dfc",
 ))

@@ -38,7 +38,7 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.dividends import dividends_at, dividends_periods
-from skills.cvm.calculations.engines.earnings import ttm_earnings_at, ttm_earnings_periods
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_earnings_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

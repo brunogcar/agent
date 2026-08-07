@@ -31,7 +31,7 @@ Usage:
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at, price_series
-from skills.cvm.calculations.engines.gross_profit import gross_profit_at, gross_profit_periods
+from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_at, gross_profit_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 

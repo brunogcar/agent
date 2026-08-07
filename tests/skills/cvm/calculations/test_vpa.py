@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 from skills.cvm.calculations.metrics import vpa as vpa_metric
-from skills.cvm.calculations.engines import pl as pl_engine
+from skills.cvm.calculations.engines.bpp import pl as pl_engine
 
 
 # ── Mock data ────────────────────────────────────────────────────────────────

@@ -17,11 +17,11 @@ Marked @pytest.mark.slow because it requires real CVM databases (DFP + ITR).
 Run with: python -m pytest -m slow -v
 """
 import pytest
-from skills.cvm.calculations.engines.revenue import revenue_at, revenue_periods
-from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
-from skills.cvm.calculations.engines.earnings import ttm_earnings_at, ttm_earnings_periods
-from skills.cvm.calculations.engines.operating_cf import operating_cf_at
-from skills.cvm.calculations.engines.investing_cf import investing_cf_at
+from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
+from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
+from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_earnings_periods
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at
 
 
 pytestmark = pytest.mark.slow

@@ -357,7 +357,7 @@ class TestRealEngineIdentity:
     def test_earnings_identity(self):
         """spec.at_fn is earnings.ttm_earnings_at (both are the wrapper)."""
         from skills.cvm.calculations._registry import ENGINES
-        from skills.cvm.calculations.engines import earnings as earnings_mod
+        from skills.cvm.calculations.engines.dre import earnings as earnings_mod
 
         spec = ENGINES["earnings"]
         assert spec.at_fn is earnings_mod.ttm_earnings_at
@@ -366,7 +366,7 @@ class TestRealEngineIdentity:
     def test_pl_identity(self):
         """spec.at_fn is pl.pl_at (both are the wrapper)."""
         from skills.cvm.calculations._registry import ENGINES
-        from skills.cvm.calculations.engines import pl as pl_mod
+        from skills.cvm.calculations.engines.bpp import pl as pl_mod
 
         spec = ENGINES["pl"]
         assert spec.at_fn is pl_mod.pl_at
@@ -375,7 +375,7 @@ class TestRealEngineIdentity:
     def test_cogs_identity(self):
         """spec.at_fn is cogs.cogs_at (both are the wrapper)."""
         from skills.cvm.calculations._registry import ENGINES
-        from skills.cvm.calculations.engines import cogs as cogs_mod
+        from skills.cvm.calculations.engines.dre import cogs as cogs_mod
 
         spec = ENGINES["cogs"]
         assert spec.at_fn is cogs_mod.cogs_at

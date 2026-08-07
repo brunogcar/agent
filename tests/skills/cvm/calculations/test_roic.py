@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 from skills.cvm.calculations.metrics import roic as roic_metric
-from skills.cvm.calculations.engines import tax as tax_engine
-from skills.cvm.calculations.engines import debt as debt_engine
+from skills.cvm.calculations.engines.dre import tax as tax_engine
+from skills.cvm.calculations.engines.bpp import debt as debt_engine
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -34,7 +34,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 15e9 / 90e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         # effective_tax_rate = 15e9 / 90e9 = 1/6
         # NOPAT = 70e9 × (1 - 1/6) = 70e9 × (5/6) = 58.333...e9
         # IC = 350e9 + 100e9 = 450e9 (no cash subtraction -- fallback)
@@ -49,7 +49,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 0.0)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         # NOPAT = 70e9 × (1 - 0) = 70e9
         # ROIC = 70e9 / 450e9
         result = roic_metric.roic_at("PETR4", "2024-06-30")
@@ -61,7 +61,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 0.0)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         result = roic_metric.roic_at("PETR4", "2024-06-30")
         assert result == pytest.approx(70e9 / 450e9, rel=1e-3)
 
@@ -73,7 +73,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: -10e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_missing_ebit(self, monkeypatch):
@@ -81,7 +81,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebit_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_missing_effective_tax_rate(self, monkeypatch):
@@ -90,7 +90,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_missing_pl(self, monkeypatch):
@@ -98,7 +98,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 0.25)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: None)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_missing_debt(self, monkeypatch):
@@ -106,7 +106,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 0.25)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: 350e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: None)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
     def test_negative_pl_returns_none(self, monkeypatch):
@@ -115,7 +115,7 @@ class TestRoicAt:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.effective_tax_rate_at", lambda c, d: 0.25)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_at", lambda c, d: -50e9)
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_at", lambda c, d: 100e9)
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_at", lambda c, d: None)
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_at", lambda c, d: None)
         assert roic_metric.roic_at("PETR4", "2024-06-30") is None
 
 
@@ -164,7 +164,7 @@ class TestRoicHistory:
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.ebt_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.pl_periods", lambda c: [])
         monkeypatch.setattr("skills.cvm.calculations.metrics.roic.debt_periods", lambda c: [])
-        monkeypatch.setattr("skills.cvm.calculations.engines.cash.cash_periods", lambda c: [])
+        monkeypatch.setattr("skills.cvm.calculations.engines.bpa.cash.cash_periods", lambda c: [])
         assert roic_metric.roic_history("PETR4", "2024-01-01", "2024-12-31") == []
 
 

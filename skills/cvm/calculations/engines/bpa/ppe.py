@@ -1,43 +1,39 @@
-"""engines/payables.py -- Fornecedores (suppliers payables) snapshot engine.
+"""engines/bpa/ppe.py -- Imobilizado (Property, Plant & Equipment) snapshot engine.
 
-Gets consolidated Fornecedores at any historical date from DFP + ITR.
+Gets consolidated Imobilizado (PP&E) at any historical date from DFP + ITR.
 
-Payables (Fornecedores) is a SNAPSHOT (point-in-time balance), not a flow.
-So this engine is simpler than earnings.py -- no TTM derivation. We just
-find the most recent BPP snapshot with data_fim_exerc <= date.
+PP&E is a SNAPSHOT (point-in-time balance), not a flow. So this engine is
+simpler than earnings.py -- no TTM derivation. We just find the most
+recent BPA snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPP (Balanço Patrimonial Passivo), codigo 2.01.01 = "Fornecedores"
-  - The suppliers/trade payables line within Passivo Circulante (codigo
-    2.01) -- obligations to suppliers for goods/services received, due
-    within 12 months.
+DFP BPA (Balanço Patrimonial Ativo), codigo 1.02.03 = "Imobilizado"
+  - Property, Plant & Equipment (net of accumulated depreciation), within
+    Ativo Não Circulante (codigo 1.02).
   - Annual snapshot at Dec 31 (meses=12)
-ITR BPP, same codigo 2.01.01
+ITR BPA, same codigo 1.02.03
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
-Together: ~4 snapshots per year. Between snapshots, payables is constant.
+Together: ~4 snapshots per year. Between snapshots, PP&E is constant.
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual)
 ITR: 2011-present (quarterly)
-Payables snapshots computable from: 2010 onwards.
+PP&E snapshots computable from: 2010 onwards.
 
-NOTE: codigo 2.01.01 is Fornecedores Nacionais + Estrangeiros (the short-
-term portion only, within Passivo Circulante). Long-term supplier
-obligations live under codigo 2.02.01 -- this engine covers the current
-(short-term) portion, which is what working-capital metrics
-(accounts-payable-turnover, DPO) typically use.
+NOTE: codigo 1.02.03 is Imobilizado Líquido (net of accumulated
+depreciation + impairments). For gross PP&E, a separate engine querying
+codigo 1.02.03.01 (Imobilizado em Operação - custo) would be needed --
+this is the net book value, which is what most balance-sheet ratios use.
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.payables import (
-        payables_at, payables_periods,
-    )
-    v = payables_at("PETR4", "2024-06-30")        # -> 30e9 (BRL)
-    ps = payables_periods("PETR4")                # -> [{date, payables}, ...]
+    from skills.cvm.calculations.engines.bpa.ppe import ppe_at, ppe_periods
+    v = ppe_at("PETR4", "2024-06-30")        # -> 400e9 (BRL)
+    ps = ppe_periods("PETR4")                # -> [{date, ppe}, ...]
 """
 
 from __future__ import annotations
@@ -48,14 +44,14 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Fornecedores Consolidado (BPP line within Passivo Circulante)
-FORNECEDORES_CODE = "2.01.01"
+# CVM account code for Imobilizado Consolidado (BPA line within Ativo Não Circulante)
+IMOBILIZADO_CODE = "1.02.03"
 
 
-def _get_dfp_payables(company: str) -> dict[str, dict]:
-    """Get all annual payables snapshots from DFP (codigo 2.01.01, meses=12, BPP).
+def _get_dfp_ppe(company: str) -> dict[str, dict]:
+    """Get all annual PP&E snapshots from DFP (codigo 1.02.03, meses=12, BPA).
 
-    Returns: {"2024-12-31": {"value": 30e9, "year": 2024}, ...}
+    Returns: {"2024-12-31": {"value": 400e9, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_dfp(read_only=True)
@@ -69,7 +65,7 @@ def _get_dfp_payables(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FORNECEDORES_CODE}'
+                 AND c.codigo = '{IMOBILIZADO_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -88,10 +84,10 @@ def _get_dfp_payables(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_payables(company: str) -> dict[str, dict]:
-    """Get all quarterly payables snapshots from ITR (codigo 2.01.01, meses 3/6/9, BPP).
+def _get_itr_ppe(company: str) -> dict[str, dict]:
+    """Get all quarterly PP&E snapshots from ITR (codigo 1.02.03, meses 3/6/9, BPA).
 
-    Returns: {"2024-06-30": {"value": 28e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 395e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_itr(read_only=True)
@@ -105,7 +101,7 @@ def _get_itr_payables(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{FORNECEDORES_CODE}'
+                 AND c.codigo = '{IMOBILIZADO_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -126,23 +122,22 @@ def _get_itr_payables(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def payables_at(company: str, date: str) -> float | None:
-    """Get Fornecedores (payables) closest to date (most recent snapshot <= date).
+def ppe_at(company: str, date: str) -> float | None:
+    """Get Imobilizado (PP&E) closest to date (most recent snapshot <= date).
 
-    Payables is a point-in-time balance, so we just find the most recent
-    BPP snapshot at or before the requested date. No TTM derivation
-    needed.
+    PP&E is a point-in-time balance, so we just find the most recent BPA
+    snapshot at or before the requested date. No TTM derivation needed.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        Payables in BRL, or None if no snapshot available at or before
-        date.
+        PP&E (net book value) in BRL, or None if no snapshot available at
+        or before date.
     """
-    dfp = _get_dfp_payables(company)
-    itr = _get_itr_payables(company)
+    dfp = _get_dfp_ppe(company)
+    itr = _get_itr_ppe(company)
 
     # Merge all snapshots (DFP + ITR), find most recent <= date
     all_dates = sorted(
@@ -159,17 +154,17 @@ def payables_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def payables_periods(company: str) -> list[dict]:
-    """Get all payables snapshot periods for a company.
+def ppe_periods(company: str) -> list[dict]:
+    """Get all PP&E snapshot periods for a company.
 
-    Returns: [{"date": "2024-06-30", "payables": 28e9}, ...]
-    Sorted oldest-first. Each entry is a point where payables changed
-    (new BPP snapshot filed). Deduplicated by date.
+    Returns: [{"date": "2024-06-30", "ppe": 395e9}, ...]
+    Sorted oldest-first. Each entry is a point where PP&E changed (new BPA
+    snapshot filed). Deduplicated by date.
 
-    Useful for building step-function payables overlays on price charts.
+    Useful for building step-function PP&E overlays on price charts.
     """
-    dfp = _get_dfp_payables(company)
-    itr = _get_itr_payables(company)
+    dfp = _get_dfp_ppe(company)
+    itr = _get_itr_ppe(company)
 
     # Merge and dedupe by date (ITR takes precedence if same date -- same value anyway)
     by_date: dict[str, float] = {}
@@ -178,17 +173,17 @@ def payables_periods(company: str) -> list[dict]:
     for d, v in itr.items():
         by_date[d] = v["value"]
 
-    return [{"date": d, "payables": by_date[d]} for d in sorted(by_date.keys())]
+    return [{"date": d, "ppe": by_date[d]} for d in sorted(by_date.keys())]
 
 
 # -- Register with the engine registry ---------------------------------------
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="payables",
-    quantity="payables",
-    at_fn=payables_at,
-    periods_fn=payables_periods,
-    source="DFP + ITR BPP codigo 2.01.01 (Fornecedores snapshot)",
-    category="bpp",
+    name="ppe",
+    quantity="ppe",
+    at_fn=ppe_at,
+    periods_fn=ppe_periods,
+    source="DFP + ITR BPA codigo 1.02.03 (Imobilizado snapshot)",
+    category="bpa",
 ))

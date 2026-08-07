@@ -49,8 +49,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
-from skills.cvm.calculations.engines.financial_result import (
+from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
+from skills.cvm.calculations.engines.dre.financial_result import (
     financial_result_at, financial_result_periods,
 )
 from skills.cvm.calculations._registry import MetricSpec, register_metric

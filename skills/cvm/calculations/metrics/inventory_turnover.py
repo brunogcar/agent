@@ -51,8 +51,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.cogs import cogs_at, cogs_periods
-from skills.cvm.calculations.engines.inventory import inventory_at, inventory_periods
+from skills.cvm.calculations.engines.dre.cogs import cogs_at, cogs_periods
+from skills.cvm.calculations.engines.bpa.inventory import inventory_at, inventory_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

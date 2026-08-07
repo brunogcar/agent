@@ -1,32 +1,37 @@
-"""engines/cash.py — Caixa e Equivalentes de Caixa (cash and cash equivalents) snapshot engine.
+"""engines/bpp/current_liabilities.py — Passivo Circulante (current liabilities) snapshot engine.
 
-Gets consolidated cash and cash equivalents at any historical date from DFP + ITR.
+Gets consolidated Passivo Circulante at any historical date from DFP + ITR.
 
-Cash is a SNAPSHOT (point-in-time balance), not a flow. So this engine is
-simpler than earnings.py — no TTM derivation. We just find the most recent
-BPA snapshot with data_fim_exerc <= date.
+Current liabilities is a SNAPSHOT (point-in-time balance), not a flow. So this
+engine is simpler than earnings.py — no TTM derivation. We just find the most
+recent BPP snapshot with data_fim_exerc <= date.
 
 DATA SOURCE
 -----------
-DFP BPA (Balanço Patrimonial Ativo), codigo 1.01.01 = "Caixa e Equivalentes de Caixa"
+DFP BPP (Balanço Patrimonial Passivo), codigo 2.01 = "Passivo Circulante"
+  - The current liabilities section of the balance sheet (obligations due
+    within 12 months).
   - Annual snapshot at Dec 31 (meses=12)
-ITR BPA, same codigo 1.01.01
+ITR BPP, same codigo 2.01
   - Quarterly snapshot at Mar/Jun/Sep 30 (meses=3/6/9)
 
-Together: ~4 snapshots per year. Between snapshots, cash is constant.
+Together: ~4 snapshots per year. Between snapshots, current liabilities is
+constant.
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual)
 ITR: 2011-present (quarterly)
-Cash snapshots computable from: 2010 onwards.
+Current liabilities snapshots computable from: 2010 onwards.
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.cash import cash_at, cash_periods
-    v = cash_at("PETR4", "2024-06-30")        # → 80e9 (BRL)
-    ps = cash_periods("PETR4")                # → [{date, cash}, ...]
+    from skills.cvm.calculations.engines.bpp.current_liabilities import (
+        current_liabilities_at, current_liabilities_periods,
+    )
+    v = current_liabilities_at("PETR4", "2024-06-30")        # → 120e9 (BRL)
+    ps = current_liabilities_periods("PETR4")                # → [{date, current_liabilities}, ...]
 """
 
 from __future__ import annotations
@@ -37,14 +42,14 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Caixa e Equivalentes de Caixa Consolidado (BPA group)
-CAIXA_CODE = "1.01.01"
+# CVM account code for Passivo Circulante Consolidado (BPP group)
+PASSIVO_CIRCULANTE_CODE = "2.01"
 
 
-def _get_dfp_cash(company: str) -> dict[str, dict]:
-    """Get all annual cash snapshots from DFP (codigo 1.01.01, meses=12, BPA).
+def _get_dfp_current_liabilities(company: str) -> dict[str, dict]:
+    """Get all annual current liabilities snapshots from DFP (codigo 2.01, meses=12, BPP).
 
-    Returns: {"2024-12-31": {"value": 80e9, "year": 2024}, ...}
+    Returns: {"2024-12-31": {"value": 120e9, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_dfp(read_only=True)
@@ -58,7 +63,7 @@ def _get_dfp_cash(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{CAIXA_CODE}'
+                 AND c.codigo = '{PASSIVO_CIRCULANTE_CODE}'
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -77,10 +82,10 @@ def _get_dfp_cash(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_cash(company: str) -> dict[str, dict]:
-    """Get all quarterly cash snapshots from ITR (codigo 1.01.01, meses 3/6/9, BPA).
+def _get_itr_current_liabilities(company: str) -> dict[str, dict]:
+    """Get all quarterly current liabilities snapshots from ITR (codigo 2.01, meses 3/6/9, BPP).
 
-    Returns: {"2024-06-30": {"value": 75e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 115e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied).
     """
     conn = connect_itr(read_only=True)
@@ -94,7 +99,7 @@ def _get_itr_cash(company: str) -> dict[str, dict]:
                FROM contas c JOIN empresas e ON c.id_empresa = e.id
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
-                 AND c.codigo = '{CAIXA_CODE}'
+                 AND c.codigo = '{PASSIVO_CIRCULANTE_CODE}'
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -115,21 +120,23 @@ def _get_itr_cash(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def cash_at(company: str, date: str) -> float | None:
-    """Get Caixa e Equivalentes de Caixa closest to date (most recent snapshot <= date).
+def current_liabilities_at(company: str, date: str) -> float | None:
+    """Get Passivo Circulante closest to date (most recent snapshot <= date).
 
-    Cash is a point-in-time balance, so we just find the most recent BPA
-    snapshot at or before the requested date. No TTM derivation needed.
+    Current liabilities is a point-in-time balance, so we just find the most
+    recent BPP snapshot at or before the requested date. No TTM derivation
+    needed.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        Cash and cash equivalents in BRL, or None if no snapshot available at or before date.
+        Current liabilities in BRL, or None if no snapshot available at or
+        before date.
     """
-    dfp = _get_dfp_cash(company)
-    itr = _get_itr_cash(company)
+    dfp = _get_dfp_current_liabilities(company)
+    itr = _get_itr_current_liabilities(company)
 
     # Merge all snapshots (DFP + ITR), find most recent <= date
     all_dates = sorted(
@@ -146,17 +153,18 @@ def cash_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def cash_periods(company: str) -> list[dict]:
-    """Get all cash snapshot periods for a company.
+def current_liabilities_periods(company: str) -> list[dict]:
+    """Get all current liabilities snapshot periods for a company.
 
-    Returns: [{"date": "2024-06-30", "cash": 75e9}, ...]
-    Sorted oldest-first. Each entry is a point where cash changed
-    (new BPA snapshot filed). Deduplicated by date.
+    Returns: [{"date": "2024-06-30", "current_liabilities": 115e9}, ...]
+    Sorted oldest-first. Each entry is a point where current liabilities
+    changed (new BPP snapshot filed). Deduplicated by date.
 
-    Useful for building step-function cash overlays on price charts.
+    Useful for building step-function current liabilities overlays on price
+    charts.
     """
-    dfp = _get_dfp_cash(company)
-    itr = _get_itr_cash(company)
+    dfp = _get_dfp_current_liabilities(company)
+    itr = _get_itr_current_liabilities(company)
 
     # Merge and dedupe by date (ITR takes precedence if same date — same value anyway)
     by_date: dict[str, float] = {}
@@ -165,7 +173,7 @@ def cash_periods(company: str) -> list[dict]:
     for d, v in itr.items():
         by_date[d] = v["value"]
 
-    return [{"date": d, "cash": by_date[d]} for d in sorted(by_date.keys())]
+    return [{"date": d, "current_liabilities": by_date[d]} for d in sorted(by_date.keys())]
 
 
 # ── Register with the engine registry ────────────────────────────────────────
@@ -173,10 +181,10 @@ def cash_periods(company: str) -> list[dict]:
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 
 register_engine(EngineSpec(
-    name="cash",
-    quantity="cash",
-    at_fn=cash_at,
-    periods_fn=cash_periods,
-    source="DFP + ITR BPA codigo 1.01.01 (Caixa e Equivalentes de Caixa snapshot)",
-    category="bpa",
+    name="current_liabilities",
+    quantity="current_liabilities",
+    at_fn=current_liabilities_at,
+    periods_fn=current_liabilities_periods,
+    source="DFP + ITR BPP codigo 2.01 (Passivo Circulante snapshot)",
+    category="bpp",
 ))

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import ppe as ppe_engine
+from skills.cvm.calculations.engines.bpa import ppe as ppe_engine
 
 
 # -- Mock data ---------------------------------------------------------------

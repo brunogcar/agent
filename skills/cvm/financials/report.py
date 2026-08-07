@@ -1412,9 +1412,9 @@ def build_dfc_quality_section(
     sections: list[dict] = []
 
     # Engine-backed TTM values (capex + earnings) — best-effort, None on fail.
-    from skills.cvm.calculations.engines.capex import capex_at
-    from skills.cvm.calculations.engines.operating_cf import operating_cf_at
-    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+    from skills.cvm.calculations.engines.dfc.capex import capex_at
+    from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
+    from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
 
     capex_ttm = _safe_engine_call(capex_at, company, today)
     fco_ttm = _safe_engine_call(operating_cf_at, company, today)
@@ -1562,7 +1562,7 @@ def build_dividend_sustainability_section(
 
     from skills.cvm.calculations.engines.dva.dividends_paid import (
         dividends_paid_at, dividends_paid_periods)
-    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+    from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at
 
     # Payout: prefer ratios_payload, then latest_annual_period.ratios.payout.
     payout = ratios_payload.get("payout")

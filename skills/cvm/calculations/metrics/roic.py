@@ -32,11 +32,11 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.ebit import ebit_at, ebit_periods
-from skills.cvm.calculations.engines.tax import tax_periods
-from skills.cvm.calculations.engines.ebt import ebt_at, ebt_periods
-from skills.cvm.calculations.engines.pl import pl_at, pl_periods
-from skills.cvm.calculations.engines.debt import debt_at, debt_periods
+from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
+from skills.cvm.calculations.engines.dre.tax import tax_periods
+from skills.cvm.calculations.engines.dre.ebt import ebt_at, ebt_periods
+from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
+from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.metrics.effective_tax_rate import effective_tax_rate_at
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
@@ -106,7 +106,7 @@ def roic_at(company: str, date: str) -> float | None:
     # If cash is None (no data), fall back to PL + Debt (v1.8 behavior).
     # Wrapped in try/except so tests without a cash engine mock don't break.
     try:
-        from skills.cvm.calculations.engines.cash import cash_at as _cash_at
+        from skills.cvm.calculations.engines.bpa.cash import cash_at as _cash_at
         cash = _cash_at(company, date)
     except Exception:
         cash = None
@@ -143,7 +143,7 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
                  "debt", "cash"} sorted oldest-first. Entries with None ROIC
         are included with roic=None so charts show gaps.
     """
-    from skills.cvm.calculations.engines.cash import cash_periods as _cash_periods
+    from skills.cvm.calculations.engines.bpa.cash import cash_periods as _cash_periods
 
     ebit_periods_list = ebit_periods(company)
     tax_periods_list = tax_periods(company)

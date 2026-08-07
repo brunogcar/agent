@@ -18,8 +18,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.debt import debt_at, debt_periods
-from skills.cvm.calculations.engines.pl import pl_at, pl_periods
+from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
+from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 

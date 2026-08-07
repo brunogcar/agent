@@ -1,4 +1,4 @@
-"""engines/capex.py -- TTM (trailing twelve months) CapEx engine.
+"""engines/dfc/capex.py -- TTM (trailing twelve months) CapEx engine.
 
 CapEx (Capital Expenditure) has no single standardized CVM account code in
 the DFC. Different filers report it under varying line items, typically
@@ -41,7 +41,7 @@ TTM CapEx computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.capex import capex_at
+    from skills.cvm.calculations.engines.dfc.capex import capex_at
     v = capex_at("PETR4", "2024-06-30")  # -> -15_000_000_000.0 (negative outflow)
 """
 
