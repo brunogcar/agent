@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import dividends_paid as dp_engine
+from skills.cvm.calculations.engines.dva import dividends_paid as dp_engine
 
 
 # -- Mock data ---------------------------------------------------------------

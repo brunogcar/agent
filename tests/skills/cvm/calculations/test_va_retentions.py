@@ -1,8 +1,8 @@
-"""Tests for skills/cvm/calculations/engines/dva_retentions.py.
+"""Tests for skills/cvm/calculations/engines/dva/retentions.py.
 
 Generation-side DVA engine (DVA grupo LIKE '%Valor Adicionado%', codigo 7.05
 -- Retenções / retentions, TTM derivation from DFP + ITR cumulative).
-Mocks the internal _get_dfp_dva_retentions + _get_itr_dva_retentions
+Mocks the internal _get_dfp_va_retentions + _get_itr_va_retentions
 functions via monkeypatch -- no database needed.
 
 DVA 7.05 = Retenções (retentions: depreciation, amortization, and other
@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import dva_retentions as dva_ret_engine
+from skills.cvm.calculations.engines.dva import retentions as va_ret_engine
 
 
 # -- Cache-clearing fixture --------------------------------------------------
-# The @engine_cached decorator on dva_retentions_at / dva_retentions_periods
+# The @engine_cached decorator on va_retentions_at / va_retentions_periods
 # uses a ContextVar (_ENGINE_CACHE in skills._base). When an
 # engine_cache_scope is active, results are memoized. To prevent
 # cross-test contamination we reset the ContextVar to None (passthrough
@@ -57,20 +57,20 @@ FAKE_ITR = {
 }
 
 
-# -- dva_retentions_at() tests (TTM derivation) ------------------------------
+# -- va_retentions_at() tests (TTM derivation) ------------------------------
 
-class TestDvaRetentionsAt:
+class TestVaRetentionsAt:
     def test_ttm_derivation(self, monkeypatch):
-        """dva_retentions_at should derive TTM via DFP - ITR_prior + ITR_current.
+        """va_retentions_at should derive TTM via DFP - ITR_prior + ITR_current.
 
         TTM at 2024-04-15 = DFP_2023 - ITR_2023_Q1 + ITR_2024_Q1
                           = -15e9 - (-3.5e9) + (-3.8e9)
                           = -15.3e9
         """
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: FAKE_DFP)
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: FAKE_ITR)
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: FAKE_DFP)
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: FAKE_ITR)
 
-        result = dva_ret_engine.dva_retentions_at("PETR4", "2024-04-15")
+        result = va_ret_engine.va_retentions_at("PETR4", "2024-04-15")
         assert result == pytest.approx(-15.3e9, rel=1e-6)
 
     def test_returns_none_for_missing_company(self, monkeypatch):
@@ -79,10 +79,10 @@ class TestDvaRetentionsAt:
         DVA is optional-filing in CVM -- some companies don't produce it.
         The engine should return None gracefully when no data exists.
         """
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: {})
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: {})
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: {})
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: {})
 
-        assert dva_ret_engine.dva_retentions_at("UNKNOWN", "2024-06-30") is None
+        assert va_ret_engine.va_retentions_at("UNKNOWN", "2024-06-30") is None
 
     def test_returns_none_for_insufficient_history(self, monkeypatch):
         """Only current ITR, no prior-year DFP -> can't derive TTM -> None.
@@ -96,33 +96,33 @@ class TestDvaRetentionsAt:
         fake_itr = {
             "2024-03-31": {"value": -3.8e9, "meses": 3, "year": 2024},
         }
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: fake_dfp)
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: fake_itr)
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: fake_dfp)
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: fake_itr)
 
-        assert dva_ret_engine.dva_retentions_at("PETR4", "2024-04-15") is None
+        assert va_ret_engine.va_retentions_at("PETR4", "2024-04-15") is None
 
     def test_returns_dfp_when_no_itr_before_date(self, monkeypatch):
         """No ITR before date -> fall back to DFP annual."""
         fake_dfp = {"2020": {"value": -10e9, "date": "2020-12-31"}}
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: fake_dfp)
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: {})
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: fake_dfp)
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: {})
 
-        assert dva_ret_engine.dva_retentions_at("PETR4", "2021-01-15") == -10e9
+        assert va_ret_engine.va_retentions_at("PETR4", "2021-01-15") == -10e9
 
     def test_ttm_at_exact_period_end(self, monkeypatch):
         """TTM at exact ITR period end date should use that ITR."""
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: FAKE_DFP)
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: FAKE_ITR)
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: FAKE_DFP)
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: FAKE_ITR)
 
-        result = dva_ret_engine.dva_retentions_at("PETR4", "2024-03-31")
+        result = va_ret_engine.va_retentions_at("PETR4", "2024-03-31")
         assert result == pytest.approx(-15.3e9, rel=1e-6)
 
 
-# -- dva_retentions_periods() tests ------------------------------------------
+# -- va_retentions_periods() tests ------------------------------------------
 
-class TestDvaRetentionsPeriods:
+class TestVaRetentionsPeriods:
     def test_periods(self, monkeypatch):
-        """dva_retentions_periods returns list of {date, ttm_dva_retentions}."""
+        """va_retentions_periods returns list of {date, ttm_va_retentions}."""
         fake_dfp = {
             "2021": {"value": -11e9, "date": "2021-12-31"},
             "2022": {"value": -13e9, "date": "2022-12-31"},
@@ -133,18 +133,18 @@ class TestDvaRetentionsPeriods:
             "2023-03-31": {"value": -3.5e9, "meses": 3, "year": 2023},
             "2024-03-31": {"value": -3.8e9, "meses": 3, "year": 2024},
         }
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: fake_dfp)
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: fake_itr)
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: fake_dfp)
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: fake_itr)
 
-        result = dva_ret_engine.dva_retentions_periods("PETR4")
+        result = va_ret_engine.va_retentions_periods("PETR4")
         assert isinstance(result, list)
         assert len(result) >= 1
 
         # Each entry has the correct key
         for entry in result:
             assert "date" in entry
-            assert "ttm_dva_retentions" in entry
-            assert isinstance(entry["ttm_dva_retentions"], float)
+            assert "ttm_va_retentions" in entry
+            assert isinstance(entry["ttm_va_retentions"], float)
 
         # Sorted oldest-first
         dates = [e["date"] for e in result]
@@ -155,29 +155,29 @@ class TestDvaRetentionsPeriods:
 
     def test_periods_empty_when_no_data(self, monkeypatch):
         """No DVA data -> empty periods list (graceful degradation)."""
-        monkeypatch.setattr(dva_ret_engine, "_get_dfp_dva_retentions", lambda c: {})
-        monkeypatch.setattr(dva_ret_engine, "_get_itr_dva_retentions", lambda c: {})
+        monkeypatch.setattr(va_ret_engine, "_get_dfp_va_retentions", lambda c: {})
+        monkeypatch.setattr(va_ret_engine, "_get_itr_va_retentions", lambda c: {})
 
-        assert dva_ret_engine.dva_retentions_periods("UNKNOWN") == []
+        assert va_ret_engine.va_retentions_periods("UNKNOWN") == []
 
 
 # -- Registry tests ----------------------------------------------------------
 
-class TestDvaRetentionsRegistry:
+class TestVaRetentionsRegistry:
     def test_registry(self):
         """Engine should be registered with correct name, category, quantity."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "dva_retentions" in ENGINES
-        spec = ENGINES["dva_retentions"]
-        assert spec.name == "dva_retentions"
+        assert "va_retentions" in ENGINES
+        spec = ENGINES["va_retentions"]
+        assert spec.name == "va_retentions"
         assert spec.category == "dva"
-        assert spec.quantity == "ttm_dva_retentions"
-        assert spec.at_fn is dva_ret_engine.dva_retentions_at
-        assert spec.periods_fn is dva_ret_engine.dva_retentions_periods
+        assert spec.quantity == "ttm_va_retentions"
+        assert spec.at_fn is va_ret_engine.va_retentions_at
+        assert spec.periods_fn is va_ret_engine.va_retentions_periods
 
     def test_uses_correct_cvm_code(self):
         """Engine should query DVA codigo 7.05 (Retenções)."""
-        assert dva_ret_engine.DVA_RETENTIONS_CODE == "7.05"
+        assert va_ret_engine.VA_RETENTIONS_CODE == "7.05"
 
     def test_uses_grupo_like_filter(self):
         """Engine should NOT use a literal DVA_GRUPO variable (SQL uses LIKE).
@@ -187,14 +187,14 @@ class TestDvaRetentionsRegistry:
         short "DVA" abbreviation — so the SQL uses ``grupo LIKE '%Valor
         Adicionado%'`` and there is no DVA_GRUPO constant on the module.
         """
-        assert not hasattr(dva_ret_engine, "DVA_GRUPO")
+        assert not hasattr(va_ret_engine, "DVA_GRUPO")
 
     def test_source_mentions_codigo(self):
         """Engine source string should mention the CVM code for documentation."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "7.05" in ENGINES["dva_retentions"].source
+        assert "7.05" in ENGINES["va_retentions"].source
 
     def test_source_mentions_grupo_dva(self):
         """Engine source string should mention the DVA grupo filter for documentation."""
         from skills.cvm.calculations._registry import ENGINES
-        assert "Valor Adicionado" in ENGINES["dva_retentions"].source
+        assert "Valor Adicionado" in ENGINES["va_retentions"].source

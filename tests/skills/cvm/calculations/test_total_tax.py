@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import total_tax as tt_engine
+from skills.cvm.calculations.engines.dva import total_tax as tt_engine
 
 
 # -- Mock data ---------------------------------------------------------------

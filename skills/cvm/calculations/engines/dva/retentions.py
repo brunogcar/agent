@@ -1,21 +1,22 @@
-"""engines/dva_net_va.py -- TTM (trailing twelve months) DVA Net VA engine.
+"""engines/dva/retentions.py -- TTM (trailing twelve months) DVA Retentions engine.
 
-DVA 7.06 = Valor Adicionado Líquido Produzido (Net Value Added Produced).
-The wealth created by the entity itself after retentions (depreciation,
-amortization, provisions). Computed by the entity (or reported as a subtotal
-on the DVA) as:
+DVA 7.05 = Retenções (Retentions). Wealth withheld within the entity to
+maintain operating capacity — depreciation, amortization, and other
+provisions. This is the deduction that bridges Gross VA (7.04) to Net VA
+Produced (7.06):
 
   Net VA Produced (7.06) = Gross VA (7.04) + Retentions (7.05)
 
-(With sign-bearing quantities: 7.05 is negative, so the arithmetic on the
-statement is 7.04 + 7.05 = 7.06.)
+(Note: in the DVA layout 7.05 is reported as a negative figure, so the
+arithmetic on the statement is 7.04 + 7.05 = 7.06 with sign-bearing
+quantities.)
 
-Mirrors engines/dva_revenue.py (DVA 7.01) with:
-  - CVM account code 7.06 (Valor Adicionado Líquido Produzido) instead of 7.01
-  - No new-chart equivalent (7.06 is used in both old + new chart formats)
+Mirrors engines/dva/revenue.py (DVA 7.01) with:
+  - CVM account code 7.05 (Retenções) instead of 7.01
+  - No new-chart equivalent (7.05 is used in both old + new chart formats)
 
-SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo = '7.06'`
-(the grupo filter is required because codigo 7.06 only appears in the DVA
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo = '7.05'`
+(the grupo filter is required because codigo 7.05 only appears in the DVA
 statement, but the grupo column distinguishes DVA rows from DRE/BPA/BPP).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). The
@@ -26,16 +27,9 @@ generation side shows how wealth is CREATED:
 
 SIGN CONVENTION
 ---------------
-DVA 7.06 (Net VA Produced) is typically reported as a POSITIVE figure (it's
-the net wealth produced by the entity's own operations). This engine returns
-the RAW value from the database.
-
-CROSS-CHECK
------------
-Net VA Produced (7.06) should approximately equal dva_gross_va_at +
-dva_retentions_at (7.06 ~= 7.04 + 7.05 because 7.05 is already negative).
-Significant deviations flag accounting inconsistencies between the reported
-subtotal and the underlying line items.
+DVA 7.05 (Retenções) is typically reported as a NEGATIVE figure (depreciation
+and other retentions reduce the wealth available for distribution). This
+engine returns the RAW value from the database (typically negative).
 
 TTM ALGORITHM
 -------------
@@ -46,8 +40,8 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_net_va import dva_net_va_at
-    r = dva_net_va_at("PETR4", "2024-06-30")  # -> 140e9 (positive net wealth)
+    from skills.cvm.calculations.engines.dva.retentions import va_retentions_at
+    r = va_retentions_at("PETR4", "2024-06-30")  # -> -20e9 (negative retention)
 """
 
 from __future__ import annotations
@@ -58,17 +52,16 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Valor Adicionado Líquido Produzido (Net Value Added
-# Produced) -- subtotal of the DVA generation side: 7.06 = 7.04 (Gross VA) +
-# 7.05 (Retentions, negative).
-DVA_NET_VA_CODE = "7.06"
+# CVM account code for Retenções (Retentions) -- depreciation, amortization,
+# and other provisions deducted from Gross VA on the DVA generation side.
+VA_RETENTIONS_CODE = "7.05"
 
 
-def _get_dfp_dva_net_va(company: str) -> dict[str, dict]:
-    """Get all annual DVA net value added from DFP (codigo 7.06, meses=12).
+def _get_dfp_va_retentions(company: str) -> dict[str, dict]:
+    """Get all annual DVA retentions from DFP (codigo 7.05, meses=12).
 
-    Returns: {"2024": {"value": 140e9, "date": "2024-12-31"}, ...}
-    Values are in BRL (escala applied). Sign preserved (typically positive).
+    Returns: {"2024": {"value": -20e9, "date": "2024-12-31"}, ...}
+    Values are in BRL (escala applied). Sign preserved (typically negative).
     """
     conn = connect_dfp(read_only=True)
     try:
@@ -85,7 +78,7 @@ def _get_dfp_dva_net_va(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
-            (*empresa_ids, DVA_NET_VA_CODE),
+            (*empresa_ids, VA_RETENTIONS_CODE),
         ).fetchall()
 
         result = {}
@@ -101,10 +94,10 @@ def _get_dfp_dva_net_va(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_net_va(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative DVA net VA from ITR (codigo 7.06, meses 3/6/9).
+def _get_itr_va_retentions(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative DVA retentions from ITR (codigo 7.05, meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": 70e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": -10e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
     """
     conn = connect_itr(read_only=True)
@@ -122,7 +115,7 @@ def _get_itr_dva_net_va(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
-            (*empresa_ids, DVA_NET_VA_CODE),
+            (*empresa_ids, VA_RETENTIONS_CODE),
         ).fetchall()
 
         result = {}
@@ -140,20 +133,21 @@ def _get_itr_dva_net_va(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def dva_net_va_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months DVA net value added (7.06) ending at or before date.
+def va_retentions_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months DVA retentions (7.05) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM DVA net value added in BRL (typically POSITIVE -- net wealth
-        produced by the entity after retentions), or None if data not
-        available (company does not file DVA, or insufficient ITR history).
+        TTM DVA retentions in BRL (typically NEGATIVE -- depreciation and
+        other retentions reduce wealth available for distribution), or None
+        if data not available (company does not file DVA, or insufficient
+        ITR history).
     """
-    dfp = _get_dfp_dva_net_va(company)
-    itr = _get_itr_dva_net_va(company)
+    dfp = _get_dfp_va_retentions(company)
+    itr = _get_itr_va_retentions(company)
 
     if not itr and not dfp:
         return None
@@ -191,14 +185,14 @@ def dva_net_va_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def dva_net_va_periods(company: str) -> list[dict]:
-    """Get all TTM DVA net value added (7.06) periods for a company.
+def va_retentions_periods(company: str) -> list[dict]:
+    """Get all TTM DVA retentions (7.05) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_net_va": value}
+    Returns a list of {"date": period_end_date, "ttm_va_retentions": value}
     sorted oldest-first.
     """
-    dfp = _get_dfp_dva_net_va(company)
-    itr = _get_itr_dva_net_va(company)
+    dfp = _get_dfp_va_retentions(company)
+    itr = _get_itr_va_retentions(company)
 
     if not itr and not dfp:
         return []
@@ -207,15 +201,15 @@ def dva_net_va_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_net_va_at(company, itr_date)
+        ttm = va_retentions_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_net_va": ttm})
+            periods.append({"date": itr_date, "ttm_va_retentions": ttm})
 
     for year, data in sorted(dfp.items()):
         if all_itr_dates and data["date"] < all_itr_dates[0]:
-            periods.append({"date": data["date"], "ttm_dva_net_va": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_retentions": data["value"]})
         elif not all_itr_dates:
-            periods.append({"date": data["date"], "ttm_dva_net_va": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_retentions": data["value"]})
 
     periods.sort(key=lambda p: p["date"])
     seen = set()
@@ -232,10 +226,10 @@ def dva_net_va_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="dva_net_va",
-    quantity="ttm_dva_net_va",
-    at_fn=dva_net_va_at,
-    periods_fn=dva_net_va_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.06 -- Valor Adicionado Líquido Produzido TTM",
+    name="va_retentions",
+    quantity="ttm_va_retentions",
+    at_fn=va_retentions_at,
+    periods_fn=va_retentions_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.05 -- Retenções TTM",
     category="dva",
 ))

@@ -357,6 +357,11 @@ def _auto_discover() -> None:
 
     Called once at module load. Idempotent — uses a flag to avoid re-running
     on re-import (which can happen in test environments).
+
+    [new commit] Now scans engine SUBFOLDERS (e.g., engines/dva/) recursively.
+    This allows organizing engines by statement (DVA, BPA, BPP, DRE, DFC)
+    without name collisions. The glob pattern `engines/**/*.py` catches both
+    top-level engines AND subfolder engines.
     """
     if getattr(_auto_discover, "_done", False):
         return
@@ -364,11 +369,22 @@ def _auto_discover() -> None:
 
     base = Path(__file__).parent
 
-    # Discover engines
-    for py_file in sorted((base / "engines").glob("*.py")):
+    # Discover engines — top-level + subfolders (e.g., engines/dva/*.py)
+    engines_dir = base / "engines"
+    # Top-level engines (engines/*.py)
+    for py_file in sorted(engines_dir.glob("*.py")):
         if py_file.name != "__init__.py":
             module_name = f"skills.cvm.calculations.engines.{py_file.stem}"
             importlib.import_module(module_name)
+    # Subfolder engines (engines/*/*.py) — e.g., engines/dva/revenue.py
+    for sub_dir in sorted(engines_dir.iterdir()):
+        if sub_dir.is_dir() and not sub_dir.name.startswith("__"):
+            for py_file in sorted(sub_dir.glob("*.py")):
+                if py_file.name != "__init__.py":
+                    module_name = (
+                        f"skills.cvm.calculations.engines.{sub_dir.name}.{py_file.stem}"
+                    )
+                    importlib.import_module(module_name)
 
     # Discover metrics
     for py_file in sorted((base / "metrics").glob("*.py")):

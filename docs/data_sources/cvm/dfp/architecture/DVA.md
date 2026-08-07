@@ -118,25 +118,34 @@ The `skills/cvm/calculations/engines/` package now has engines covering
 added incrementally (v1.2 → v1.4); the generation-side engines were added
 in v1.12 (2026-08-05), completing the DVA coverage.
 
-**Generation side (v1.12, new):**
+**Generation side (v1.12, new — moved to `engines/dva/` subfolder in v1.16):**
 
-| Engine file | Code | Label |
-|-------------|------|-------|
-| `dva_revenue.py` | `7.01` | Receitas |
-| `dva_inputs.py` | `7.03` | Insumos Adquiridos de Terceiros |
-| `dva_gross_va.py` | `7.04` | Valor Adicionado Bruto |
-| `dva_retentions.py` | `7.05` | Retenções |
-| `dva_net_va.py` | `7.06` | Valor Adicionado Líquido Produzido |
-| `dva_va_received.py` | `7.07` | Vlr Adicionado Recebido em Transferência |
+| Engine file (in `engines/dva/`) | Registered name | Code | Label |
+|-------------|------|------|-------|
+| `revenue.py` | `va_revenue` | `7.01` | Receitas |
+| `inputs.py` | `va_inputs` | `7.03` | Insumos Adquiridos de Terceiros |
+| `gross_va.py` | `va_gross` | `7.04` | Valor Adicionado Bruto |
+| `retentions.py` | `va_retentions` | `7.05` | Retenções |
+| `net_va.py` | `va_net` | `7.06` | Valor Adicionado Líquido Produzido |
+| `va_received.py` | `va_received` | `7.07` | Vlr Adicionado Recebido em Transferência |
 
-**Distribution side (v1.2 → v1.4, pre-existing):**
+**Distribution side (v1.2 → v1.4, pre-existing — moved to `engines/dva/` in v1.16):**
 
-| Engine file | Code | Label |
-|-------------|------|-------|
-| `value_added.py` | `7.08` / `7.10` | Valor Adicionado Total a Distribuir (the total) |
-| `total_tax.py` | `7.08.02` / `7.11.02` | Impostos, Taxas e Contribuições |
-| `interest_paid.py` | `7.08.03` / `7.11.03` | Remuneração de Capital de Terceiros |
-| `dividends_paid.py` | `7.08.04` / `7.11.04` | Remuneração de Capital Próprio |
+| Engine file (in `engines/dva/`) | Registered name | Code | Label |
+|-------------|------|------|-------|
+| `value_added.py` | `value_added` | `7.08` / `7.10` | Valor Adicionado Total a Distribuir (the total) |
+| `total_tax.py` | `total_tax` | `7.08.02` / `7.11.02` | Impostos, Taxas e Contribuições |
+| `interest_paid.py` | `interest_paid` | `7.08.03` / `7.11.03` | Remuneração de Capital de Terceiros |
+| `dividends_paid.py` | `dividends_paid` | `7.08.04` / `7.11.04` | Remuneração de Capital Próprio |
+
+> **v1.16 reorganization:** All 10 DVA engines now live in `engines/dva/`.
+> Generation-side files dropped the `dva_` prefix (the subfolder provides
+> namespace isolation). Registered engine names use `va_` prefix for
+> generation-side (to avoid collision with DRE `revenue`, BPA `cash`, etc.
+> in the global ENGINES dict). Distribution-side names are unchanged.
+> 3 legacy duplicate files (`dva_value_added.py`, `dva_total_tax.py`,
+> `dva_interest_paid.py`) were deleted — they were byte-identical copies
+> left behind in the v1.4 rename sprint.
 
 All 10 engines follow the same template: `*_at()` point-in-time +
 `*_history()` time-series + TTM derivation via `compute_ttm_with_engines()`
@@ -148,13 +157,17 @@ engines query both old (`7.08.0x`) + new (`7.11.0x`) taxonomies via
 `codigo IN ('7.08.0x', '7.11.0x')`; the 6 generation engines use single-code
 lookup (codes `7.0x` are unique — no old/new taxonomy split).
 
-> **Note on the `dva_` prefix.** The v1.4 sprint removed the `dva_` prefix
-> from the 4 distribution-side engines (e.g. `dva_interest_paid` →
+> **Note on naming (v1.16 update).** The v1.4 sprint removed the `dva_`
+> prefix from the 4 distribution-side engines (e.g. `dva_interest_paid` →
 > `interest_paid`) to follow the no-category-prefix convention. The 6
-> generation-side engines added in v1.12 retain the `dva_` prefix because
-> names like `revenue` (already used for DRE 3.01), `inputs`, and
-> `retentions` would be ambiguous without it. The prefix is therefore
-> **policy-by-necessity**, not a convention reversal.
+> generation-side engines added in v1.12 initially retained the `dva_`
+> prefix because names like `revenue` (already used for DRE 3.01) would
+> collide. In v1.16, all 10 DVA engines were moved to the `engines/dva/`
+> subfolder, which provides filesystem-level namespace isolation. The
+> generation-side files dropped the `dva_` prefix (e.g., `dva_revenue.py`
+> → `dva/revenue.py`), but their REGISTERED ENGINE NAMES use a `va_`
+> prefix (e.g., `va_revenue`) to avoid collision in the global ENGINES
+> dict (which is keyed by name, not by file path).
 
 ## Common pitfalls
 
@@ -172,9 +185,9 @@ lookup (codes `7.0x` are unique — no old/new taxonomy split).
 4. **The new 7.11 format is rare (~75 rows).** Most filers still use
    `7.08.xx`. But a complete DVA implementation must handle both — the new
    format will likely grow as CVM rolls it out. **[v1.8]** The 4 DVA
-   calculations engines (`value_added`, `dva_total_tax`, `dva_interest_paid`,
-   `dividends_paid`) all query both old + new codes via
-   `codigo IN ('7.08.0x', '7.11.0x')` — the same pattern is applied to
+   calculations engines (`value_added`, `total_tax`, `interest_paid`,
+   `dividends_paid` — all in `engines/dva/`) all query both old + new codes
+   via `codigo IN ('7.08.0x', '7.11.0x')` — the same pattern is applied to
    `7.08`/`7.10` (total) and `7.08.0x`/`7.11.0x` (distribution components).
 
 5. **DVA is available in BOTH DFP and ITR.** Annual DVA comes from DFP
@@ -194,8 +207,7 @@ lookup (codes `7.0x` are unique — no old/new taxonomy split).
 
 ---
 
-*Last updated: 2026-08-05 (v1.12 — documents the 6 new DVA generation-side
-calculation engines: `dva_revenue` 7.01, `dva_inputs` 7.03, `dva_gross_va`
-7.04, `dva_retentions` 7.05, `dva_net_va` 7.06, `dva_va_received` 7.07.
-Completes the DVA — both generation + distribution sides now have engines.
-Sibling of DRE.md).*
+*Last updated: 2026-08-07 (v1.16 — all 10 DVA engines moved to `engines/dva/`
+subfolder. Generation-side files dropped `dva_` prefix; registered engine
+names use `va_` prefix to avoid global registry collision. 3 legacy
+duplicate files deleted. Sibling of DRE.md).*

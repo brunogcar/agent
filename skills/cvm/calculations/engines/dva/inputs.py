@@ -1,4 +1,4 @@
-"""engines/dva_inputs.py -- TTM (trailing twelve months) DVA Inputs engine.
+"""engines/dva/inputs.py -- TTM (trailing twelve months) DVA Inputs engine.
 
 DVA 7.03 = Insumos Adquiridos de Terceiros (Inputs Acquired from Third
 Parties). The cost of external inputs consumed in the period — raw materials,
@@ -8,7 +8,7 @@ first deduction on the DVA "generation side" and the bridge from Revenues
 
   Gross VA (7.04) = Revenues (7.01) - Inputs (7.03)
 
-Mirrors engines/dva_revenue.py (DVA 7.01) with:
+Mirrors engines/dva/revenue.py (DVA 7.01) with:
   - CVM account code 7.03 (Insumos) instead of 7.01
   - No new-chart equivalent (7.03 is used in both old + new chart formats)
 
@@ -37,8 +37,8 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_inputs import dva_inputs_at
-    r = dva_inputs_at("PETR4", "2024-06-30")  # -> -120e9 (negative cost)
+    from skills.cvm.calculations.engines.dva.inputs import va_inputs_at
+    r = va_inputs_at("PETR4", "2024-06-30")  # -> -120e9 (negative cost)
 """
 
 from __future__ import annotations
@@ -51,10 +51,10 @@ from skills._base import engine_cached  # [v1.8 F7]
 
 # CVM account code for Insumos Adquiridos de Terceiros (Inputs from Third
 # Parties) -- first deduction on the DVA generation side.
-DVA_INPUTS_CODE = "7.03"
+VA_INPUTS_CODE = "7.03"
 
 
-def _get_dfp_dva_inputs(company: str) -> dict[str, dict]:
+def _get_dfp_va_inputs(company: str) -> dict[str, dict]:
     """Get all annual DVA inputs from DFP (codigo 7.03, meses=12).
 
     Returns: {"2024": {"value": -120e9, "date": "2024-12-31"}, ...}
@@ -75,7 +75,7 @@ def _get_dfp_dva_inputs(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
-            (*empresa_ids, DVA_INPUTS_CODE),
+            (*empresa_ids, VA_INPUTS_CODE),
         ).fetchall()
 
         result = {}
@@ -91,7 +91,7 @@ def _get_dfp_dva_inputs(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_inputs(company: str) -> dict[str, dict]:
+def _get_itr_va_inputs(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative DVA inputs from ITR (codigo 7.03, meses 3/6/9).
 
     Returns: {"2024-06-30": {"value": -60e9, "meses": 6, "year": 2024}, ...}
@@ -112,7 +112,7 @@ def _get_itr_dva_inputs(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
-            (*empresa_ids, DVA_INPUTS_CODE),
+            (*empresa_ids, VA_INPUTS_CODE),
         ).fetchall()
 
         result = {}
@@ -130,7 +130,7 @@ def _get_itr_dva_inputs(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def dva_inputs_at(company: str, date: str) -> float | None:
+def va_inputs_at(company: str, date: str) -> float | None:
     """Get trailing twelve months DVA inputs (7.03) ending at or before date.
 
     Args:
@@ -142,8 +142,8 @@ def dva_inputs_at(company: str, date: str) -> float | None:
         from third parties), or None if data not available (company does not
         file DVA, or insufficient ITR history).
     """
-    dfp = _get_dfp_dva_inputs(company)
-    itr = _get_itr_dva_inputs(company)
+    dfp = _get_dfp_va_inputs(company)
+    itr = _get_itr_va_inputs(company)
 
     if not itr and not dfp:
         return None
@@ -181,14 +181,14 @@ def dva_inputs_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def dva_inputs_periods(company: str) -> list[dict]:
+def va_inputs_periods(company: str) -> list[dict]:
     """Get all TTM DVA inputs (7.03) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_inputs": value}
+    Returns a list of {"date": period_end_date, "ttm_va_inputs": value}
     sorted oldest-first.
     """
-    dfp = _get_dfp_dva_inputs(company)
-    itr = _get_itr_dva_inputs(company)
+    dfp = _get_dfp_va_inputs(company)
+    itr = _get_itr_va_inputs(company)
 
     if not itr and not dfp:
         return []
@@ -197,15 +197,15 @@ def dva_inputs_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_inputs_at(company, itr_date)
+        ttm = va_inputs_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_inputs": ttm})
+            periods.append({"date": itr_date, "ttm_va_inputs": ttm})
 
     for year, data in sorted(dfp.items()):
         if all_itr_dates and data["date"] < all_itr_dates[0]:
-            periods.append({"date": data["date"], "ttm_dva_inputs": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_inputs": data["value"]})
         elif not all_itr_dates:
-            periods.append({"date": data["date"], "ttm_dva_inputs": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_inputs": data["value"]})
 
     periods.sort(key=lambda p: p["date"])
     seen = set()
@@ -222,10 +222,10 @@ def dva_inputs_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="dva_inputs",
-    quantity="ttm_dva_inputs",
-    at_fn=dva_inputs_at,
-    periods_fn=dva_inputs_periods,
+    name="va_inputs",
+    quantity="ttm_va_inputs",
+    at_fn=va_inputs_at,
+    periods_fn=va_inputs_periods,
     source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.03 -- Insumos Adquiridos de Terceiros TTM",
     category="dva",
 ))

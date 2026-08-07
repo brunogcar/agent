@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import value_added as va_engine
+from skills.cvm.calculations.engines.dva import value_added as va_engine
 
 
 # -- Mock data ---------------------------------------------------------------

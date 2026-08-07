@@ -1,15 +1,21 @@
-"""engines/dva_revenue.py -- TTM (trailing twelve months) DVA Revenues engine.
+"""engines/dva/net_va.py -- TTM (trailing twelve months) DVA Net VA engine.
 
-DVA 7.01 = Receitas (Revenues). The top line of the DVA "generation side" —
-total revenues from goods sold and services rendered. This is the starting
-point for computing Valor Adicionado Bruto (7.04 = 7.01 - 7.03).
+DVA 7.06 = Valor Adicionado Líquido Produzido (Net Value Added Produced).
+The wealth created by the entity itself after retentions (depreciation,
+amortization, provisions). Computed by the entity (or reported as a subtotal
+on the DVA) as:
 
-Mirrors engines/dva_value_added.py (DVA 7.08) with:
-  - CVM account code 7.01 (Receitas) instead of 7.08
-  - No new-chart equivalent (7.01 is used in both old + new chart formats)
+  Net VA Produced (7.06) = Gross VA (7.04) + Retentions (7.05)
 
-SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo = '7.01'`
-(the grupo filter is required because codigo 7.01 only appears in the DVA
+(With sign-bearing quantities: 7.05 is negative, so the arithmetic on the
+statement is 7.04 + 7.05 = 7.06.)
+
+Mirrors engines/dva/revenue.py (DVA 7.01) with:
+  - CVM account code 7.06 (Valor Adicionado Líquido Produzido) instead of 7.01
+  - No new-chart equivalent (7.06 is used in both old + new chart formats)
+
+SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo = '7.06'`
+(the grupo filter is required because codigo 7.06 only appears in the DVA
 statement, but the grupo column distinguishes DVA rows from DRE/BPA/BPP).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). The
@@ -20,8 +26,16 @@ generation side shows how wealth is CREATED:
 
 SIGN CONVENTION
 ---------------
-DVA 7.01 (Receitas) is typically reported as a POSITIVE figure (it's
-revenue). This engine returns the RAW value from the database.
+DVA 7.06 (Net VA Produced) is typically reported as a POSITIVE figure (it's
+the net wealth produced by the entity's own operations). This engine returns
+the RAW value from the database.
+
+CROSS-CHECK
+-----------
+Net VA Produced (7.06) should approximately equal va_gross_at +
+va_retentions_at (7.06 ~= 7.04 + 7.05 because 7.05 is already negative).
+Significant deviations flag accounting inconsistencies between the reported
+subtotal and the underlying line items.
 
 TTM ALGORITHM
 -------------
@@ -32,8 +46,8 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_revenue import dva_revenue_at
-    r = dva_revenue_at("PETR4", "2024-06-30")  # -> 280e9 (positive revenue)
+    from skills.cvm.calculations.engines.dva.net_va import va_net_at
+    r = va_net_at("PETR4", "2024-06-30")  # -> 140e9 (positive net wealth)
 """
 
 from __future__ import annotations
@@ -44,14 +58,16 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Receitas (Revenues) — top line of DVA generation side.
-DVA_REVENUE_CODE = "7.01"
+# CVM account code for Valor Adicionado Líquido Produzido (Net Value Added
+# Produced) -- subtotal of the DVA generation side: 7.06 = 7.04 (Gross VA) +
+# 7.05 (Retentions, negative).
+VA_NET_VA_CODE = "7.06"
 
 
-def _get_dfp_dva_revenue(company: str) -> dict[str, dict]:
-    """Get all annual DVA revenues from DFP (codigo 7.01, meses=12).
+def _get_dfp_va_net(company: str) -> dict[str, dict]:
+    """Get all annual DVA net value added from DFP (codigo 7.06, meses=12).
 
-    Returns: {"2024": {"value": 280e9, "date": "2024-12-31"}, ...}
+    Returns: {"2024": {"value": 140e9, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically positive).
     """
     conn = connect_dfp(read_only=True)
@@ -69,7 +85,7 @@ def _get_dfp_dva_revenue(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
-            (*empresa_ids, DVA_REVENUE_CODE),
+            (*empresa_ids, VA_NET_VA_CODE),
         ).fetchall()
 
         result = {}
@@ -85,10 +101,10 @@ def _get_dfp_dva_revenue(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_revenue(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative DVA revenues from ITR (codigo 7.01, meses 3/6/9).
+def _get_itr_va_net(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative DVA net VA from ITR (codigo 7.06, meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": 140e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": 70e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
     """
     conn = connect_itr(read_only=True)
@@ -106,7 +122,7 @@ def _get_itr_dva_revenue(company: str) -> dict[str, dict]:
                  AND c.codigo = ?
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
-            (*empresa_ids, DVA_REVENUE_CODE),
+            (*empresa_ids, VA_NET_VA_CODE),
         ).fetchall()
 
         result = {}
@@ -124,19 +140,20 @@ def _get_itr_dva_revenue(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def dva_revenue_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months DVA revenues (7.01) ending at or before date.
+def va_net_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months DVA net value added (7.06) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM DVA revenues in BRL (typically POSITIVE), or None if data not
+        TTM DVA net value added in BRL (typically POSITIVE -- net wealth
+        produced by the entity after retentions), or None if data not
         available (company does not file DVA, or insufficient ITR history).
     """
-    dfp = _get_dfp_dva_revenue(company)
-    itr = _get_itr_dva_revenue(company)
+    dfp = _get_dfp_va_net(company)
+    itr = _get_itr_va_net(company)
 
     if not itr and not dfp:
         return None
@@ -174,14 +191,14 @@ def dva_revenue_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def dva_revenue_periods(company: str) -> list[dict]:
-    """Get all TTM DVA revenues (7.01) periods for a company.
+def va_net_periods(company: str) -> list[dict]:
+    """Get all TTM DVA net value added (7.06) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_revenue": value}
+    Returns a list of {"date": period_end_date, "ttm_va_net": value}
     sorted oldest-first.
     """
-    dfp = _get_dfp_dva_revenue(company)
-    itr = _get_itr_dva_revenue(company)
+    dfp = _get_dfp_va_net(company)
+    itr = _get_itr_va_net(company)
 
     if not itr and not dfp:
         return []
@@ -190,15 +207,15 @@ def dva_revenue_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_revenue_at(company, itr_date)
+        ttm = va_net_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_revenue": ttm})
+            periods.append({"date": itr_date, "ttm_va_net": ttm})
 
     for year, data in sorted(dfp.items()):
         if all_itr_dates and data["date"] < all_itr_dates[0]:
-            periods.append({"date": data["date"], "ttm_dva_revenue": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_net": data["value"]})
         elif not all_itr_dates:
-            periods.append({"date": data["date"], "ttm_dva_revenue": data["value"]})
+            periods.append({"date": data["date"], "ttm_va_net": data["value"]})
 
     periods.sort(key=lambda p: p["date"])
     seen = set()
@@ -215,10 +232,10 @@ def dva_revenue_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="dva_revenue",
-    quantity="ttm_dva_revenue",
-    at_fn=dva_revenue_at,
-    periods_fn=dva_revenue_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.01 -- Receitas TTM",
+    name="va_net",
+    quantity="ttm_va_net",
+    at_fn=va_net_at,
+    periods_fn=va_net_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.06 -- Valor Adicionado Líquido Produzido TTM",
     category="dva",
 ))

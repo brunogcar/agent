@@ -1,4 +1,10 @@
-"""engines/dva_interest_paid.py -- TTM (trailing twelve months) Interest Paid engine.
+"""engines/dva/interest_paid.py -- TTM (trailing twelve months) Interest Paid engine.
+
+This is the CANONICAL TTM interest-paid engine for DVA 7.08.03/7.11.03
+(Remuneração do Capital de Terceiros). CHANGELOG v1.4 confirmed the rename
+`dva_interest_paid` -> `interest_paid` -- the non-prefixed `interest_paid`
+is the ACTIVE version. The legacy `engines/dva_interest_paid.py` was the
+old name and has been deleted; this file is the canonical import path.
 
 Mirrors engines/operating_cf.py (DFC 6.01) with one change:
   - CVM account code 7.08.03 (Remuneração do Capital de Terceiros --
@@ -53,8 +59,8 @@ TTM interest paid computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_interest_paid import dva_interest_paid_at
-    r = dva_interest_paid_at("PETR4", "2024-06-30")  # -> -8e9 (negative outflow)
+    from skills.cvm.calculations.engines.dva.interest_paid import interest_paid_at
+    r = interest_paid_at("PETR4", "2024-06-30")  # -> -8e9 (negative outflow)
 """
 
 from __future__ import annotations
@@ -69,11 +75,11 @@ from skills._base import engine_cached  # [v1.8 F7]
 # third-party capital). Lives within the DVA statement group.
 # Old chart: 7.08.03 (dominant). New chart: 7.11.03 (~75 rows).
 # Query both via the SQL `codigo IN (...)` clause below.
-DVA_INTEREST_PAID_CODE = "7.08.03"
-DVA_INTEREST_PAID_CODE_NEW = "7.11.03"
+INTEREST_PAID_CODE = "7.08.03"
+INTEREST_PAID_CODE_NEW = "7.11.03"
 
 
-def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
+def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
     """Get all annual interest paid from DFP (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses=12).
 
@@ -92,7 +98,7 @@ def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo IN ('{DVA_INTEREST_PAID_CODE}', '{DVA_INTEREST_PAID_CODE_NEW}')
+                 AND c.codigo IN ('{INTEREST_PAID_CODE}', '{INTEREST_PAID_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -111,7 +117,7 @@ def _get_dfp_dva_interest_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
+def _get_itr_interest_paid(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative interest paid from ITR (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses 3/6/9).
 
@@ -131,7 +137,7 @@ def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo IN ('{DVA_INTEREST_PAID_CODE}', '{DVA_INTEREST_PAID_CODE_NEW}')
+                 AND c.codigo IN ('{INTEREST_PAID_CODE}', '{INTEREST_PAID_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -152,7 +158,7 @@ def _get_itr_dva_interest_paid(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def dva_interest_paid_at(company: str, date: str) -> float | None:
+def interest_paid_at(company: str, date: str) -> float | None:
     """Get trailing twelve months interest paid (DVA 7.08.03 or 7.11.03) ending at or before date.
 
     Args:
@@ -164,8 +170,8 @@ def dva_interest_paid_at(company: str, date: str) -> float | None:
         sign preserved), or None if data not available (e.g., company does
         not file DVA, or insufficient ITR history to derive TTM).
     """
-    dfp = _get_dfp_dva_interest_paid(company)
-    itr = _get_itr_dva_interest_paid(company)
+    dfp = _get_dfp_interest_paid(company)
+    itr = _get_itr_interest_paid(company)
 
     if not itr and not dfp:
         return None
@@ -210,18 +216,18 @@ def dva_interest_paid_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def dva_interest_paid_periods(company: str) -> list[dict]:
+def interest_paid_periods(company: str) -> list[dict]:
     """Get all TTM interest paid (DVA 7.08.03 or 7.11.03) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_interest": value}
+    Returns a list of {"date": period_end_date, "ttm_interest_paid": value}
     sorted oldest-first. Each entry represents a point where TTM interest
     paid changed (new ITR/DFP filed).
 
     Useful for building step-function interest-paid overlays on price charts
     or for cross-checking against the financial_result engine (DRE 3.06).
     """
-    dfp = _get_dfp_dva_interest_paid(company)
-    itr = _get_itr_dva_interest_paid(company)
+    dfp = _get_dfp_interest_paid(company)
+    itr = _get_itr_interest_paid(company)
 
     if not itr and not dfp:
         return []
@@ -231,14 +237,14 @@ def dva_interest_paid_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_interest_paid_at(company, itr_date)
+        ttm = interest_paid_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_interest": ttm})
+            periods.append({"date": itr_date, "ttm_interest_paid": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_dva_interest": data["value"]})
+            periods.append({"date": data["date"], "ttm_interest_paid": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -256,10 +262,10 @@ def dva_interest_paid_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="dva_interest_paid",
-    quantity="ttm_dva_interest",
-    at_fn=dva_interest_paid_at,
-    periods_fn=dva_interest_paid_periods,
+    name="interest_paid",
+    quantity="ttm_interest_paid",
+    at_fn=interest_paid_at,
+    periods_fn=interest_paid_periods,
     source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.03 (or 7.11.03) -- Juros Pagos TTM",
     category="dva",
 ))

@@ -1,15 +1,15 @@
-"""engines/dva_total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
+"""engines/dva/dividends_paid.py -- TTM (trailing twelve months) Dividends Paid engine.
 
-Mirrors engines/operating_cf.py (DFC 6.01) with one change:
-  - CVM account code 7.08.02 (Impostos, Taxas e Contribuições -- total tax
-    burden) instead of 6.01 (FCO). New-chart filers use code 7.11.02
-    instead — queried in the same SQL via `codigo IN (...)`.
+Mirrors engines/dva/interest_paid.py (DVA 7.08.03) with one change:
+  - CVM account code 7.08.04 (Remuneração do Capital Próprio -- dividends /
+    distributions paid to shareholders / own-capital providers) instead of
+    7.08.03 (interest paid to third-party capital providers).
 
 SQL filter: `AND c.grupo LIKE '%Valor Adicionado%' AND c.codigo IN
-('7.08.02', '7.11.02')` (the grupo filter is required because the DVA
+('7.08.04', '7.11.04')` (the grupo filter is required because the DVA
 statement re-uses codigo numbers that overlap with DRE/BPA/BPP/DFC
-scopes; the codigo IN covers BOTH the old-chart `7.08.02` and the
-new-chart `7.11.02` formats).
+scopes; the codigo IN covers BOTH the old-chart `7.08.04` and the
+new-chart `7.11.04` formats).
 
 DVA = Demonstração do Valor Adicionado (Value Added Statement). A CVM
 flow statement showing how wealth is created and distributed. Required
@@ -17,25 +17,21 @@ filing for all B3-listed companies, but OPTIONAL for non-listed filers --
 so some companies have no DVA rows. The engine returns None gracefully
 in that case (the existing `if not itr and not dfp: return None` path).
 
-This is the TOTAL TAX BURDEN -- broader than the `tax` engine (DRE 3.08,
-which captures only INCOME TAX). DVA 7.08.02 includes:
-  - Income tax (IRPJ + CSLL) -- cross-checks DRE 3.08
-  - Indirect taxes on revenue (PIS, COFINS)
-  - Taxes on goods/services (ICMS, IPI, ISS)
-  - Other contributions (FGTS, INSS -- depending on reporting practice)
-
-For industrial/commercial companies, indirect taxes often dwarf income
-tax -- so DVA 7.08.02 gives a more complete picture of the company's total
-tax contribution to society. Useful for tax-burden analysis and for
-cross-checking effective_tax_rate (DRE 3.08 / EBT) against the broader
-DVA figure.
+This is dividends DISTRIBUTED (paid to shareholders) as reported in the
+DVA. It is a SECOND independent source for dividends data -- it
+cross-checks the B3 dividends engine (engines/dividends.py), which
+tracks individual proventos from the cash_dividends B3 table and
+produces DPA on a per-share basis. DVA 7.08.04 reports the aggregate BRL
+amount distributed (not per-share), so the two engines are
+complementary: B3 = per-share cash flow to shareholders; DVA 7.08.04 =
+aggregate wealth distribution reported by the company.
 
 SIGN CONVENTION
 ---------------
-DVA 7.08.02 (Impostos, Taxas e Contribuições) is typically reported as a
-NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- taxes distributed
-to government). This engine returns the RAW value from the database --
-callers handle the sign as needed.
+DVA 7.08.04 (Remuneração do Capital Próprio) is typically reported as a
+NEGATIVE figure on the DVA (it's a wealth OUTFLOW -- dividends /
+distributions paid to shareholders). This engine returns the RAW value
+from the database -- callers handle the sign as needed.
 
 TTM ALGORITHM
 -------------
@@ -44,22 +40,22 @@ For a date D, find the most recent ITR period (data_fim_exerc <= D):
   TTM = DFP_prior_year - ITR_prior_year_same_period + ITR_current_period
 
 Example for D = 2024-08-15 (most recent ITR = Q2 2024, data_fim = 2024-06-30):
-  ITR 2024 Q2 (meses=6) = cumulative H1 2024 total tax burden
-  ITR 2023 Q2 (meses=6) = cumulative H1 2023 total tax burden
-  DFP 2023 (meses=12)   = full year 2023 total tax burden
+  ITR 2024 Q2 (meses=6) = cumulative H1 2024 dividends paid
+  ITR 2023 Q2 (meses=6) = cumulative H1 2023 dividends paid
+  DFP 2023 (meses=12)   = full year 2023 dividends paid
   TTM = DFP_2023 - ITR_2023_H1 + ITR_2024_H1 = 12 months ending 2024-06-30
 
 DATA RANGE
 ----------
 DFP: 2010-present (annual, meses=12)
 ITR: 2011-present (quarterly cumulative, meses=3/6/9)
-TTM total tax burden computable from: ~2012 onwards (need 2 years of ITR)
+TTM dividends paid computable from: ~2012 onwards (need 2 years of ITR)
 
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.dva_total_tax import dva_total_tax_at
-    r = dva_total_tax_at("PETR4", "2024-06-30")  # -> -90e9 (negative outflow)
+    from skills.cvm.calculations.engines.dva.dividends_paid import dividends_paid_at
+    r = dividends_paid_at("PETR4", "2024-06-30")  # -> -1.5e10 (negative outflow)
 """
 
 from __future__ import annotations
@@ -70,19 +66,20 @@ from data_sources.cvm._bridge import resolve_company
 from skills._base import engine_cached  # [v1.8 F7]
 
 
-# CVM account code for Impostos, Taxas e Contribuições (total tax burden).
-# Lives within the DVA statement group.
-# Old chart: 7.08.02 (dominant). New chart: 7.11.02 (~75 rows).
-# Query both via the SQL `codigo IN (...)` clause below.
-DVA_TOTAL_TAX_CODE = "7.08.02"
-DVA_TOTAL_TAX_CODE_NEW = "7.11.02"
+# CVM account code for Remuneração do Capital Próprio (dividends /
+# distributions paid to shareholders / own-capital providers). Lives
+# within the DVA statement group.
+# Old chart: 7.08.04 (dominant — 16808 rows in DFP). New chart: 7.11.04
+# (~75 rows). Query both via the SQL `codigo IN (...)` clause below.
+DIVIDENDS_PAID_CODE = "7.08.04"
+DIVIDENDS_PAID_CODE_NEW = "7.11.04"
 
 
-def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
-    """Get all annual total tax burden from DFP (DVA grupo LIKE
-    '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses=12).
+def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
+    """Get all annual dividends paid from DFP (DVA grupo LIKE '%Valor Adicionado%',
+    codigo IN ('7.08.04', '7.11.04'), meses=12).
 
-    Returns: {"2024": {"value": -90e9, "date": "2024-12-31"}, ...}
+    Returns: {"2024": {"value": -1.5e10, "date": "2024-12-31"}, ...}
     Values are in BRL (escala applied). Sign preserved (typically negative).
     """
     conn = connect_dfp(read_only=True)
@@ -97,7 +94,7 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo IN ('{DVA_TOTAL_TAX_CODE}', '{DVA_TOTAL_TAX_CODE_NEW}')
+                 AND c.codigo IN ('{DIVIDENDS_PAID_CODE}', '{DIVIDENDS_PAID_CODE_NEW}')
                  AND c.meses = 12
                ORDER BY e.ano DESC""",
             empresa_ids,
@@ -116,11 +113,11 @@ def _get_dfp_dva_total_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
-def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
-    """Get all quarterly cumulative total tax burden from ITR (DVA grupo LIKE
-    '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses 3/6/9).
+def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
+    """Get all quarterly cumulative dividends paid from ITR (DVA grupo LIKE
+    '%Valor Adicionado%', codigo IN ('7.08.04', '7.11.04'), meses 3/6/9).
 
-    Returns: {"2024-06-30": {"value": -45e9, "meses": 6, "year": 2024}, ...}
+    Returns: {"2024-06-30": {"value": -7e9, "meses": 6, "year": 2024}, ...}
     Values are in BRL (escala applied). Cumulative (Jan -> period end).
     Sign preserved (typically negative).
     """
@@ -136,7 +133,7 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
                WHERE c.id_empresa IN ({emp_ph})
                  AND c.consolidado = 1
                  AND c.grupo LIKE '%Valor Adicionado%'
-                 AND c.codigo IN ('{DVA_TOTAL_TAX_CODE}', '{DVA_TOTAL_TAX_CODE_NEW}')
+                 AND c.codigo IN ('{DIVIDENDS_PAID_CODE}', '{DIVIDENDS_PAID_CODE_NEW}')
                  AND c.meses IN (3, 6, 9)
                ORDER BY e.ano DESC, c.data_fim_exerc DESC""",
             empresa_ids,
@@ -157,20 +154,20 @@ def _get_itr_dva_total_tax(company: str) -> dict[str, dict]:
 
 
 @engine_cached
-def dva_total_tax_at(company: str, date: str) -> float | None:
-    """Get trailing twelve months total tax burden (DVA 7.08.02 or 7.11.02) ending at or before date.
+def dividends_paid_at(company: str, date: str) -> float | None:
+    """Get trailing twelve months dividends paid (DVA 7.08.04 or 7.11.04) ending at or before date.
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        TTM total tax burden in BRL (typically NEGATIVE -- raw DVA value,
+        TTM dividends paid in BRL (typically NEGATIVE -- raw DVA value,
         sign preserved), or None if data not available (e.g., company does
         not file DVA, or insufficient ITR history to derive TTM).
     """
-    dfp = _get_dfp_dva_total_tax(company)
-    itr = _get_itr_dva_total_tax(company)
+    dfp = _get_dfp_dividends_paid(company)
+    itr = _get_itr_dividends_paid(company)
 
     if not itr and not dfp:
         return None
@@ -215,18 +212,18 @@ def dva_total_tax_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def dva_total_tax_periods(company: str) -> list[dict]:
-    """Get all TTM total tax burden (DVA 7.08.02 or 7.11.02) periods for a company.
+def dividends_paid_periods(company: str) -> list[dict]:
+    """Get all TTM dividends paid (DVA 7.08.04 or 7.11.04) periods for a company.
 
-    Returns a list of {"date": period_end_date, "ttm_dva_tax": value}
-    sorted oldest-first. Each entry represents a point where TTM total
-    tax burden changed (new ITR/DFP filed).
+    Returns a list of {"date": period_end_date, "ttm_dividends_paid": value}
+    sorted oldest-first. Each entry represents a point where TTM dividends
+    paid changed (new ITR/DFP filed).
 
-    Useful for building step-function tax-burden overlays on price charts
-    or for cross-checking against the tax engine (DRE 3.08, income tax only).
+    Useful for building step-function dividends-paid overlays on price charts
+    or for cross-checking against the B3 dividends engine (engines/dividends.py).
     """
-    dfp = _get_dfp_dva_total_tax(company)
-    itr = _get_itr_dva_total_tax(company)
+    dfp = _get_dfp_dividends_paid(company)
+    itr = _get_itr_dividends_paid(company)
 
     if not itr and not dfp:
         return []
@@ -236,14 +233,14 @@ def dva_total_tax_periods(company: str) -> list[dict]:
     periods = []
 
     for itr_date in all_itr_dates:
-        ttm = dva_total_tax_at(company, itr_date)
+        ttm = dividends_paid_at(company, itr_date)
         if ttm is not None:
-            periods.append({"date": itr_date, "ttm_dva_tax": ttm})
+            periods.append({"date": itr_date, "ttm_dividends_paid": ttm})
 
     # Also add DFP-only periods (for years before ITR data)
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_dva_tax": data["value"]})
+            periods.append({"date": data["date"], "ttm_dividends_paid": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])
@@ -261,10 +258,10 @@ def dva_total_tax_periods(company: str) -> list[dict]:
 
 from skills.cvm.calculations._registry import EngineSpec, register_engine  # noqa: E402
 register_engine(EngineSpec(
-    name="dva_total_tax",
-    quantity="ttm_dva_tax",
-    at_fn=dva_total_tax_at,
-    periods_fn=dva_total_tax_periods,
-    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.02 (or 7.11.02) -- Carga Tributária Total TTM",
+    name="dividends_paid",
+    quantity="ttm_dividends_paid",
+    at_fn=dividends_paid_at,
+    periods_fn=dividends_paid_periods,
+    source="DFP (annual) + ITR (quarterly cumulative) DVA grupo LIKE '%Valor Adicionado%' codigo 7.08.04 (or 7.11.04) -- Dividendos Pagos (DVA) TTM",
     category="dva",
 ))

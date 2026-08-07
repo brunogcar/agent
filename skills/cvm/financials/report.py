@@ -1560,7 +1560,7 @@ def build_dividend_sustainability_section(
     """
     sections: list[dict] = []
 
-    from skills.cvm.calculations.engines.dividends_paid import (
+    from skills.cvm.calculations.engines.dva.dividends_paid import (
         dividends_paid_at, dividends_paid_periods)
     from skills.cvm.calculations.engines.earnings import ttm_earnings_at
 

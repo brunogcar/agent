@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from skills.cvm.calculations.engines import interest_paid as ip_engine
+from skills.cvm.calculations.engines.dva import interest_paid as ip_engine
 
 
 # -- Mock data ---------------------------------------------------------------

@@ -1,10 +1,10 @@
-"""engines/total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
+"""engines/dva/total_tax.py -- TTM (trailing twelve months) Total Tax Burden engine.
 
-This engine mirrors `engines/dva_total_tax.py` 1:1 and is preserved as a
-secondary entry point for callers that import via the `total_tax_*`
-naming convention. The two engines track the SAME DVA line (Impostos,
-Taxas e Contribuições). Prefer `engines/dva_total_tax.py` for new
-imports; this file is kept for backwards compatibility.
+DVA distribution-side engine for Impostos, Taxas e Contribuições (total tax
+burden). This is the CANONICAL version — the old `dva_total_tax.py` was a
+legacy duplicate that was deleted in the v1.4 rename sprint but accidentally
+left behind. This file was moved from `engines/total_tax.py` to
+`engines/dva/total_tax.py` as part of the DVA subfolder reorganization.
 
 Mirrors engines/operating_cf.py (DFC 6.01) with one change:
   - CVM account code 7.08.02 (Impostos, Taxas e Contribuições -- total tax
@@ -64,7 +64,7 @@ TTM total tax burden computable from: ~2012 onwards (need 2 years of ITR)
 Standalone module: importable by historical skill + future backtest skill.
 
 Usage:
-    from skills.cvm.calculations.engines.total_tax import total_tax_at
+    from skills.cvm.calculations.engines.dva.total_tax import total_tax_at
     r = total_tax_at("PETR4", "2024-06-30")  # -> -90e9 (negative outflow)
 """
 
