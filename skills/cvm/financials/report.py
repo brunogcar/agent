@@ -330,6 +330,26 @@ def _group_metrics_by_prefix(items: list[dict], category_label: str = "") -> lis
             gname = category_label if category_label else "Outros"
         groups.setdefault(gname, []).append(item)
 
+    # [new commit] Sort items WITHIN each growth group by horizon:
+    # 3M first (key=0), then 1A (key=1), then 5A (key=2). User feedback:
+    # "3M / 1A / 5A — currently sorted alphabetically (1A, 3M, 5A), want 3M
+    # first". The registry's list_metrics_by_category() returns metric names
+    # sorted alphabetically, so 1A ends up first by default — this re-sort
+    # restores the intended chronological order.
+    _GROWTH_HORIZON_ORDER = {"3M": 0, "1A": 1, "5A": 2, "1Y": 1, "5Y": 2}
+    growth_groups = {"Receita", "Lucro Líquido", "Resultado Bruto",
+                     "Outros Crescimento"}
+    for gname in growth_groups:
+        if gname in groups:
+            def _horizon_key(item: dict) -> int:
+                lbl = item.get("label", "")
+                # Match trailing horizon token (e.g. "Crescimento Receita 3M").
+                for tok, key in _GROWTH_HORIZON_ORDER.items():
+                    if lbl.endswith(" " + tok) or lbl.endswith(tok):
+                        return key
+                return 99
+            groups[gname].sort(key=_horizon_key)
+
     # Return in a sensible order
     order = [
         "EV (Enterprise Value)", "P/ (Price)", "Retorno", "Margens",
@@ -617,43 +637,43 @@ def build_crescimento_sections(
         ),
     })
 
-    # Bar chart: 3M + 1Y + 5Y for each metric.
-    chart_data_1y = [rev_1y, gp_1y, ni_1y]
-    chart_data_5y = [rev_5y, gp_5y, ni_5y]
-    chart_data_3m = [rev_3m, gp_3m, ni_3m]
-    if any(v is not None for v in chart_data_1y + chart_data_5y + chart_data_3m):
-        datasets = []
-        if any(v is not None for v in chart_data_3m):
-            datasets.append({
-                "label": "3M (QoQ TTM)",
-                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_3m],
-                "backgroundColor": "#a855f7",
-            })
-        if any(v is not None for v in chart_data_1y):
-            datasets.append({
-                "label": "1Y",
-                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_1y],
-                "backgroundColor": "#22c55e",
-            })
-        if any(v is not None for v in chart_data_5y):
-            datasets.append({
-                "label": "5Y",
-                "data": [(_v * 100 if _v is not None else None) for _v in chart_data_5y],
-                "backgroundColor": "#3b82f6",
-            })
-        sections.append({
+    # [new commit] SPLIT chart: previously ONE combined bar chart with 3
+    # datasets (3M/1Y/5Y) × 3 metric labels (Receita/Lucro Bruto/Lucro
+    # Líquido). User feedback: "3 separate charts — one per metric
+    # (Receita, Lucro Líquido, Resultado Bruto), each showing 3M/1Y/5Y as
+    # bars." Now we emit 3 separate bar charts, each with 3 bars (3M/1Y/5Y)
+    # for a single metric. Makes cross-horizon comparison within a metric
+    # easier (no longer competing on the same axis as the other metrics).
+    _COLORS = {"3M": "#a855f7", "1A": "#22c55e", "5A": "#3b82f6"}
+
+    def _metric_chart(
+        metric_label: str, vals: list[float | None],
+    ) -> dict | None:
+        """Build a single-metric 3-bar chart (3M / 1A / 5Y)."""
+        if all(v is None for v in vals):
+            return None
+        labels = ["3M", "1A", "5A"]
+        data = [(v * 100 if v is not None else None) for v in vals]
+        return {
             "type": "chart",
-            "title": "Crescimento Comparativo (3M / 1Y / 5Y)",
+            "title": f"Crescimento {metric_label} (3M / 1A / 5A)",
             "description": (
-                "Crescimento percentual de Receita Líquida, Lucro Bruto e "
-                "Lucro Líquido nos três horizontes temporais. Barras "
-                "ausentes indicam dados insuficientes para o cálculo."
+                f"Crescimento percentual de {metric_label} nos três "
+                "horizontes temporais (3M = QoQ TTM, 1A = anual, 5A = "
+                "5 anos). Barras ausentes indicam dados insuficientes "
+                "para o cálculo."
             ),
             "chart_data": {
                 "type": "bar",
                 "data": {
-                    "labels": ["Receita Líquida", "Lucro Bruto", "Lucro Líquido"],
-                    "datasets": datasets,
+                    "labels": labels,
+                    "datasets": [{
+                        "label": f"{metric_label} (%)",
+                        "data": data,
+                        "backgroundColor": [
+                            _COLORS["3M"], _COLORS["1A"], _COLORS["5A"],
+                        ],
+                    }],
                 },
                 "options": {
                     "responsive": True,
@@ -665,11 +685,23 @@ def build_crescimento_sections(
                         },
                     },
                     "plugins": {
-                        "title": {"display": True, "text": "Crescimento por Horizonte Temporal"},
+                        "title": {
+                            "display": True,
+                            "text": f"{metric_label} — Crescimento por Horizonte",
+                        },
                     },
                 },
             },
-        })
+        }
+
+    for metric_label, vals in [
+        ("Receita Líquida",   [rev_3m, rev_1y, rev_5y]),
+        ("Lucro Bruto",       [gp_3m, gp_1y, gp_5y]),
+        ("Lucro Líquido",     [ni_3m, ni_1y, ni_5y]),
+    ]:
+        chart = _metric_chart(metric_label, vals)
+        if chart is not None:
+            sections.append(chart)
 
     return sections
 
@@ -883,6 +915,56 @@ def build_dre_sections(
                 },
             },
         })
+
+    # [new commit] NEW chart: absolute-value bar chart of Receita, EBITDA,
+    # Lucro Líquido per year. Complements the margin trend chart above
+    # (which shows percentages). User feedback requested "Revenue + EBITDA +
+    # Lucro Líquido bar chart showing absolute values over the annual
+    # periods, grouped bars per year."
+    if len(sorted_periods) >= 2:
+        labels_abs = [str(p.get("period")) for p in sorted_periods]
+        revenue_abs, ebitda_abs, ni_abs = [], [], []
+        for p in sorted_periods:
+            m = p.get("metrics") or {}
+            revenue_abs.append(_num_or_none(m.get("receita_liquida")))
+            ebitda_abs.append(_num_or_none(m.get("ebitda")))
+            ni_abs.append(_num_or_none(m.get("lucro_liquido")))
+        if any(v is not None for v in revenue_abs + ebitda_abs + ni_abs):
+            sections.append({
+                "type": "chart",
+                "title": "Receita, EBITDA e Lucro Líquido (Anual, R$)",
+                "description": (
+                    "Valores absolutos anuais de Receita Líquida, EBITDA e "
+                    "Lucro Líquido. Barras agrupadas por ano permitem "
+                    "comparar a magnitude de cada componente do resultado "
+                    "ao longo do tempo."
+                ),
+                "chart_data": {
+                    "type": "bar",
+                    "data": {
+                        "labels": labels_abs,
+                        "datasets": [
+                            {"label": "Receita Líquida", "data": revenue_abs,
+                             "backgroundColor": "#0d9488"},
+                            {"label": "EBITDA", "data": ebitda_abs,
+                             "backgroundColor": "#f59e0b"},
+                            {"label": "Lucro Líquido", "data": ni_abs,
+                             "backgroundColor": "#3b82f6"},
+                        ],
+                    },
+                    "options": {
+                        "responsive": True,
+                        "maintainAspectRatio": False,
+                        "scales": {
+                            "y": {"ticks": {},
+                                  "title": {"display": True, "text": "R$"}},
+                        },
+                        "plugins": {
+                            "title": {"display": True, "text": "Receita, EBITDA e Lucro por Ano"},
+                        },
+                    },
+                },
+            })
 
     return sections
 
@@ -1181,7 +1263,90 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
             },
         })
 
+    # [new commit] NEW chart: DVA generation-side decomposition (bar chart).
+    # User feedback: "DVA generation-side bar chart showing the wealth
+    # creation waterfall: 7.01 Receitas, 7.03 Insumos, 7.04 VA Bruto,
+    # 7.05 Retenções, 7.06 VA Líquido, 7.07 VA Recebido, 7.08 Total a
+    # Distribuir". Codes are already in `accounts` (DVA mode fetches them).
+    gen_chart = _build_dva_generation_chart(accounts, latest)
+    if gen_chart is not None:
+        sections.append(gen_chart)
+
     return sections
+
+
+def _build_dva_generation_chart(accounts: dict, latest_period: dict) -> dict | None:
+    """Build the DVA generation-side waterfall bar chart.
+
+    Shows the wealth-creation pipeline: Receitas → (−Insumos) → VA Bruto →
+    (−Retenções) → VA Líquido → (+VA Recebido) → Total a Distribuir.
+
+    Codes per user spec (post-2012 CVM DVA taxonomy):
+      7.01 Receitas / 7.03 Insumos / 7.04 VA Bruto / 7.05 Retenções /
+      7.06 VA Líquido / 7.07 VA Recebido / 7.08 Total a Distribuir.
+
+    Returns None when fewer than 2 of the codes are present (graceful
+    degradation when the filer doesn't report a full DVA).
+    """
+    # (codigo, label) pairs in waterfall order.
+    gen_codes = [
+        ("7.01", "Receitas"),
+        ("7.03", "Insumos"),
+        ("7.04", "VA Bruto"),
+        ("7.05", "Retenções"),
+        ("7.06", "VA Líquido"),
+        ("7.07", "VA Recebido"),
+        ("7.08", "Total a Distribuir"),
+    ]
+    labels: list[str] = []
+    values: list[float] = []
+    for code, label in gen_codes:
+        acc = accounts.get(code) or {}
+        v = acc.get("valor_brl")
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        labels.append(f"{code} — {label}")
+        values.append(fv)
+    if len(labels) < 2:
+        return None
+    period_label = (latest_period or {}).get("period") \
+        or (latest_period or {}).get("data_fim_exerc") or "Latest"
+    return {
+        "type": "chart",
+        "title": f"Geração de Riqueza — {period_label}",
+        "description": (
+            "Cascata de geração de valor adicionado: Receitas → Insumos → "
+            "VA Bruto → Retenções → VA Líquido → VA Recebido → Total a "
+            "Distribuir. Códigos CVM 7.01-7.08 (nova taxonomia)."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Geração de Riqueza (R$)",
+                    "data": values,
+                    "backgroundColor": "#0d9488",
+                }],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "R$"}},
+                    "x": {"ticks": {"maxRotation": 45, "minRotation": 30}},
+                },
+                "plugins": {
+                    "title": {"display": True, "text": "DVA — Geração de Valor Adicionado"},
+                },
+            },
+        },
+    }
 
 
 # ── Error-section helper (used by dashboard for failed sub-mode calls) ───────
@@ -1194,6 +1359,423 @@ def build_error_section(stage: str, error: str) -> dict:
             f"{stage} indisponível para esta empresa. "
             f"Detalhe: {error}"
         ),
+    }
+
+
+# ── [new commit] F12: DFC quality analysis ───────────────────────────────────
+
+def _safe_engine_call(fn, *args, **kwargs) -> float | None:
+    """Call a calculations engine fn; return its float result or None on failure.
+
+    Used by build_dfc_quality_section / build_dividend_sustainability_section
+    to gracefully degrade when the DFC or DVA DB is missing — engine calls
+    raise FileNotFoundError etc., which we swallow so a single missing
+    statement doesn't crash the whole dashboard tab.
+    """
+    try:
+        v = fn(*args, **kwargs)
+    except Exception:
+        return None
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_dfc_quality_section(
+    latest_annual_period: dict | None,
+    annual_periods: list[dict],
+    company: str,
+    today: str,
+) -> list[dict]:
+    """[new commit] F12 — DFC quality analysis (appended to DFC tab).
+
+    Shows:
+      - Table: FCO, FCI, FCF (financing), FCF_true = FCO - |CapEx| for the
+        latest annual period. NOTE: the financials ``metrics`` dict uses
+        "fcf" for FINANCING cash flow (DFC 6.03 — Fluxo de Caixa de
+        Financiamento), NOT Free Cash Flow. FCF_true uses a separate key
+        to avoid that collision.
+      - Cash Conversion Ratio = FCO / Lucro Líquido (TTM).
+      - 5Y line chart: FCO vs Lucro Líquido — divergence = earnings-quality
+        red flag (high NI with low/negative FCO suggests accruals
+        manipulation).
+
+    Args:
+        latest_annual_period: latest annual period dict (or None).
+        annual_periods: list of all annual period dicts (5Y trend).
+        company: ticker/CNPJ — needed for capex_at + ttm_earnings_at calls.
+        today: YYYY-MM-DD for the TTM engine anchoring.
+    """
+    sections: list[dict] = []
+
+    # Engine-backed TTM values (capex + earnings) — best-effort, None on fail.
+    from skills.cvm.calculations.engines.capex import capex_at
+    from skills.cvm.calculations.engines.operating_cf import operating_cf_at
+    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+
+    capex_ttm = _safe_engine_call(capex_at, company, today)
+    fco_ttm = _safe_engine_call(operating_cf_at, company, today)
+    ni_ttm = _safe_engine_call(ttm_earnings_at, company, today)
+
+    # Latest annual FCO/FCI/FCF (financing) — from the metrics dict.
+    fco_annual = fci_annual = fcf_financing_annual = None
+    if latest_annual_period:
+        m = latest_annual_period.get("metrics") or {}
+        fco_annual = _num_or_none(m.get("fco"))
+        fci_annual = _num_or_none(m.get("fci"))
+        fcf_financing_annual = _num_or_none(m.get("fcf"))
+
+    # FCF_true = FCO - |CapEx|. Capex from capex_at is negative (outflow),
+    # so we take abs then subtract from FCO. Use TTM values when available;
+    # fall back to latest annual FCO if TTM engine failed.
+    fco_for_fcf = fco_ttm if fco_ttm is not None else fco_annual
+    fcf_true: float | None = None
+    if fco_for_fcf is not None and capex_ttm is not None:
+        fcf_true = fco_for_fcf - abs(capex_ttm)
+
+    # Cash Conversion Ratio = FCO / Lucro Líquido (TTM preferred).
+    cash_conversion: float | None = None
+    if fco_ttm is not None and ni_ttm is not None and ni_ttm != 0:
+        cash_conversion = fco_ttm / ni_ttm
+    elif fco_annual is not None:
+        # Fall back to latest annual NI.
+        if latest_annual_period:
+            ni_annual = _num_or_none(
+                (latest_annual_period.get("metrics") or {}).get("lucro_liquido"))
+            if ni_annual and ni_annual != 0:
+                cash_conversion = fco_annual / ni_annual
+
+    # Table: FCO, FCI, FCF (financing), FCF_true, Cash Conversion.
+    rows = [
+        ["FCO (Anual)",                  _fmt(fco_annual, "brl")],
+        ["FCI (Anual)",                  _fmt(fci_annual, "brl")],
+        ["FCF — Financiamento (Anual)",  _fmt(fcf_financing_annual, "brl")],
+        ["FCO (TTM)",                    _fmt(fco_ttm, "brl")],
+        ["CapEx (TTM)",                  _fmt(capex_ttm, "brl")],
+        ["FCF Verdadeiro = FCO − |CapEx| (TTM)", _fmt(fcf_true, "brl")],
+        ["Lucro Líquido (TTM)",          _fmt(ni_ttm, "brl")],
+        ["Cash Conversion = FCO / LL",   _fmt(cash_conversion, "num")],
+    ]
+    sections.append({
+        "title": "Qualidade do Fluxo de Caixa",
+        "description": (
+            "FCF Verdadeiro = FCO − |CapEx| (capex é saída de caixa, "
+            "por isso subtrai-se o valor absoluto). Cash Conversion Ratio "
+            "= FCO / Lucro Líquido — abaixo de 0.8 pode indicar baixa "
+            "conversão de lucro em caixa (red flag de qualidade)."
+        ),
+        "type": "table",
+        "columns": ["Indicador", "Valor"],
+        "rows": rows,
+        "note": (
+            "Atenção: no Dashboard BR, 'FCF' é o Fluxo de Caixa de "
+            "Financiamento (DFC 6.03), NÃO Free Cash Flow. Use a linha "
+            "'FCF Verdadeiro' para o Free Cash Flow real."
+        ),
+    })
+
+    # 5Y line chart: FCO vs Lucro Líquido (divergence = earnings-quality flag).
+    sorted_periods = sorted(
+        [p for p in annual_periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) >= 2:
+        labels = [str(p.get("period")) for p in sorted_periods]
+        fco_series = []
+        ni_series = []
+        for p in sorted_periods:
+            m = p.get("metrics") or {}
+            fco_series.append(_num_or_none(m.get("fco")))
+            ni_series.append(_num_or_none(m.get("lucro_liquido")))
+        if any(v is not None for v in fco_series + ni_series):
+            sections.append({
+                "type": "chart",
+                "title": "FCO vs Lucro Líquido (5 anos)",
+                "description": (
+                    "Divergência entre FCO (Fluxo de Caixa Operacional) e "
+                    "Lucro Líquido ao longo dos últimos 5 anos. Quando o "
+                    "Lucro Líquido cresce mas o FCO cai (ou fica "
+                    "persistentemente abaixo), pode indicar baixa qualidade "
+                    "dos lucros (accruals agressivos, recebimentos não "
+                    "realizados)."
+                ),
+                "chart_data": {
+                    "type": "line",
+                    "data": {
+                        "labels": labels,
+                        "datasets": [
+                            {"label": "FCO", "data": fco_series,
+                             "borderColor": "#22c55e", "fill": False,
+                             "tension": 0.3},
+                            {"label": "Lucro Líquido", "data": ni_series,
+                             "borderColor": "#3b82f6", "fill": False,
+                             "tension": 0.3},
+                        ],
+                    },
+                    "options": {
+                        "responsive": True,
+                        "maintainAspectRatio": False,
+                        "scales": {
+                            "y": {"ticks": {},
+                                  "title": {"display": True, "text": "R$"}},
+                        },
+                        "plugins": {
+                            "title": {"display": True,
+                                      "text": "Divergência FCO vs Lucro Líquido"},
+                        },
+                    },
+                },
+            })
+
+    return sections
+
+
+# ── [new commit] F13: Dividend sustainability ────────────────────────────────
+
+def build_dividend_sustainability_section(
+    ratios_payload: dict,
+    latest_annual_period: dict | None,
+    company: str,
+    today: str,
+) -> list[dict]:
+    """[new commit] F13 — Dividend sustainability (appended to DVA tab).
+
+    Shows:
+      - Payout ratio (from ratios_payload, computed as dividends / NI).
+      - Dividend Coverage = Lucro Líquido / Dividends Paid.
+      - 5Y dividend trend chart (BRL total, from dividends_paid_periods).
+
+    Args:
+        ratios_payload: dict from compute_all_ratios. May contain "payout"
+            when the dpa metric isn't excluded (currently dashboard.py
+            excludes ["lpa", "vpa", "dpa", "rps"] — payout is an alias of
+            dpa, so it's also excluded; we fall back to computing payout
+            from latest_annual_period["ratios"]["payout"]).
+        latest_annual_period: latest annual period dict (or None).
+        company: ticker/CNPJ — needed for dividends_paid_at + ttm_earnings_at.
+        today: YYYY-MM-DD for TTM anchoring.
+    """
+    sections: list[dict] = []
+
+    from skills.cvm.calculations.engines.dividends_paid import (
+        dividends_paid_at, dividends_paid_periods)
+    from skills.cvm.calculations.engines.earnings import ttm_earnings_at
+
+    # Payout: prefer ratios_payload, then latest_annual_period.ratios.payout.
+    payout = ratios_payload.get("payout")
+    if payout is None and latest_annual_period:
+        payout = (latest_annual_period.get("ratios") or {}).get("payout")
+    payout = _num_or_none(payout)
+
+    # TTM dividends paid (BRL total) + TTM net income.
+    div_ttm = _safe_engine_call(dividends_paid_at, company, today)
+    ni_ttm = _safe_engine_call(ttm_earnings_at, company, today)
+
+    # Dividend Coverage = NI / |Dividends Paid|. Dividends are negative
+    # outflow in the DVA engine (matches capex convention); take abs.
+    div_coverage: float | None = None
+    if ni_ttm is not None and div_ttm is not None and div_ttm != 0:
+        div_coverage = ni_ttm / abs(div_ttm)
+
+    rows = [
+        ["Payout Ratio (LL → Dividendos)", _fmt(payout, "pct")],
+        ["Dividendos Pagos (TTM, BRL)",     _fmt(div_ttm, "brl")],
+        ["Lucro Líquido (TTM, BRL)",        _fmt(ni_ttm, "brl")],
+        ["Cobertura de Dividendos = LL / Div", _fmt(div_coverage, "num")],
+    ]
+    sections.append({
+        "title": "Sustentabilidade de Dividendos",
+        "description": (
+            "Payout Ratio = Dividendos / Lucro Líquido. Cobertura de "
+            "Dividendos = Lucro Líquido / Dividendos — abaixo de 1.5x "
+            "indica risco de cortes em cenários de queda de lucro. Acima "
+            "de 2x é considerado saudável."
+        ),
+        "type": "table",
+        "columns": ["Indicador", "Valor"],
+        "rows": rows,
+        "note": (
+            "Dividendos Pagos vem do DVA 7.08.04 (Remuneração de Capitais "
+            "Próprios) — é o valor agregado reportado pela empresa, não o "
+            "por-ação da B3."
+        ),
+    })
+
+    # 5Y dividend trend chart from dividends_paid_periods.
+    div_periods = _safe_engine_call(dividends_paid_periods, company)
+    if isinstance(div_periods, list) and len(div_periods) >= 2:
+        labels = [str(p.get("date", ""))[:10] for p in div_periods]
+        values = []
+        for p in div_periods:
+            v = p.get("ttm_dividends_paid")
+            values.append(_num_or_none(v))
+        if any(v is not None for v in values):
+            sections.append({
+                "type": "chart",
+                "title": "Dividendos Pagos — TTM ao longo do tempo",
+                "description": (
+                    "Série histórica de dividendos pagos (TTM, BRL) — "
+                    "agregado reportado no DVA 7.08.04. Mostra a "
+                    "trajetória da distribuição de capital aos acionistas."
+                ),
+                "chart_data": {
+                    "type": "line",
+                    "data": {
+                        "labels": labels,
+                        "datasets": [{
+                            "label": "Dividendos Pagos (TTM)",
+                            "data": values,
+                            "borderColor": "#a855f7",
+                            "backgroundColor": "#a855f7",
+                            "fill": False,
+                            "tension": 0.3,
+                        }],
+                    },
+                    "options": {
+                        "responsive": True,
+                        "maintainAspectRatio": False,
+                        "scales": {
+                            "y": {"ticks": {},
+                                  "title": {"display": True, "text": "R$ (TTM)"}},
+                        },
+                        "plugins": {
+                            "title": {"display": True,
+                                      "text": "Evolução dos Dividendos Pagos"},
+                        },
+                    },
+                },
+            })
+
+    return sections
+
+
+# ── [new commit] F14: Accounting red flags ───────────────────────────────────
+
+def build_red_flags_section(
+    bpa_result: dict,
+    bpp_result: dict,
+    dre_result: dict,
+    dfc_result: dict,
+    dva_result: dict,
+    annual_periods: list[dict],
+) -> dict:
+    """[new commit] F14 — Accounting red flags (appended to Overview tab).
+
+    Surfaces the cross-statement consistency checks already implemented in
+    ``skills/cvm/financials/validation.py`` (BPA 1 ≈ 1.01+1.02; DRE
+    3.03 ≈ 3.01-3.02; BPP 2 ≈ 2.01+2.02+2.03; DVA 7.08 ≈ Σ7.08.0x). Each
+    statement's periods are checked; mismatches beyond the 5% tolerance
+    surface as warnings.
+
+    Also runs two extra checks (computed here, not in validation.py):
+      - ROE with negative PL (silent None in metrics.py — flagged here).
+      - FCO declining 3Y (earnings-quality red flag).
+
+    Args:
+        bpa_result, bpp_result, dre_result, dfc_result, dva_result:
+            statement-mode results (each with ``periods`` list).
+        annual_periods: list of annual period dicts (for FCO trend check).
+
+    Returns:
+        A ``type: "table"`` section with one row per check (pass/fail).
+    """
+    from skills.cvm.financials.validation import (
+        validate_statement_consistency,
+    )
+
+    rows: list[list[str]] = []
+
+    def _add_check(label: str, warnings: list[str]) -> None:
+        if not warnings:
+            rows.append([label, "✓ OK", "—"])
+        else:
+            # Truncate to first warning for compactness (full text in
+            # collapsible below if needed).
+            summary = "; ".join(warnings)
+            if len(summary) > 220:
+                summary = summary[:217] + "..."
+            rows.append([label, "⚠ Divergência", summary])
+
+    # Statement consistency checks (validation.py).
+    for stmt_result, stmt_type, label in [
+        (bpa_result, "bpa", "BPA: 1 = 1.01 + 1.02"),
+        (bpp_result, "bpp", "BPP: 2 = 2.01 + 2.02 + 2.03"),
+        (dre_result, "dre", "DRE: 3.03 = 3.01 − 3.02"),
+        (dva_result, "dva", "DVA: 7.08 = Σ(7.08.01-04)"),
+    ]:
+        if not isinstance(stmt_result, dict):
+            continue
+        if stmt_result.get("status") != "ok":
+            continue
+        periods = stmt_result.get("periods") or []
+        warnings = validate_statement_consistency(periods, stmt_type)
+        _add_check(label, warnings)
+
+    # Extra check 1: ROE with negative PL.
+    pl_warnings: list[str] = []
+    if annual_periods:
+        for p in annual_periods[:3]:  # latest 3 annual periods
+            m = p.get("metrics") or {}
+            pl = _num_or_none(m.get("patrimonio_liquido"))
+            if pl is not None and pl < 0:
+                pl_warnings.append(
+                    f"{p.get('period', '?')}: PL negativo "
+                    f"({pl:,.0f}) — ROE não é significativo."
+                )
+    _add_check("ROE: PL positivo (3 últimos anos)", pl_warnings)
+
+    # Extra check 2: FCO declining 3Y (earnings-quality red flag).
+    fco_warnings: list[str] = []
+    sorted_periods = sorted(
+        [p for p in annual_periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) >= 3:
+        # Take last 3 periods (chronological), check FCO trend.
+        last3 = sorted_periods[-3:]
+        fco_vals = []
+        for p in last3:
+            m = p.get("metrics") or {}
+            fco_vals.append(_num_or_none(m.get("fco")))
+        if all(v is not None for v in fco_vals):
+            # Flag if FCO strictly declined across all 3 periods.
+            if fco_vals[0] > fco_vals[1] > fco_vals[2]:
+                fco_warnings.append(
+                    f"FCO caiu 3 anos consecutivos: "
+                    f"{fco_vals[0]:,.0f} → {fco_vals[1]:,.0f} → "
+                    f"{fco_vals[2]:,.0f}. Red flag de qualidade dos lucros."
+                )
+    _add_check("FCO: tendência 3 anos (não-declínio)", fco_warnings)
+
+    # If no checks ran at all (all statements failed), show empty message.
+    if not rows:
+        return {
+            "type": "collapsible",
+            "title": "Red Flags Contábeis",
+            "text": "Nenhum dado contábil disponível para validação.",
+            "open": False,
+        }
+
+    has_warnings = any("⚠" in r[1] for r in rows)
+    return {
+        "type": "collapsible",
+        "title": f"Red Flags Contábeis ({'atenção' if has_warnings else 'OK'})",
+        "open": has_warnings,
+        "sections": [{
+            "title": "Verificações de Consistência Contábil",
+            "description": (
+                "Cada verificação compara identidades contábeis (e.g., "
+                "Ativo = Circulante + Não Circulante) com tolerância de "
+                "5%. Divergências podem indicar erro de extração, "
+                "arredondamento ou troca de taxonomia (CVM 2012+)."
+            ),
+            "type": "table",
+            "columns": ["Verificação", "Status", "Detalhe"],
+            "rows": rows,
+        }],
     }
 
 
@@ -1539,17 +2121,38 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
     """Build the accounting equation chart: Ativo = Passivo + PL over years.
 
     [new commit] MAJOR REWRITE per user feedback:
-    - Chart now shows Ativo Total vs (Passivo Total + PL) as two lines
-      to visualize the accounting equation Ativo = Passivo + PL.
-    - Note added explaining this is not the default display.
-    - Removed dead `caixa` variable (F18).
-    - Added two new charts: Ativo decomposition (Circ + Não Circ) and
-      Passivo decomposition (Circ + Não Circ + PL).
+    - 3 separate LINES (not 2 combined): Ativo Total / Passivo Total / PL.
+      User: "do lines for each not passivo + pl" and "passivo = ativo - pl".
+      The accounting identity Ativo = Passivo + PL is shown visually by
+      having the Passivo + PL lines sum to the Ativo line at every period.
+    - Quarterly preference: when ``bpa_result``/``bpp_result`` carry
+      quarterly (ITR) periods, those are shown; otherwise falls back to
+      annual. (Currently the dashboard fetches annual-only BPA/BPP via
+      ``_fetch_all_statements_annual(periods=4)`` — quarterly BPA/BPP
+      would require a separate fetch, so this branch is forward-compatible
+      but typically degrades to the annual periods already present.)
     """
     bpa_periods = (bpa_result or {}).get("periods") or []
     bpp_periods = (bpp_result or {}).get("periods") or []
     if not bpa_periods or not bpp_periods:
         return None
+
+    # [new commit] Prefer quarterly periods when present. Each period dict
+    # exposes ``meses`` (12 for DFP, 3/6/9 for ITR) and ``data_fim_exerc``.
+    # If any ITR-style period exists in either result, restrict to ITR.
+    def _is_quarterly(p: dict) -> bool:
+        meses = p.get("meses")
+        if meses in (3, 6, 9):
+            return True
+        # Some legacy shapes store meses via the periodo label "T1/T2/T3".
+        return False
+
+    bpa_quarterly = any(_is_quarterly(p) for p in bpa_periods)
+    bpp_quarterly = any(_is_quarterly(p) for p in bpp_periods)
+    prefer_quarterly = bpa_quarterly and bpp_quarterly
+    if prefer_quarterly:
+        bpa_periods = [p for p in bpa_periods if _is_quarterly(p)]
+        bpp_periods = [p for p in bpp_periods if _is_quarterly(p)]
 
     bpa_by_year: dict[str, dict] = {}
     for p in bpa_periods:
@@ -1580,53 +2183,44 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
         return None
 
     ativo_total, passivo_total, pl = [], [], []
-    ativo_circ, ativo_ncirc = [], []
-    passivo_circ, passivo_ncirc = [], []
     for year in years:
         bpa_acc = bpa_by_year.get(year, {})
         bpp_acc = bpp_by_year.get(year, {})
+        # BPP 2.03 = PL (old chart) or 2.08 (new chart). Prefer 2.03 then 2.08.
+        pl_val = _val(bpp_acc, "2.03")
+        if pl_val is None:
+            pl_val = _val(bpp_acc, "2.08")
         ativo_total.append(_num_or_none(_val(bpa_acc, "1")))
-        ativo_circ.append(_num_or_none(_val(bpa_acc, "1.01")))
-        ativo_ncirc.append(_num_or_none(_val(bpa_acc, "1.02")))
-        pl.append(_num_or_none(_val(bpp_acc, "2.03")))
+        pl.append(_num_or_none(pl_val))
         passivo_total.append(_num_or_none(_val(bpp_acc, "2")))
-        passivo_circ.append(_num_or_none(_val(bpp_acc, "2.01")))
-        passivo_ncirc.append(_num_or_none(_val(bpp_acc, "2.02")))
 
-    # Chart 1: Accounting equation — Ativo vs (Passivo + PL)
-    # [new commit] Two overlapping lines to visualize Ativo = Passivo + PL.
-    passivo_mais_pl = []
-    for i in range(len(years)):
-        p = passivo_total[i] if i < len(passivo_total) else None
-        e = pl[i] if i < len(pl) else None
-        if p is not None and e is not None:
-            passivo_mais_pl.append(p + e)
-        else:
-            passivo_mais_pl.append(None)
-
+    # [new commit] 3 separate lines (was 2: Ativo vs Passivo+PL combined).
+    # The user's spec: "do lines for each not passivo + pl" — visually
+    # Ativo should equal Passivo + PL at every period. Showing them
+    # separately makes divergences easier to spot.
     return {
         "type": "chart",
-        "title": "Equação Contábil: Ativo = Passivo + PL (Anual)",
+        "title": "Equação Contábil: Ativo = Passivo + PL",
         "description": (
-            "Visualização da equação contábil fundamental: Ativo Total vs "
-            "(Passivo Total + Patrimônio Líquido). As linhas devem se "
-            "sobrepor quando a equação é válida."
-        ),
-        "note": (
-            "Nota: esta não é a exibição padrão (3 barras separadas). "
-            "Aqui sobrepondo Ativo com (Passivo+PL) para validar a "
-            "equação contábil. Para ver a decomposição, veja os gráficos "
-            "abaixo."
+            "Visualização da equação contábil fundamental: três linhas "
+            "separadas para Ativo Total, Passivo Total e Patrimônio "
+            "Líquido. As linhas de Passivo + PL devem somar à linha de "
+            "Ativo em cada período — divergências indicam inconsistência."
         ),
         "chart_data": {
-            "type": "bar",
+            "type": "line",
             "data": {
                 "labels": years,
                 "datasets": [
-                    {"label": "Ativo Total", "data": ativo_total, "backgroundColor": "#0d9488",
-                     "borderColor": "#0d9488", "type": "line", "fill": False, "tension": 0.1},
-                    {"label": "Passivo + PL", "data": passivo_mais_pl, "backgroundColor": "#f59e0b",
-                     "borderColor": "#f59e0b", "type": "line", "fill": False, "tension": 0.1},
+                    {"label": "Ativo Total", "data": ativo_total,
+                     "borderColor": "#0d9488", "backgroundColor": "#0d9488",
+                     "fill": False, "tension": 0.1},
+                    {"label": "Passivo Total", "data": passivo_total,
+                     "borderColor": "#f59e0b", "backgroundColor": "#f59e0b",
+                     "fill": False, "tension": 0.1},
+                    {"label": "Patrimônio Líquido", "data": pl,
+                     "borderColor": "#3b82f6", "backgroundColor": "#3b82f6",
+                     "fill": False, "tension": 0.1},
                 ],
             },
             "options": {
@@ -1635,7 +2229,7 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
                 "scales": {"y": {"ticks": {},
                                  "title": {"display": True, "text": "R$"}}},
                 "plugins": {
-                    "title": {"display": True, "text": "Ativo vs Passivo + PL"},
+                    "title": {"display": True, "text": "Ativo, Passivo e PL por Período"},
                 },
             },
         },

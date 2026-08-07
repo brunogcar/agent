@@ -334,10 +334,14 @@ def revenue_periods(company: str) -> list[dict]:
         if ttm is not None:
             periods.append({"date": itr_date, "ttm_rev": ttm})
 
-    # Also add DFP-only periods (for years before ITR data)
+    # [new commit] Include ALL DFP annual dates, not just those before the
+    # first ITR. Brazilian companies file ITR for Q1/Q2/Q3 but DFP for the
+    # full year (Q4) — they don't file ITR Q4. So recent DFP annual dates
+    # (e.g., 2025-12-31) were missing from the periods list, causing 3M
+    # growth to return None (prior period not found in the 90-day window).
+    # The dedup step below handles overlaps (ITR Q4 = DFP annual for same year).
     for year, data in sorted(dfp.items()):
-        if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_rev": data["value"]})
+        periods.append({"date": data["date"], "ttm_rev": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])

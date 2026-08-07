@@ -194,10 +194,9 @@ def gross_profit_periods(company: str) -> list[dict]:
         if ttm is not None:
             periods.append({"date": itr_date, "ttm_gp": ttm})
 
-    # Also add DFP-only periods (for years before ITR data)
+    # [new commit] Include ALL DFP annual dates (same fix as revenue.py).
     for year, data in sorted(dfp.items()):
-        if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm_gp": data["value"]})
+        periods.append({"date": data["date"], "ttm_gp": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])

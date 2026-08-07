@@ -336,10 +336,10 @@ def ttm_earnings_periods(company: str) -> list[dict]:
         if ttm is not None:
             periods.append({"date": itr_date, "ttm": ttm})
 
-    # Also add DFP-only periods (for years before ITR data)
+    # [new commit] Include ALL DFP annual dates (same fix as revenue.py).
+    # See revenue.py for full explanation of the 3M growth bug this fixes.
     for year, data in sorted(dfp.items()):
-        if data["date"] < all_itr_dates[0] if all_itr_dates else True:
-            periods.append({"date": data["date"], "ttm": data["value"]})
+        periods.append({"date": data["date"], "ttm": data["value"]})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])

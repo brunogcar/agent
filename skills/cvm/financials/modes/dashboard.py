@@ -54,6 +54,10 @@ from skills.cvm.financials.report import (
     build_dre_sections,
     build_dfc_sections,
     build_dva_sections,
+    # [new commit] F12/F13/F14 — new analytical sections.
+    build_dfc_quality_section,
+    build_dividend_sustainability_section,
+    build_red_flags_section,
     build_error_section,
     build_ttm_chart,
     build_ttm_table,
@@ -199,6 +203,19 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if overview_trend:
         overview_sections.append(overview_trend)
 
+    # [new commit] F14 — Accounting red flags (collapsible section at the
+    # BOTTOM of Overview). Surfaces validation.py consistency checks +
+    # ROE-negative-PL + FCO-3Y-decline checks. Wrapped in try/except so a
+    # validation.py failure doesn't crash the Overview tab.
+    try:
+        red_flags = build_red_flags_section(
+            bpa_result, bpp_result, dre_result, dfc_result, dva_result,
+            annual_periods)
+        if red_flags:
+            overview_sections.append(red_flags)
+    except Exception as e:
+        print(f"[financials] Red flags section failed: {e}", flush=True)
+
     # Tab 2: Indicadores
     indicadores_section = build_indicadores_section(today, ratios_payload)
 
@@ -242,12 +259,36 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             dfc_result, annual_periods, latest_annual_period)
     else:
         dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
+    # [new commit] F12 — DFC quality analysis (appended after existing DFC
+    # sections). Engine-backed (capex_at + operating_cf_at + ttm_earnings_at)
+    # wrapped in its own engine_cache_scope so the 3 engine calls share one
+    # cache (the dashboard's outer scope already exited at this point).
+    try:
+        with engine_cache_scope():
+            dfc_quality = build_dfc_quality_section(
+                latest_annual_period, annual_periods, company, today)
+        if dfc_quality:
+            dfc_sections.extend(dfc_quality)
+    except Exception as e:
+        print(f"[financials] DFC quality section failed: {e}", flush=True)
 
     # Tab 7: DVA
     if dva_result.get("status") == "ok":
         dva_sections = build_dva_sections(dva_result)
     else:
         dva_sections = [build_error_section("DVA", dva_result.get("error", "unknown"))]
+    # [new commit] F13 — Dividend sustainability (appended to DVA tab — DVA
+    # is where dividends/distribution data lives). Engine-backed
+    # (dividends_paid_at + dividends_paid_periods + ttm_earnings_at) wrapped
+    # in engine_cache_scope for cache sharing across the 3 engine calls.
+    try:
+        with engine_cache_scope():
+            div_sust = build_dividend_sustainability_section(
+                ratios_payload, latest_annual_period, company, today)
+        if div_sust:
+            dva_sections.extend(div_sust)
+    except Exception as e:
+        print(f"[financials] Dividend sustainability section failed: {e}", flush=True)
 
     # Tab 8: Anual (raw annual periods table + trend chart)
     if annual_payload.get("status") == "ok":
