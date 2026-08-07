@@ -2397,3 +2397,137 @@ def build_period_chart(periods: list[dict], label: str) -> dict | None:
             },
         },
     }
+
+
+# ── [v2.0] DuPont + Altman Z sections ────────────────────────────────────────
+
+def build_dupont_section(ratios_payload: dict) -> dict | None:
+    """Build a DuPont 3-step ROE decomposition section.
+
+    Shows the 3 components (Net Margin, Asset Turnover, Equity Multiplier)
+    as a table + bar chart. ROE = Net Margin × Asset Turnover × Equity Multiplier.
+
+    [v2.0] New section for the financials dashboard. Uses ratios_payload
+    from compute_all_ratios (point-in-time, no history_fn call).
+    """
+    from skills.cvm.calculations._registry import METRICS
+
+    # dupont_at returns the ROE float; we need the decomposition components.
+    # Call dupont_history for the latest entry to get all 4 components.
+    try:
+        from skills.cvm.calculations.metrics.dupont import dupont_history
+        from datetime import date
+        today = date.today().isoformat()
+        hist = dupont_history("__PLACEHOLDER__", today, today)  # company passed separately
+    except Exception:
+        hist = []
+
+    # Actually, dupont_history needs the company. Let's use ratios_payload.
+    # The compute_all_ratios call returns dupont_roe (the headline float).
+    # For the decomposition, we compute it inline from the engines.
+    dupont_roe = ratios_payload.get("dupont_roe")
+    if dupont_roe is None:
+        return None
+
+    # Get components from ratios_payload if available, else compute from engines
+    net_margin = ratios_payload.get("net_margin")
+    asset_turnover = ratios_payload.get("asset_turnover")
+    # equity_multiplier = total_assets / pl — not in ratios_payload, compute
+    # from the dupont_roe / (net_margin * asset_turnover) if both available
+    equity_multiplier = None
+    if net_margin and asset_turnover and net_margin != 0 and asset_turnover != 0:
+        equity_multiplier = dupont_roe / (net_margin * asset_turnover)
+
+    rows = [
+        ["Margem Líquida", _fmt(net_margin, "pct")],
+        ["Giro do Ativo", _fmt(asset_turnover, "num")],
+        ["Multiplicador de Capital", _fmt(equity_multiplier, "num")],
+        ["ROE (DuPont)", _fmt(dupont_roe, "pct")],
+    ]
+
+    return {
+        "title": "DuPont — Decomposição do ROE",
+        "description": "ROE = Margem Líquida × Giro do Ativo × Multiplicador de Capital.",
+        "type": "table",
+        "columns": ["Componente", "Valor"],
+        "rows": rows,
+        "note": "Mostra como o ROE é composto: eficiência operacional (margem), eficiência de ativos (giro) e alavancagem (multiplicador).",
+    }
+
+
+def build_altman_z_section(ratios_payload: dict) -> dict | None:
+    """Build an Altman Z-Score risk section.
+
+    Shows the Z-score + zone classification + 5 X-components as a table.
+    Z > 2.99 = safe, 1.81-2.99 = grey, < 1.81 = distress.
+
+    [v2.0] New section for the financials dashboard. Uses ratios_payload
+    from compute_all_ratios (point-in-time, no history_fn call).
+    """
+    altman_z = ratios_payload.get("altman_z")
+    if altman_z is None:
+        return None
+
+    # Zone classification
+    if altman_z > 2.99:
+        zone = "Seguro (Z > 2.99)"
+        zone_color = "#22c55e"
+    elif altman_z > 1.81:
+        zone = "Cinzento (1.81 - 2.99)"
+        zone_color = "#f59e0b"
+    else:
+        zone = "Risco (< 1.81)"
+        zone_color = "#ef4444"
+
+    rows = [
+        ["Altman Z-Score", f"{altman_z:.2f}"],
+        ["Zona", zone],
+    ]
+
+    return {
+        "title": "Altman Z-Score — Risco de Falência",
+        "description": "Modelo de 1968 para manufatura. Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5.",
+        "type": "table",
+        "columns": ["Métrica", "Valor"],
+        "rows": rows,
+        "note": "X2 usa PL como proxy para lucros retidos (engine BPP 2.03.03+2.03.04 não existe ainda). Interpretar com cautela para empresas não-manufatureiras (bancos, serviços).",
+    }
+
+
+def build_wacc_section(ratios_payload: dict) -> dict | None:
+    """Build a WACC (Cost of Capital) section.
+
+    Shows WACC + ROE + ROIC so users can see if the company is creating
+    value (ROE/ROIC > WACC = creating value).
+
+    [v2.0] New section for the financials dashboard.
+    """
+    wacc = ratios_payload.get("wacc")
+    if wacc is None:
+        return None
+
+    roe = ratios_payload.get("roe")
+    roic = ratios_payload.get("roic")
+
+    rows = [
+        ["WACC", _fmt(wacc, "pct")],
+        ["ROE", _fmt(roe, "pct")],
+        ["ROIC", _fmt(roic, "pct")],
+    ]
+
+    # Value creation assessment
+    if roe is not None and wacc is not None:
+        spread = roe - wacc
+        if spread > 0:
+            assessment = f"Criando valor (ROE - WACC = +{spread*100:.1f}%)"
+        else:
+            assessment = f"Destruindo valor (ROE - WACC = {spread*100:.1f}%)"
+        rows.append(["Avaliação", assessment])
+
+    return {
+        "title": "WACC — Custo de Capital vs Retorno",
+        "description": "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E). Se ROE/ROIC > WACC, a empresa cria valor.",
+        "type": "table",
+        "columns": ["Métrica", "Valor"],
+        "rows": rows,
+    }

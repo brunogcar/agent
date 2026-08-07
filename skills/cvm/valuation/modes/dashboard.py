@@ -167,56 +167,10 @@ def dashboard(company: str = "") -> dict:
     except Exception:
         pass
 
-    # ── Histórico tab: wire historical_valuation mode into dashboard ─────
-    print(f"[valuation]   Histórico tab...", flush=True)
-    historico_sections: list[dict] = []
-    try:
-        from skills.cvm.valuation.modes.historical_valuation import historical_valuation
-        hist_result = historical_valuation(company=company, years=5)
-        if hist_result.get("status") == "ok":
-            series = hist_result.get("series") or []
-            metrics = hist_result.get("metrics") or []
-            # Build one line chart per metric category
-            for m in metrics[:6]:  # Cap at 6 charts to avoid DOM bloat
-                key = m.get("key", "")
-                label = m.get("label", key)
-                if m.get("error"):
-                    continue
-                # Extract this metric's values from the series
-                dates = []
-                values = []
-                for point in series:
-                    val = point.get(key)
-                    if val is not None:
-                        dates.append(point.get("date", ""))
-                        values.append(val)
-                if len(dates) >= 2:
-                    historico_sections.append({
-                        "type": "chart",
-                        "title": f"{label} — Histórico 5A",
-                        "description": f"Série histórica de {label} nos últimos 5 anos.",
-                        "chart_data": {
-                            "type": "line",
-                            "data": {
-                                "labels": dates,
-                                "datasets": [{
-                                    "label": label,
-                                    "data": values,
-                                    "borderColor": "#0d9488",
-                                    "fill": False,
-                                    "tension": 0.3,
-                                    "pointRadius": 0,
-                                }],
-                            },
-                            "options": {
-                                "responsive": True,
-                                "maintainAspectRatio": False,
-                                "scales": {"x": {"ticks": {"maxTicksLimit": 12}}},
-                            },
-                        },
-                    })
-    except Exception as e:
-        print(f"[valuation]   Histórico: error ({e})", flush=True)
+    # [v3] Dropped Histórico tab — it duplicated the historical skill and
+    # took 20 minutes (fetching 5Y history for 9 metrics, each calling
+    # history_fn). The historical skill already provides this functionality
+    # with better performance (parallel fetching + F7 cache).
 
     tabs = [
         {"name": "Overview",              "group": "Resumo",       "sections": overview_sections},
@@ -224,7 +178,6 @@ def dashboard(company: str = "") -> dict:
         {"name": "Rentabilidade",         "group": "Fundamentos",  "sections": profitability_sections},
         {"name": "Liquidez e Alavancagem",  "group": "Fundamentos",  "sections": liquidity_leverage_sections},
         {"name": "Eficiência e Crescimento",   "group": "Crescimento",  "sections": efficiency_growth_sections},
-        {"name": "Histórico",             "group": "Séries Temporais", "sections": historico_sections},
     ]
     print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
     return {

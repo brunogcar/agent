@@ -313,8 +313,13 @@ def ttm_earnings_at(company: str, date: str) -> float | None:
 
 
 @engine_cached
-def ttm_earnings_periods(company: str) -> list[dict]:
+def ttm_earnings_periods(company: str, date_from: str | None = None,
+                          date_to: str | None = None) -> list[dict]:
     """Get all TTM earnings periods for a company.
+
+    [v3 fix] Now accepts (company, date_from, date_to) to match the
+    MetricSpec history_fn contract. Was (company) only — caused TypeError
+    in earnings_yield_history + valuation historical_valuation mode.
 
     Returns a list of {"date": period_end_date, "ttm": value} sorted oldest-first.
     Each entry represents a point where TTM earnings changed (new ITR/DFP filed).
@@ -337,7 +342,6 @@ def ttm_earnings_periods(company: str) -> list[dict]:
             periods.append({"date": itr_date, "ttm": ttm})
 
     # [new commit] Include ALL DFP annual dates (same fix as revenue.py).
-    # See revenue.py for full explanation of the 3M growth bug this fixes.
     for year, data in sorted(dfp.items()):
         periods.append({"date": data["date"], "ttm": data["value"]})
 
@@ -349,6 +353,12 @@ def ttm_earnings_periods(company: str) -> list[dict]:
         if p["date"] not in seen:
             result.append(p)
             seen.add(p["date"])
+
+    # [v3 fix] Filter by date_from / date_to if provided
+    if date_from:
+        result = [p for p in result if p["date"] >= date_from]
+    if date_to:
+        result = [p for p in result if p["date"] <= date_to]
 
     return result
 

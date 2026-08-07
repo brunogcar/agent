@@ -36,6 +36,10 @@ _METRIC_DEFS = [
     # [v1.17] Market risk metrics (from BCB SGS + COTAHIST + brapi)
     ("coe", "COE (CAPM)", "pct", "market"),
     ("beta", "Beta (5A)", "ratio", "market"),
+    # [v3] WACC/DuPont/Altman Z removed from _METRIC_DEFS — their history_fn
+    # is too expensive (recomputes full decomposition for 5Y of dates).
+    # Instead, they're shown as a separate "Advanced Valuation" section
+    # that calls ratio_fn directly (point-in-time, fast).
 ]
 _METRIC_DEFS_3 = [(m, l, u) for m, l, u, _ in _METRIC_DEFS]
 
@@ -104,8 +108,12 @@ def dashboard(company: str = "") -> dict:
         with engine_cache_scope():
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {executor.submit(_fetch_series, mn): mn for mn, _, _, _ in _METRIC_DEFS}
+                done_count = 0
+                total_count = len(futures)
                 for future in as_completed(futures):
                     mn, q, s = future.result()
+                    done_count += 1
+                    print(f"[historical]   quartiles+series {done_count}/{total_count} ({mn})... done.", flush=True)
                     # Only store if summary was ok (consistent with old behavior)
                     if (summaries.get(mn) or {}).get("status") == "ok":
                         quartiles[mn] = q
@@ -250,6 +258,40 @@ def dashboard(company: str = "") -> dict:
         except: pass
     mkt_sections = [{"type": "subtabs", "tabs": mkt_subtabs}] if mkt_metrics else []
 
+    # [v3] Advanced Valuation section — point-in-time (no history_fn, fast).
+    # WACC/DuPont/Altman Z are too expensive for the summary/fetch_series
+    # pattern (each would recompute the full decomposition for 5Y of dates).
+    # Instead, call ratio_fn directly for the current value.
+    print(f"[historical]   Advanced Valuation...", flush=True)
+    adv_val_rows = []
+    try:
+        from skills.cvm.calculations.metrics.wacc import wacc_at
+        from skills.cvm.calculations.metrics.dupont import dupont_at
+        from skills.cvm.calculations.metrics.altman_z import altman_z_at
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        wacc_val = wacc_at(company, today)
+        if wacc_val is not None:
+            adv_val_rows.append(["WACC", _fmt(wacc_val, "pct")])
+        dupont_val = dupont_at(company, today)
+        if dupont_val is not None:
+            adv_val_rows.append(["DuPont ROE", _fmt(dupont_val, "pct")])
+        altman_val = altman_z_at(company, today)
+        if altman_val is not None:
+            zone = "Seguro" if altman_val > 2.99 else ("Cinzento" if altman_val > 1.81 else "Risco")
+            adv_val_rows.append(["Altman Z-Score", f"{altman_val:.2f} ({zone})"])
+    except Exception as e:
+        print(f"[historical] Advanced Valuation failed: {e}", flush=True)
+    adv_val_sections = []
+    if adv_val_rows:
+        adv_val_sections.append({
+            "title": "Advanced Valuation (Point-in-Time)",
+            "description": "WACC, DuPont ROE decomposition, Altman Z-Score. Computed at current date (no historical series).",
+            "type": "table",
+            "columns": ["Métrica", "Valor"],
+            "rows": adv_val_rows,
+        })
+
     # Freshness footer
     freshness_footer = ""
     try:
@@ -271,6 +313,8 @@ def dashboard(company: str = "") -> dict:
         tabs.append({"name": "Eficiencia e Crescimento", "group": "Analise", "sections": eg_sections})
     if mkt_sections:
         tabs.append({"name": "Risco de Mercado", "group": "Analise", "sections": mkt_sections})
+    if adv_val_sections:
+        tabs.append({"name": "Advanced Valuation", "group": "Analise", "sections": adv_val_sections})
     tabs.append({"name": "Ratio Grid", "group": "Analise", "sections": grid_sections})
     tabs.append({"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections})
 

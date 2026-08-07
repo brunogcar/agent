@@ -79,6 +79,10 @@ _METRIC_TOOLTIPS = {
     # [v1.13] market risk metrics
     "coe": "COE = Rf + Beta × ERP. Custo de Oportunidade do Capital Próprio (CAPM). Rf=Selic, ERP=5.5% (Damodaran).",
     "beta": "Beta = Cov(Retorno ação, Retorno IBOV) / Var(IBOV). Sensibilidade ao mercado. >1 mais volátil, <1 menos volátil, <0 anticíclico.",
+    # [v2.0] Advanced valuation metrics
+    "wacc": "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E). Custo Médio Ponderado de Capital. Discount rate for DCF.",
+    "dupont": "DuPont: ROE = Margem Líquida × Giro do Ativo × Multiplicador de Capital. Decomposição da rentabilidade.",
+    "altman_z": "Altman Z = 1.2×(WC/Ativo) + 1.4×(RE/Ativo) + 3.3×(EBIT/Ativo) + 0.6×(MktCap/Passivo) + 1.0×(Vendas/Ativo). >2.99 seguro, 1.81-2.99 cinzento, <1.81 risco.",
 }
 
 

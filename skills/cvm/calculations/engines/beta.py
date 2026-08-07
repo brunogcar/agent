@@ -16,6 +16,16 @@ from datetime import datetime, timedelta
 from skills._base import engine_cached
 
 
+# [v2.0 fix] Module-level IBOV cache + brapi skip flag.
+# IBOV 5Y history doesn't change during a single dashboard run, so we
+# fetch it ONCE per process and reuse. Without this, each metric that
+# depends on beta (coe, wacc, dupont via coe, altman_z via price) would
+# trigger a separate brapi ^BVSP fetch, causing 100+ HTTP requests + 20+
+# minutes of runtime. Now: 1 fetch (or 1 failure + skip), then cache.
+_IBOV_CACHE: dict[str, dict] = {}  # key: f"{end_date}:{years}" -> returns dict
+_IBOV_BRAPI_FAILED = False  # set True after first brapi failure, skip subsequent
+
+
 def _fetch_stock_returns(ticker: str, end_date: str, years: int = 5) -> dict[str, float]:
     """Fetch daily returns for a stock from COTAHIST.
 
@@ -42,35 +52,55 @@ def _fetch_stock_returns(ticker: str, end_date: str, years: int = 5) -> dict[str
 
 
 def _fetch_ibov_returns(end_date: str, years: int = 5) -> dict[str, float]:
-    """Fetch daily returns for IBOV. Tries brapi ^BVSP, falls back to COTAHIST proxy."""
-    # Path 1: Try brapi ^BVSP
-    try:
-        from data_sources.b3.brapi.fetcher import fetch_history
-        result = fetch_history("^BVSP", range=f"{years}y", interval="1d")
-        if result.get("status") == "ok":
-            ohlcv = result.get("ohlcv", [])
-            if len(ohlcv) >= 60:
-                returns = {}
-                prev_close = None
-                for bar in ohlcv:
-                    date_str = bar.get("date", "")
-                    close = bar.get("close")
-                    if not date_str or not close:
-                        continue
-                    if date_str > end_date:
-                        break
-                    if prev_close and prev_close > 0:
-                        returns[date_str] = (close / prev_close) - 1.0
-                    prev_close = close
-                if len(returns) >= 60:
-                    return returns
-    except Exception as e:
-        # [v1.14] Log the fallback instead of silently swallowing — helps
-        # debug when brapi is down or ^BVSP is delisted.
-        pass
+    """Fetch daily returns for IBOV. Tries brapi ^BVSP, falls back to COTAHIST proxy.
+
+    [v2.0 fix] Module-level cache (_IBOV_CACHE) so IBOV 5Y history is
+    fetched ONCE per process. Without this, each metric depending on beta
+    (coe, wacc, dupont, altman_z) would trigger a separate brapi fetch,
+    causing 100+ HTTP requests + 20+ minutes. Also has a skip flag
+    (_IBOV_BRAPI_FAILED) so after the first brapi failure, subsequent
+    calls go straight to the COTAHIST proxy without retrying brapi.
+    """
+    global _IBOV_BRAPI_FAILED
+
+    cache_key = f"{end_date}:{years}"
+    if cache_key in _IBOV_CACHE:
+        return _IBOV_CACHE[cache_key]
+
+    # Path 1: Try brapi ^BVSP (skip if previously failed)
+    if not _IBOV_BRAPI_FAILED:
+        try:
+            from data_sources.b3.brapi.fetcher import fetch_history
+            result = fetch_history("^BVSP", range=f"{years}y", interval="1d")
+            if result.get("status") == "ok":
+                ohlcv = result.get("ohlcv", [])
+                if len(ohlcv) >= 60:
+                    returns = {}
+                    prev_close = None
+                    for bar in ohlcv:
+                        date_str = bar.get("date", "")
+                        close = bar.get("close")
+                        if not date_str or not close:
+                            continue
+                        if date_str > end_date:
+                            break
+                        if prev_close and prev_close > 0:
+                            returns[date_str] = (close / prev_close) - 1.0
+                        prev_close = close
+                    if len(returns) >= 60:
+                        _IBOV_CACHE[cache_key] = returns
+                        return returns
+            else:
+                # brapi returned error/not_found — set skip flag
+                _IBOV_BRAPI_FAILED = True
+        except Exception:
+            _IBOV_BRAPI_FAILED = True
 
     # Path 2: Fallback via COTAHIST proxy
-    return _fetch_ibov_proxy_from_cotahist(end_date, years)
+    returns = _fetch_ibov_proxy_from_cotahist(end_date, years)
+    if returns:
+        _IBOV_CACHE[cache_key] = returns
+    return returns
 
 
 def _get_top_ibov_constituents() -> list[tuple[str, float]]:

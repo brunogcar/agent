@@ -331,18 +331,54 @@ def compute_all_ratios(
     # The scope is re-entrancy-safe: if a scope is already active (nested
     # compute_all_ratios call), this is a no-op (reuses the outer cache).
     with engine_cache_scope():
-        for name, spec in METRICS.items():
-            # Filter by category
-            if categories is not None and spec.category not in categories:
-                continue
-            # Filter by exclusion list
-            if name in exclude_set:
-                continue
-            # Compute — swallow all errors (missing DB, missing account, etc.)
-            try:
-                result[name] = spec.ratio_fn(company, date)
-            except Exception:
-                result[name] = None
+        metrics_to_compute = [
+            (name, spec) for name, spec in METRICS.items()
+            if (categories is None or spec.category in categories)
+            and name not in exclude_set
+        ]
+        total = len(metrics_to_compute)
+
+        # [v5] Parallelize metric computation with ThreadPoolExecutor when
+        # there are enough metrics to justify the overhead. For small counts
+        # (<=10, e.g., in tests), run sequentially to preserve F7 cache
+        # sharing across metrics that use the same engine.
+        # Each parallel worker enters its own engine_cache_scope (ContextVar
+        # is per-thread), so shared engines are recomputed per worker — but
+        # the parallelism helps for I/O-bound metrics (brapi, DB queries).
+        computed = 0
+        if total <= 10:
+            # Sequential — preserves F7 cache sharing
+            for name, spec in metrics_to_compute:
+                computed += 1
+                if computed % 10 == 0 or computed == total:
+                    print(f"  [ratios] {computed}/{total} metrics computed...",
+                          flush=True)
+                try:
+                    result[name] = spec.ratio_fn(company, date)
+                except Exception:
+                    result[name] = None
+        else:
+            # Parallel — each worker has its own cache scope
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _compute_metric(name_spec_tuple):
+                name, spec = name_spec_tuple
+                with engine_cache_scope():
+                    try:
+                        return name, spec.ratio_fn(company, date)
+                    except Exception:
+                        return name, None
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(_compute_metric, ns): ns[0]
+                           for ns in metrics_to_compute}
+                for future in as_completed(futures):
+                    name, value = future.result()
+                    result[name] = value
+                    computed += 1
+                    if computed % 10 == 0 or computed == total:
+                        print(f"  [ratios] {computed}/{total} metrics computed...",
+                              flush=True)
 
     return result
 

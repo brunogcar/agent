@@ -58,6 +58,9 @@ from skills.cvm.financials.report import (
     build_dfc_quality_section,
     build_dividend_sustainability_section,
     build_red_flags_section,
+    build_dupont_section,
+    build_altman_z_section,
+    build_wacc_section,
     build_error_section,
     build_ttm_chart,
     build_ttm_table,
@@ -215,6 +218,27 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             overview_sections.append(red_flags)
     except Exception as e:
         print(f"[financials] Red flags section failed: {e}", flush=True)
+
+    # [v2.0] WACC + DuPont + Altman Z sections (from ratios_payload).
+    # These are point-in-time (no history_fn), so they're fast.
+    try:
+        wacc_sec = build_wacc_section(ratios_payload)
+        if wacc_sec:
+            overview_sections.append(wacc_sec)
+    except Exception as e:
+        print(f"[financials] WACC section failed: {e}", flush=True)
+    try:
+        dupont_sec = build_dupont_section(ratios_payload)
+        if dupont_sec:
+            overview_sections.append(dupont_sec)
+    except Exception as e:
+        print(f"[financials] DuPont section failed: {e}", flush=True)
+    try:
+        altman_sec = build_altman_z_section(ratios_payload)
+        if altman_sec:
+            overview_sections.append(altman_sec)
+    except Exception as e:
+        print(f"[financials] Altman Z section failed: {e}", flush=True)
 
     # Tab 2: Indicadores
     indicadores_section = build_indicadores_section(today, ratios_payload)

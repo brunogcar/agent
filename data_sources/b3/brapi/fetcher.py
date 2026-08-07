@@ -121,6 +121,13 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
 
     Returns:
         Dict with OHLCV list.
+
+    [v2.0 fix] Error results (HTTP errors, not_found) are now cached with
+    a short TTL (60s) so failed requests don't retry within the same
+    dashboard run. Without this, a brapi failure on ^BVSP (index data
+    requires token) would cause 100+ retry HTTP requests, taking 20+
+    minutes. Now the first failure is cached + subsequent calls return
+    the cached error immediately.
     """
     ticker = ticker.strip().upper()
     cache_key = f"history:{ticker}:{range}:{interval}"
@@ -129,7 +136,12 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
     with _cache_lock:
         if not force and cache_key in _cache:
             data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL_QUOTE:
+            age = time.time() - ts
+            # [v2.0 fix] Successful results: 5min TTL. Error/not_found: 60s TTL.
+            if isinstance(data, dict) and data.get("status") in ("error", "not_found"):
+                if age < 60:
+                    return data
+            elif age < _CACHE_TTL_QUOTE:
                 return data
 
     params = {"range": range, "interval": interval}
@@ -146,14 +158,22 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
             resp = httpx.get(url, params=params, timeout=30, follow_redirects=True)
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            return {"status": "error", "error": f"brapi.dev: {e}"}
+            result = {"status": "error", "error": f"brapi.dev: {e}"}
+            # [v2.0 fix] Cache error results with short TTL
+            with _cache_lock:
+                _cache[cache_key] = (result, time.time())
+            return result
 
     data = resp.json()
     results = data.get("results", [])
 
     if not results:
-        return {"status": "not_found", "ticker": ticker,
-                "error": f"No data for {ticker}"}
+        result = {"status": "not_found", "ticker": ticker,
+                  "error": f"No data for {ticker}"}
+        # [v2.0 fix] Cache not_found results with short TTL
+        with _cache_lock:
+            _cache[cache_key] = (result, time.time())
+        return result
 
     quote = results[0]
     ohlcv = quote.get("historicalDataPrice", [])

@@ -813,52 +813,48 @@ def build_efficiency_growth_sections(
         except Exception:
             return None
 
-    # Build per-metric growth tables + charts.
-    _GROWTH_GROUPS = [
-        ("Receita Líquida", "revenue_growth",
-         [("3M", "revenue_growth_3m"), ("1Y", "revenue_growth_1y"), ("5Y", "revenue_growth_5y")],
-         "receita_liquida"),
-        ("Lucro Bruto", "gross_profit_growth",
-         [("3M", "gross_profit_growth_3m"), ("1Y", "gross_profit_growth_1y"), ("5Y", "gross_profit_growth_5y")],
-         "lucro_bruto"),
-        ("Lucro Líquido", "net_income_growth",
-         [("3M", "net_income_growth_3m"), ("1Y", "net_income_growth_1y"), ("5Y", "net_income_growth_5y")],
-         "lucro_liquido"),
+    # [v4] Regrouped by TIME HORIZON (was by metric type). User feedback:
+    # "instead of sorting by type, lets sort and group by time, to compare
+    # each type by 3m/1y/5y". So now: "Crescimento 3M" table shows all 3
+    # metrics, "Crescimento 1Y" shows all 3, "Crescimento 5Y" shows all 3.
+    _GROWTH_METRICS = [
+        ("Receita Líquida", "revenue_growth_3m", "revenue_growth_1y", "revenue_growth_5y", "receita_liquida"),
+        ("Lucro Bruto", "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y", "lucro_bruto"),
+        ("Lucro Líquido", "net_income_growth_3m", "net_income_growth_1y", "net_income_growth_5y", "lucro_liquido"),
     ]
-    for group_label, _, windows, annual_key in _GROWTH_GROUPS:
+    _HORIZONS = [("3M", 0), ("1Y", 1), ("5Y", 5)]
+    for win_label, lookback_years in _HORIZONS:
         rows = []
         chart_labels = []
         chart_values = []
-        for win_label, key in windows:
-            lookback = 1 if win_label == "1Y" else 5 if win_label == "5Y" else 0
-            val = _get_growth(key, annual_key, lookback)
-            # [v1.8] Add tooltip/formula column for growth metrics.
+        for metric_label, key_3m, key_1y, key_5y, annual_key in _GROWTH_METRICS:
+            key = key_3m if win_label == "3M" else key_1y if win_label == "1Y" else key_5y
+            val = _get_growth(key, annual_key, lookback_years)
             formula = _get_tooltip(key)
             if not formula:
-                formula = f"Crescimento de {group_label} {win_label} = (atual - anterior) / |anterior|"
-            rows.append([{"text": win_label, "tooltip": formula}, _fmt(val, "pct")])
+                formula = f"Crescimento de {metric_label} {win_label} = (atual - anterior) / |anterior|"
+            rows.append([{"text": metric_label, "tooltip": formula}, _fmt(val, "pct")])
             if val is not None:
-                chart_labels.append(win_label)
+                chart_labels.append(metric_label)
                 chart_values.append(val * 100 if abs(val) < 1 else val)
         sections.append({
-            "title": f"Crescimento — {group_label}",
+            "title": f"Crescimento {win_label}",
+            "description": f"Comparativo de crescimento {win_label} entre Receita, Lucro Bruto e Lucro Líquido.",
             "type": "table",
-            "columns": ["Horizonte", "Crescimento"],
+            "columns": ["Métrica", "Crescimento"],
             "rows": rows,
         })
         if len(chart_labels) >= 2:
-            # [v1.8] Multi-color bars — one color per horizon (3M/1Y/5Y).
-            _GROWTH_COLORS = ["#22c55e", "#3b82f6", "#f59e0b"]
-            bar_colors = _GROWTH_COLORS[:len(chart_labels)]
+            _HORIZON_COLORS = {"3M": "#a855f7", "1Y": "#22c55e", "5Y": "#3b82f6"}
             sections.append({
                 "type": "chart",
-                "title": f"Crescimento {group_label} — 3M / 1Y / 5Y",
-                "description": f"Crescimento de {group_label} nos três horizontes temporais.",
+                "title": f"Crescimento {win_label} — Comparativo",
+                "description": f"Crescimento {win_label} de Receita Líquida, Lucro Bruto e Lucro Líquido.",
                 "chart_data": {
                     "type": "bar",
                     "data": {"labels": chart_labels,
-                             "datasets": [{"label": group_label, "data": chart_values,
-                                           "backgroundColor": bar_colors}]},
+                             "datasets": [{"label": f"Crescimento {win_label}", "data": chart_values,
+                                           "backgroundColor": _HORIZON_COLORS.get(win_label, "#0d9488")}]},
                     "options": {"responsive": True, "maintainAspectRatio": False,
                                 "scales": {"y": {"beginAtZero": True}}},
                 },
