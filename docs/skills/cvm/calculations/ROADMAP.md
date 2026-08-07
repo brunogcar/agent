@@ -2,18 +2,25 @@
 
 # 🗺️ Roadmap
 
-## 📋 Quick View — What's Next
+## 📋 Quick View — What's Next (v2.0)
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P1 | C1 — WACC engine | COE × E/(D+E) + after-tax Kd × D/(D+E). Reuses coe_at + debt + cash + pl + tax + ebit. Blocks on historical H6 (DCF). |
-| P1 | C2 — FCF_true engine (FCO − Capex) | New Capex engine for DFC code 6.01.02.04. Needed for financials F12 (DFC quality) + dividend sustainability. |
-| P2 | C3 — Signature validation at registration | `register_metric` should `inspect.signature(spec.history_fn)` + assert ≥3 positional params. Would catch beta_periods-style bugs at import time. Suggested by Claude 1. |
-| P2 | C4 — Registry-wide history_fn smoke test | Call `summary(metric=...)` for EVERY registered metric in a test (not mocked). Catches signature drift + history_fn contract violations. Suggested by Claude 1. |
+| P1 | C1 — WACC (Weighted Average Cost of Capital) | COE × E/(D+E) + after-tax Kd × D/(D+E). Reuses coe_at + debt + cash + pl + tax + ebit. Unlocks DCF. Suggested by all 3 LLMs (Claude 1, Claude 2, Qwen). |
+| P1 | C2 — DuPont Analysis (3-step decomposition) | ROE = Net Margin × Asset Turnover × Equity Multiplier. All engines exist (earnings, revenue, total_assets, pl). Low effort, high value. Suggested by Qwen. |
+| P1 | C3 — Altman Z-Score (bankruptcy risk) | 5-component model: working capital / total assets, retained earnings / total assets, EBIT / total assets, market cap / total liabilities, sales / total assets. All engines exist. Suggested by Qwen. |
+| P2 | C4 — DCF Intrinsic Value (2-stage model) | Discount FCFF at WACC + terminal value → per-share intrinsic value. Depends on C1 (WACC). High effort, high value. Suggested by all 3 LLMs. |
+| P2 | C5 — IRR (Internal Rate of Return / TIR) | Solve for discount rate that makes NPV=0 on historical FCF investments. Requires iterative solver (Newton's method or bisection). Complex — needs design decision on cash flow projection methodology. |
+| P2 | C6 — Cash Conversion Cycle (CCC) | DIO + DSO − DPO. Uses inventory, receivables, payables, cogs, revenue. Suggested by Qwen. |
+| P2 | C7 — Real Returns (Fisher equation) | real = (1 + nominal) / (1 + IPCA) - 1. IPCA already synced via BCB SGS. Low effort. Suggested by Claude 2. |
+| P2 | C8 — Sector median comparison | Add "Mediana do Setor" column to percentile table. Reuses screener sector mode. Suggested by all 3 LLMs. |
+| P2 | C9 — Signature validation at registration | `register_metric` should `inspect.signature(spec.history_fn)` + assert ≥3 positional params. Would catch beta_periods-style bugs at import time. Suggested by Claude 1. |
 | P3 | New engines (DVA 8.1 + 8.4) | Personnel costs + shareholder remuneration — completes DVA distribution decomposition |
 | P3 | New metrics (PEG, payables turnover) | Deferred — need design decisions on lookback windows + purchases derivation |
 | P3 | Hardening | Consolidated vs individual fallback, multi-code helper, negative value policy |
 | Future | Technical analysis skill | FIBO, Swing, BTC, Termo — separate skill, not calculations-layer |
+| Done | Hardening (v1.18) | _auto_discover try/except + docstring fix + cross-registry test + test_graham_number fix |
+| Done | Engine subfolder reorganization (v1.16-v1.17) | DVA + BPA/BPP/DRE/DFC engines moved to subfolders. 39 engines in 5 subfolders + 5 top-level. |
 | Done | BCB SGS + COE + Beta (v1.13/v1.14) | Selic/CDI/IPCA + COE (CAPM) + Beta (5Y OLS) — all wired |
 | Done | Performance: brapi batching | Screener + comparison now use ThreadPoolExecutor(max_workers=5) — 5-7x speedup (v1.3 screener/comparison + brapi v1.1 thread safety) |
 | Done | DVA generation-side engines (v1.12) | 6 new engines (7.01, 7.03, 7.04, 7.05, 7.06, 7.07) — completes DVA statement (was distribution-only) |

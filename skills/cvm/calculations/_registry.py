@@ -358,25 +358,42 @@ def _auto_discover() -> None:
     Called once at module load. Idempotent — uses a flag to avoid re-running
     on re-import (which can happen in test environments).
 
-    [new commit] Now scans engine SUBFOLDERS (e.g., engines/dva/) recursively.
-    This allows organizing engines by statement (DVA, BPA, BPP, DRE, DFC)
-    without name collisions. The glob pattern `engines/**/*.py` catches both
-    top-level engines AND subfolder engines.
+    Scans engine subfolders ONE LEVEL DEEP (e.g., engines/dva/*.py), not
+    recursively. This allows organizing engines by statement (DVA, BPA, BPP,
+    DRE, DFC) without name collisions. A hypothetical engines/dva/sub/foo.py
+    would NOT be discovered — one level is sufficient for the current
+    5-statement structure.
+
+    [v1.18 hardening] Each import is wrapped in try/except so a single
+    broken engine/metric doesn't crash the entire registry. Failed imports
+    are logged to stderr and skipped, allowing the agent to start with
+    whatever modules DID load. Found by external LLM review (Qwen).
     """
     if getattr(_auto_discover, "_done", False):
         return
     _auto_discover._done = True
 
     base = Path(__file__).parent
+    _failed: list[str] = []
 
-    # Discover engines — top-level + subfolders (e.g., engines/dva/*.py)
+    def _safe_import(module_name: str) -> None:
+        try:
+            importlib.import_module(module_name)
+        except Exception as e:
+            _failed.append(f"{module_name}: {type(e).__name__}: {e}")
+            # Print to stderr so failures are visible in MCP logs
+            import sys
+            print(f"[registry] WARNING: Failed to import {module_name}: {e}",
+                  file=sys.stderr, flush=True)
+
+    # Discover engines — top-level + subfolders (one level deep)
     engines_dir = base / "engines"
     # Top-level engines (engines/*.py)
     for py_file in sorted(engines_dir.glob("*.py")):
         if py_file.name != "__init__.py":
             module_name = f"skills.cvm.calculations.engines.{py_file.stem}"
-            importlib.import_module(module_name)
-    # Subfolder engines (engines/*/*.py) — e.g., engines/dva/revenue.py
+            _safe_import(module_name)
+    # Subfolder engines (engines/*/*.py) — one level deep only
     for sub_dir in sorted(engines_dir.iterdir()):
         if sub_dir.is_dir() and not sub_dir.name.startswith("__"):
             for py_file in sorted(sub_dir.glob("*.py")):
@@ -384,13 +401,16 @@ def _auto_discover() -> None:
                     module_name = (
                         f"skills.cvm.calculations.engines.{sub_dir.name}.{py_file.stem}"
                     )
-                    importlib.import_module(module_name)
+                    _safe_import(module_name)
 
-    # Discover metrics
+    # Discover metrics (flat — no subfolders)
     for py_file in sorted((base / "metrics").glob("*.py")):
         if py_file.name != "__init__.py":
             module_name = f"skills.cvm.calculations.metrics.{py_file.stem}"
-            importlib.import_module(module_name)
+            _safe_import(module_name)
+
+    # Store failed imports for debugging (accessible via _auto_discover._failed)
+    _auto_discover._failed = _failed
 
 
 # Run auto-discovery at import time

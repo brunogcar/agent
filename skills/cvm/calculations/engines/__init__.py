@@ -4,6 +4,27 @@ Each engine is a standalone module that fetches ONE raw quantity at any
 historical date. Engines are LEAVES -- they never import each other and never
 import metrics. They can be imported independently by any skill.
 
+ENGINE SUBFOLDER STRUCTURE (v1.16-v1.17)
+----------------------------------------
+Engines are organized by CVM statement:
+  engines/         — top-level (market data: beta, dividends, price, selic, shares)
+  engines/bpa/     — Balanco Patrimonial Ativo (assets)
+  engines/bpp/     — Balanco Patrimonial Passivo (liabilities + equity)
+  engines/dre/     — Demonstracao do Resultado do Exercicio (income statement)
+  engines/dfc/     — Demonstracao de Fluxo de Caixa (cash flow statement)
+  engines/dva/     — Demonstracao do Valor Adicionado (value added statement)
+
+DIVIDENDS vs DIVIDENDS_PAID — DO NOT CONFUSE
+--------------------------------------------
+Two similarly-named engines serve different purposes:
+  - engines/dividends.py       — Per-share dividend HISTORY from B3 market data
+                                 (R$/share, used for Dividend Yield + DPA metrics)
+  - engines/dva/dividends_paid.py — Absolute BRL paid from the DVA statement
+                                     (R$, used for dividend sustainability analysis)
+
+  The first is a MARKET DATA engine (what shareholders received per share).
+  The second is a STATEMENT engine (what the company reported paying in total).
+
 AUTO-DISCOVERY
 --------------
 Auto-discovery is handled by the TOP-LEVEL _registry.py

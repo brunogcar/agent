@@ -253,4 +253,4 @@ scope and doesn't install a new one).
 
 ---
 
-*Last updated: 2026-08-07 (v1.17))) — force sync guard). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-08-07 (v1.18 — hardening: auto-discover try/except + docstring fix + cross-registry test). See [API.md](API.md) for function signatures, [ROADMAP.md](ROADMAP.md) for deferred items, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
