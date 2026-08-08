@@ -45,7 +45,7 @@ def execute(action: str, **kwargs) -> dict:
 
 ## 🏗️ Modular Skill Pattern (skills/_base.py)
 
-All skills (CVM + investsite + BCB + B3) use a shared modular pattern built on
+All skills (CVM + investsite + BCB) use a shared modular pattern built on
 `skills/_base.py`. This file provides the infrastructure so each skill only
 needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
 
@@ -96,36 +96,25 @@ skills/
 │   ├── report.py
 │   └── modes/
 │       └── ... (6 mode files)
-├── bcb/                              # BCB domain (Brazilian Central Bank)
-│   ├── __init__.py                   # Domain hub
-│   └── macro/                        # Macro skill (5-tab dashboard)
-│       ├── __init__.py               # MANIFEST + route (required_sources=["sgs"])
-│       ├── _registry.py              # MODES + register_mode (with standalone fallback)
-│       ├── helpers.py                # format_value, annualize_rate, compute_stats
-│       ├── report.py                 # build_kpi_card, build_chart_section, build_table_section
-│       └── modes/
-│           ├── dashboard.py          # @register_mode("dashboard") 5-tab composition
-│           ├── rates.py              # @register_mode("rates") Selic/CDI/TR/Copom
-│           ├── inflation.py          # @register_mode("inflation") IPCA/IGP-M
-│           └── fx.py                 # @register_mode("fx") USD/BRL
-└── b3/                               # B3 domain (Brazilian Stock Exchange)
-    ├── __init__.py                   # B3 domain hub (routes sub_domain → skill)
-    └── index/                        # Index skill (3 modes: dashboard, compare, ticker)
-        ├── __init__.py               # MANIFEST + route (required_sources=["index"])
-        ├── _registry.py              # MODES + register_mode (delegates to skills/_base.py)
-        ├── helpers.py                # compute_jaccard, compute_sector_breakdown, compute_returns
-        ├── report.py                 # dashboard section builders (KPI cards, tables, charts)
+└── bcb/                              # BCB domain (Brazilian Central Bank)
+    ├── __init__.py                   # Domain hub
+    └── macro/                        # Macro skill (5-tab dashboard)
+        ├── __init__.py               # MANIFEST + route (required_sources=["sgs"])
+        ├── _registry.py              # MODES + register_mode (with standalone fallback)
+        ├── helpers.py                # format_value, annualize_rate, compute_stats
+        ├── report.py                 # build_kpi_card, build_chart_section, build_table_section
         └── modes/
-            ├── dashboard.py          # @register_mode("dashboard") — single-index deep dive
-            ├── compare.py            # @register_mode("compare")   — multi-index side-by-side
-            └── ticker.py             # @register_mode("ticker")    — reverse-lookup
+            ├── dashboard.py          # @register_mode("dashboard") 5-tab composition
+            ├── rates.py              # @register_mode("rates") Selic/CDI/TR/Copom
+            ├── inflation.py          # @register_mode("inflation") IPCA/IGP-M
+            └── fx.py                 # @register_mode("fx") USD/BRL
 ```
 
 ### How to Create a New Skill
 
 #### 1. Create the skill directory
 ```
-skills/<domain>/my_skill/
+skills/cvm/my_skill/
 ├── __init__.py
 ├── _registry.py
 ├── report.py         (only if the skill has a dashboard mode)
@@ -135,44 +124,42 @@ skills/<domain>/my_skill/
 
 #### 2. Write `_registry.py` (3 lines)
 ```python
-"""skills/<domain>/my_skill/_registry.py — Mode registry for my_skill."""
+"""skills/cvm/my_skill/_registry.py — Mode registry for my_skill."""
 from skills._base import make_registry, build_manifest_modes, list_modes, get_mode
 MODES, register_mode = make_registry()
 ```
 
 #### 3. Write mode files in `modes/`
 ```python
-# skills/<domain>/my_skill/modes/my_mode.py
-from skills.<domain>.my_skill._registry import register_mode
+# skills/cvm/my_skill/modes/my_mode.py
+from skills.cvm.my_skill._registry import register_mode
 
 @register_mode(
     "my_mode",
     description="What this mode does.",
     include_in_all=True,  # True = default mode when mode="all"
     params={
-        "index": "str. Index symbol (IBOV). Required.",
+        "company": "str. B3 ticker (PETR4). Required.",
         "periods": "int. Number of periods. Default: 5.",
     },
     examples=[
-        'skill(domain="b3", sub_domain="my_skill", mode="my_mode", params=\'{"index":"IBOV"}\')',
+        'skill(domain="cvm", sub_domain="my_skill", mode="my_mode", params=\'{"company":"PETR4"}\')',
     ],
 )
-def my_mode(index: str = "", periods: int = 5) -> dict:
+def my_mode(company: str = "", periods: int = 5) -> dict:
     """Implement the mode logic here."""
-    if not index:
-        return {"status": "error", "error": "index is required"}
+    if not company:
+        return {"status": "error", "error": "company is required"}
     # ... query data_sources, compute, return dict
-    return {"status": "ok", "index": index, "data": ...}
+    return {"status": "ok", "company": company, "data": ...}
 ```
 
 #### 4. Write `__init__.py` (~20 lines)
 ```python
-"""skills/<domain>/my_skill/__init__.py -- My skill manifest + router."""
+"""skills/cvm/my_skill/__init__.py -- My skill manifest + router."""
 from __future__ import annotations
 from skills._base import auto_discover_modes, make_route, build_manifest_modes
-from skills.<domain>.my_skill._registry import MODES  # noqa: F401
-
-REQUIRED_SOURCES = ["index"]  # sync guard: force-sync stale data sources
+from skills.cvm.my_skill._registry import MODES  # noqa: F401
 
 auto_discover_modes(__name__)
 
@@ -184,8 +171,7 @@ MANIFEST = {
     "modes":       build_manifest_modes(MODES),
 }
 
-route = make_route("sub_domain", "my_skill", MODES,
-                   required_sources=REQUIRED_SOURCES)
+route = make_route("sub_domain", "my_skill", MODES)
 ```
 
 #### 5. For a top-level flat domain (like investsite)
@@ -247,7 +233,6 @@ Skills are **read-only** — they call `data_sources/` query engines directly:
 - `data_sources.cvm.cgvn` — governance practices (CGVN)
 - `data_sources.cvm.fca` — listing segment (FCA)
 - `data_sources.b3.dividends` — B3 dividend events
-- `data_sources.b3.index` — B3 index composition + history (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued)
 - `data_sources.cvm.bridge` — ticker ↔ CNPJ ↔ CD_CVM resolution
 - `data_sources.bcb.sgs` — BCB macro series (Selic, CDI, IPCA, USD/BRL, etc.)
 
@@ -267,7 +252,7 @@ checks if the required data sources are fresh (synced within 24h). If stale,
 it force-syncs them BEFORE running the skill.
 
 **Escape hatches:**
-- `CVM_SKIP_SYNC=1` / `B3_SKIP_SYNC=1` env var (for tests)
+- `CVM_SKIP_SYNC=1` env var (for tests)
 - `route(..., skip_sync=True)` per-call kwarg
 
 **BCB macro skill note:** `required_sources=["sgs"]` is wired, but
@@ -276,11 +261,6 @@ sources). The sync guard records an error in `result["_sync"]["errors"]` and
 proceeds with available data. Users must run `sync_all` manually until the
 sync_map is extended (tracked in BCB macro ROADMAP P2).
 
-**B3 index skill note (v1.0):** `required_sources=["index"]` is wired AND
-`skills/_base._trigger_sync.sync_map` knows "index" → `data_sources.b3.index.sync_engine.sync_all`.
-Sync guard fully functional: first call of the day force-syncs all 5 active
-indices (~30s), subsequent calls are fast.
-
 ---
 
 ## 📈 Current Skill Domains
@@ -288,31 +268,12 @@ indices (~30s), subsequent calls are fast.
 ### B3 (Brasil, Bolsa, Balcão)
 
 **Location**: `skills/b3/`
-**Purpose**: Analytical skills over Brazilian stock exchange data.
-
-**Sub-domains:**
-- **index**: 3 modes — dashboard (single-index deep dive, 4-tab), compare (multi-index side-by-side, 3-tab), ticker (reverse-lookup). Reads from `data_sources/b3/index` (composition + history) + `data_sources/b3/api` (sector join).
-
-**Example Usage:**
-```python
-# Index dashboard (IBOV)
-skill(domain="b3", sub_domain="index", mode="dashboard", params='{"index":"IBOV"}')
-
-# Compare indices
-skill(domain="b3", sub_domain="index", mode="compare", params='{"indices":["IBOV","SMLL"]}')
-
-# Reverse-lookup: which indices include a ticker
-skill(domain="b3", sub_domain="index", mode="ticker", params='{"ticker":"PETR4"}')
-```
-
-See [B3 Skills Overview](skills/B3.md) for the B3 landing page.
+**Purpose**: Ingest, sync, and query Brazilian stock market data from Brasil, Bolsa, Balcão (Brazilian Stock Exchange).
 
 ### CVM (Comissão de Valores Mobiliários)
 
 **Location**: `skills/cvm/`
 **Purpose**: Regulatory, financial statement, and shareholder data from the Brazilian SEC equivalent.
-
-See [CVM Skills Overview](skills/CVM.md) for the CVM landing page.
 
 ### BCB (Banco Central do Brasil)
 
@@ -354,9 +315,8 @@ Identical pattern to `data_source()` — JSON params string, auto-discovery.
 ### All Skills
 
 See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
-[Investsite Overview](skills/INVESTSITE.md) for the investsite landing page,
-[BCB Skills Overview](skills/BCB.md) for the BCB landing page, or
-[B3 Skills Overview](skills/B3.md) for the B3 landing page.
+[Investsite Overview](skills/INVESTSITE.md) for the investsite landing page, or
+[BCB Skills Overview](skills/BCB.md) for the BCB landing page.
 
 | Skill | Domain | Dashboard Tabs | Charts | Sync Guard | Doc |
 |-------|--------|---------------|--------|------------|-----|
@@ -372,7 +332,6 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 | [comparison](skills/cvm/COMPARISON.md) | cvm | 5 | ✅ | ❌ | COMPARISON.md |
 | [investsite](skills/INVESTSITE.md) | investsite | 3 | ✅ | N/A (web) | INVESTSITE.md |
 | [macro](skills/bcb/MACRO.md) | bcb | 5 | ✅ | P2 (sgs not in sync_map) | MACRO.md |
-| [index](skills/b3/INDEX.md) | b3 | 4 | ✅ | ✅ | INDEX.md |
 
 **Notes:**
 
@@ -400,34 +359,6 @@ Skills call data_source query engines directly (no JSON round-trip).
 
 ---
 
-## 🏗️ Domain Creation Guidance
-
-When adding a brand-new **skills domain** (e.g., `skills/b3/`), follow this checklist:
-
-1. **Create the domain folder** — `skills/<new_domain>/`.
-2. **Write the domain hub** — `skills/<new_domain>/__init__.py` with a `route(sub_domain, mode, params)` that dispatches to the right skill. Mirror `skills/cvm/__init__.py` or `skills/b3/__init__.py`.
-3. **Register with the dispatcher** — `skills/dispatcher.py` auto-discovers domains by scanning `skills/*/`. No edits needed if the domain follows the hub convention.
-4. **Create the first skill** under `skills/<new_domain>/<skill>/` using the **Modular Skill Pattern** (`_registry.py` + `__init__.py` + `modes/`) described above.
-5. **Wire `REQUIRED_SOURCES`** — if the skill reads from a data source, declare it (e.g., `REQUIRED_SOURCES = ["index"]`) AND ensure `skills/_base.py`'s `_trigger_sync.sync_map` knows how to sync that source. If it doesn't, add a branch (and a test).
-6. **Set the test escape hatch** — add `<DOMAIN>_SKIP_SYNC=1` (e.g., `B3_SKIP_SYNC=1`) to the domain's `conftest.py` so tests skip the sync guard. Mirror `tests/skills/cvm/conftest.py`.
-7. **Create docs**:
-   - `docs/skills/<NEW_DOMAIN>.md` — domain landing page (mirror `docs/skills/B3.md` or `docs/skills/CVM.md`).
-   - `docs/skills/<new_domain>/<SKILL>.md` — skill landing page (mirror `docs/skills/b3/INDEX.md` or `docs/skills/cvm/FINANCIALS.md`).
-   - `docs/skills/<new_domain>/<skill>/{API,ARCHITECTURE,CHANGELOG,INSTRUCTIONS,ROADMAP}.md` — 5 detail docs in the subfolder.
-8. **Update top-level docs** — add the new domain row to `docs/SKILLS.md` (Current Skill Domains + All Skills table + architecture tree).
-
-### Adding a new skill to an existing domain
-
-If the domain already exists (e.g., adding a second B3 skill alongside `index`):
-
-1. Create `skills/<domain>/<new_skill>/` with `_registry.py` + `__init__.py` + `modes/`.
-2. Add `REQUIRED_SOURCES` if the skill reads from a data source.
-3. Create `docs/skills/<domain>/<NEW_SKILL>.md` + `docs/skills/<domain>/<new_skill>/{API,ARCHITECTURE,CHANGELOG,INSTRUCTIONS,ROADMAP}.md`.
-4. Add a row to the domain landing page (`docs/skills/<DOMAIN>.md` Skills table).
-5. Add a row to the **All Skills** table in `docs/SKILLS.md`.
-
----
-
 ## 🚀 Future Skill Domains (Planned)
 
 - **`ibge`**: Brazilian Institute of Geography and Statistics (macroeconomic indicators, census data).
@@ -438,4 +369,95 @@ Each new domain follows the same Hub-and-Spoke pattern, making it easy to extend
 
 ---
 
-*Last updated: 2026-08-05.*
+## 📊 Dashboard Output Standard (v1.22+)
+
+All dashboard modes (`dashboard()`) MUST follow this output pattern for PowerShell
+terminal visibility + performance debugging. This is NOT optional — it's how we
+identify bottlenecks and verify parallelism is working.
+
+### Required Output Format
+
+```
+[skill] Starting dashboard for {company}...
+[skill]   {task} done ({elapsed_from_start:.1f}s)
+[skill]   {N}/{total} {metric} ({per_metric:.1f}s, total {running:.1f}s) = {value}
+[skill] All data fetched in {total:.1f}s (cache: {hits} hits, {misses} misses)
+[skill] Building sections...
+[skill]   {section_name}...
+[skill] Done! {N} tabs, {N} KPIs in {total:.1f}s.
+```
+
+### Rules
+
+1. **Start line**: `[skill] Starting dashboard for {company}...`
+2. **Per-task timing**: Every parallel/sequential task shows elapsed from start:
+   `[skill]   {task_name} done ({elapsed:.1f}s)`
+3. **Per-metric timing**: `compute_all_ratios` shows EVERY metric:
+   `  [ratios] {N}/{total} {name} ({per_metric:.2f}s, total {running:.1f}s) = {value}`
+4. **Cache stats**: After all data fetched:
+   `[skill] All data fetched in {total:.1f}s (cache: {hits} hits, {misses} misses)`
+5. **Section building**: Each section name:
+   `[skill]   {section_name}...`
+6. **End line**: `[skill] Done! {N} tabs, {N} KPIs in {total:.1f}s.`
+
+### Timer Implementation
+
+```python
+from datetime import datetime as _dt
+_t0 = _dt.now()
+print(f"[skill] Starting dashboard for {company}...", flush=True)
+
+# ... each step:
+_elapsed = (_dt.now() - _t0).total_seconds()
+print(f"[skill]   {task} done ({_elapsed:.1f}s)", flush=True)
+
+# ... end:
+_total = (_dt.now() - _t0).total_seconds()
+print(f"[skill] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
+```
+
+### brapi Timing (data_sources/b3/brapi/fetcher.py)
+
+All brapi calls show timing:
+```
+[brapi] Fetching quote: {ticker}
+[brapi] {ticker} quote OK ({elapsed:.2f}s, price={price})
+[brapi] {ticker} quote FAILED ({elapsed:.2f}s): {error}
+[brapi] Fetching history: {ticker} ({range}/{interval})
+[brapi] {ticker} OK ({elapsed:.2f}s, {N} bars)
+[brapi] {ticker} FAILED ({elapsed:.2f}s): {error}
+[brapi] {ticker} not_found ({elapsed:.2f}s)
+```
+
+On 401 Unauthorized: `[brapi] DISABLED for this session: 401 Unauthorized on {ticker}`
+— all subsequent brapi calls skip entirely (no HTTP request, instant return).
+
+### Cache (engine_cache_scope)
+
+- **Sequential** `compute_all_ratios` is FASTER than parallel — shared cache
+  means `earnings_at(PETR4, today)` is queried ONCE (used by 11 metrics).
+  Parallel workers each get their own cache → re-query N times.
+- **Historical** dashboard: summaries + quartiles share the SAME cache scope.
+  `fetch_series()` calls the same `history_fn` that `summary()` already called
+  → cache HIT → instant. No re-fetching.
+- **Financials** dashboard: 6 parallel fetches (annual, quarterly, statements,
+  TTM, YoY, ratios) — each is independent, no shared engines between them.
+  Parallel is correct here.
+- **Valuation** dashboard: `ratios()` calls `compute_all_ratios` (sequential,
+  shared cache) + 11 parallel engine calls (earnings, revenue, ebit, pl, debt,
+  cash, da, fco, fci, shares, dividends) — parallel is correct here (each
+  engine fetches a different DB table).
+
+### What NOT to do
+
+- Do NOT use `F7` as a name — it was just a tag. Use `cache` or `engine cache`.
+- Do NOT create separate cache scopes for summaries vs quartiles — they MUST
+  share the same scope so `fetch_series` gets cache hits.
+- Do NOT parallelize `compute_all_ratios` — sequential with shared cache is
+  faster (shared engines queried once vs N times).
+- Do NOT use `*_periods()` in `*_at()` functions — `*_periods` fetches ALL
+  data; `*_at` fetches only the most recent period ≤ date (cached, fast).
+
+---
+
+*Last updated: 2026-08-08 (v1.22 — dashboard output standard + timing pattern + cache rules).*

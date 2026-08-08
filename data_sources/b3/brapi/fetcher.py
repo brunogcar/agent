@@ -53,6 +53,25 @@ def _get_token() -> str:
     return os.getenv("BRAPI_TOKEN", "")
 
 
+# [v1.22] Module-level flag: if brapi returns 401 Unauthorized, skip ALL
+# subsequent brapi calls for the rest of the process. Avoids 100+ failed
+# HTTP requests when the token is missing/expired.
+_BRAPI_DISABLED = False
+
+
+def _brapi_disabled() -> bool:
+    """Check if brapi has been disabled due to auth failure."""
+    return _BRAPI_DISABLED
+
+
+def _disable_brapi(reason: str) -> None:
+    """Disable all subsequent brapi calls."""
+    global _BRAPI_DISABLED
+    if not _BRAPI_DISABLED:
+        _BRAPI_DISABLED = True
+        _progress(f"[brapi] DISABLED for this session: {reason}")
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def fetch_quote(ticker: str, modules: str = "", force: bool = False) -> dict:
@@ -68,6 +87,10 @@ def fetch_quote(ticker: str, modules: str = "", force: bool = False) -> dict:
     """
     ticker = ticker.strip().upper()
     cache_key = f"quote:{ticker}:{modules}"
+
+    # [v1.22] Skip if brapi disabled (401 auth failure)
+    if _brapi_disabled():
+        return {"status": "error", "error": "brapi disabled (auth failure)"}
 
     # Check cache (thread-safe)
     with _cache_lock:
@@ -96,6 +119,8 @@ def fetch_quote(ticker: str, modules: str = "", force: bool = False) -> dict:
         except httpx.HTTPError as e:
             _q_elapsed = (_dt.now() - _q_t0).total_seconds()
             _progress(f"[brapi] {ticker} quote FAILED ({_q_elapsed:.2f}s): {e}")
+            if "401" in str(e) or "Unauthorized" in str(e):
+                _disable_brapi(f"401 Unauthorized on {ticker}")
             return {"status": "error", "error": f"brapi.dev: {e}"}
 
     data = resp.json()
@@ -140,6 +165,10 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
     ticker = ticker.strip().upper()
     cache_key = f"history:{ticker}:{range}:{interval}"
 
+    # [v1.22] Skip if brapi disabled (401 auth failure)
+    if _brapi_disabled():
+        return {"status": "error", "error": "brapi disabled (auth failure)"}
+
     # Check cache (thread-safe)
     with _cache_lock:
         if not force and cache_key in _cache:
@@ -170,6 +199,8 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
         except httpx.HTTPError as e:
             _brapi_elapsed = (_dt.now() - _brapi_t0).total_seconds()
             _progress(f"[brapi] {ticker} FAILED ({_brapi_elapsed:.2f}s): {e}")
+            if "401" in str(e) or "Unauthorized" in str(e):
+                _disable_brapi(f"401 Unauthorized on {ticker}")
             result = {"status": "error", "error": f"brapi.dev: {e}"}
             # [v2.0 fix] Cache error results with short TTL
             with _cache_lock:

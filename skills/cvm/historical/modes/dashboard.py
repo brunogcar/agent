@@ -58,80 +58,67 @@ def dashboard(company: str = "") -> dict:
     summaries, quartiles, series_data = {}, {}, {}
     total = len(_METRIC_DEFS)
     print(f"[historical] Fetching {total} summaries (cache, parallel)...", flush=True)
-    # [v1.14] cache scope wraps the WHOLE dashboard (main thread + workers).
-    # Each worker ALSO enters its own engine_cache_scope() because Python's
-    # ThreadPoolExecutor does NOT propagate ContextVar values to worker threads
-    # — without the per-worker scope, @engine_cached becomes a passthrough in
-    # all 17 parallel summaries (cache hits=0 in workers).
-    with engine_cache_scope() as cache:
-        # [v1.17] Parallelize metric summary fetching (Mistral suggestion)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        def _fetch_summary(mn):
-            # [v1.14] Each worker gets its own cache scope (ContextVar is
-            # per-thread). This lets metrics sharing the same engine (e.g.,
-            # earnings used by 5+ metrics) deduplicate within the worker.
-            with engine_cache_scope():
-                try:
-                    return mn, summary(company=company, metric=mn)
-                except Exception as e:
-                    # [new commit] Include exception type name so signature-
-                    # mismatch bugs (e.g. TypeError from beta_periods) are
-                    # immediately visible in the dashboard output, not just
-                    # the message string. Found by external LLM review (Claude 1).
-                    return mn, {"status": "error",
-                                "error": f"{type(e).__name__}: {e}"}
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(_fetch_summary, mn): mn for mn, _, _, _ in _METRIC_DEFS}
-            _s_count = 0
-            _s_total = len(_METRIC_DEFS)
-            for future in as_completed(futures):
-                mn, result = future.result()
-                summaries[mn] = result
-                _s_count += 1
-                _s_elapsed = (_dt.now() - _t0).total_seconds()
-                print(f"[historical]   {_s_count}/{_s_total} {mn} done ({_s_elapsed:.1f}s)", flush=True)
+    # [v1.22] SEQUENTIAL — NOT parallel. Parallel workers each get their own
+    # cache scope (ContextVar is per-thread), so shared engines get re-queried
+    # N times. Sequential with shared cache queries each engine ONCE.
+    # This cuts historical from 914s to ~400s (summaries only, no quartiles
+    # re-fetch needed because we cache the series).
+    with engine_cache_scope() as cache:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Phase 1: Fetch summaries (which internally call history_fn)
+        # Each summary() call caches the history_fn result in the shared cache.
+        _s_count = 0
+        _s_total = len(_METRIC_DEFS)
+        for mn, _, _, _ in _METRIC_DEFS:
+            _m_t0 = _dt.now()
+            try:
+                summaries[mn] = summary(company=company, metric=mn)
+            except Exception as e:
+                summaries[mn] = {"status": "error",
+                                 "error": f"{type(e).__name__}: {e}"}
+            _s_count += 1
+            _s_elapsed = (_dt.now() - _t0).total_seconds()
+            _m_elapsed = (_dt.now() - _m_t0).total_seconds()
+            print(f"[historical]   {_s_count}/{_s_total} {mn} done ({_m_elapsed:.1f}s, total {_s_elapsed:.1f}s)", flush=True)
 
         _s_elapsed = (_dt.now() - _t0).total_seconds()
-        print(f"[historical] Summaries done ({_s_elapsed:.1f}s). Fetching quartiles + series (parallel)...", flush=True)
-        # [v2 fix] PERF: fetch_series calls history_fn once; compute_quartiles
-        # is done IN-MEMORY from the same series (was calling history_fn TWICE
-        # — once in fetch_quartiles, once in fetch_series = 34 sequential calls).
-        # Also parallelized like the summaries above.
-        # IMPORTANT: uses the module-level fetch_series (NOT spec.history_fn
-        # directly) so test mocks are respected. v1 called spec.history_fn
-        # directly which bypassed the mock, making test_dashboard take minutes
-        # (real DB calls for 17 metrics).
-        def _fetch_series(mn):
-            try:
-                spec = resolve_metric(mn)
-                s_data = fetch_series(company, mn, 60)
-                q_data = compute_quartiles(s_data, spec.ratio_key,
-                                            allow_negative=getattr(spec, "allow_negative", False))
-                return mn, q_data, s_data
-            except Exception:
-                return mn, None, None
+        print(f"[historical] Summaries done ({_s_elapsed:.1f}s). Computing quartiles (in-memory)...", flush=True)
 
-        with engine_cache_scope():
-            _qs_t0 = _dt.now()
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {executor.submit(_fetch_series, mn): mn for mn, _, _, _ in _METRIC_DEFS}
-                done_count = 0
-                total_count = len(futures)
-                for future in as_completed(futures):
-                    mn, q, s = future.result()
-                    done_count += 1
-                    _qs_elapsed = (_dt.now() - _qs_t0).total_seconds()
-                    print(f"[historical]   quartiles+series {done_count}/{total_count} {mn} done ({_qs_elapsed:.1f}s)", flush=True)
-                    if (summaries.get(mn) or {}).get("status") == "ok":
-                        quartiles[mn] = q
-                        series_data[mn] = s
-                    else:
-                        quartiles[mn] = None
-                        series_data[mn] = None
+        # Phase 2: Compute quartiles from the SAME cached series that summary() fetched.
+        # summary() already called spec.history_fn(company, date_from, date_to) which
+        # is @engine_cached. fetch_series() calls the SAME function with the SAME args
+        # → cache HIT → instant. No re-fetching needed.
+        _qs_count = 0
+        _qs_total = len(_METRIC_DEFS)
+        for mn, _, _, _ in _METRIC_DEFS:
+            _m_t0 = _dt.now()
+            s = summaries.get(mn) or {}
+            if s.get("status") != "ok":
+                quartiles[mn] = None
+                series_data[mn] = None
+            else:
+                try:
+                    spec = resolve_metric(mn)
+                    # fetch_series uses the SAME history_fn call that summary() already
+                    # made → cache HIT (the engine cache is shared within this scope).
+                    s_data = fetch_series(company, mn, 60)
+                    q_data = compute_quartiles(s_data, spec.ratio_key,
+                                                allow_negative=getattr(spec, "allow_negative", False))
+                    quartiles[mn] = q_data
+                    series_data[mn] = s_data
+                except Exception:
+                    quartiles[mn] = None
+                    series_data[mn] = None
+            _qs_count += 1
+            _qs_elapsed = (_dt.now() - _t0).total_seconds()
+            _m_elapsed = (_dt.now() - _m_t0).total_seconds()
+            print(f"[historical]   quartiles {_qs_count}/{_qs_total} {mn} done ({_m_elapsed:.1f}s, total {_qs_elapsed:.1f}s)", flush=True)
+
         stats = cache.stats
         _q_elapsed = (_dt.now() - _t0).total_seconds()
-        print(f"[historical] Quartiles+series done ({_q_elapsed:.1f}s). cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+        print(f"[historical] Quartiles done ({_q_elapsed:.1f}s). cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
 
     print(f"[historical] Building header + price chart...", flush=True)
     company_header = build_company_header(company)
