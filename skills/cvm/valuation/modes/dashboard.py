@@ -20,6 +20,7 @@ from __future__ import annotations
 from skills._base import engine_cache_scope
 from skills.cvm._shared_report.company_header import build_company_header
 from skills.cvm._shared_report.price_chart import build_price_chart
+from skills.cvm._shared_report.tooltips import get_tooltip as _get_tooltip
 from skills.cvm.valuation._registry import register_mode
 from skills.cvm.valuation.modes.ratios import ratios
 from skills.cvm.valuation.report import (
@@ -30,6 +31,8 @@ from skills.cvm.valuation.report import (
     build_profitability_section,
     build_liquidity_leverage_sections,
     build_efficiency_growth_sections,
+    build_dcf_sensitivity_section,
+    build_roe_trend_chart,
 )
 
 
@@ -119,6 +122,41 @@ def dashboard(company: str = "") -> dict:
         print(f"[valuation] Building company header + price chart...", flush=True)
         company_header = build_company_header(company)
         price_chart = build_price_chart(company)
+
+        # [v2.2] V4 — Graham Number horizontal line overlay on the price chart.
+        # If we have a Graham Number from ratios_dict, append it as a second
+        # line dataset (horizontal line) on the historical price chart.
+        if price_chart and isinstance(ratios_dict, dict):
+            graham_val = ratios_dict.get("graham_number")
+            if graham_val is not None:
+                try:
+                    graham_val = float(graham_val)
+                    chart_data = price_chart.get("chart_data") or {}
+                    data_block = chart_data.get("data") or {}
+                    labels = data_block.get("labels") or []
+                    datasets = data_block.get("datasets") or []
+                    datasets.append({
+                        "label": "Graham Number",
+                        "data": [graham_val] * len(labels),
+                        "borderColor": "#ef4444",
+                        "type": "line",
+                        "fill": False,
+                        "tension": 0,
+                        "pointRadius": 0,
+                        "borderWidth": 2,
+                        "borderDash": [8, 4],
+                    })
+                    data_block["datasets"] = datasets
+                    chart_data["data"] = data_block
+                    price_chart["chart_data"] = chart_data
+                    # Re-sync the full-price snapshot used by the
+                    # client-side range selector so the Graham line also
+                    # appears when the user filters to 5A/1A/1M.
+                    full_labels = price_chart.get("price_full_labels") or labels
+                    price_chart["price_full_labels"] = full_labels
+                except (TypeError, ValueError):
+                    pass
+
         _hdr_elapsed = (_dt.now() - _hdr_start).total_seconds()
         print(f"[valuation] Header+chart done ({_hdr_elapsed:.1f}s).", flush=True)
 
@@ -136,24 +174,156 @@ def dashboard(company: str = "") -> dict:
         overview_sections.insert(1, price_chart)
 
     # [v1.8] Multiples: split by group + per-share merged in.
+    # [v2.2] Wrap the 3 multiple groups + per-share into 3 subtabs.
     print(f"[valuation]   Multiples tab...", flush=True)
     multiples_sections = _safe_build(build_multiples_sections, ratios_dict)
     per_share_sections = _safe_build(build_per_share_sections, ratios_dict)
-    multiples_sections.extend(per_share_sections)
+
+    # Split multiples_sections by title into the 3 groups.
+    # build_multiples_sections returns (in order):
+    #   [0] "Múltiplos de Preço" table
+    #   [1] "Múltiplos de Preço — Comparativo" chart (optional)
+    #   [2] "Múltiplos EV (Enterprise Value)" table
+    #   [3] "Múltiplos EV — Comparativo" chart (optional)
+    #   [4] "Múltiplos Menos Comuns" table
+    price_secs: list[dict] = []
+    ev_secs: list[dict] = []
+    less_secs: list[dict] = []
+    for s in multiples_sections:
+        title = (s.get("title") or "").lower()
+        if "ev" in title and "menos" not in title:
+            ev_secs.append(s)
+        elif "menos comuns" in title:
+            less_secs.append(s)
+        else:
+            price_secs.append(s)
+    # Per-share sections go in the "Preço" subtab.
+    price_secs.extend(per_share_sections)
+
+    multiples_tab_sections: list[dict] = []
+    if price_secs or ev_secs or less_secs:
+        multiples_subtabs: list[dict] = []
+        if price_secs:
+            multiples_subtabs.append({"name": "Preço", "sections": price_secs})
+        if ev_secs:
+            multiples_subtabs.append({"name": "EV", "sections": ev_secs})
+        if less_secs:
+            multiples_subtabs.append({"name": "Menos Comuns", "sections": less_secs})
+        multiples_tab_sections = [{
+            "type": "subtabs",
+            "tabs": multiples_subtabs,
+        }]
+    else:
+        multiples_tab_sections = []
 
     # [v1.8] Profitability: split charts (Returns + Margins).
+    # [v2.2] Wrap in 2 subtabs (Retornos + Margens). Add V5 ROE trend chart
+    # to the Retornos subtab.
     print(f"[valuation]   Profitability tab...", flush=True)
     profitability_sections = _safe_build(build_profitability_section, ratios_dict)
 
+    # Split: items 0-1 = Returns (ratio_grid + chart), items 2-3 = Margins.
+    ret_secs: list[dict] = []
+    mar_secs: list[dict] = []
+    seen_returns_chart = False
+    for s in profitability_sections:
+        title = (s.get("title") or "").lower()
+        if "margens" in title or "margin" in title:
+            mar_secs.append(s)
+        else:
+            ret_secs.append(s)
+            if s.get("type") == "chart":
+                seen_returns_chart = True
+
+    # V5 — ROE / ROA / ROIC 5Y trend chart goes in the Retornos subtab.
+    try:
+        roe_trend = build_roe_trend_chart(company, annual_periods)
+        if roe_trend:
+            ret_secs.append(roe_trend)
+    except Exception as e:
+        print(f"[valuation] ROE trend chart failed: {e}", flush=True)
+
+    profitability_tab_sections: list[dict] = []
+    if ret_secs or mar_secs:
+        prof_subtabs: list[dict] = []
+        if ret_secs:
+            prof_subtabs.append({"name": "Retornos", "sections": ret_secs})
+        if mar_secs:
+            prof_subtabs.append({"name": "Margens", "sections": mar_secs})
+        profitability_tab_sections = [{
+            "type": "subtabs",
+            "tabs": prof_subtabs,
+        }]
+    else:
+        profitability_tab_sections = []
+
     # [v1.8] Liquidity & Leverage: charts + detailed table (was collapsible).
+    # [v2.2] Wrap in 2 subtabs (Liquidez + Endividamento).
     print(f"[valuation]   Liquidity & Leverage tab...", flush=True)
     liquidity_leverage_sections = _safe_build(
         build_liquidity_leverage_sections, ratios_dict)
 
+    # Split: sections before the Leverage ratio_grid = Liquidez, sections
+    # from the Leverage ratio_grid onwards = Endividamento.
+    liq_secs: list[dict] = []
+    lev_secs: list[dict] = []
+    split_done = False
+    for s in liquidity_leverage_sections:
+        title = (s.get("title") or "").lower()
+        if not split_done and ("alavancagem" in title or "leverage" in title):
+            split_done = True
+        if split_done:
+            lev_secs.append(s)
+        else:
+            liq_secs.append(s)
+
+    liquidity_tab_sections: list[dict] = []
+    if liq_secs or lev_secs:
+        liq_subtabs: list[dict] = []
+        if liq_secs:
+            liq_subtabs.append({"name": "Liquidez", "sections": liq_secs})
+        if lev_secs:
+            liq_subtabs.append({"name": "Endividamento", "sections": lev_secs})
+        liquidity_tab_sections = [{
+            "type": "subtabs",
+            "tabs": liq_subtabs,
+        }]
+    else:
+        liquidity_tab_sections = []
+
     # [v1.8] Efficiency & Growth: split growth + charts + annual periods fallback.
+    # [v2.2] Wrap in 2 subtabs (Eficiência + Crescimento).
     print(f"[valuation]   Efficiency & Growth tab...", flush=True)
     efficiency_growth_sections = _safe_build(
         build_efficiency_growth_sections, ratios_dict, annual_periods)
+
+    # Split: the first section is the Efficiency table; everything from the
+    # first "Crescimento" table onwards is Growth.
+    eff_secs: list[dict] = []
+    grow_secs: list[dict] = []
+    growth_split_done = False
+    for s in efficiency_growth_sections:
+        title = (s.get("title") or "").lower()
+        if not growth_split_done and "crescimento" in title:
+            growth_split_done = True
+        if growth_split_done:
+            grow_secs.append(s)
+        else:
+            eff_secs.append(s)
+
+    efficiency_tab_sections: list[dict] = []
+    if eff_secs or grow_secs:
+        eg_subtabs: list[dict] = []
+        if eff_secs:
+            eg_subtabs.append({"name": "Eficiência", "sections": eff_secs})
+        if grow_secs:
+            eg_subtabs.append({"name": "Crescimento", "sections": grow_secs})
+        efficiency_tab_sections = [{
+            "type": "subtabs",
+            "tabs": eg_subtabs,
+        }]
+    else:
+        efficiency_tab_sections = []
 
     # ── Freshness footer ────────────────────────────────────────────────
     freshness_footer = ""
@@ -203,23 +373,41 @@ def dashboard(company: str = "") -> dict:
 
         rows = []
         if intrinsic is not None:
-            rows.append(["DCF Valor Intrínseco", f"R$ {intrinsic:.2f}"])
+            rows.append([
+                {"text": "DCF Valor Intrínseco", "tooltip": _get_tooltip("dcf_intrinsic_value")},
+                f"R$ {intrinsic:.2f}",
+            ])
         if price_val is not None:
-            rows.append(["Preço Atual", f"R$ {float(price_val):.2f}"])
+            rows.append([
+                {"text": "Preço Atual", "tooltip": "Preço atual da ação no mercado (COTAHIST)"},
+                f"R$ {float(price_val):.2f}",
+            ])
         if mos is not None:
             mos_pct = mos * 100
             assessment = "Subavaliado" if mos > 0.25 else ("Justo" if mos > 0 else "Supervalorizado")
-            rows.append(["Margem de Segurança", f"{mos_pct:.1f}% ({assessment})"])
+            rows.append([
+                {"text": "Margem de Segurança", "tooltip": _get_tooltip("dcf_margin_of_safety")},
+                f"{mos_pct:.1f}% ({assessment})",
+            ])
         if irr_val is not None:
             irr_pct = irr_val * 100
-            rows.append(["TIR (IRR)", f"{irr_pct:.1f}%"])
+            rows.append([
+                {"text": "TIR (IRR)", "tooltip": _get_tooltip("irr")},
+                f"{irr_pct:.1f}%",
+            ])
         if wacc_val is not None:
             wacc_pct = wacc_val * 100
-            rows.append(["WACC", f"{wacc_pct:.1f}%"])
+            rows.append([
+                {"text": "WACC", "tooltip": _get_tooltip("wacc")},
+                f"{wacc_pct:.1f}%",
+            ])
             if irr_val is not None:
                 spread = (irr_val - wacc_val) * 100
                 verdict = "Cria valor (TIR > WACC)" if irr_val > wacc_val else "Destrói valor (TIR < WACC)"
-                rows.append(["TIR - WACC", f"{spread:.1f}% ({verdict})"])
+                rows.append([
+                    {"text": "TIR - WACC", "tooltip": "Spread entre retorno esperado e custo de capital. >0 = cria valor."},
+                    f"{spread:.1f}% ({verdict})",
+                ])
 
         if rows:
             intrinsic_sections.append({
@@ -234,16 +422,26 @@ def dashboard(company: str = "") -> dict:
             # Add to overview sections too
             overview_sections.append(intrinsic_sections[-1])
 
+        # [v2.2] V3 — DCF Sensitivity Analysis (5 growth-rate scenarios).
+        # Adds a table + bar chart showing how the intrinsic value responds
+        # to FCF growth assumptions (base ± 2.5% and ± 5%).
+        try:
+            sensitivity_sections = build_dcf_sensitivity_section(company, _vtoday)
+            if sensitivity_sections:
+                intrinsic_sections.extend(sensitivity_sections)
+        except Exception as e:
+            print(f"[valuation] DCF sensitivity failed: {e}", flush=True)
+
     except Exception as e:
         print(f"[valuation] DCF/IRR failed: {e}", flush=True)
 
     tabs = [
         {"name": "Overview",              "group": "Resumo",       "sections": overview_sections},
-        {"name": "Múltiplos",             "group": "Resumo",       "sections": multiples_sections},
+        {"name": "Múltiplos",             "group": "Resumo",       "sections": multiples_tab_sections},
         {"name": "Valor Intrínseco",      "group": "Resumo",       "sections": intrinsic_sections},
-        {"name": "Rentabilidade",         "group": "Fundamentos",  "sections": profitability_sections},
-        {"name": "Liquidez e Alavancagem",  "group": "Fundamentos",  "sections": liquidity_leverage_sections},
-        {"name": "Eficiência e Crescimento",   "group": "Crescimento",  "sections": efficiency_growth_sections},
+        {"name": "Rentabilidade",         "group": "Fundamentos",  "sections": profitability_tab_sections},
+        {"name": "Liquidez e Alavancagem",  "group": "Fundamentos",  "sections": liquidity_tab_sections},
+        {"name": "Eficiência e Crescimento",   "group": "Crescimento",  "sections": efficiency_tab_sections},
     ]
     _total = (_dt.now() - _t0).total_seconds()
     print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)

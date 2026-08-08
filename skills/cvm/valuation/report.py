@@ -23,6 +23,7 @@ Design rules:
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from tools.report_ops.formats import apply_fmt
@@ -488,11 +489,19 @@ _PROFITABILITY_ITEMS: list[tuple[str, str, str]] = [
 ]
 
 
-def build_profitability_section(ratios_dict: dict | None) -> dict | list:
-    """Build the Profitability tab — ratio_grid + split charts.
+def build_profitability_section(ratios_dict: dict | None) -> list[dict]:
+    """Build the Profitability tab — split ratio_grids + charts (Retornos + Margens).
 
-    [v1.8] Split the single bar chart into 2: Returns (ROE/ROA/ROIC) +
-    Margins (Gross/Operating/Net/EBITDA/OCF/FCF).
+    [v2.2] Split the single ratio_grid (2 categories) into TWO separate
+    ratio_grids so the dashboard can group them under "Retornos" and
+    "Margens" subtabs. Returns 4 sections in order:
+      [0] Returns ratio_grid (1 category: Retornos, 3 items)
+      [1] Returns chart (bar, with rich tooltips)
+      [2] Margins ratio_grid (1 category: Margens, 6 items)
+      [3] Margins chart (bar, with rich tooltips)
+
+    Charts include explicit ``plugins.tooltip`` callbacks so each bar's
+    tooltip shows the formula (PT-BR) alongside the value.
     """
     items = []
     for label, key, spec in _PROFITABILITY_ITEMS:
@@ -502,24 +511,28 @@ def build_profitability_section(ratios_dict: dict | None) -> dict | list:
             "value": _fmt(raw, spec),
             "value_raw": float(raw) if raw is not None else None,
             "tooltip": _get_tooltip(key),
+            "key": key,
         })
-    # Split items into Returns (first 3) + Margins (last 6).
     returns_items = items[:3]
     margins_items = items[3:]
-    sections: list[dict] = [{
-        "title": "Profitability & Margins",
+
+    sections: list[dict] = []
+
+    # ── Returns ratio_grid ──
+    sections.append({
+        "title": "Retornos",
         "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
         "type": "ratio_grid",
         "categories": [
             {"label": "Retornos", "items": returns_items},
-            {"label": "Margens",  "items": margins_items},
         ],
-    }]
-    # [v1.8] Chart 1: Returns (ROE/ROA/ROIC)
+    })
+
+    # ── Returns chart (ROE / ROA / ROIC) with rich tooltip ──
     ret_labels = [i["label"] for i in returns_items if i.get("value_raw") is not None]
     ret_values = [i["value_raw"] for i in returns_items if i.get("value_raw") is not None]
+    ret_formulas = {i["label"]: i.get("tooltip", "") for i in returns_items}
     if len(ret_labels) >= 2:
-        # Convert to percentage for display
         ret_pct = [v * 100 if abs(v) < 1 else v for v in ret_values]
         sections.append({
             "type": "chart",
@@ -531,12 +544,38 @@ def build_profitability_section(ratios_dict: dict | None) -> dict | list:
                          "datasets": [{"label": "Retornos (%)", "data": ret_pct,
                                        "backgroundColor": "#0d9488"}]},
                 "options": {"responsive": True, "maintainAspectRatio": False,
-                            "scales": {"y": {"beginAtZero": True}}},
+                            "scales": {"y": {"beginAtZero": True}},
+                            "plugins": {
+                                "tooltip": {
+                                    "mode": "index",
+                                    "intersect": False,
+                                    "callbacks": {
+                                        "afterLabel": (
+                                            "function(ctx) {"
+                                            f"  var m = {json.dumps(ret_formulas)};"
+                                            "  return m[ctx.label] ? '\\n' + m[ctx.label] : '';"
+                                            "}"
+                                        ),
+                                    },
+                                },
+                            }},
             },
         })
-    # [v1.8] Chart 2: Margins
+
+    # ── Margins ratio_grid ──
+    sections.append({
+        "title": "Margens",
+        "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
+        "type": "ratio_grid",
+        "categories": [
+            {"label": "Margens", "items": margins_items},
+        ],
+    })
+
+    # ── Margins chart with rich tooltip ──
     mar_labels = [i["label"] for i in margins_items if i.get("value_raw") is not None]
     mar_values = [i["value_raw"] for i in margins_items if i.get("value_raw") is not None]
+    mar_formulas = {i["label"]: i.get("tooltip", "") for i in margins_items}
     if len(mar_labels) >= 2:
         mar_pct = [v * 100 if abs(v) < 1 else v for v in mar_values]
         sections.append({
@@ -549,11 +588,24 @@ def build_profitability_section(ratios_dict: dict | None) -> dict | list:
                          "datasets": [{"label": "Margens (%)", "data": mar_pct,
                                        "backgroundColor": "#f59e0b"}]},
                 "options": {"responsive": True, "maintainAspectRatio": False,
-                            "scales": {"y": {"beginAtZero": True}}},
+                            "scales": {"y": {"beginAtZero": True}},
+                            "plugins": {
+                                "tooltip": {
+                                    "mode": "index",
+                                    "intersect": False,
+                                    "callbacks": {
+                                        "afterLabel": (
+                                            "function(ctx) {"
+                                            f"  var m = {json.dumps(mar_formulas)};"
+                                            "  return m[ctx.label] ? '\\n' + m[ctx.label] : '';"
+                                            "}"
+                                        ),
+                                    },
+                                },
+                            }},
             },
         })
-    if len(sections) == 1:
-        return sections[0]
+
     return sections
 
 
@@ -563,7 +615,8 @@ _LIQUIDITY_ITEMS: list[tuple[str, str, str]] = [
     ("Current Ratio",    "current_ratio",    "num"),
     ("Quick Ratio",      "quick_ratio",      "num"),
     ("Cash Ratio",       "cash_ratio",       "num"),
-    ("Working Capital",  "working_capital",  "brl"),
+    # [v2.2] Working Capital removed from this list — it's a BRL value, not a
+    # ratio, so it gets its own BRL section below the Liquidity ratio_grid.
 ]
 
 _LEVERAGE_ITEMS: list[tuple[str, str, str]] = [
@@ -603,13 +656,22 @@ def _derive_detailed_leverage(ratios_dict: dict | None) -> dict[str, float | Non
 
 
 def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
-    """Build the Liquidity & Leverage tab — ratio_grid + charts + detailed table.
+    """Build the Liquidity & Leverage tab — split ratio_grids + charts + detailed table.
 
-    [v1.8] Replaced the collapsible with a proper table. Added 2 bar charts:
-    Liquidity ratios + Leverage ratios.
+    [v2.2] Split into separate Liquidity and Leverage ratio_grids so the
+    dashboard can group them under "Liquidez" and "Endividamento" subtabs.
+    Working Capital (BRL, not a ratio) is now its own BRL section below the
+    Liquidity ratio_grid. Returns 6 sections in order:
+      [0] Liquidity ratio_grid (3 items, no Working Capital)
+      [1] Working Capital BRL table (1 row)
+      [2] Liquidity chart
+      [3] Leverage ratio_grid (5 items)
+      [4] Leverage chart
+      [5] Detailed Leverage table
     """
     sections: list[dict] = []
 
+    # ── Liquidity ratio_grid (no Working Capital) ──
     liquidity_items = []
     for label, key, spec in _LIQUIDITY_ITEMS:
         raw = _safe_get(ratios_dict, key)
@@ -619,6 +681,29 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
             "value_raw": float(raw) if raw is not None else None,
             "tooltip": _get_tooltip(key),
         })
+    sections.append({
+        "title": "Liquidez",
+        "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
+        "type": "ratio_grid",
+        "categories": [
+            {"label": "Liquidity", "items": liquidity_items},
+        ],
+    })
+
+    # ── Working Capital BRL section (separate — it's a BRL value, not a ratio) ──
+    wc_raw = _safe_get(ratios_dict, "working_capital")
+    sections.append({
+        "title": "Capital de Giro (BRL)",
+        "description": "Ativo Circulante - Passivo Circulante. Valor em BRL.",
+        "type": "table",
+        "columns": ["Indicador", "Valor"],
+        "rows": [[
+            {"text": "Working Capital", "tooltip": _get_tooltip("working_capital")},
+            _fmt(wc_raw, "brl"),
+        ]],
+    })
+
+    # ── Leverage ratio_grid ──
     leverage_items = []
     for label, key, spec in _LEVERAGE_ITEMS:
         raw = _safe_get(ratios_dict, key)
@@ -629,12 +714,11 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
             "tooltip": _get_tooltip(key),
         })
     sections.append({
-        "title": "Liquidity & Leverage",
+        "title": "Alavancagem",
         "description": "Passe o mouse sobre cada indicador para ver a fórmula (ⓘ).",
         "type": "ratio_grid",
         "categories": [
-            {"label": "Liquidity",  "items": liquidity_items},
-            {"label": "Leverage",   "items": leverage_items},
+            {"label": "Leverage", "items": leverage_items},
         ],
     })
 
@@ -642,10 +726,10 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
     liq_labels = [i["label"] for i in liquidity_items if i.get("value_raw") is not None]
     liq_values = [i["value_raw"] for i in liquidity_items if i.get("value_raw") is not None]
     if len(liq_labels) >= 2:
-        sections.append({
+        sections.insert(2, {
             "type": "chart",
             "title": "Liquidez — Comparativo",
-            "description": "Liquidez Corrente, Seca, Imediata + Capital de Giro.",
+            "description": "Liquidez Corrente, Seca, Imediata.",
             "chart_data": {
                 "type": "bar",
                 "data": {"labels": liq_labels,
@@ -861,3 +945,368 @@ def build_efficiency_growth_sections(
             })
 
     return sections
+
+
+# ── V3: DCF Sensitivity Analysis ─────────────────────────────────────────────
+#
+# Computes DCF intrinsic value at 5 growth-rate scenarios:
+#   - growth_rate - 5%   (pessimistic)
+#   - growth_rate - 2.5% (conservative)
+#   - growth_rate        (base case = revenue_growth_1y)
+#   - growth_rate + 2.5% (optimistic)
+#   - growth_rate + 5%   (aggressive)
+#
+# Because dcf_intrinsic_value_at() hardcodes growth=revenue_growth_1y_at(),
+# we replicate the DCF formula here using the underlying engine helpers so we
+# can sweep the growth rate. Returns: [table_section, chart_section].
+
+def _dcf_at_growth(
+    company: str,
+    date: str,
+    growth_rate: float,
+) -> float | None:
+    """Compute DCF intrinsic value per share with a CUSTOM growth rate.
+
+    Mirrors ``dcf_intrinsic_value_at()`` from
+    ``skills.cvm.calculations.metrics.dcf_intrinsic_value`` but lets the
+    caller pass the Stage-1 FCF growth rate instead of pulling it from
+    ``revenue_growth_1y_at``.
+
+    Returns None when FCF/WACC/shares are missing or WACC <= terminal growth.
+    """
+    try:
+        from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
+        from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at
+        from skills.cvm.calculations.engines.shares import shares_at
+        from skills.cvm.calculations.engines.price import price_at
+        from skills.cvm.calculations.metrics.wacc import wacc_at
+        from skills.cvm.calculations.growth_helpers import (
+            get_terminal_growth, project_fcf, PROJECTION_YEARS,
+        )
+    except ImportError:
+        return None
+
+    fco = operating_cf_at(company, date)
+    fci = investing_cf_at(company, date)
+    if fco is None or fci is None:
+        return None
+    base_fcf = fco + fci
+    if base_fcf <= 0:
+        return None
+
+    wacc = wacc_at(company, date)
+    if wacc is None or wacc <= 0:
+        return None
+
+    terminal_growth = get_terminal_growth()
+    if wacc <= terminal_growth:
+        return None
+
+    shares = shares_at(company, date)
+    if shares is None or shares <= 0:
+        return None
+
+    # Stage 1: project FCF at the requested growth rate (project_fcf caps
+    # the rate to [-10%, +30%] which is the realistic long-term range).
+    fcf_projections = project_fcf(base_fcf, growth_rate, PROJECTION_YEARS)
+
+    pv_stage1 = 0.0
+    for t, fcf_t in enumerate(fcf_projections, 1):
+        pv_stage1 += fcf_t / (1.0 + wacc) ** t
+
+    # Stage 2: Terminal Value
+    fcf_terminal = fcf_projections[-1] * (1.0 + terminal_growth)
+    tv = fcf_terminal / (wacc - terminal_growth)
+    pv_tv = tv / (1.0 + wacc) ** PROJECTION_YEARS
+
+    intrinsic_value = pv_stage1 + pv_tv
+    return intrinsic_value / shares
+
+
+def build_dcf_sensitivity_section(company: str, date: str) -> list[dict]:
+    """Build the DCF sensitivity analysis sections (table + bar chart).
+
+    Computes the DCF intrinsic value per share at 5 growth-rate scenarios
+    (base ± 2.5% and ± 5%) so the user can see how sensitive the
+    intrinsic-value estimate is to the FCF growth assumption.
+
+    Returns a list of section dicts (table + bar chart). Returns an empty
+    list if the base DCF cannot be computed (missing inputs).
+    """
+    try:
+        from skills.cvm.calculations.metrics.revenue_growth import (
+            revenue_growth_1y_at,
+        )
+        from skills.cvm.calculations.engines.price import price_at
+    except ImportError:
+        return []
+
+    # Base growth rate = revenue_growth_1y (falls back to 5% like the DCF metric).
+    # Wrap in try/except — revenue_growth_1y_at may hit the DFP/ITR DBs which
+    # aren't always available (test env, fresh install before sync).
+    try:
+        base_growth = revenue_growth_1y_at(company, date)
+    except Exception:
+        base_growth = None
+    if base_growth is None:
+        base_growth = 0.05
+
+    scenarios: list[tuple[str, float]] = [
+        ("Pessimista",   base_growth - 0.05),
+        ("Conservador",  base_growth - 0.025),
+        ("Base",         base_growth),
+        ("Otimista",     base_growth + 0.025),
+        ("Agressivo",    base_growth + 0.05),
+    ]
+
+    rows: list[list] = []
+    chart_labels: list[str] = []
+    chart_values: list[float | None] = []
+
+    current_price = None
+    try:
+        current_price = price_at(company, date)
+    except Exception:
+        current_price = None
+
+    for name, g in scenarios:
+        try:
+            intrinsic = _dcf_at_growth(company, date, g)
+        except Exception:
+            intrinsic = None
+        # Margin of Safety vs current price (None if either side missing)
+        mos_pct_str = "—"
+        if intrinsic is not None and intrinsic > 0 and current_price is not None and current_price > 0:
+            mos = (intrinsic - current_price) / intrinsic
+            mos_pct_str = f"{mos * 100:.1f}%"
+        rows.append([
+            {"text": name, "tooltip": (
+                f"Cenário {name}. Taxa de crescimento do FCF = "
+                f"{g*100:+.1f}% (base {base_growth*100:.1f}%)."
+            )},
+            f"{g*100:+.1f}%",
+            f"R$ {intrinsic:.2f}" if intrinsic is not None else "—",
+            mos_pct_str,
+        ])
+        chart_labels.append(name)
+        chart_values.append(intrinsic)
+
+    # If ALL scenarios returned None (DCF inputs unavailable), return empty.
+    if all(v is None for v in chart_values):
+        return []
+
+    sections: list[dict] = [{
+        "title": "Análise de Sensibilidade — DCF por Cenário",
+        "description": (
+            "DCF recalculado em 5 cenários de crescimento do FCF "
+            "(base ± 2.5% e ± 5%). A base é o revenue_growth_1y real."
+        ),
+        "type": "table",
+        "columns": ["Cenário", "Crescimento", "Valor Intrínseco", "Margem de Segurança"],
+        "rows": rows,
+        "note": (
+            "Premissas mantidas: WACC, terminal growth (IPCA 12M), shares, "
+            "FCF base (TTM). Apenas o crescimento do FCF dos 5 anos explícitos varia."
+        ),
+    }]
+
+    # Bar chart: 5 intrinsic values + horizontal line at current price.
+    bar_data = [v if v is not None else 0 for v in chart_values]
+    datasets: list[dict] = [{
+        "label": "Valor Intrínseco (R$)",
+        "data": bar_data,
+        "backgroundColor": [
+            "#ef4444",  # Pessimista - red
+            "#f59e0b",  # Conservador - amber
+            "#0d9488",  # Base - teal
+            "#3b82f6",  # Otimista - blue
+            "#22c55e",  # Agressivo - green
+        ],
+    }]
+    if current_price is not None and current_price > 0:
+        datasets.append({
+            "label": "Preço Atual",
+            "data": [current_price] * len(chart_labels),
+            "borderColor": "#6b7280",
+            "type": "line",
+            "fill": False,
+            "tension": 0,
+            "pointRadius": 0,
+            "borderDash": [6, 4],
+        })
+    sections.append({
+        "type": "chart",
+        "title": "Sensibilidade do Valor Intrínseco",
+        "description": (
+            "Barras: valor intrínseco por cenário. Linha tracejada: preço "
+            "atual. Barras acima da linha = cenários em que a ação está "
+            "subavaliada."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {"labels": chart_labels, "datasets": datasets},
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": {
+                    "y": {
+                        "beginAtZero": True,
+                        "title": {"display": True, "text": "R$ / ação"},
+                    },
+                },
+                "plugins": {"legend": {"display": True}},
+            },
+        },
+    })
+
+    return sections
+
+
+# ── V5: ROE / ROA / ROIC 5Y trend chart ──────────────────────────────────────
+#
+# Uses annual_periods (from financials.modes.annual) to plot ROE, ROA, ROIC
+# across the last 6 years. ROE and ROA come straight from each period's
+# ``ratios`` dict (already computed by financials.compute_ratios). ROIC is
+# computed inline from each period's ``metrics`` dict
+# (EBIT × (1-tax) / (PL + Debt - Cash)) since financials.compute_ratios
+# doesn't emit ROIC.
+
+def _compute_roic_from_metrics(metrics: dict) -> float | None:
+    """Approximate ROIC from a financials metrics dict (no tax/EBT available).
+
+    ROIC = NOPAT / Invested Capital
+      NOPAT            = EBIT × (1 - 0.34)   (Brazilian combined IRPJ+CSLL)
+      Invested Capital = PL + Debt - Cash
+
+    Returns None when EBIT <= 0, PL <= 0, or invested capital <= 0.
+    """
+    if not isinstance(metrics, dict):
+        return None
+    ebit = metrics.get("ebit")
+    pl = metrics.get("patrimonio_liquido")
+    debt = metrics.get("divida_bruta")
+    cash = metrics.get("caixa") or 0.0
+    if ebit is None or ebit <= 0:
+        return None
+    if pl is None or pl <= 0:
+        return None
+    if debt is None:
+        return None
+    invested = pl + debt - (cash or 0.0)
+    if invested <= 0:
+        return None
+    nopat = ebit * (1.0 - 0.34)
+    return nopat / invested
+
+
+def build_roe_trend_chart(company: str, annual_periods: list[dict]) -> dict | None:
+    """Build the ROE/ROA/ROIC 5Y trend chart section.
+
+    Plots 3 lines (ROE teal, ROA blue, ROIC orange) across up to 6 annual
+    periods from ``annual_periods`` (fetched from financials.modes.annual).
+
+    Args:
+        company: Ticker (unused for computation but kept for the chart title).
+        annual_periods: list of period dicts from financials.modes.annual(),
+            each with ``period`` (year string), ``data_fim_exerc``, ``metrics``
+            and ``ratios`` sub-dicts.
+
+    Returns:
+        A ``chart`` section dict, or None if fewer than 2 annual periods are
+        available.
+    """
+    if not annual_periods or len(annual_periods) < 2:
+        return None
+
+    # Sort oldest-first by period (year string) or data_fim_exerc.
+    def _period_key(p: dict) -> str:
+        return str(p.get("period") or (p.get("data_fim_exerc") or "")[:4] or "")
+
+    periods = sorted(annual_periods, key=_period_key)
+
+    years: list[str] = []
+    roe_vals: list[float | None] = []
+    roa_vals: list[float | None] = []
+    roic_vals: list[float | None] = []
+
+    for p in periods:
+        year = _period_key(p)
+        if not year:
+            continue
+        years.append(year)
+        ratios = p.get("ratios") or {}
+        metrics = p.get("metrics") or {}
+        roe = ratios.get("roe")
+        roa = ratios.get("roa")
+        roic = _compute_roic_from_metrics(metrics)
+        roe_vals.append(roe * 100 if roe is not None else None)
+        roa_vals.append(roa * 100 if roa is not None else None)
+        roic_vals.append(roic * 100 if roic is not None else None)
+
+    if len(years) < 2:
+        return None
+
+    chart_data = {
+        "type": "line",
+        "data": {
+            "labels": years,
+            "datasets": [
+                {
+                    "label": "ROE",
+                    "data": roe_vals,
+                    "borderColor": "#0d9488",
+                    "backgroundColor": "rgba(13,148,136,0.1)",
+                    "tension": 0.15,
+                    "fill": False,
+                    "pointRadius": 3,
+                    "pointHoverRadius": 5,
+                },
+                {
+                    "label": "ROA",
+                    "data": roa_vals,
+                    "borderColor": "#3b82f6",
+                    "backgroundColor": "rgba(59,130,246,0.1)",
+                    "tension": 0.15,
+                    "fill": False,
+                    "pointRadius": 3,
+                    "pointHoverRadius": 5,
+                },
+                {
+                    "label": "ROIC",
+                    "data": roic_vals,
+                    "borderColor": "#f59e0b",
+                    "backgroundColor": "rgba(245,158,11,0.1)",
+                    "tension": 0.15,
+                    "fill": False,
+                    "pointRadius": 3,
+                    "pointHoverRadius": 5,
+                },
+            ],
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "scales": {
+                "y": {
+                    "beginAtZero": True,
+                    "title": {"display": True, "text": "%"},
+                },
+                "x": {"title": {"display": True, "text": "Ano"}},
+            },
+            "plugins": {
+                "legend": {"display": True, "position": "top"},
+                "tooltip": {"mode": "index", "intersect": False},
+            },
+        },
+    }
+
+    return {
+        "type": "chart",
+        "title": f"ROE / ROA / ROIC — Tendência {years[0]}-{years[-1]}",
+        "description": (
+            "Evolução anual dos retornos. ROE = rentabilidade do capital dos "
+            "acionistas; ROA = eficiência do uso dos ativos; ROIC = retorno "
+            "sobre o capital investido (NOPAT / (PL + Dívida - Caixa))."
+        ),
+        "chart_data": chart_data,
+    }

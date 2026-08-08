@@ -6,17 +6,21 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | D1 — Per-statement adapters | BPA/BPP/DRE/DFC/DVA adapters for Per-share tab |
-| P2 | D2 — Additional metrics | ROI, COE/CAPM, CAGR (remaining — Earnings Yield done v1.8, _derive_multiples promoted to registry v1.8) |
-| P2 | D3 — Cash flow metrics | FCT, FCL, Saldo Inicial/Final |
-| P3 | D4 — New data sources | B3 index, Beta, options, volatility, BCB macro, FX rates |
-| P2 | D5 — Dashboard enhancements | Sub-tabs, price trend, margin trend, peer comparison (most done v1.8 — see below) |
-| P2 | D6 — Report adapters | valuation_bpa/bpp/dre/dfc/dva/macro |
-| P3 | D7 — Performance & quality | Per-call cache done (F7); materialized done (F8); TypedDict + telemetry remaining |
-| P2 | Peer comparison mode | Compare multiples vs sector (uses screener data) |
-| P2 | Graham Number vs Price overlay chart | Price chart with Graham Number horizontal line |
-| P2 | ROE/ROA/ROIC comparison bar chart in Profitability | 5Y trend comparison |
-| P3 | BCB SGS integration | Selic/CDI for cost of equity (shared with calculations) |
+| P2 | V7 — DCF sensitivity analysis | Vary growth rate ±5%, show intrinsic value range. DONE v2.0 |
+| P2 | V8 — Graham Number overlay | Horizontal line on price chart. DONE v2.0 |
+| P2 | V9 — ROE/ROA/ROIC 5Y trend | Multi-line chart in Profitability. DONE v2.0 |
+|----------|------|-------------|
+| Done | D1 — Per-statement adapters | BPA/BPP/DRE/DFC/DVA adapters for Per-share tab |
+| Done | D2 — Additional metrics | ROI, COE/CAPM, CAGR (remaining — Earnings Yield done v1.8, _derive_multiples promoted to registry v1.8) |
+| Done | D3 — Cash flow metrics | FCT, FCL, Saldo Inicial/Final |
+| Done | D4 — New data sources | B3 index, Beta, options, volatility, BCB macro, FX rates |
+| Done | D5 — Dashboard enhancements | Sub-tabs, price trend, margin trend, peer comparison (most done v1.8 — see below) |
+| P3 | D6 — Report adapters | valuation_bpa/bpp/dre/dfc/dva/macro |
+| Done | D7 — Performance & quality | Per-call cache done (F7); materialized done (F8); TypedDict + telemetry remaining |
+| P3 | Peer comparison mode | Compare multiples vs sector (uses screener data) |
+| Done | Graham Number vs Price overlay chart | Price chart with Graham Number horizontal line |
+| Done | ROE/ROA/ROIC comparison bar chart in Profitability | 5Y trend comparison |
+| Done | BCB SGS integration | Selic/CDI for cost of equity (shared with calculations) |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
 | Done | Force sync guard (v1.7) | `ensure_fresh()` + HEAD check + current-year force sync |
 | Done | Dashboard overhaul + v2 split (v1.8) | Company header, price chart, sidebar groups, tooltips, chart titles, freshness footer, engine_cache_scope, profitability bar chart, Per-share merged into Multiples |
