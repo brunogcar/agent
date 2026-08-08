@@ -325,7 +325,7 @@ def compute_all_ratios(
     result: dict[str, float | None] = {}
     exclude_set = set(exclude or [])
 
-    # [v1.9 F7] Cache engines for the duration of this call. Engines shared
+    # [v1.9] Cache engines for the duration of this call. Engines shared
     # across metrics (earnings used by 11 metrics, pl by 10, debt by 10,
     # revenue by 15) are queried ONCE per (company, date) instead of N times.
     # The scope is re-entrancy-safe: if a scope is already active (nested
@@ -341,7 +341,7 @@ def compute_all_ratios(
         # [v6] SEQUENTIAL — NOT parallel. Parallel workers each get their own
         # engine_cache_scope (ContextVar is per-thread), so shared engines
         # (earnings used by 11 metrics, pl by 10, debt by 10, revenue by 15)
-        # get re-queried N times. Sequential with shared F7 cache queries
+        # get re-queried N times. Sequential with shared cache queries
         # each engine ONCE. Net result: sequential is FASTER for compute-heavy
         # metrics that share engines.
         #

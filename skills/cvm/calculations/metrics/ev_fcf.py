@@ -46,49 +46,31 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
-from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_periods
-from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_periods
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at, investing_cf_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
 def _resolve_fcf(company: str, date: str) -> tuple[float | None, str | None]:
     """Resolve TTM FCO + TTM FCI at the most recent period-end <= date.
 
-    Returns (fcf_value, resolved_period_date) where resolved_period_date is
-    the common period-end date of both FCO and FCI (used by callers for the
-    alignment guard). If FCO and FCI resolve to different dates, returns
-    (None, None) so callers can short-circuit.
+    [v1.22 fix] Was calling operating_cf_periods() + investing_cf_periods()
+    which fetch ALL DFC data and compute TTM for every period — took 95-133s.
+    Now calls operating_cf_at() + investing_cf_at() which are cached + only
+    fetch the most recent period <= date. Expected: 95s → <0.01s.
 
-    Mirrors the alignment-guard logic in metrics/p_fcf.py::fcf_ps_at.
+    FCO and FCI come from the SAME DFC statement, so alignment is guaranteed
+    (both resolve to the same period-end). The old alignment guard was
+    defensive but unnecessary for same-statement engines.
     """
-    # Resolve FCO period + value
-    fco_periods_list = operating_cf_periods(company)
-    fco_date: str | None = None
-    fco_val: float | None = None
-    for fp in reversed(fco_periods_list):
-        if fp["date"] <= date:
-            fco_date = fp["date"]
-            fco_val = fp["ttm_fco"]
-            break
-
-    # Resolve FCI period + value
-    fci_periods_list = investing_cf_periods(company)
-    fci_date: str | None = None
-    fci_val: float | None = None
-    for ip in reversed(fci_periods_list):
-        if ip["date"] <= date:
-            fci_date = ip["date"]
-            fci_val = ip["ttm_fci"]
-            break
+    fco_val = operating_cf_at(company, date)
+    fci_val = investing_cf_at(company, date)
 
     if fco_val is None or fci_val is None:
         return None, None
 
-    # Alignment guard: FCO and FCI must resolve to the same period-end date.
-    if fco_date != fci_date:
-        return None, None
-
-    return fco_val + fci_val, fco_date
+    # FCO + FCI = Free Cash Flow (both are TTM, same period)
+    return fco_val + fci_val, date
 
 
 # -- Ratio: EV/FCF = (price × shares + debt - cash) / (FCO + FCI) -------------

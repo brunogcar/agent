@@ -84,6 +84,8 @@ def fetch_quote(ticker: str, modules: str = "", force: bool = False) -> dict:
         params["modules"] = modules
 
     url = f"{API_BASE}/quote/{ticker}"
+    from datetime import datetime as _dt
+    _q_t0 = _dt.now()
     _progress(f"[brapi] Fetching quote: {ticker}")
 
     # Acquire semaphore (limits concurrency to 5)
@@ -92,16 +94,22 @@ def fetch_quote(ticker: str, modules: str = "", force: bool = False) -> dict:
             resp = httpx.get(url, params=params, timeout=15, follow_redirects=True)
             resp.raise_for_status()
         except httpx.HTTPError as e:
+            _q_elapsed = (_dt.now() - _q_t0).total_seconds()
+            _progress(f"[brapi] {ticker} quote FAILED ({_q_elapsed:.2f}s): {e}")
             return {"status": "error", "error": f"brapi.dev: {e}"}
 
     data = resp.json()
     results = data.get("results", [])
+    _q_elapsed = (_dt.now() - _q_t0).total_seconds()
 
     if not results:
+        _progress(f"[brapi] {ticker} quote not_found ({_q_elapsed:.2f}s)")
         return {"status": "not_found", "ticker": ticker,
                 "error": f"No data for {ticker}"}
 
     quote = results[0]
+    _price = quote.get("regularMarketPrice", "?")
+    _progress(f"[brapi] {ticker} quote OK ({_q_elapsed:.2f}s, price={_price})")
 
     # Update cache (thread-safe)
     with _cache_lock:

@@ -38,8 +38,8 @@ Usage:
 """
 from __future__ import annotations
 
-from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_periods
-from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_periods
+from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
+from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at, investing_cf_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
@@ -47,35 +47,16 @@ from skills.cvm.calculations._registry import MetricSpec, register_metric
 def _resolve_fcf(company: str, date: str) -> tuple[float | None, str | None]:
     """Resolve TTM FCO + TTM FCI at the most recent period-end <= date.
 
-    Returns (fcf_value, resolved_period_date). If FCO and FCI resolve to
-    different dates, returns (None, None) so callers can short-circuit.
-    Mirrors the alignment-guard logic in metrics/p_fcf.py::fcf_ps_at.
+    [v1.22 fix] Same fix as ev_fcf: use *_at (cached, point-in-time) instead
+    of *_periods (fetches ALL DFC data). Was 105s, now <0.01s.
     """
-    fco_periods_list = operating_cf_periods(company)
-    fco_date: str | None = None
-    fco_val: float | None = None
-    for fp in reversed(fco_periods_list):
-        if fp["date"] <= date:
-            fco_date = fp["date"]
-            fco_val = fp["ttm_fco"]
-            break
-
-    fci_periods_list = investing_cf_periods(company)
-    fci_date: str | None = None
-    fci_val: float | None = None
-    for ip in reversed(fci_periods_list):
-        if ip["date"] <= date:
-            fci_date = ip["date"]
-            fci_val = ip["ttm_fci"]
-            break
+    fco_val = operating_cf_at(company, date)
+    fci_val = investing_cf_at(company, date)
 
     if fco_val is None or fci_val is None:
         return None, None
 
-    if fco_date != fci_date:
-        return None, None
-
-    return fco_val + fci_val, fco_date
+    return fco_val + fci_val, date
 
 
 def fcf_margin_at(company: str, date: str) -> float | None:

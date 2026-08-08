@@ -107,20 +107,16 @@ def dashboard(company: str = "") -> dict:
             annual_payload = annual(company=company, periods=6, consolidado=1)
             if annual_payload.get("status") == "ok":
                 annual_periods = annual_payload.get("periods") or []
-                _ap_elapsed = (_dt.now() - _t0).total_seconds()
-                print(f"[valuation] Annual periods: {len(annual_periods)} years ({_ap_elapsed:.1f}s).", flush=True)
+                print(f"[valuation] Annual periods: {len(annual_periods)} years.", flush=True)
             else:
                 print(f"[valuation] Annual periods: unavailable ({annual_payload.get('error', '?')}).", flush=True)
         except Exception as e:
             print(f"[valuation] Annual periods: error ({e}).", flush=True)
 
         # ── Company header + price chart ─────────────────────────────
-        _hdr_start = _dt.now()
         print(f"[valuation] Building company header + price chart...", flush=True)
         company_header = build_company_header(company)
         price_chart = build_price_chart(company)
-        _hdr_elapsed = (_dt.now() - _hdr_start).total_seconds()
-        print(f"[valuation] Header+chart done ({_hdr_elapsed:.1f}s).", flush=True)
 
     # ── Build sections ──────────────────────────────────────────────────
     print(f"[valuation] Building dashboard sections...", flush=True)

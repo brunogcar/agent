@@ -57,17 +57,17 @@ def dashboard(company: str = "") -> dict:
 
     summaries, quartiles, series_data = {}, {}, {}
     total = len(_METRIC_DEFS)
-    print(f"[historical] Fetching {total} summaries (F7 cache, parallel)...", flush=True)
-    # [v1.14] F7 cache scope wraps the WHOLE dashboard (main thread + workers).
+    print(f"[historical] Fetching {total} summaries (cache, parallel)...", flush=True)
+    # [v1.14] cache scope wraps the WHOLE dashboard (main thread + workers).
     # Each worker ALSO enters its own engine_cache_scope() because Python's
     # ThreadPoolExecutor does NOT propagate ContextVar values to worker threads
     # — without the per-worker scope, @engine_cached becomes a passthrough in
-    # all 17 parallel summaries (F7 hits=0 in workers).
+    # all 17 parallel summaries (cache hits=0 in workers).
     with engine_cache_scope() as cache:
         # [v1.17] Parallelize metric summary fetching (Mistral suggestion)
         from concurrent.futures import ThreadPoolExecutor, as_completed
         def _fetch_summary(mn):
-            # [v1.14] Each worker gets its own F7 cache scope (ContextVar is
+            # [v1.14] Each worker gets its own cache scope (ContextVar is
             # per-thread). This lets metrics sharing the same engine (e.g.,
             # earnings used by 5+ metrics) deduplicate within the worker.
             with engine_cache_scope():
@@ -113,6 +113,7 @@ def dashboard(company: str = "") -> dict:
                 return mn, None, None
 
         with engine_cache_scope():
+            _qs_t0 = _dt.now()
             with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {executor.submit(_fetch_series, mn): mn for mn, _, _, _ in _METRIC_DEFS}
                 done_count = 0
@@ -120,8 +121,8 @@ def dashboard(company: str = "") -> dict:
                 for future in as_completed(futures):
                     mn, q, s = future.result()
                     done_count += 1
-                    print(f"[historical]   quartiles+series {done_count}/{total_count} ({mn})... done.", flush=True)
-                    # Only store if summary was ok (consistent with old behavior)
+                    _qs_elapsed = (_dt.now() - _qs_t0).total_seconds()
+                    print(f"[historical]   quartiles+series {done_count}/{total_count} {mn} done ({_qs_elapsed:.1f}s)", flush=True)
                     if (summaries.get(mn) or {}).get("status") == "ok":
                         quartiles[mn] = q
                         series_data[mn] = s
@@ -130,7 +131,7 @@ def dashboard(company: str = "") -> dict:
                         series_data[mn] = None
         stats = cache.stats
         _q_elapsed = (_dt.now() - _t0).total_seconds()
-        print(f"[historical] Quartiles+series done ({_q_elapsed:.1f}s). F7: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+        print(f"[historical] Quartiles+series done ({_q_elapsed:.1f}s). cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
 
     print(f"[historical] Building header + price chart...", flush=True)
     company_header = build_company_header(company)

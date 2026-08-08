@@ -109,44 +109,41 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     with engine_cache_scope() as cache:
         # [v1.22] Parallel fetch — annual, quarterly, statements, TTM, YoY
         # are all independent. Run them in parallel with ThreadPoolExecutor.
-        # Each worker enters its own engine_cache_scope (ContextVar is per-thread).
+        # [v6 fix] Use contextvars.copy_context() to propagate the main thread's
+        # engine cache to workers. Was each worker creating its own scope →
+        # shared engines re-queried N times. Now all workers share the cache.
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        import contextvars
 
         today = date.today().isoformat()
         ratios_payload: dict = {"date": today}
 
         def _fetch_annual():
-            with engine_cache_scope():
-                return _safe_call(annual, company=company, periods=6, consolidado=consolidado)
+            return _safe_call(annual, company=company, periods=6, consolidado=consolidado)
 
         def _fetch_quarterly():
-            with engine_cache_scope():
-                return _safe_call(quarterly, company=company, periods=8, consolidado=consolidado)
+            return _safe_call(quarterly, company=company, periods=8, consolidado=consolidado)
 
         def _fetch_statements():
-            with engine_cache_scope():
-                return _fetch_all_statements(company, consolidado)
+            return _fetch_all_statements(company, consolidado)
 
         def _fetch_ttm():
-            with engine_cache_scope():
-                return _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
+            return _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
 
         def _fetch_yoy():
-            with engine_cache_scope():
-                return _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
+            return _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
 
         def _fetch_ratios():
-            with engine_cache_scope():
-                try:
-                    from skills.cvm.calculations._registry import compute_all_ratios
-                    return compute_all_ratios(
-                        company, today,
-                        categories=["profitability", "liquidity", "leverage",
-                                    "efficiency", "growth", "tax", "valuation"],
-                        exclude=["lpa", "vpa", "dpa", "rps"],
-                    )
-                except Exception as e:
-                    return {"error": str(e)}
+            try:
+                from skills.cvm.calculations._registry import compute_all_ratios
+                return compute_all_ratios(
+                    company, today,
+                    categories=["profitability", "liquidity", "leverage",
+                                "efficiency", "growth", "tax", "valuation"],
+                    exclude=["lpa", "vpa", "dpa", "rps"],
+                )
+            except Exception as e:
+                return {"error": str(e)}
 
         tasks = {
             "annual": _fetch_annual,
@@ -189,7 +186,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
 
         stats = cache.stats
         _fetch_elapsed = (_dt.now() - _t0).total_seconds()
-        print(f"[financials] All data fetched in {_fetch_elapsed:.1f}s (F7: {stats['hits']} hits, {stats['misses']} misses)", flush=True)
+        print(f"[financials] All data fetched in {_fetch_elapsed:.1f}s (cache: {stats['hits']} hits, {stats['misses']} misses)", flush=True)
 
     # ── Build sections ────────────────────────────────────────────────────
     print(f"[financials] Building dashboard sections...", flush=True)
