@@ -435,3 +435,43 @@ def cagr_history(
             "start_date": start_date,
         })
     return result
+
+
+# ── DCF/IRR helpers (v2.1) ───────────────────────────────────────────────────
+# Moved here to avoid circular imports between dcf_intrinsic_value.py and irr.py
+
+DEFAULT_TERMINAL_GROWTH = 0.04  # 4% — below long-term IPCA average (~5-6%)
+PROJECTION_YEARS = 5
+
+
+def get_terminal_growth() -> float:
+    """Get terminal growth rate from IPCA 12M accumulated.
+
+    Uses BCB SGS series 433 (IPCA monthly). Accumulates last 12 months
+    to get annual IPCA. Falls back to DEFAULT_TERMINAL_GROWTH if unavailable.
+    """
+    try:
+        from data_sources.bcb.sgs.query_engine import series
+        res = series(code=433, days=400)
+        if res.get("status") == "ok":
+            obs = res.get("observations", [])
+            if len(obs) >= 12:
+                product = 1.0
+                for o in obs[-12:]:
+                    v = o.get("value")
+                    if v is not None:
+                        product *= (1.0 + float(v) / 100.0)
+                ipca_12m = product - 1.0
+                return min(ipca_12m, 0.08)  # Cap at 8%
+    except Exception:
+        pass
+    return DEFAULT_TERMINAL_GROWTH
+
+
+def project_fcf(base_fcf: float, growth_rate: float, years: int) -> list[float]:
+    """Project FCF for N years using a growth rate. Caps growth at -10% to +30%."""
+    capped_growth = min(max(growth_rate, -0.10), 0.30)
+    projections = []
+    for t in range(1, years + 1):
+        projections.append(base_fcf * (1.0 + capped_growth) ** t)
+    return projections

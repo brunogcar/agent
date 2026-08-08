@@ -107,16 +107,20 @@ def dashboard(company: str = "") -> dict:
             annual_payload = annual(company=company, periods=6, consolidado=1)
             if annual_payload.get("status") == "ok":
                 annual_periods = annual_payload.get("periods") or []
-                print(f"[valuation] Annual periods: {len(annual_periods)} years.", flush=True)
+                _ap_elapsed = (_dt.now() - _t0).total_seconds()
+                print(f"[valuation] Annual periods: {len(annual_periods)} years ({_ap_elapsed:.1f}s).", flush=True)
             else:
                 print(f"[valuation] Annual periods: unavailable ({annual_payload.get('error', '?')}).", flush=True)
         except Exception as e:
             print(f"[valuation] Annual periods: error ({e}).", flush=True)
 
         # ── Company header + price chart ─────────────────────────────
+        _hdr_start = _dt.now()
         print(f"[valuation] Building company header + price chart...", flush=True)
         company_header = build_company_header(company)
         price_chart = build_price_chart(company)
+        _hdr_elapsed = (_dt.now() - _hdr_start).total_seconds()
+        print(f"[valuation] Header+chart done ({_hdr_elapsed:.1f}s).", flush=True)
 
     # ── Build sections ──────────────────────────────────────────────────
     print(f"[valuation] Building dashboard sections...", flush=True)
@@ -175,11 +179,68 @@ def dashboard(company: str = "") -> dict:
     # [v3] Dropped Histórico tab — it duplicated the historical skill and
     # took 20 minutes (fetching 5Y history for 9 metrics, each calling
     # history_fn). The historical skill already provides this functionality
-    # with better performance (parallel fetching + F7 cache).
+    # with better performance (parallel fetching + cache).
+
+    # [v2.1] DCF + IRR — Valor Intrínseco tab
+    print(f"[valuation]   Valor Intrínseco tab...", flush=True)
+    intrinsic_sections: list[dict] = []
+    try:
+        from skills.cvm.calculations.metrics.dcf_intrinsic_value import (
+            dcf_intrinsic_value_at, dcf_margin_of_safety_at,
+        )
+        from skills.cvm.calculations.metrics.irr import irr_at
+        from skills.cvm.calculations.metrics.wacc import wacc_at
+        from datetime import datetime as _vdt
+        _vtoday = _vdt.now().strftime("%Y-%m-%d")
+
+        intrinsic = dcf_intrinsic_value_at(company, _vtoday)
+        mos = dcf_margin_of_safety_at(company, _vtoday)
+        irr_val = irr_at(company, _vtoday)
+        wacc_val = wacc_at(company, _vtoday)
+
+        # Get current price for comparison
+        price_val = ratios_dict.get("price") or ratios_dict.get("preco")
+
+        rows = []
+        if intrinsic is not None:
+            rows.append(["DCF Valor Intrínseco", f"R$ {intrinsic:.2f}"])
+        if price_val is not None:
+            rows.append(["Preço Atual", f"R$ {float(price_val):.2f}"])
+        if mos is not None:
+            mos_pct = mos * 100
+            assessment = "Subavaliado" if mos > 0.25 else ("Justo" if mos > 0 else "Supervalorizado")
+            rows.append(["Margem de Segurança", f"{mos_pct:.1f}% ({assessment})"])
+        if irr_val is not None:
+            irr_pct = irr_val * 100
+            rows.append(["TIR (IRR)", f"{irr_pct:.1f}%"])
+        if wacc_val is not None:
+            wacc_pct = wacc_val * 100
+            rows.append(["WACC", f"{wacc_pct:.1f}%"])
+            if irr_val is not None:
+                spread = (irr_val - wacc_val) * 100
+                verdict = "Cria valor (TIR > WACC)" if irr_val > wacc_val else "Destrói valor (TIR < WACC)"
+                rows.append(["TIR - WACC", f"{spread:.1f}% ({verdict})"])
+
+        if rows:
+            intrinsic_sections.append({
+                "title": "Valor Intrínseco — DCF + TIR",
+                "description": "DCF: fluxo de caixa descontado a 5 anos + valor terminal (crescimento = IPCA 12M). TIR: taxa de retorno anualizada ao preço atual.",
+                "type": "table",
+                "columns": ["Métrica", "Valor"],
+                "rows": rows,
+                "note": "Premissas: crescimento FCF = revenue_growth_1y, crescimento terminal = IPCA 12M, período = 5 anos, desconto = WACC.",
+            })
+
+            # Add to overview sections too
+            overview_sections.append(intrinsic_sections[-1])
+
+    except Exception as e:
+        print(f"[valuation] DCF/IRR failed: {e}", flush=True)
 
     tabs = [
         {"name": "Overview",              "group": "Resumo",       "sections": overview_sections},
         {"name": "Múltiplos",             "group": "Resumo",       "sections": multiples_sections},
+        {"name": "Valor Intrínseco",      "group": "Resumo",       "sections": intrinsic_sections},
         {"name": "Rentabilidade",         "group": "Fundamentos",  "sections": profitability_sections},
         {"name": "Liquidez e Alavancagem",  "group": "Fundamentos",  "sections": liquidity_leverage_sections},
         {"name": "Eficiência e Crescimento",   "group": "Crescimento",  "sections": efficiency_growth_sections},

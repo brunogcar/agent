@@ -83,6 +83,10 @@ _METRIC_TOOLTIPS = {
     "wacc": "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E). Custo Médio Ponderado de Capital. Discount rate for DCF.",
     "dupont": "DuPont: ROE = Margem Líquida × Giro do Ativo × Multiplicador de Capital. Decomposição da rentabilidade.",
     "altman_z": "Altman Z = 1.2×(WC/Ativo) + 1.4×(RE/Ativo) + 3.3×(EBIT/Ativo) + 0.6×(MktCap/Passivo) + 1.0×(Vendas/Ativo). >2.99 seguro, 1.81-2.99 cinzento, <1.81 risco.",
+    # [v2.1] DCF + IRR
+    "dcf_intrinsic_value": "DCF = Σ FCF/(1+WACC)^t + TV. Valor intrínseco por ação. Margem de segurança vs preço atual.",
+    "dcf_margin_of_safety": "Margem de Segurança = (Valor Intrínseco - Preço) / Valor Intrínseco. >25% subavaliado, <0 supervalorizado.",
+    "irr": "TIR = taxa de retorno anualizada se comprar ao preço atual. >WACC subavaliado, <WACC supervalorizado. >15% atrativo.",
 }
 
 
