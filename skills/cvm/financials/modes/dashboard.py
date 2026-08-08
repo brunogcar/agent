@@ -102,19 +102,80 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    from datetime import datetime as _dt
+    _t0 = _dt.now()
     print(f"[financials] Starting dashboard for {company}...", flush=True)
 
     with engine_cache_scope() as cache:
-        # ── Gather underlying data ─────────────────────────────────────────
-        # [v1.16] Fetch 6 annual periods (was 5) so 5Y growth has enough
-        # data points: growth_at(target, LOOKBACK_5Y) needs the period 5
-        # years before the latest, which requires 6 total annual points.
-        print(f"[financials] Fetching annual data (6 periods)...", flush=True)
-        annual_payload = _safe_call(annual, company=company, periods=6,
-                                    consolidado=consolidado)
-        print(f"[financials] Fetching quarterly data (8 periods)...", flush=True)
-        quarterly_payload = _safe_call(quarterly, company=company, periods=8,
-                                       consolidado=consolidado)
+        # [v1.22] Parallel fetch — annual, quarterly, statements, TTM, YoY
+        # are all independent. Run them in parallel with ThreadPoolExecutor.
+        # Each worker enters its own engine_cache_scope (ContextVar is per-thread).
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        today = date.today().isoformat()
+        ratios_payload: dict = {"date": today}
+
+        def _fetch_annual():
+            with engine_cache_scope():
+                return _safe_call(annual, company=company, periods=6, consolidado=consolidado)
+
+        def _fetch_quarterly():
+            with engine_cache_scope():
+                return _safe_call(quarterly, company=company, periods=8, consolidado=consolidado)
+
+        def _fetch_statements():
+            with engine_cache_scope():
+                return _fetch_all_statements(company, consolidado)
+
+        def _fetch_ttm():
+            with engine_cache_scope():
+                return _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
+
+        def _fetch_yoy():
+            with engine_cache_scope():
+                return _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
+
+        def _fetch_ratios():
+            with engine_cache_scope():
+                try:
+                    from skills.cvm.calculations._registry import compute_all_ratios
+                    return compute_all_ratios(
+                        company, today,
+                        categories=["profitability", "liquidity", "leverage",
+                                    "efficiency", "growth", "tax", "valuation"],
+                        exclude=["lpa", "vpa", "dpa", "rps"],
+                    )
+                except Exception as e:
+                    return {"error": str(e)}
+
+        tasks = {
+            "annual": _fetch_annual,
+            "quarterly": _fetch_quarterly,
+            "statements": _fetch_statements,
+            "ttm": _fetch_ttm,
+            "yoy": _fetch_yoy,
+            "ratios": _fetch_ratios,
+        }
+
+        results: dict[str, object] = {}
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(fn): name for name, fn in tasks.items()}
+            for future in as_completed(futures):
+                name = futures[future]
+                _elapsed = (_dt.now() - _t0).total_seconds()
+                try:
+                    results[name] = future.result()
+                    print(f"[financials]   {name} done ({_elapsed:.1f}s)", flush=True)
+                except Exception as e:
+                    results[name] = {"status": "error", "error": str(e)}
+                    print(f"[financials]   {name} FAILED ({_elapsed:.1f}s): {e}", flush=True)
+
+        annual_payload = results.get("annual", {})
+        quarterly_payload = results.get("quarterly", {})
+        bpa_result, bpp_result, dre_result, dfc_result, dva_result = results.get("statements", ({}, {}, {}, {}, {}))
+        ttm_result = results.get("ttm", {})
+        yoy_result = results.get("yoy", {})
+        ratios_payload.update(results.get("ratios", {}))
 
         latest_annual_period: dict | None = None
         annual_periods: list[dict] = []
@@ -126,43 +187,9 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         if quarterly_payload.get("status") == "ok" and quarterly_payload.get("periods"):
             quarterly_periods = quarterly_payload["periods"]
 
-        # Current ratios via the calculations registry
-        today = date.today().isoformat()
-        ratios_payload: dict = {"date": today}
-        print(f"[financials] Computing ratios (via compute_all_ratios)...", flush=True)
-        try:
-            from skills.cvm.calculations._registry import compute_all_ratios
-
-            all_ratios = compute_all_ratios(
-                company,
-                today,
-                categories=["profitability", "liquidity", "leverage",
-                            "efficiency", "growth", "tax", "valuation"],
-                exclude=["lpa", "vpa", "dpa", "rps"],
-            )
-            ratios_payload.update(all_ratios)
-        except Exception as e:
-            ratios_payload["error"] = str(e)
-
-        # ── Standalone statement modes (single-fetch optimization) ────────
-        # [v1.2] Single-fetch: ONE SQL query for ALL 5 statements (BPA/BPP/DRE/DFC/DVA)
-        # instead of 5 separate queries. 80% fewer SQL round-trips (~180-360ms saved).
-        print(f"[financials] Fetching all statements (single-query)...", flush=True)
-        bpa_result, bpp_result, dre_result, dfc_result, dva_result = _fetch_all_statements(
-            company, consolidado
-        )
-        print(f"[financials]   BPA/BPP/DRE/DFC/DVA fetched.", flush=True)
-
-        # ── TTM series ──────────────────────────────────────────────────────
-        print(f"[financials] Fetching TTM series...", flush=True)
-        ttm_result = _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
-
-        # ── YoY quarterly ───────────────────────────────────────────────────
-        print(f"[financials] Fetching YoY quarterly comparison...", flush=True)
-        yoy_result = _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
-
         stats = cache.stats
-        print(f"[financials] F7 cache: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+        _fetch_elapsed = (_dt.now() - _t0).total_seconds()
+        print(f"[financials] All data fetched in {_fetch_elapsed:.1f}s (F7: {stats['hits']} hits, {stats['misses']} misses)", flush=True)
 
     # ── Build sections ────────────────────────────────────────────────────
     print(f"[financials] Building dashboard sections...", flush=True)
@@ -393,7 +420,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception:
         pass
 
-    print(f"[financials] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[financials] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
     return {
         "status": "ok",
         "company": company,

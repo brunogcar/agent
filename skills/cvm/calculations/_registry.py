@@ -338,47 +338,30 @@ def compute_all_ratios(
         ]
         total = len(metrics_to_compute)
 
-        # [v5] Parallelize metric computation with ThreadPoolExecutor when
-        # there are enough metrics to justify the overhead. For small counts
-        # (<=10, e.g., in tests), run sequentially to preserve F7 cache
-        # sharing across metrics that use the same engine.
-        # Each parallel worker enters its own engine_cache_scope (ContextVar
-        # is per-thread), so shared engines are recomputed per worker — but
-        # the parallelism helps for I/O-bound metrics (brapi, DB queries).
+        # [v6] SEQUENTIAL — NOT parallel. Parallel workers each get their own
+        # engine_cache_scope (ContextVar is per-thread), so shared engines
+        # (earnings used by 11 metrics, pl by 10, debt by 10, revenue by 15)
+        # get re-queried N times. Sequential with shared F7 cache queries
+        # each engine ONCE. Net result: sequential is FASTER for compute-heavy
+        # metrics that share engines.
+        #
+        # Show EVERY metric name + elapsed time so we can identify bottlenecks.
+        from datetime import datetime as _dt
+        _r_t0 = _dt.now()
         computed = 0
-        if total <= 10:
-            # Sequential — preserves F7 cache sharing
-            for name, spec in metrics_to_compute:
-                computed += 1
-                if computed % 10 == 0 or computed == total:
-                    print(f"  [ratios] {computed}/{total} metrics computed...",
-                          flush=True)
-                try:
-                    result[name] = spec.ratio_fn(company, date)
-                except Exception:
-                    result[name] = None
-        else:
-            # Parallel — each worker has its own cache scope
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
-            def _compute_metric(name_spec_tuple):
-                name, spec = name_spec_tuple
-                with engine_cache_scope():
-                    try:
-                        return name, spec.ratio_fn(company, date)
-                    except Exception:
-                        return name, None
-
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {executor.submit(_compute_metric, ns): ns[0]
-                           for ns in metrics_to_compute}
-                for future in as_completed(futures):
-                    name, value = future.result()
-                    result[name] = value
-                    computed += 1
-                    if computed % 10 == 0 or computed == total:
-                        print(f"  [ratios] {computed}/{total} metrics computed...",
-                              flush=True)
+        for name, spec in metrics_to_compute:
+            computed += 1
+            _m_t0 = _dt.now()
+            try:
+                result[name] = spec.ratio_fn(company, date)
+            except Exception:
+                result[name] = None
+            _m_elapsed = (_dt.now() - _m_t0).total_seconds()
+            _r_elapsed = (_dt.now() - _r_t0).total_seconds()
+            _val = result[name]
+            _val_str = f"{_val:.4f}" if isinstance(_val, float) else str(_val)
+            print(f"  [ratios] {computed}/{total} {name} ({_m_elapsed:.2f}s, total {_r_elapsed:.1f}s) = {_val_str}",
+                  flush=True)
 
     return result
 

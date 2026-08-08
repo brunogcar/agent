@@ -69,6 +69,8 @@ def dashboard(company: str = "") -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
 
+    from datetime import datetime as _dt
+    _t0 = _dt.now()
     print(f"[valuation] Starting dashboard for {company}...", flush=True)
 
     with engine_cache_scope():
@@ -78,6 +80,9 @@ def dashboard(company: str = "") -> dict:
             ratios_payload = ratios(company=company)
         except Exception as e:
             ratios_payload = {"status": "error", "error": str(e)}
+
+        _r_elapsed = (_dt.now() - _t0).total_seconds()
+        print(f"[valuation] Ratios fetched ({_r_elapsed:.1f}s)", flush=True)
 
         ratios_dict = (
             ratios_payload.get("ratios")
@@ -102,16 +107,20 @@ def dashboard(company: str = "") -> dict:
             annual_payload = annual(company=company, periods=6, consolidado=1)
             if annual_payload.get("status") == "ok":
                 annual_periods = annual_payload.get("periods") or []
-                print(f"[valuation] Annual periods: {len(annual_periods)} years.", flush=True)
+                _ap_elapsed = (_dt.now() - _t0).total_seconds()
+                print(f"[valuation] Annual periods: {len(annual_periods)} years ({_ap_elapsed:.1f}s).", flush=True)
             else:
                 print(f"[valuation] Annual periods: unavailable ({annual_payload.get('error', '?')}).", flush=True)
         except Exception as e:
             print(f"[valuation] Annual periods: error ({e}).", flush=True)
 
         # ── Company header + price chart ─────────────────────────────
+        _hdr_start = _dt.now()
         print(f"[valuation] Building company header + price chart...", flush=True)
         company_header = build_company_header(company)
         price_chart = build_price_chart(company)
+        _hdr_elapsed = (_dt.now() - _hdr_start).total_seconds()
+        print(f"[valuation] Header+chart done ({_hdr_elapsed:.1f}s).", flush=True)
 
     # ── Build sections ──────────────────────────────────────────────────
     print(f"[valuation] Building dashboard sections...", flush=True)
@@ -179,7 +188,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "Liquidez e Alavancagem",  "group": "Fundamentos",  "sections": liquidity_leverage_sections},
         {"name": "Eficiência e Crescimento",   "group": "Crescimento",  "sections": efficiency_growth_sections},
     ]
-    print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[valuation] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
     return {
         "status": "ok",
         "company": company,

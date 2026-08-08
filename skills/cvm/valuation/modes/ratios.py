@@ -125,19 +125,33 @@ def ratios(company: str = "") -> dict:
     # 2. Get TTM financials via calculations engines [v2.0.0]
     # Each engine fetches ONE quantity at "today" (most recent <= today).
     # _safe_call swallows FileNotFoundError when an underlying DB is missing.
+    # [v1.22] Parallel fetch — all 11 engine calls are independent.
     today = datetime.now().strftime("%Y-%m-%d")
-    lucro_liquido = _safe_call(ttm_earnings_at, ticker, today)
-    receita_liquida = _safe_call(revenue_at, ticker, today)
-    ebit = _safe_call(ebit_at, ticker, today)
-    pl = _safe_call(pl_at, ticker, today)
-    divida_bruta = _safe_call(debt_at, ticker, today)
-    caixa = _safe_call(cash_at, ticker, today)
-    da = _safe_call(da_at, ticker, today)
-    fco = _safe_call(operating_cf_at, ticker, today)
-    fci = _safe_call(investing_cf_at, ticker, today)
-    total_shares = _safe_call(shares_at, ticker, today)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=5) as _ex:
+        futs = {
+            _ex.submit(_safe_call, fn, ticker, today): key
+            for key, fn in [
+                ("lucro", ttm_earnings_at), ("receita", revenue_at),
+                ("ebit", ebit_at), ("pl", pl_at), ("debt", debt_at),
+                ("cash", cash_at), ("da", da_at), ("fco", operating_cf_at),
+                ("fci", investing_cf_at), ("shares", shares_at),
+                ("dpa", dividends_at),
+            ]
+        }
+        _eng = {futs[f]: f.result() for f in futs}
+    lucro_liquido = _eng.get("lucro")
+    receita_liquida = _eng.get("receita")
+    ebit = _eng.get("ebit")
+    pl = _eng.get("pl")
+    divida_bruta = _eng.get("debt")
+    caixa = _eng.get("cash")
+    da = _eng.get("da")
+    fco = _eng.get("fco")
+    fci = _eng.get("fci")
+    total_shares = _eng.get("shares")
     # dividends_at returns DPA per-share (R$/share TTM), NOT total dividends.
-    dpa_ttm = _safe_call(dividends_at, ticker, today)
+    dpa_ttm = _eng.get("dpa")
 
     # EBITDA = EBIT + D&A (only computable when both are present)
     ebitda = (ebit + da) if (ebit is not None and da is not None) else None

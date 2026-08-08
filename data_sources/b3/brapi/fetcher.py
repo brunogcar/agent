@@ -150,6 +150,8 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
         params["token"] = token
 
     url = f"{API_BASE}/quote/{ticker}"
+    from datetime import datetime as _dt
+    _brapi_t0 = _dt.now()
     _progress(f"[brapi] Fetching history: {ticker} ({range}/{interval})")
 
     # Acquire semaphore (limits concurrency to 5)
@@ -158,6 +160,8 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
             resp = httpx.get(url, params=params, timeout=30, follow_redirects=True)
             resp.raise_for_status()
         except httpx.HTTPError as e:
+            _brapi_elapsed = (_dt.now() - _brapi_t0).total_seconds()
+            _progress(f"[brapi] {ticker} FAILED ({_brapi_elapsed:.2f}s): {e}")
             result = {"status": "error", "error": f"brapi.dev: {e}"}
             # [v2.0 fix] Cache error results with short TTL
             with _cache_lock:
@@ -166,8 +170,10 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
 
     data = resp.json()
     results = data.get("results", [])
+    _brapi_elapsed = (_dt.now() - _brapi_t0).total_seconds()
 
     if not results:
+        _progress(f"[brapi] {ticker} not_found ({_brapi_elapsed:.2f}s)")
         result = {"status": "not_found", "ticker": ticker,
                   "error": f"No data for {ticker}"}
         # [v2.0 fix] Cache not_found results with short TTL
@@ -180,6 +186,7 @@ def fetch_history(ticker: str, range: str = "1mo", interval: str = "1d",
 
     result = {"status": "ok", "ticker": ticker,
               "count": len(ohlcv), "ohlcv": ohlcv}
+    _progress(f"[brapi] {ticker} OK ({_brapi_elapsed:.2f}s, {len(ohlcv)} bars)")
 
     # Update cache (thread-safe)
     with _cache_lock:

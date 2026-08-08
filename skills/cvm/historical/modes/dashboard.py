@@ -51,6 +51,8 @@ _METRIC_DEFS_3 = [(m, l, u) for m, l, u, _ in _METRIC_DEFS]
 def dashboard(company: str = "") -> dict:
     if not company:
         return {"status": "error", "error": "company is required"}
+    from datetime import datetime as _dt
+    _t0 = _dt.now()
     print(f"[historical] Starting for {company}...", flush=True)
 
     summaries, quartiles, series_data = {}, {}, {}
@@ -81,12 +83,17 @@ def dashboard(company: str = "") -> dict:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(_fetch_summary, mn): mn for mn, _, _, _ in _METRIC_DEFS}
+            _s_count = 0
+            _s_total = len(_METRIC_DEFS)
             for future in as_completed(futures):
                 mn, result = future.result()
                 summaries[mn] = result
-                print(f"[historical]   {mn}... done.", flush=True)
+                _s_count += 1
+                _s_elapsed = (_dt.now() - _t0).total_seconds()
+                print(f"[historical]   {_s_count}/{_s_total} {mn} done ({_s_elapsed:.1f}s)", flush=True)
 
-        print(f"[historical] Fetching quartiles + series (parallel)...", flush=True)
+        _s_elapsed = (_dt.now() - _t0).total_seconds()
+        print(f"[historical] Summaries done ({_s_elapsed:.1f}s). Fetching quartiles + series (parallel)...", flush=True)
         # [v2 fix] PERF: fetch_series calls history_fn once; compute_quartiles
         # is done IN-MEMORY from the same series (was calling history_fn TWICE
         # — once in fetch_quartiles, once in fetch_series = 34 sequential calls).
@@ -122,7 +129,8 @@ def dashboard(company: str = "") -> dict:
                         quartiles[mn] = None
                         series_data[mn] = None
         stats = cache.stats
-        print(f"[historical] F7: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
+        _q_elapsed = (_dt.now() - _t0).total_seconds()
+        print(f"[historical] Quartiles+series done ({_q_elapsed:.1f}s). F7: {stats['hits']} hits, {stats['misses']} misses.", flush=True)
 
     print(f"[historical] Building header + price chart...", flush=True)
     company_header = build_company_header(company)
@@ -318,6 +326,7 @@ def dashboard(company: str = "") -> dict:
     tabs.append({"name": "Ratio Grid", "group": "Analise", "sections": grid_sections})
     tabs.append({"name": "Percentile Analysis", "group": "Análise", "sections": pct_sections})
 
-    print(f"[historical] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[historical] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
     return {"status": "ok", "company": company, "company_header": company_header,
             "tabs": tabs, "kpis": kpis, "freshness_footer": freshness_footer}

@@ -89,3 +89,7 @@ def _patch_environment(tmp_path, monkeypatch):
         lambda c: {"ticker": c, "name": "TEST"})
     monkeypatch.setattr("skills.cvm.historical.modes.dashboard.build_price_chart",
         lambda c: None)
+    # [v6] Mock Advanced Valuation metrics so test doesn't hit real DB
+    monkeypatch.setattr("skills.cvm.calculations.metrics.wacc.wacc_at", lambda c, d: None)
+    monkeypatch.setattr("skills.cvm.calculations.metrics.dupont.dupont_at", lambda c, d: None)
+    monkeypatch.setattr("skills.cvm.calculations.metrics.altman_z.altman_z_at", lambda c, d: None)
