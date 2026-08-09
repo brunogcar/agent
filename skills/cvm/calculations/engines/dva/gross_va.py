@@ -59,6 +59,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 VA_GROSS_VA_CODE = "7.04"
 
 
+@engine_cached
 def _get_dfp_va_gross(company: str) -> dict[str, dict]:
     """Get all annual DVA gross value added from DFP (codigo 7.04, meses=12).
 
@@ -96,6 +97,7 @@ def _get_dfp_va_gross(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_va_gross(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative DVA gross VA from ITR (codigo 7.04, meses 3/6/9).
 

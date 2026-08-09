@@ -60,6 +60,7 @@ _EBIT_DESC_STEMS = (
 )
 
 
+@engine_cached
 def _get_dfp_ebit(company: str) -> dict[str, dict]:
     """Get all annual EBIT from DFP (codigo 3.05, meses=12).
 
@@ -79,6 +80,7 @@ def _get_dfp_ebit(company: str) -> dict[str, dict]:
     return _get_dfp_ebit_by_desc(company)
 
 
+@engine_cached
 def _get_dfp_ebit_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.05). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
@@ -111,6 +113,7 @@ def _get_dfp_ebit_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_dfp_ebit_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by EBIT description stems.
 
@@ -156,6 +159,7 @@ def _get_dfp_ebit_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_ebit(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative EBIT from ITR (codigo 3.05, meses 3/6/9).
 
@@ -171,6 +175,7 @@ def _get_itr_ebit(company: str) -> dict[str, dict]:
     return _get_itr_ebit_by_desc(company)
 
 
+@engine_cached
 def _get_itr_ebit_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.05). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
@@ -204,6 +209,7 @@ def _get_itr_ebit_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_ebit_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by EBIT description stems."""
     conn = connect_itr(read_only=True)

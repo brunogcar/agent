@@ -75,6 +75,7 @@ DIVIDENDS_PAID_CODE = "7.08.04"
 DIVIDENDS_PAID_CODE_NEW = "7.11.04"
 
 
+@engine_cached
 def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
     """Get all annual dividends paid from DFP (DVA grupo LIKE '%Valor Adicionado%',
     codigo IN ('7.08.04', '7.11.04'), meses=12).
@@ -113,6 +114,7 @@ def _get_dfp_dividends_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_dividends_paid(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative dividends paid from ITR (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.04', '7.11.04'), meses 3/6/9).

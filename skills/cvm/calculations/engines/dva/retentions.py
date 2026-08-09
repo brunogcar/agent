@@ -57,6 +57,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 VA_RETENTIONS_CODE = "7.05"
 
 
+@engine_cached
 def _get_dfp_va_retentions(company: str) -> dict[str, dict]:
     """Get all annual DVA retentions from DFP (codigo 7.05, meses=12).
 
@@ -94,6 +95,7 @@ def _get_dfp_va_retentions(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_va_retentions(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative DVA retentions from ITR (codigo 7.05, meses 3/6/9).
 

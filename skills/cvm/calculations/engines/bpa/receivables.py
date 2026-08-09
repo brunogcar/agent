@@ -51,6 +51,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 CONTAS_A_RECEBER_CODE = "1.01.03"
 
 
+@engine_cached
 def _get_dfp_receivables(company: str) -> dict[str, dict]:
     """Get all annual receivables snapshots from DFP (codigo 1.01.03, meses=12, BPA).
 
@@ -87,6 +88,7 @@ def _get_dfp_receivables(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_receivables(company: str) -> dict[str, dict]:
     """Get all quarterly receivables snapshots from ITR (codigo 1.01.03, meses 3/6/9, BPA).
 

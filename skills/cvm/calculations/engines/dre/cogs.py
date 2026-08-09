@@ -60,6 +60,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 COGS_CODE = "3.02"
 
 
+@engine_cached
 def _get_dfp_cogs(company: str) -> dict[str, dict]:
     """Get all annual COGS from DFP (codigo 3.02, meses=12).
 
@@ -96,6 +97,7 @@ def _get_dfp_cogs(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_cogs(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative COGS from ITR (codigo 3.02, meses 3/6/9).
 

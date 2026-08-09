@@ -86,6 +86,7 @@ _EBT_DESC_STEMS = (
 )
 
 
+@engine_cached
 def _get_dfp_ebt(company: str) -> dict[str, dict]:
     """Get all annual EBT from DFP (codigo 3.07, meses=12).
 
@@ -105,6 +106,7 @@ def _get_dfp_ebt(company: str) -> dict[str, dict]:
     return _get_dfp_ebt_by_desc(company)
 
 
+@engine_cached
 def _get_dfp_ebt_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.07). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
@@ -137,6 +139,7 @@ def _get_dfp_ebt_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_dfp_ebt_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by EBT description stems.
 
@@ -182,6 +185,7 @@ def _get_dfp_ebt_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_ebt(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative EBT from ITR (codigo 3.07, meses 3/6/9).
 
@@ -197,6 +201,7 @@ def _get_itr_ebt(company: str) -> dict[str, dict]:
     return _get_itr_ebt_by_desc(company)
 
 
+@engine_cached
 def _get_itr_ebt_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.07). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
@@ -230,6 +235,7 @@ def _get_itr_ebt_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_ebt_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by EBT description stems."""
     conn = connect_itr(read_only=True)

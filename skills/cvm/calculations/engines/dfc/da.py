@@ -115,6 +115,7 @@ def _is_financing_line(descricao: str) -> bool:
     return any(stem in norm for stem in _DA_EXCLUDE_STEMS)
 
 
+@engine_cached
 def _get_dfp_da(company: str) -> dict[str, dict]:
     """Get all annual D&A from DFP (DFC, descricao search, meses=12).
 
@@ -167,6 +168,7 @@ def _get_dfp_da(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_da(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative D&A from ITR (DFC, descricao search, meses 3/6/9).
 

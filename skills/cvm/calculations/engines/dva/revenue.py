@@ -48,6 +48,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 VA_REVENUE_CODE = "7.01"
 
 
+@engine_cached
 def _get_dfp_va_revenue(company: str) -> dict[str, dict]:
     """Get all annual DVA revenues from DFP (codigo 7.01, meses=12).
 
@@ -85,6 +86,7 @@ def _get_dfp_va_revenue(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_va_revenue(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative DVA revenues from ITR (codigo 7.01, meses 3/6/9).
 

@@ -150,6 +150,7 @@ def _group_rows_by_date(rows) -> dict[str, list[dict]]:
     return by_date
 
 
+@engine_cached
 def _get_dfp_pl(company: str) -> dict[str, dict]:
     """Get all annual PL snapshots from DFP (codigo 2.03 [+ 2.08 fallback], meses=12, BPP).
 
@@ -199,6 +200,7 @@ def _get_dfp_pl(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_pl(company: str) -> dict[str, dict]:
     """Get all quarterly PL snapshots from ITR (codigo 2.03 [+ 2.08 fallback], meses 3/6/9, BPP).
 

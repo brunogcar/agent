@@ -51,6 +51,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 INTANGIVEL_CODE = "1.02.04"
 
 
+@engine_cached
 def _get_dfp_intangibles(company: str) -> dict[str, dict]:
     """Get all annual intangibles snapshots from DFP (codigo 1.02.04, meses=12, BPA).
 
@@ -87,6 +88,7 @@ def _get_dfp_intangibles(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_intangibles(company: str) -> dict[str, dict]:
     """Get all quarterly intangibles snapshots from ITR (codigo 1.02.04, meses 3/6/9, BPA).
 

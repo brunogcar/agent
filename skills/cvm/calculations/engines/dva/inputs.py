@@ -54,6 +54,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 VA_INPUTS_CODE = "7.03"
 
 
+@engine_cached
 def _get_dfp_va_inputs(company: str) -> dict[str, dict]:
     """Get all annual DVA inputs from DFP (codigo 7.03, meses=12).
 
@@ -91,6 +92,7 @@ def _get_dfp_va_inputs(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_va_inputs(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative DVA inputs from ITR (codigo 7.03, meses 3/6/9).
 

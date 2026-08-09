@@ -46,6 +46,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 ATIVO_CIRCULANTE_CODE = "1.01"
 
 
+@engine_cached
 def _get_dfp_current_assets(company: str) -> dict[str, dict]:
     """Get all annual current assets snapshots from DFP (codigo 1.01, meses=12, BPA).
 
@@ -82,6 +83,7 @@ def _get_dfp_current_assets(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_current_assets(company: str) -> dict[str, dict]:
     """Get all quarterly current assets snapshots from ITR (codigo 1.01, meses 3/6/9, BPA).
 

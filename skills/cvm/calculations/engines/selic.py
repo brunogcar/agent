@@ -89,15 +89,26 @@ def selic_periods(company: str) -> list[dict]:
     Returns a list of {"date": ref_date, "selic": annualized_rate} sorted
     oldest-first. Uses monthly sampling (last observation per month) to keep
     the list manageable (~60 points for 5 years).
+
+    [P0 fix] Was MAX(ref_date), MAX(value) as independent aggregates — if
+    Selic changed mid-month (e.g. 13.25% -> 11.75%), MAX(value) returned
+    13.25% (the highest), not the value at the latest date. Now uses a
+    correlated subquery to get the value AT the max date.
     """
     try:
         conn = _connect()
+        # Get the value at the latest ref_date within each month.
         rows = conn.execute(
-            """SELECT MAX(ref_date) as ref_date, MAX(value) as value
-               FROM series_observations
-               WHERE series_code = 11 AND value IS NOT NULL
-               GROUP BY substr(ref_date, 1, 7)
-               ORDER BY ref_date ASC""",
+            """SELECT t.ref_date as ref_date, t.value as value
+               FROM series_observations t
+               INNER JOIN (
+                   SELECT MAX(ref_date) as max_date
+                   FROM series_observations
+                   WHERE series_code = 11 AND value IS NOT NULL
+                   GROUP BY substr(ref_date, 1, 7)
+               ) m ON t.ref_date = m.max_date
+               WHERE t.series_code = 11 AND t.value IS NOT NULL
+               ORDER BY t.ref_date ASC""",
         ).fetchall()
         conn.close()
 

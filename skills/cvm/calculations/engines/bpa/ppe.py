@@ -48,6 +48,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 IMOBILIZADO_CODE = "1.02.03"
 
 
+@engine_cached
 def _get_dfp_ppe(company: str) -> dict[str, dict]:
     """Get all annual PP&E snapshots from DFP (codigo 1.02.03, meses=12, BPA).
 
@@ -84,6 +85,7 @@ def _get_dfp_ppe(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_ppe(company: str) -> dict[str, dict]:
     """Get all quarterly PP&E snapshots from ITR (codigo 1.02.03, meses 3/6/9, BPA).
 

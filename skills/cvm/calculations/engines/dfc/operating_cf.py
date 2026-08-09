@@ -47,6 +47,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 FCO_CODE = "6.01"
 
 
+@engine_cached
 def _get_dfp_operating_cf(company: str) -> dict[str, dict]:
     """Get all annual FCO from DFP (codigo 6.01, meses=12).
 
@@ -83,6 +84,7 @@ def _get_dfp_operating_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_operating_cf(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative FCO from ITR (codigo 6.01, meses 3/6/9).
 

@@ -115,6 +115,7 @@ def _build_desc_filter(column: str = "c.descricao") -> str:
     )
 
 
+@engine_cached
 def _get_dfp_capex(company: str) -> dict[str, dict]:
     """Get all annual CapEx from DFP (DFC, descricao search, meses=12).
 
@@ -168,6 +169,7 @@ def _get_dfp_capex(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_capex(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative CapEx from ITR (DFC, descricao search, meses 3/6/9).
 

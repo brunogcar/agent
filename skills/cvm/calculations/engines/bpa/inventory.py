@@ -50,6 +50,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 ESTOQUES_CODE = "1.01.04"
 
 
+@engine_cached
 def _get_dfp_inventory(company: str) -> dict[str, dict]:
     """Get all annual inventory snapshots from DFP (codigo 1.01.04, meses=12, BPA).
 
@@ -86,6 +87,7 @@ def _get_dfp_inventory(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_inventory(company: str) -> dict[str, dict]:
     """Get all quarterly inventory snapshots from ITR (codigo 1.01.04, meses 3/6/9, BPA).
 

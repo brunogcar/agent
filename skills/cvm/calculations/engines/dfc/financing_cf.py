@@ -66,6 +66,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 FINANCING_CF_CODE = "6.03"
 
 
+@engine_cached
 def _get_dfp_financing_cf(company: str) -> dict[str, dict]:
     """Get all annual FCF from DFP (codigo 6.03, meses=12).
 
@@ -104,6 +105,7 @@ def _get_dfp_financing_cf(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_financing_cf(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative FCF from ITR (codigo 6.03, meses 3/6/9).
 

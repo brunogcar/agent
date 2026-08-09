@@ -79,6 +79,7 @@ INTEREST_PAID_CODE = "7.08.03"
 INTEREST_PAID_CODE_NEW = "7.11.03"
 
 
+@engine_cached
 def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
     """Get all annual interest paid from DFP (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses=12).
@@ -117,6 +118,7 @@ def _get_dfp_interest_paid(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_interest_paid(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative interest paid from ITR (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.03', '7.11.03'), meses 3/6/9).

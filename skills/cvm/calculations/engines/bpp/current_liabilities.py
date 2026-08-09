@@ -46,6 +46,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 PASSIVO_CIRCULANTE_CODE = "2.01"
 
 
+@engine_cached
 def _get_dfp_current_liabilities(company: str) -> dict[str, dict]:
     """Get all annual current liabilities snapshots from DFP (codigo 2.01, meses=12, BPP).
 
@@ -82,6 +83,7 @@ def _get_dfp_current_liabilities(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_current_liabilities(company: str) -> dict[str, dict]:
     """Get all quarterly current liabilities snapshots from ITR (codigo 2.01, meses 3/6/9, BPP).
 

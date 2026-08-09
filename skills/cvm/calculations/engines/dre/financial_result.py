@@ -61,6 +61,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 RESULTADO_FINANCEIRO_CODE = "3.06"
 
 
+@engine_cached
 def _get_dfp_financial_result(company: str) -> dict[str, dict]:
     """Get all annual financial result from DFP (codigo 3.06, meses=12).
 
@@ -97,6 +98,7 @@ def _get_dfp_financial_result(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_financial_result(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative financial result from ITR (codigo 3.06, meses 3/6/9).
 

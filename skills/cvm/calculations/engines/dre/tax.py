@@ -69,6 +69,7 @@ _INCOME_TAX_DESC_STEMS = (
 )
 
 
+@engine_cached
 def _get_dfp_tax(company: str) -> dict[str, dict]:
     """Get all annual income tax from DFP (codigo 3.08, meses=12).
 
@@ -88,6 +89,7 @@ def _get_dfp_tax(company: str) -> dict[str, dict]:
     return _get_dfp_tax_by_desc(company)
 
 
+@engine_cached
 def _get_dfp_tax_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.08). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
@@ -120,6 +122,7 @@ def _get_dfp_tax_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_dfp_tax_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by income-tax description stems.
 
@@ -169,6 +172,7 @@ def _get_dfp_tax_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_tax(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative income tax from ITR (codigo 3.08, meses 3/6/9).
 
@@ -184,6 +188,7 @@ def _get_itr_tax(company: str) -> dict[str, dict]:
     return _get_itr_tax_by_desc(company)
 
 
+@engine_cached
 def _get_itr_tax_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.08). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
@@ -217,6 +222,7 @@ def _get_itr_tax_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_tax_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by income-tax description stems.
 

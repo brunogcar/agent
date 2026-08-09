@@ -85,6 +85,7 @@ VALUE_ADDED_CODE = "7.08"
 VALUE_ADDED_CODE_NEW = "7.10"
 
 
+@engine_cached
 def _get_dfp_value_added(company: str) -> dict[str, dict]:
     """Get all annual total value added from DFP (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08', '7.10'), meses=12).
@@ -123,6 +124,7 @@ def _get_dfp_value_added(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_value_added(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative total value added from ITR (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08', '7.10'), meses 3/6/9).

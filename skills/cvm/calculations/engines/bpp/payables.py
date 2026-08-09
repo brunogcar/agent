@@ -52,6 +52,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 FORNECEDORES_CODE = "2.01.01"
 
 
+@engine_cached
 def _get_dfp_payables(company: str) -> dict[str, dict]:
     """Get all annual payables snapshots from DFP (codigo 2.01.01, meses=12, BPP).
 
@@ -88,6 +89,7 @@ def _get_dfp_payables(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_payables(company: str) -> dict[str, dict]:
     """Get all quarterly payables snapshots from ITR (codigo 2.01.01, meses 3/6/9, BPP).
 

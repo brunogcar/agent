@@ -76,6 +76,7 @@ def _query_debt_snapshots(conn, empresa_ids: list[int]) -> dict[str, float]:
     return {}
 
 
+@engine_cached
 def _get_dfp_debt(company: str) -> dict[str, dict]:
     """Get all annual debt snapshots from DFP (codigos 2.01.04 + 2.02.01, meses=12).
 
@@ -114,6 +115,7 @@ def _get_dfp_debt(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_debt(company: str) -> dict[str, dict]:
     """Get all quarterly debt snapshots from ITR (codigos 2.01.04 + 2.02.01, meses 3/6/9).
 

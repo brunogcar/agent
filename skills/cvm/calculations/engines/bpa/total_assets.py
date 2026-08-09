@@ -52,6 +52,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 ATIVO_TOTAL_CODE = "1"
 
 
+@engine_cached
 def _get_dfp_total_assets(company: str) -> dict[str, dict]:
     """Get all annual total assets snapshots from DFP (codigo 1, meses=12, BPA).
 
@@ -88,6 +89,7 @@ def _get_dfp_total_assets(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_total_assets(company: str) -> dict[str, dict]:
     """Get all quarterly total assets snapshots from ITR (codigo 1, meses 3/6/9, BPA).
 

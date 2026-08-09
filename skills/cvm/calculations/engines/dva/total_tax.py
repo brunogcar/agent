@@ -84,6 +84,7 @@ TOTAL_TAX_CODE = "7.08.02"
 TOTAL_TAX_CODE_NEW = "7.11.02"
 
 
+@engine_cached
 def _get_dfp_total_tax(company: str) -> dict[str, dict]:
     """Get all annual total tax burden from DFP (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses=12).
@@ -122,6 +123,7 @@ def _get_dfp_total_tax(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_total_tax(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative total tax burden from ITR (DVA grupo LIKE
     '%Valor Adicionado%', codigo IN ('7.08.02', '7.11.02'), meses 3/6/9).

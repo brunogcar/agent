@@ -41,6 +41,7 @@ from skills._base import engine_cached  # [v1.8 F7]
 LUCRO_BRUTO_CODE = "3.03"
 
 
+@engine_cached
 def _get_dfp_gross_profit(company: str) -> dict[str, dict]:
     """Get all annual gross profit from DFP (codigo 3.03, meses=12).
 
@@ -77,6 +78,7 @@ def _get_dfp_gross_profit(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_gross_profit(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative gross profit from ITR (codigo 3.03, meses 3/6/9).
 

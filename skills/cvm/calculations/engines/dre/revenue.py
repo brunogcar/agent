@@ -69,6 +69,7 @@ _RECEITA_DESC_STEMS = (
 )
 
 
+@engine_cached
 def _get_dfp_revenue(company: str) -> dict[str, dict]:
     """Get all annual net revenue from DFP (codigo 3.01, meses=12).
 
@@ -88,6 +89,7 @@ def _get_dfp_revenue(company: str) -> dict[str, dict]:
     return _get_dfp_revenue_by_desc(company)
 
 
+@engine_cached
 def _get_dfp_revenue_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
     conn = connect_dfp(read_only=True)
@@ -120,6 +122,7 @@ def _get_dfp_revenue_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems.
 
@@ -165,6 +168,7 @@ def _get_dfp_revenue_by_desc(company: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_revenue(company: str) -> dict[str, dict]:
     """Get all quarterly cumulative net revenue from ITR (codigo 3.01, meses 3/6/9).
 
@@ -180,6 +184,7 @@ def _get_itr_revenue(company: str) -> dict[str, dict]:
     return _get_itr_revenue_by_desc(company)
 
 
+@engine_cached
 def _get_itr_revenue_by_code(company: str, code: str) -> dict[str, dict]:
     """Fast path: exact codigo match (3.01). Returns {} if nothing found."""
     conn = connect_itr(read_only=True)
@@ -213,6 +218,7 @@ def _get_itr_revenue_by_code(company: str, code: str) -> dict[str, dict]:
         conn.close()
 
 
+@engine_cached
 def _get_itr_revenue_by_desc(company: str) -> dict[str, dict]:
     """Fallback: search DRE (codigo LIKE '3.%') by revenue description stems."""
     conn = connect_itr(read_only=True)

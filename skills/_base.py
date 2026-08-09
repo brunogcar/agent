@@ -334,12 +334,22 @@ def _auto_generate_html(skill_name: str, mode: str, kwargs: dict, result: dict) 
         from tools.report_ops import html as _report_html
 
         # Get company/ticker for the filename prefix.
+        # Try kwargs first (company / ticker / tickers list), then result dict.
         company = (kwargs.get("company") or kwargs.get("ticker") or "").strip()
+        if not company:
+            tickers = kwargs.get("tickers")
+            if isinstance(tickers, list) and tickers:
+                company = str(tickers[0]).strip()
+        if not company and isinstance(result, dict):
+            company = (result.get("company") or result.get("ticker") or "").strip()
+            if isinstance(company, list) and company:
+                company = str(company[0])
         safe_company = "".join(
             c if c.isalnum() or c in "-_" else "_" for c in company
         ) if company else ""
 
         # Build the HTML via the report tool (writes to a temp subfolder).
+        # build_dashboard creates 3 files: {title}.html, manifest.json, metrics.json
         _trace = f"auto_{skill_name}"
         _title = f"{skill_name} dashboard"
         html_result = _report_html.build_dashboard(
@@ -355,19 +365,37 @@ def _auto_generate_html(skill_name: str, mode: str, kwargs: dict, result: dict) 
         if not src_path.exists():
             return
 
-        # Move to REPORTS ROOT with company prefix:
-        #   workspace/reports/{company}_{skill}_dashboard.html
-        reports_root = src_path.parent.parent  # workspace/reports/
+        # Move ALL files (HTML + manifest.json + metrics.json) to REPORTS ROOT.
+        # Reports root = workspace/reports/ (parent of the trace_id subfolder).
+        reports_root = src_path.parent.parent
         prefix = f"{safe_company}_" if safe_company else ""
-        dst_path = reports_root / f"{prefix}{skill_name}_dashboard.html"
+        sub_dir = src_path.parent  # workspace/reports/auto_{skill_name}/
 
-        # Overwrite if exists (latest dashboard run wins).
-        if dst_path.exists():
-            dst_path.unlink()
-        _shutil.move(str(src_path), str(dst_path))
+        # Move the HTML file with company prefix.
+        dst_html = reports_root / f"{prefix}{skill_name}_dashboard.html"
+        if dst_html.exists():
+            dst_html.unlink()
+        _shutil.move(str(src_path), str(dst_html))
 
-        result["html_path"] = str(dst_path)
-        print(f"  [html] {skill_name} dashboard → {dst_path}", flush=True)
+        # Move manifest.json + metrics.json to root with company prefix.
+        for json_name in ("manifest.json", "metrics.json"):
+            src_json = sub_dir / json_name
+            if src_json.exists():
+                json_prefix = f"{prefix}{skill_name}_dashboard_"
+                dst_json = reports_root / f"{json_prefix}{json_name}"
+                if dst_json.exists():
+                    dst_json.unlink()
+                _shutil.move(str(src_json), str(dst_json))
+
+        # Remove the now-empty trace_id subfolder (and any empty parents).
+        try:
+            if sub_dir.exists() and not any(sub_dir.iterdir()):
+                sub_dir.rmdir()
+        except OSError:
+            pass  # not empty or in use — leave it
+
+        result["html_path"] = str(dst_html)
+        print(f"  [html] {skill_name} dashboard → {dst_html}", flush=True)
     except Exception as e:
         # Never break the dashboard — just warn
         print(f"  [html] {skill_name} dashboard HTML generation failed: {e}", flush=True)
