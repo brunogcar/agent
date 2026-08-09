@@ -291,6 +291,88 @@ def make_route(
         return route
 
 
+def _auto_generate_html(skill_name: str, mode: str, kwargs: dict, result: dict) -> None:
+    """Auto-generate an HTML dashboard file for dashboard mode results.
+
+    [v5] Every time a skill's route(mode="dashboard", ...) produces a
+    successful result with tabs, this function pipes the result into
+    tools.report_ops.html.build_dashboard() and writes an HTML file.
+
+    The HTML file is written to the REPORTS ROOT (workspace/reports/) with a
+    company prefix: e.g. ``PETR4_valuation_dashboard.html``.
+
+    The html_path is added to the result dict so callers can open it.
+
+    Skipped when:
+      - mode != "dashboard"
+      - result status != "ok" or no tabs
+      - CVM_SKIP_HTML=1 env var is set (for tests)
+
+    NOTE: Re-entrancy is already handled by _SYNC_CHECKED — inner route()
+    calls return early from _route_with_sync_guard before reaching here.
+
+    Wrapped in try/except — NEVER breaks the dashboard result. On failure,
+    prints a warning and continues without html_path.
+    """
+    # Only dashboard mode
+    if mode != "dashboard":
+        return
+    # Only successful results with tabs
+    if not isinstance(result, dict):
+        return
+    if result.get("status") != "ok":
+        return
+    if not result.get("tabs"):
+        return
+    # Escape hatch for tests
+    if os.environ.get("CVM_SKIP_HTML") == "1":
+        return
+
+    try:
+        from pathlib import Path as _Path
+        import shutil as _shutil
+        from tools.report_ops import html as _report_html
+
+        # Get company/ticker for the filename prefix.
+        company = (kwargs.get("company") or kwargs.get("ticker") or "").strip()
+        safe_company = "".join(
+            c if c.isalnum() or c in "-_" else "_" for c in company
+        ) if company else ""
+
+        # Build the HTML via the report tool (writes to a temp subfolder).
+        _trace = f"auto_{skill_name}"
+        _title = f"{skill_name} dashboard"
+        html_result = _report_html.build_dashboard(
+            trace_id=_trace,
+            title=_title,
+            data=result,
+            config={},
+        )
+        src_path_str = html_result.get("html_path", "")
+        if not src_path_str:
+            return
+        src_path = _Path(src_path_str)
+        if not src_path.exists():
+            return
+
+        # Move to REPORTS ROOT with company prefix:
+        #   workspace/reports/{company}_{skill}_dashboard.html
+        reports_root = src_path.parent.parent  # workspace/reports/
+        prefix = f"{safe_company}_" if safe_company else ""
+        dst_path = reports_root / f"{prefix}{skill_name}_dashboard.html"
+
+        # Overwrite if exists (latest dashboard run wins).
+        if dst_path.exists():
+            dst_path.unlink()
+        _shutil.move(str(src_path), str(dst_path))
+
+        result["html_path"] = str(dst_path)
+        print(f"  [html] {skill_name} dashboard → {dst_path}", flush=True)
+    except Exception as e:
+        # Never break the dashboard — just warn
+        print(f"  [html] {skill_name} dashboard HTML generation failed: {e}", flush=True)
+
+
 def _route_with_sync_guard(
     srcs: list[str],
     manifest_key: str,
@@ -306,10 +388,14 @@ def _route_with_sync_guard(
     function (e.g., dashboard()) internally calls another route() (e.g.,
     annual()), the inner route() skips the sync check — it's already been
     done by the outer route().
+
+    [v5] The outer route() call also auto-generates HTML for dashboard mode.
+    Inner route() calls (re-entrancy) skip HTML generation because they
+    return early from the _SYNC_CHECKED guard above.
     """
     # Re-entrancy guard: if we're already inside a route() call, skip sync.
     if _SYNC_CHECKED.get():
-        # Inner call — just dispatch, no sync check
+        # Inner call — just dispatch, no sync check, no HTML
         kwargs.pop("skip_sync", False)
         return _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
 
@@ -324,6 +410,9 @@ def _route_with_sync_guard(
         result = _dispatch(manifest_key, skill_name, MODES, mode, kwargs)
         if sync_report is not None:
             result["_sync"] = sync_report
+        # [v5] Auto-generate HTML for dashboard mode (outer call only —
+        # inner calls return early from the _SYNC_CHECKED guard above).
+        _auto_generate_html(skill_name, mode, kwargs, result)
         return result
     finally:
         _SYNC_CHECKED.reset(token)
@@ -548,6 +637,27 @@ def _source_last_sync(source: str) -> str:
         return ""
 
 
+def _parse_sync_ts(ts: str) -> datetime | None:
+    """Parse a sync timestamp string to a LOCAL naive datetime.
+
+    Handles mixed conventions in the codebase:
+      - cotahist/brapi store UTC with tzinfo  (e.g. "2026-08-08T20:00:00+00:00")
+      - bridge/dfp/itr store LOCAL naive     (e.g. "2026-08-08T17:00:00")
+
+    If the timestamp has tzinfo (UTC), convert to local then strip tzinfo so
+    it can be compared with datetime.now() (local naive) without producing
+    negative ages.
+    """
+    try:
+        last = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if last.tzinfo is not None:
+            # UTC timestamp → convert to local time, then strip tzinfo
+            last = last.astimezone().replace(tzinfo=None)
+        return last
+    except (ValueError, TypeError):
+        return None
+
+
 def _source_is_stale(source: str, max_age_hours: int = SYNC_FRESHNESS_HOURS) -> bool:
     """Check if a data source is stale (last sync older than max_age_hours, or missing).
 
@@ -558,18 +668,15 @@ def _source_is_stale(source: str, max_age_hours: int = SYNC_FRESHNESS_HOURS) -> 
     ts = _source_last_sync(source)
     if not ts:
         return True  # never synced
-    try:
-        last = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        if last.tzinfo is not None:
-            last = last.replace(tzinfo=None)
-        age = datetime.now() - last
-        return age > timedelta(hours=max_age_hours)
-    except (ValueError, TypeError):
+    last = _parse_sync_ts(ts)
+    if last is None:
         return True  # can't parse → treat as stale
+    age = datetime.now() - last
+    return age > timedelta(hours=max_age_hours)
 
 
 def _cvm_has_new_data(source: str, year: int) -> bool:
-    """HEAD request to CVM ZIP URL — check if server has new data since last sync.
+    """HEAD request to CVM URL — check if server has new data since last sync.
 
     Returns True if:
       - The remote Last-Modified header is newer than the last sync timestamp, OR
@@ -579,16 +686,25 @@ def _cvm_has_new_data(source: str, year: int) -> bool:
       - The HEAD succeeds AND Last-Modified is older than the last sync.
 
     Args:
-        source: One of "dfp", "itr", "fca".
-        year: The year to check (e.g., 2025).
+        source: One of "dfp", "itr", "fca", "fre", "ipe", "vlmo", "cgvn", "cad".
+        year: The year to check (e.g., 2025). Ignored for "cad" (no year in URL).
     """
     import requests
     import email.utils
 
+    # [v4] All CVM sources now have URL maps — previously only dfp/itr/fca
+    # were HEAD-checkable; fre/ipe/vlmo/cgvn/cad always returned True ("sync
+    # anyway"), causing unnecessary re-downloads every route() call.
     url_map = {
-        "dfp": f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{year}.zip",
-        "itr": f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_{year}.zip",
-        "fca": f"http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_{year}.zip",
+        "dfp":  f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_{year}.zip",
+        "itr":  f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_{year}.zip",
+        "fca":  f"http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_{year}.zip",
+        "fre":  f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FRE/DADOS/fre_cia_aberta_{year}.zip",
+        "ipe":  f"https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip",
+        "vlmo": f"http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/VLMO/DADOS/vlmo_cia_aberta_{year}.zip",
+        "cgvn": f"http://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/CGVN/DADOS/cgvn_cia_aberta_{year}.zip",
+        # cad is a single CSV (no year) — always check the same URL.
+        "cad":  f"https://dados.cvm.gov.br/dados/CIA_ABERTA/CAD/DADOS/cad_cia_aberta.csv",
     }
 
     if source not in url_map:
@@ -600,15 +716,16 @@ def _cvm_has_new_data(source: str, year: int) -> bool:
         if not remote_mtime_str:
             return True  # no Last-Modified header → sync
         remote_mtime = email.utils.parsedate_to_datetime(remote_mtime_str)
+        # CVM's Last-Modified is UTC → convert to local naive for comparison
         if remote_mtime.tzinfo is not None:
-            remote_mtime = remote_mtime.replace(tzinfo=None)
+            remote_mtime = remote_mtime.astimezone().replace(tzinfo=None)
 
         last_sync_str = _source_last_sync(source)
         if not last_sync_str:
             return True  # never synced → sync
-        last_sync = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
-        if last_sync.tzinfo is not None:
-            last_sync = last_sync.replace(tzinfo=None)
+        last_sync = _parse_sync_ts(last_sync_str)
+        if last_sync is None:
+            return True  # can't parse → sync
 
         return remote_mtime > last_sync
     except Exception:
@@ -742,8 +859,50 @@ def ensure_fresh(
     errors: list[dict] = []
     skipped: list[str] = []
 
+    # [v2.1] CVM sources ALWAYS get a HEAD check against the server — not
+    # just when the local DB is >24h old. This catches new quarterly filings
+    # published within the 24h window. Non-CVM sources (cotahist, brapi,
+    # bridge, sgs, index) keep the 24h freshness window.
+    _CVM_SOURCES = {"dfp", "itr", "fca", "fre", "ipe", "cad", "vlmo", "cgvn"}
+
     for source in sources:
+        # CVM sources: always HEAD-check against CVM's server (not just 24h).
+        # This catches new quarterly filings published within the 24h window.
+        # The HEAD check is visible so the user can see it happening.
+        if source in _CVM_SOURCES:
+            if skip_sync:
+                skipped.append(source)
+                continue
+            # HEAD check — only download if CVM server has new data
+            print(f"  [sync] Checking CVM {source} HEAD...", flush=True)
+            current_year = datetime.now().year
+            if not _cvm_has_new_data(source, current_year):
+                print(f"  [sync] {source} HEAD: up to date (no sync needed)", flush=True)
+                fresh.append(source)
+                continue
+            # CVM has new data → trigger sync
+            print(f"  [sync] {source} HEAD: new data available → force-sync", flush=True)
+            sync_result = _trigger_sync(source, company=company, trace_id=trace_id)
+            sync_status = sync_result.get("status")
+            if sync_status in ("ok", "skipped"):
+                synced.append(source)
+            else:
+                errors.append({
+                    "source": source,
+                    "error": sync_result.get("error", "unknown sync error"),
+                })
+            continue
+
+        # Non-CVM sources: use 24h freshness window
         if not _source_is_stale(source):
+            _ts = _source_last_sync(source)
+            _age = ""
+            if _ts:
+                _last = _parse_sync_ts(_ts)
+                if _last is not None:
+                    _age_h = int((datetime.now() - _last).total_seconds() / 3600)
+                    _age = f" ({_age_h}h ago)"
+            print(f"  [sync] {source}: fresh{_age}", flush=True)
             fresh.append(source)
             continue
 
@@ -751,13 +910,7 @@ def ensure_fresh(
             skipped.append(source)
             continue
 
-        # HEAD check for CVM sources (avoid pointless re-downloads)
-        if source in ("dfp", "itr", "fca"):
-            current_year = datetime.now().year
-            if not _cvm_has_new_data(source, current_year):
-                fresh.append(source)
-                continue
-
+        print(f"  [sync] {source}: stale (>24h) → force-sync", flush=True)
         # Trigger force-sync (blocking)
         sync_result = _trigger_sync(source, company=company, trace_id=trace_id)
         sync_status = sync_result.get("status")

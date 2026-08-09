@@ -23,6 +23,7 @@ Registered as "dashboard" in skills.cvm.governance._registry.MODES via
 the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.cvm._shared_report.company_header import build_company_header
 from skills.cvm._shared_report.price_chart import build_price_chart
@@ -94,6 +95,7 @@ def dashboard(company: str = "") -> dict:
     # status row via the adapter's _error_table fallback).
     print(f"[governance] Starting governance dashboard for company='{company}'...",
           flush=True)
+    _t0 = _dt.now()
     print(f"[governance] Fetching score data...", flush=True)
     score_payload: dict = {}
     try:
@@ -120,18 +122,22 @@ def dashboard(company: str = "") -> dict:
     print(f"[governance] Data fetched: {practices_count} practices.",
           flush=True)
 
+    # ── Top-level KPI cards (Governance Score, Practices Count,
+    #     Compliance Level) ──────────────────────────────────────────────────
+    kpis = build_overview_kpis(score_payload, practices_payload)
+
     # ── Build company header + price chart (v3 dashboard pattern) ──
-    print(f"[governance] Building company header + price chart...", flush=True)
     company_header = build_company_header(company)
     price_chart = build_price_chart(company)
 
-    # ── Top-level KPI cards (Governance Score, Practices Count,
-    #     Compliance Level) ──────────────────────────────────────────────────
-    print(f"[governance] Building KPI cards + tab sections...", flush=True)
-    kpis = build_overview_kpis(score_payload, practices_payload)
+    # [v5] One-line section timers (ratios pattern): 3 sections.
+    _SEC_TOTAL = 3
+    _sec_count = 0
+    _sec_t0 = _dt.now()
 
-    # ── Tab 1: Overview -- header + price chart + Summary text ──
-    print(f"[governance]   Overview...", flush=True)
+    # ── Section 1/3: Overview ──────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections: list[dict] = []
     if company_header.get("name"):
         overview_sections.append({"type": "company_info",
@@ -139,21 +145,32 @@ def dashboard(company: str = "") -> dict:
     if price_chart:
         overview_sections.append(price_chart)
     overview_sections.append(build_overview_section(score_payload, practices_payload))
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 2: Practices -- full practices table + compliance doughnut ──
-    print(f"[governance]   Practices...", flush=True)
+    # ── Section 2/3: Practices ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     practices_sections = [build_practices_section(practices_payload)]
     practices_doughnut = build_practices_doughnut(practices_payload)
     if practices_doughnut:
         practices_sections.append(practices_doughnut)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Practices ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 3: By Chapter -- per-chapter adoption table + score bar chart ──
-    print(f"[governance]   By Chapter...", flush=True)
+    # ── Section 3/3: By Chapter ────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     by_chapter_sections = [build_by_chapter_section(by_chapter_payload)]
     # [v3] Add a horizontal bar chart showing Score % by chapter.
     chapter_chart = build_by_chapter_chart(by_chapter_payload)
     if chapter_chart:
         by_chapter_sections.append(chapter_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} By Chapter ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -164,8 +181,9 @@ def dashboard(company: str = "") -> dict:
         {"name": "Practices",  "group": "Governança", "sections": practices_sections},
         {"name": "By Chapter", "group": "Governança", "sections": by_chapter_sections},
     ]
+    _total = (_dt.now() - _t0).total_seconds()
     print(f"[governance] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
-          f"{practices_count} practices.", flush=True)
+          f"{practices_count} practices in {_total:.1f}s.", flush=True)
 
     # Prefer the score() result's company/cnpj/data_referencia when present
     # (matches what the Overview text section uses); fall back to the

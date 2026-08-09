@@ -492,7 +492,7 @@ _PROFITABILITY_ITEMS: list[tuple[str, str, str]] = [
 def build_profitability_section(ratios_dict: dict | None) -> list[dict]:
     """Build the Profitability tab — split ratio_grids + charts (Retornos + Margens).
 
-    [v2.2] Split the single ratio_grid (2 categories) into TWO separate
+    [v1.9] Split the single ratio_grid (2 categories) into TWO separate
     ratio_grids so the dashboard can group them under "Retornos" and
     "Margens" subtabs. Returns 4 sections in order:
       [0] Returns ratio_grid (1 category: Retornos, 3 items)
@@ -615,7 +615,7 @@ _LIQUIDITY_ITEMS: list[tuple[str, str, str]] = [
     ("Current Ratio",    "current_ratio",    "num"),
     ("Quick Ratio",      "quick_ratio",      "num"),
     ("Cash Ratio",       "cash_ratio",       "num"),
-    # [v2.2] Working Capital removed from this list — it's a BRL value, not a
+    # [v1.9] Working Capital removed from this list — it's a BRL value, not a
     # ratio, so it gets its own BRL section below the Liquidity ratio_grid.
 ]
 
@@ -658,7 +658,7 @@ def _derive_detailed_leverage(ratios_dict: dict | None) -> dict[str, float | Non
 def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
     """Build the Liquidity & Leverage tab — split ratio_grids + charts + detailed table.
 
-    [v2.2] Split into separate Liquidity and Leverage ratio_grids so the
+    [v1.9] Split into separate Liquidity and Leverage ratio_grids so the
     dashboard can group them under "Liquidez" and "Endividamento" subtabs.
     Working Capital (BRL, not a ratio) is now its own BRL section below the
     Liquidity ratio_grid. Returns 6 sections in order:

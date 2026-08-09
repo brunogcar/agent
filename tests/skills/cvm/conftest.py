@@ -44,6 +44,12 @@ os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 # locally + mock the sync functions.
 os.environ.setdefault("CVM_SKIP_SYNC", "1")
 
+# [v5] Disable auto-HTML generation for ALL CVM tests. Dashboard mode now
+# auto-generates an HTML file on every route() call — tests don't need this
+# (it slows tests + creates files). Individual tests that need HTML set
+# CVM_SKIP_HTML=0 locally.
+os.environ.setdefault("CVM_SKIP_HTML", "1")
+
 
 @pytest.fixture(autouse=True)
 def mock_freshness(monkeypatch):

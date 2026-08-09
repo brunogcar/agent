@@ -43,7 +43,13 @@ MANIFEST = {
     "source":  "calls financials + valuation + dividends skills internally",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
+    "required_sources": ["dfp", "itr", "cotahist", "bridge"],
 }
 
+# [v2.1] Sync guard — comparison calls financials + valuation + dividends
+# internally, so it needs the same sources as all three.
+REQUIRED_SOURCES = ["dfp", "itr", "cotahist", "bridge"]
+
 # Create the route() dispatcher via the shared factory.
-route = make_route("sub_domain", "comparison", MODES)
+route = make_route("sub_domain", "comparison", MODES,
+                   required_sources=REQUIRED_SOURCES)

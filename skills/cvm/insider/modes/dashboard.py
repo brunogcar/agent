@@ -24,6 +24,7 @@ Registered as "dashboard" in skills.cvm.insider._registry.MODES via
 the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.cvm._shared_report.company_header import build_company_header
 from skills.cvm._shared_report.price_chart import build_price_chart
@@ -94,6 +95,7 @@ def dashboard(company: str = "") -> dict:
         return {"status": "error", "error": "company is required"}
 
     print(f"[insider] Starting insider dashboard for {company}...", flush=True)
+    _t0 = _dt.now()
 
     # ── Gather underlying data (each call wrapped independently) ────────────
     # The dashboard degrades gracefully: if summary()/history()/by_role()
@@ -123,16 +125,20 @@ def dashboard(company: str = "") -> dict:
 
     # ── Top-level KPI cards (Sentimento, Volume Comprado, Volume Vendido,
     #     Net Volume) ─────────────────────────────────────────────────────────
-    print(f"[insider] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
     # ── Build company header + price chart (v3 dashboard pattern) ──
-    print(f"[insider] Building company header + price chart...", flush=True)
     company_header = build_company_header(company)
     price_chart = build_price_chart(company)
 
-    # ── Tab 1: Overview -- header + price chart + Summary text ──
-    print(f"[insider]   Overview...", flush=True)
+    # [v5] One-line section timers (ratios pattern): 4 sections.
+    _SEC_TOTAL = 4
+    _sec_count = 0
+    _sec_t0 = _dt.now()
+
+    # ── Section 1/4: Overview ──────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections: list[dict] = []
     if company_header.get("name"):
         overview_sections.append({"type": "company_info",
@@ -140,28 +146,43 @@ def dashboard(company: str = "") -> dict:
     if price_chart:
         overview_sections.append(price_chart)
     overview_sections.append(build_overview_section(summary_payload))
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 2: Recent Transactions -- last 10 transactions table + cumulative chart ──
-    print(f"[insider]   Recent Transactions...", flush=True)
+    # ── Section 2/4: Recent Transactions ───────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     recent_sections = [build_recent_transactions_section(history_payload)]
     cumulative_chart = build_cumulative_chart(history_payload)
     if cumulative_chart:
         recent_sections.append(cumulative_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Recent Transactions ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 3: By Role -- per-role summary table + buy/sell grouped chart ──
-    print(f"[insider]   By Role...", flush=True)
+    # ── Section 3/4: By Role ───────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     by_role_sections = [build_by_role_section(by_role_payload)]
     # [v3] Add a grouped bar chart showing buy vs sell volume per Cargo.
     by_role_chart = build_by_role_chart(by_role_payload)
     if by_role_chart:
         by_role_sections.append(by_role_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} By Role ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 4: Monthly Net -- monthly net buy/sell table + monthly net chart ──
-    print(f"[insider]   Monthly Net...", flush=True)
+    # ── Section 4/4: Monthly Net ───────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     monthly_sections = [build_monthly_section(summary_payload)]
     monthly_chart = build_monthly_net_chart(summary_payload)
     if monthly_chart:
         monthly_sections.append(monthly_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Monthly Net ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -174,7 +195,8 @@ def dashboard(company: str = "") -> dict:
         {"name": "Monthly Net",         "group": "Análise",    "sections": monthly_sections},
     ]
 
-    print(f"[insider] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[insider] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
 
     # Prefer the summary() result's company/cnpj when present (matches what
     # the Overview text section uses); fall back to the input company.

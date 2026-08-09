@@ -26,6 +26,7 @@ graceful-degradation contract.
 Registered as "dashboard" in skills.bcb.macro._registry.MODES.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.bcb.macro._registry import register_mode
 from skills.bcb.macro.helpers import format_value, annualize_rate
@@ -164,13 +165,26 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
 
     [v3] Default days=365 (was 30) and months=24 (was 12) for meaningful trends.
     """
+    _t0 = _dt.now()
+    print(f"[bcb.macro] Starting dashboard...", flush=True)
+    print(f"[bcb.macro] Fetching rates / inflation / fx...", flush=True)
     rates_res     = _safe_call(rates_mode,     days=days)
     inflation_res = _safe_call(inflation_mode, months=months)
     fx_res        = _safe_call(fx_mode,        days=days)
+    _fetch_elapsed = (_dt.now() - _t0).total_seconds()
+    print(f"[bcb.macro] Data fetched ({_fetch_elapsed:.1f}s).", flush=True)
 
     # Top-level KPIs (rendered in the universal header above tabs).
     kpis = _build_resumo_kpis()
 
+    # [v5] One-line section timers (ratios pattern): 5 sections.
+    _SEC_TOTAL = 5
+    _sec_count = 0
+    _sec_t0 = _dt.now()
+
+    # ── Section 1/5: Resumo ────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # [v3] Build Resumo as a TABLE (not text) so the template renders it
     overview_rows = []
     for code, label in [(11, "Selic"), (12, "CDI"), (432, "Meta Selic"), (433, "IPCA"), (189, "IGP-M"), (1, "USD/BRL"), (226, "TR"), (1619, "Salario minimo")]:
@@ -180,46 +194,60 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
             overview_rows.append([label, val_str, lv.get("ref_date", "-"), lv.get("unit", "")])
         else:
             overview_rows.append([label, "-", "-", ""])
+    resumo_sections = [{
+        "type": "table",
+        "title": "Indicadores Atuais",
+        "columns": ["Indicador", "Valor", "Data Ref.", "Unidade"],
+        "rows": overview_rows,
+    }]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Resumo ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 2/5: Juros ─────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    juros_sections = rates_res.get("sections", []) or [
+        build_error_section("Juros", rates_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Juros ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 3/5: Inflacao ──────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    inflacao_sections = inflation_res.get("sections", []) or [
+        build_error_section("Inflacao", inflation_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Inflacao ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 4/5: Cambio ────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    cambio_sections = fx_res.get("sections", []) or [
+        build_error_section("Cambio", fx_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Cambio ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 5/5: Atividade ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    atividade_sections = _build_atividade_sections()
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Atividade ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     tabs = [
-        {
-            "name":     "Resumo",
-            "group":    "Resumo",
-            "sections": [
-                {
-                    "type": "table",
-                    "title": "Indicadores Atuais",
-                    "columns": ["Indicador", "Valor", "Data Ref.", "Unidade"],
-                    "rows": overview_rows,
-                },
-            ],
-        },
-        {
-            "name":     "Juros",
-            "group":    "Indicadores",
-            "sections": rates_res.get("sections", []) or [
-                build_error_section("Juros", rates_res.get("error", "sem dados")),
-            ],
-        },
-        {
-            "name":     "Inflacao",
-            "group":    "Indicadores",
-            "sections": inflation_res.get("sections", []) or [
-                build_error_section("Inflacao", inflation_res.get("error", "sem dados")),
-            ],
-        },
-        {
-            "name":     "Cambio",
-            "group":    "Indicadores",
-            "sections": fx_res.get("sections", []) or [
-                build_error_section("Cambio", fx_res.get("error", "sem dados")),
-            ],
-        },
-        {
-            "name":     "Atividade",
-            "group":    "Indicadores",
-            "sections": _build_atividade_sections(),
-        },
+        {"name": "Resumo",    "group": "Resumo",      "sections": resumo_sections},
+        {"name": "Juros",     "group": "Indicadores", "sections": juros_sections},
+        {"name": "Inflacao",  "group": "Indicadores", "sections": inflacao_sections},
+        {"name": "Cambio",    "group": "Indicadores", "sections": cambio_sections},
+        {"name": "Atividade", "group": "Indicadores", "sections": atividade_sections},
     ]
 
     # Surface sub-mode errors as a note (but keep status=ok so the dashboard
@@ -230,6 +258,8 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
         if res.get("status") not in ("ok", None):
             errors.append(f"{name}: {res.get('error', '')}")
 
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[bcb.macro] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
     return {
         "status": "ok",
         "mode":   "dashboard",

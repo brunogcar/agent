@@ -20,6 +20,33 @@ Skills do **not** use the `@tool` decorator on every function. Instead, they rel
 2. **Create the Hub**: Create `skills/my_domain/my_domain.py`. This file must implement the main execution logic that `dispatcher.py` expects.
 3. **Create Subdomains**: Create modules like `skills/my_domain/api_client.py` or `skills/my_domain/analytics.py`.
 4. **Wire the Hub**: Inside `my_domain.py`, import your subdomains and route the `action` argument to them.
+5. **Add REQUIRED_SOURCES + sync guard** (MANDATORY for all skills that use data sources):
+   ```python
+   # skills/my_domain/__init__.py
+   from skills._base import auto_discover_modes, make_route, build_manifest_modes
+
+   REQUIRED_SOURCES = ["dfp", "itr", "bridge"]  # List ALL data sources this skill needs
+
+   MANIFEST = {
+       "sub_domain": "my_domain",
+       ...
+       "required_sources": REQUIRED_SOURCES,
+   }
+
+   route = make_route("sub_domain", "my_domain", MODES,
+                      required_sources=REQUIRED_SOURCES)
+   ```
+
+   **Why mandatory:** The `route()` wrapper calls `ensure_fresh(REQUIRED_SOURCES)` before
+   EVERY mode dispatch. Without it, the skill will NEVER trigger sync. Tests are protected
+   by `CVM_SKIP_SYNC=1` (set in `tests/skills/cvm/conftest.py`).
+
+   **Sync behavior varies by domain** (see per-domain docs for details):
+   - **CVM sources** (`dfp`, `itr`, `fca`, `fre`, `ipe`, `cad`, `vlmo`, `cgvn`): ALWAYS
+     HEAD-checked against CVM's server on every `route()` call. See [docs/skills/CVM.md](skills/CVM.md).
+   - **B3 sources** (`cotahist`, `b3_dividends`, `brapi`, `index`, `bridge`): 24h freshness
+     window. See [docs/skills/B3.md](skills/B3.md).
+   - **BCB sources** (`sgs`): 24h freshness window. See [docs/skills/BCB.md](skills/BCB.md).
 
 ```python
 # skills/my_domain/my_domain.py (The Hub)

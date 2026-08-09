@@ -10,7 +10,7 @@ Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE s
 - **Underlying values included** — each ratio returns the inputs (price, EPS, VPA, etc.) so callers can verify
 - **Data source status** — `summary` mode shows which DBs are synced vs missing
 - **3 modes** — ratios (default), summary, dashboard, historical_valuation (v1.8)
-- **5-tab dashboard (v1.8)** — grouped into 3 sidebar sections: Resumo (Overview with company header + price chart, Multiples with per-share merged in), Fundamentos (Profitability, Liquidity & Leverage), Crescimento (Efficiency & Growth). Company header (FCA/CAD/COTAHIST) + historical price chart with Tudo/5A/1A/1M range selector at top of Overview. Tooltips on all ratio_grid items. Chart titles + descriptions. Freshness footer. engine_cache_scope wraps data-gathering phase. Reuses `build_company_header` + `build_price_chart` + `get_tooltip` from `skills/cvm/_shared_report/`.
+- **6-tab dashboard (v1.9)** — grouped into 3 sidebar sections: Resumo (Overview with company header + price chart, Multiples with subtabs, Valor Intrínseco with DCF/IRR/sensitivity), Fundamentos (Profitability with Retornos/Margens subtabs, Liquidity & Leverage with Liquidez/Endividamento subtabs), Crescimento (Efficiency & Growth with Eficiência/Crescimento subtabs). Company header (FCA/CAD/COTAHIST) + historical price chart with Tudo/5A/1A/1M range selector at top of Overview. Graham Number overlay on price chart. ROE/ROA/ROIC 5Y trend chart. Tooltips on all ratio_grid items. Chart titles + descriptions. Freshness footer. engine_cache_scope wraps the ENTIRE dashboard (ratios fetch + section building + DCF sensitivity share one cache). Reuses `build_company_header` + `build_price_chart` + `get_tooltip` from `skills/cvm/_shared_report/`.
 - **Modular file structure (v1.4)** — split into `_registry.py` + `modes/` (3 files) + `fetchers.py` + `helpers.py` + `report.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `skills/cvm/financials/` v1.6). Public API unchanged for `ratios` + `summary`; `dashboard` was new in v1.4 (5 tabs), reorganized in v1.5 (6 tabs). See [ARCHITECTURE.md](valuation/ARCHITECTURE.md) for the file map.
 - **Uses core/br_validator** — `validate_ticker()`, `parse_escala()` for consistent parsing
 - **Read-only** — no sync. Assumes b3 trades.db + dfp.db + fre.db are already synced.
@@ -69,4 +69,4 @@ EV/EBITDA, Div Yield, Market Cap) + a full indicator table. See
 
 ---
 
-*Last updated: 2026-08-02 (v1.8 — dashboard overhaul + v2 split + historical_valuation + Earnings Yield + historical_valuation mode + Earnings Yield metric; see CHANGELOG.md).*
+*Last updated: 2026-08-08 (v1.9 — dashboard restructure + DCF/IRR/sensitivity + Graham overlay + ROE trend + subtabs; see CHANGELOG.md).*

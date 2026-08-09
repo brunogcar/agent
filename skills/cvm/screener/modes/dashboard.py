@@ -23,6 +23,7 @@ Registered as "dashboard" in skills.cvm.screener._registry.MODES via
 the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.cvm._shared_report.company_header import build_company_header
 from skills.cvm._shared_report.price_chart import build_price_chart
@@ -88,6 +89,7 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
         return {"status": "error", "error": "company is required"}
 
     print(f"[screener] Starting screener dashboard for {company}...", flush=True)
+    _t0 = _dt.now()
 
     # ── Gather underlying data: compare() (which internally calls sector()) ──
     print(f"[screener] Fetching compare() (limit={limit})...", flush=True)
@@ -98,10 +100,6 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
         compare_payload = {"status": "error", "error": str(e)}
 
     # [v3] Build company header + price chart once at the start so they're
-    # available for both the happy path and the degraded early-return path.
-    # The screener's `company` parameter is always a ticker (e.g. SUZB3),
-    # so we always pass it to build_company_header().
-    print(f"[screener] Building company header + price chart...", flush=True)
     company_header = build_company_header(company)
     price_chart = build_price_chart(company)
 
@@ -198,11 +196,16 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     medians = sector_payload.get("medians") or {}
 
     # ── Top-level KPI cards (5 sector medians) ──
-    print(f"[screener] Building dashboard sections...", flush=True)
     kpis = build_overview_kpis(medians, compare_payload.get("my_data"))
 
-    # ── Tab 1: Overview -- header + price chart + Summary text ──
-    print(f"[screener]   Overview...", flush=True)
+    # [v5] One-line section timers (ratios pattern): 3 sections.
+    _SEC_TOTAL = 3
+    _sec_count = 0
+    _sec_t0 = _dt.now()
+
+    # ── Section 1/3: Overview ──────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections: list[dict] = []
     if company_header.get("name"):
         overview_sections.append({"type": "company_info",
@@ -210,21 +213,32 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
     if price_chart:
         overview_sections.append(price_chart)
     overview_sections.append(build_overview_section(sector_payload, compare_payload))
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 2: Peers -- full peers table + top companies chart ──
-    print(f"[screener]   Peers...", flush=True)
+    # ── Section 2/3: Peers ─────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     peers_sections = [build_peers_section(sector_payload)]
     top_chart = build_top_companies_chart(sector_payload, metric="p_l")
     if top_chart:
         peers_sections.append(top_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Peers ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 3: Comparison -- my ticker vs sector medians ──
-    print(f"[screener]   Comparison...", flush=True)
+    # ── Section 3/3: Comparison ────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     comparison_sections = [build_comparison_section(compare_payload)]
     # [v3] Add a grouped bar chart showing My Value vs Sector Median per metric.
     comp_chart = build_comparison_chart(compare_payload)
     if comp_chart:
         comparison_sections.append(comp_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Comparison ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -236,7 +250,8 @@ def dashboard(company: str = "", limit: int = 20) -> dict:
         {"name": "Comparison",  "group": "Análise", "sections": comparison_sections},
     ]
 
-    print(f"[screener] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[screener] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
 
     # Prefer compare()'s ticker (uppercased) for the company field; fall
     # back to the input company string.

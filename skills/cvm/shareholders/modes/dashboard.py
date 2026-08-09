@@ -24,6 +24,7 @@ Registered as "dashboard" in skills.cvm.shareholders._registry.MODES via
 the @register_mode decorator. Auto-discovered by __init__.py.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.cvm._shared_report.company_header import build_company_header
 from skills.cvm._shared_report.price_chart import build_price_chart
@@ -96,6 +97,7 @@ def dashboard(company: str = "") -> dict:
     # values, Equity Structure tab has 0 rows, all KPIs render as '—').
     print(f"[shareholders] Starting shareholders dashboard for "
           f"company='{company}'...", flush=True)
+    _t0 = _dt.now()
     print(f"[shareholders] Fetching summary data (shareholders + free float "
           f"+ equity)...", flush=True)
     summary_payload: dict = {}
@@ -117,16 +119,20 @@ def dashboard(company: str = "") -> dict:
           f"{eq_count} equity components.", flush=True)
 
     # ── Top-level KPI cards (% Free Float, Total Acionistas, PL Total) ─────
-    print(f"[shareholders] Building KPI cards + tab sections...", flush=True)
     kpis = build_overview_kpis(summary_payload)
 
     # ── Build company header + price chart (v3 dashboard pattern) ──
-    print(f"[shareholders] Building company header + price chart...", flush=True)
     company_header = build_company_header(company)
     price_chart = build_price_chart(company)
 
-    # ── Tab 1: Overview -- header + price chart + Summary text ──
-    print(f"[shareholders]   Overview...", flush=True)
+    # [v5] One-line section timers (ratios pattern): 4 sections.
+    _SEC_TOTAL = 4
+    _sec_count = 0
+    _sec_t0 = _dt.now()
+
+    # ── Section 1/4: Overview ──────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections: list[dict] = []
     if company_header.get("name"):
         overview_sections.append({"type": "company_info",
@@ -134,25 +140,40 @@ def dashboard(company: str = "") -> dict:
     if price_chart:
         overview_sections.append(price_chart)
     overview_sections.append(build_overview_section(summary_payload))
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 2: Top Shareholders -- top 5 named shareholders table + doughnut
-    print(f"[shareholders]   Top Shareholders...", flush=True)
+    # ── Section 2/4: Top Shareholders ──────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     top_shareholders_sections = [build_top_shareholders_section(summary_payload)]
     top_list = (sh_section.get("top") or []) if isinstance(sh_section, dict) else []
     shareholder_doughnut = build_shareholder_doughnut(top_list)
     if shareholder_doughnut:
         top_shareholders_sections.append(shareholder_doughnut)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Top Shareholders ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 3: Free Float -- single-row table of free float metrics ──
-    print(f"[shareholders]   Free Float...", flush=True)
+    # ── Section 3/4: Free Float ────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     free_float_sections = [build_free_float_section(summary_payload)]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Free Float ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Tab 4: Equity Structure -- BPP 2.03.* components table + bar chart ──
-    print(f"[shareholders]   Equity Structure...", flush=True)
+    # ── Section 4/4: Equity Structure ──────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     equity_sections = [build_equity_section(summary_payload)]
     equity_bar = build_equity_structure_bar(eq_section)
     if equity_bar:
         equity_sections.append(equity_bar)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Equity Structure ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # ── Assemble the dashboard payload ─────────────────────────────────────
     # KPIs go at the TOP LEVEL (not inside a tab) — the dashboard template
@@ -164,8 +185,9 @@ def dashboard(company: str = "") -> dict:
         {"name": "Free Float",       "group": "Acionistas","sections": free_float_sections},
         {"name": "Equity Structure", "group": "Estrutura", "sections": equity_sections},
     ]
+    _total = (_dt.now() - _t0).total_seconds()
     print(f"[shareholders] Done! {len(tabs)} tabs, {len(kpis)} KPIs, "
-          f"{top_count} shareholders.", flush=True)
+          f"{top_count} shareholders in {_total:.1f}s.", flush=True)
 
     # Prefer summary()'s company field when present (it's the resolved
     # company name from FRE/DFP); fall back to the input company string.

@@ -39,7 +39,12 @@ MANIFEST = {
     "source":  "calls CAD + bridge + valuation skills internally",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
+    "required_sources": ["dfp", "itr", "cad", "bridge"],
 }
 
+# [v2.1] Sync guard — screener calls CAD + valuation + bridge internally.
+REQUIRED_SOURCES = ["dfp", "itr", "cad", "bridge"]
+
 # Create the route() dispatcher via the shared factory.
-route = make_route("sub_domain", "screener", MODES)
+route = make_route("sub_domain", "screener", MODES,
+                   required_sources=REQUIRED_SOURCES)

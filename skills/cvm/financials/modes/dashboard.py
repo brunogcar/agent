@@ -189,8 +189,14 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         print(f"[financials] All data fetched in {_fetch_elapsed:.1f}s (cache: {stats['hits']} hits, {stats['misses']} misses)", flush=True)
 
     # ── Build sections ────────────────────────────────────────────────────
-    print(f"[financials] Building dashboard sections...", flush=True)
+    # [v4] One-line section timers (ratios pattern): 11 sections.
+    _SEC_TOTAL = 11
+    _sec_count = 0
+    _sec_t0 = _dt.now()
 
+    # ── Section 1/11: Overview ────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 1: Overview
     roe_val = ratios_payload.get("roe")
     if roe_val is None:
@@ -264,9 +270,22 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] Altman Z section failed: {e}", flush=True)
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 2/11: Indicadores ─────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 2: Indicadores
     indicadores_section = build_indicadores_section(today, ratios_payload)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Indicadores ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
+    # ── Section 3/11: Crescimento ─────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 3: Crescimento
     # [new commit] Pass ratios_payload so growth values come from the
     # calculations registry (FIXED growth_at anchoring), consistent with
@@ -275,6 +294,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         latest_annual_period, annual_periods, quarterly_periods,
         ratios_payload=ratios_payload)
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Crescimento ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 4/11: Balanço ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
         balanco_section = build_balanco_section(bpa_result, bpp_result)
@@ -294,6 +320,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     else:
         balanco_sections = [build_error_section("Balanço", "BPA/BPP indisponível")]
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Balanço ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 5/11: DRE ─────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 5: DRE
     if dre_result.get("status") == "ok":
         dre_sections = build_dre_sections(
@@ -301,6 +334,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     else:
         dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} DRE ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 6/11: DFC ─────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 6: DFC
     if dfc_result.get("status") == "ok":
         dfc_sections = build_dfc_sections(
@@ -320,6 +360,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] DFC quality section failed: {e}", flush=True)
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} DFC ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 7/11: DVA ─────────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 7: DVA
     if dva_result.get("status") == "ok":
         dva_sections = build_dva_sections(dva_result)
@@ -338,6 +385,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] Dividend sustainability section failed: {e}", flush=True)
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} DVA ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 8/11: Anual ───────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 8: Anual (raw annual periods table + trend chart)
     if annual_payload.get("status") == "ok":
         anual_sections = [build_period_table(annual_periods, "Anual")]
@@ -347,6 +401,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     else:
         anual_sections = [build_error_section("Anual", annual_payload.get("error", "unknown"))]
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Anual ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 9/11: Trimestral ──────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 9: Trimestral (raw quarterly periods table + bar chart)
     if quarterly_payload.get("status") == "ok":
         trimestral_sections = [build_period_table(quarterly_periods, "Trimestral")]
@@ -356,6 +417,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     else:
         trimestral_sections = [build_error_section("Trimestral", quarterly_payload.get("error", "unknown"))]
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Trimestral ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 10/11: Anualizado (TTM) ───────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 10: TTM (Anualizado)
     ttm_sections: list[dict] = []
     if isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
@@ -368,6 +436,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if not ttm_sections:
         ttm_sections = [build_error_section("Anualizado", ttm_result.get("error", "unknown") if isinstance(ttm_result, dict) else "unknown")]
 
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Anualizado ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 11/11: Trimestral YoY ─────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     # Tab 11: YoY Quarterly (Trimestral YoY)
     # [v1.18] build_yoy_table now returns a LIST of sections (one per year).
     yoy_sections: list[dict] = []
@@ -380,6 +455,10 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                 yoy_sections.append(yoy_chart)
     if not yoy_sections:
         yoy_sections = [build_error_section("Trimestral YoY", yoy_result.get("error", "unknown") if isinstance(yoy_result, dict) else "unknown")]
+
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Trimestral YoY ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # ── Assemble the dashboard payload with sidebar groups ────────────────
     tabs = [

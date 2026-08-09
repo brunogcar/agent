@@ -172,6 +172,45 @@ def valuation_env(monkeypatch):
         "skills.cvm.valuation.modes.ratios.compute_all_ratios",
         mock_compute_all_ratios)
 
+    # [v2.1] Mock DCF/IRR/WACC (dashboard calls these directly).
+    # Also mock annual() (dashboard fetches annual periods for growth).
+    # Also mock build_dcf_sensitivity_section + build_roe_trend_chart
+    # (they call DCF/IRR/engine functions internally).
+    # Without these mocks, tests hit the real DB and take 100+ seconds.
+    monkeypatch.setattr(
+        "skills.cvm.calculations.metrics.dcf_intrinsic_value.dcf_intrinsic_value_at",
+        lambda c, d: 170.71)
+    monkeypatch.setattr(
+        "skills.cvm.calculations.metrics.dcf_intrinsic_value.dcf_margin_of_safety_at",
+        lambda c, d: 0.7544)
+    monkeypatch.setattr(
+        "skills.cvm.calculations.metrics.irr.irr_at",
+        lambda c, d: 0.3372)
+    monkeypatch.setattr(
+        "skills.cvm.calculations.metrics.wacc.wacc_at",
+        lambda c, d: 0.1156)
+    monkeypatch.setattr(
+        "skills.cvm.valuation.report.build_dcf_sensitivity_section",
+        lambda c, d: {"type": "table", "title": "Sensibilidade DCF",
+                      "columns": ["Cenario", "Valor"],
+                      "rows": [["Base", "R$ 170.71"]]})
+    monkeypatch.setattr(
+        "skills.cvm.valuation.report.build_roe_trend_chart",
+        lambda c, p: {"type": "chart", "title": "ROE Trend",
+                      "chart_data": {"type": "line", "data": {"labels": [],
+                      "datasets": []}}})
+    # Mock annual() so it doesn't hit the real DFP/ITR DB
+    monkeypatch.setattr(
+        "skills.cvm.financials.modes.annual.annual",
+        lambda **kw: {"status": "ok", "periods": [
+            {"period": "2024", "data_fim_exerc": "2024-12-31",
+             "metrics": {"receita_liquida": 280e9, "lucro_liquido": 120e9},
+             "ratios": {"roe": 0.28, "roa": 0.15}},
+            {"period": "2023", "data_fim_exerc": "2023-12-31",
+             "metrics": {"receita_liquida": 250e9, "lucro_liquido": 100e9},
+             "ratios": {"roe": 0.25, "roa": 0.13}},
+        ]})
+
     # ── Price (kept in valuation.fetchers -- not yet an engine) ─────────
     # modes/ratios.py imports _get_price via `from skills.cvm.valuation.fetchers
     # import _get_price`, so the bound name in modes.ratios is what we patch.

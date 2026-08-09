@@ -43,7 +43,12 @@ MANIFEST = {
     "source":  "vlmo.db (VLMO — Valores Mobiliários)",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
+    "required_sources": ["vlmo", "bridge"],
 }
 
+# [v2.1] Sync guard — insider needs VLMO + bridge for ticker resolution.
+REQUIRED_SOURCES = ["vlmo", "bridge"]
+
 # Create the route() dispatcher via the shared factory.
-route = make_route("sub_domain", "insider", MODES)
+route = make_route("sub_domain", "insider", MODES,
+                   required_sources=REQUIRED_SOURCES)

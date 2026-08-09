@@ -16,6 +16,7 @@ os.environ.setdefault("PLANNER_PROVIDER", "test")
 os.environ.setdefault("EXECUTOR_MODEL", "test")
 os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 os.environ.setdefault("CVM_SKIP_SYNC", "1")
+os.environ.setdefault("CVM_SKIP_HTML", "1")
 
 import pytest
 from skills._base import (
@@ -525,7 +526,10 @@ class TestRouteSyncGuard:
     def test_route_attaches_sync_report(self, monkeypatch):
         """route() with required_sources attaches _sync to result."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
+        # [v4] CVM sources use _cvm_has_new_data (HEAD check), not _source_is_stale.
+        # Monkeypatch both so dfp is treated as fresh/no-new-data.
         monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: False)
+        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: False)
         from skills._base import make_route, make_registry
         MODES, register_mode = make_registry()
 

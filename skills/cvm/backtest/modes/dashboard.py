@@ -3,6 +3,7 @@
 [v1.4] 3 tabs in 3 groups: Resumo / Operações / Desempenho.
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 from skills.cvm.backtest._registry import register_mode
 from skills.cvm.backtest.modes.run import run
 from skills.cvm.backtest.report import (
@@ -27,6 +28,7 @@ def dashboard(ticker: str = "", strategy: str = "value_pe", start_date: str = ""
               end_date: str = "", initial_capital: float = 10000.0, max_positions: int = 1) -> dict:
     if not ticker:
         return {"status": "error", "error": "ticker is required"}
+    _t0 = _dt.now()
     print(f"[backtest] Starting: {ticker} / {strategy}...", flush=True)
     print(f"[backtest] Running backtest...", flush=True)
     try:
@@ -40,10 +42,15 @@ def dashboard(ticker: str = "", strategy: str = "value_pe", start_date: str = ""
     trades = run_result.get("trades") or []
     equity_curve = run_result.get("equity_curve") or []
     _ticker = run_result.get("ticker", ticker)
-    print(f"[backtest] Done: {len(trades)} trades, return={perf.get('total_return_pct',0):.2f}%", flush=True)
+    _bt_elapsed = (_dt.now() - _t0).total_seconds()
+    print(f"[backtest] Backtest done ({_bt_elapsed:.1f}s): {len(trades)} trades, return={perf.get('total_return_pct',0):.2f}%", flush=True)
 
-    print(f"[backtest] Building sections...", flush=True)
     kpis = build_overview_kpis(perf)
+
+    # [v5] One-line section timers (ratios pattern): 3 sections.
+    _SEC_TOTAL = 3
+    _sec_count = 0
+    _sec_t0 = _dt.now()
 
     # Company header + price chart
     company_header, price_chart = {}, None
@@ -56,24 +63,36 @@ def dashboard(ticker: str = "", strategy: str = "value_pe", start_date: str = ""
         price_chart = build_price_chart(_ticker)
     except Exception: pass
 
-    # Overview
-    print(f"[backtest]   Overview...", flush=True)
+    # ── Section 1/3: Overview ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections = [build_config_section(run_result), build_strategy_section(run_result),
                          build_equity_curve_section(equity_curve)]
     if company_header.get("name"):
         overview_sections.insert(0, {"type": "company_info", "company_header": company_header})
     if price_chart:
         overview_sections.append(price_chart)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # Trades
-    print(f"[backtest]   Trades...", flush=True)
+    # ── Section 2/3: Trades ───────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     trades_sections = [build_trades_section(trades)]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Trades ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # Performance (split into 3 tables + drawdown)
-    print(f"[backtest]   Performance...", flush=True)
+    # ── Section 3/3: Performance ──────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     performance_sections = build_performance_section(perf)
     dd = build_drawdown_section(equity_curve)
     if dd: performance_sections.append(dd)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Performance ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # Freshness footer
     freshness_footer = ""
@@ -89,7 +108,8 @@ def dashboard(ticker: str = "", strategy: str = "value_pe", start_date: str = ""
         {"name": "Trades", "group": "Operações", "sections": trades_sections},
         {"name": "Performance", "group": "Desempenho", "sections": performance_sections},
     ]
-    print(f"[backtest] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[backtest] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
     return {"status": "ok", "ticker": _ticker, "strategy": run_result.get("strategy",""),
             "company_header": company_header, "tabs": tabs, "kpis": kpis,
             "freshness_footer": freshness_footer}

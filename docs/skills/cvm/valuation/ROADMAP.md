@@ -6,9 +6,9 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | V7 — DCF sensitivity analysis | Vary growth rate ±5%, show intrinsic value range. DONE v2.0 |
-| P2 | V8 — Graham Number overlay | Horizontal line on price chart. DONE v2.0 |
-| P2 | V9 — ROE/ROA/ROIC 5Y trend | Multi-line chart in Profitability. DONE v2.0 |
+| P2 | V7 — DCF sensitivity analysis | Vary growth rate ±5%, show intrinsic value range. DONE v1.9 |
+| P2 | V8 — Graham Number overlay | Horizontal line on price chart. DONE v1.9 |
+| P2 | V9 — ROE/ROA/ROIC 5Y trend | Multi-line chart in Profitability. DONE v1.9 |
 |----------|------|-------------|
 | Done | D1 — Per-statement adapters | BPA/BPP/DRE/DFC/DVA adapters for Per-share tab |
 | Done | D2 — Additional metrics | ROI, COE/CAPM, CAGR (remaining — Earnings Yield done v1.8, _derive_multiples promoted to registry v1.8) |

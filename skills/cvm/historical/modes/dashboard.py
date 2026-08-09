@@ -124,11 +124,16 @@ def dashboard(company: str = "") -> dict:
     company_header = build_company_header(company)
     price_chart = build_price_chart(company)
 
-    print(f"[historical] Building sections...", flush=True)
     kpis = build_overview_kpis(summaries, _METRIC_DEFS_3)
 
-    # Overview: header + price chart + split tables (Valuation + Rentabilidade)
-    print(f"[historical]   Overview...", flush=True)
+    # [v4] One-line section timers (ratios pattern): 9 sections.
+    _SEC_TOTAL = 9
+    _sec_count = 0
+    _sec_t0 = _dt.now()
+
+    # ── Section 1/9: Overview ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_sections: list[dict] = []
     if company_header.get("name"):
         overview_sections.append({"type": "company_info", "company_header": company_header})
@@ -150,8 +155,13 @@ def dashboard(company: str = "") -> dict:
     if prof_rows:
         overview_sections.append({"title": "Rentabilidade", "type": "table", "columns": ["Métrica", "Valor"], "rows": prof_rows})
 
-    # Valuation + Profitability subtabs
-    print(f"[historical]   Valuation...", flush=True)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 2/9: Valuation ────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     val_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "valuation"]
     val_s = {m: summaries.get(m, {}) for m, _, _ in val_metrics}
     val_q = {m: quartiles.get(m) for m, _, _ in val_metrics}
@@ -169,7 +179,13 @@ def dashboard(company: str = "") -> dict:
         except: pass
     valuation_sections = [{"type": "subtabs", "tabs": val_subtabs}]
 
-    print(f"[historical]   Profitability...", flush=True)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Valuation ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 3/9: Profitability ────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     prof_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "profitability"]
     prof_s = {m: summaries.get(m, {}) for m, _, _ in prof_metrics}
     prof_q = {m: quartiles.get(m) for m, _, _ in prof_metrics}
@@ -187,18 +203,31 @@ def dashboard(company: str = "") -> dict:
         except: pass
     profitability_sections = [{"type": "subtabs", "tabs": prof_subtabs}]
 
-    # Ratio Grid (now split tables)
-    print(f"[historical]   Ratio Grid...", flush=True)
-    grid_sections = build_ratio_grid_section(summaries, _METRIC_DEFS_3)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Profitability ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # Percentile Analysis
-    print(f"[historical]   Percentile Analysis...", flush=True)
+    # ── Section 4/9: Ratio Grid ───────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    grid_sections = build_ratio_grid_section(summaries, _METRIC_DEFS_3)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Ratio Grid ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 5/9: Percentile Analysis ──────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     pct_sections = [build_percentile_section(summaries, quartiles, _METRIC_DEFS_3)]
     fc = build_percentile_chart(summaries, quartiles, _METRIC_DEFS_3)
     if fc: pct_sections.append(fc)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Percentile Analysis ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # [v1.16] Leverage tab
-    print(f"[historical]   Leverage...", flush=True)
+    # ── Section 6/9: Leverage ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     lev_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "leverage"]
     lev_s = {m: summaries.get(m, {}) for m, _, _ in lev_metrics}
     lev_q = {m: quartiles.get(m) for m, _, _ in lev_metrics}
@@ -216,8 +245,13 @@ def dashboard(company: str = "") -> dict:
         except: pass
     leverage_sections = [{"type": "subtabs", "tabs": lev_subtabs}] if lev_metrics else []
 
-    # [v1.16] Efficiency + Growth tab
-    print(f"[historical]   Efficiency & Growth...", flush=True)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Leverage ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 7/9: Efficiency & Growth ──────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     eg_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c in ("efficiency", "growth")]
     eg_s = {m: summaries.get(m, {}) for m, _, _ in eg_metrics}
     eg_q = {m: quartiles.get(m) for m, _, _ in eg_metrics}
@@ -235,8 +269,13 @@ def dashboard(company: str = "") -> dict:
         except: pass
     eg_sections = [{"type": "subtabs", "tabs": eg_subtabs}] if eg_metrics else []
 
-    # [v1.17] Market risk tab (COE + Beta)
-    print(f"[historical]   Market Risk...", flush=True)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Efficiency & Growth ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 8/9: Market Risk ──────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     mkt_metrics = [(m, l, u) for m, l, u, c in _METRIC_DEFS if c == "market"]
     mkt_s = {m: summaries.get(m, {}) for m, _, _ in mkt_metrics}
     mkt_q = {m: quartiles.get(m) for m, _, _ in mkt_metrics}
@@ -254,11 +293,16 @@ def dashboard(company: str = "") -> dict:
         except: pass
     mkt_sections = [{"type": "subtabs", "tabs": mkt_subtabs}] if mkt_metrics else []
 
-    # [v3] Advanced Valuation section — point-in-time (no history_fn, fast).
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Market Risk ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 9/9: Advanced Valuation (point-in-time) ───────────
     # WACC/DuPont/Altman Z are too expensive for the summary/fetch_series
     # pattern (each would recompute the full decomposition for 5Y of dates).
     # Instead, call ratio_fn directly for the current value.
-    print(f"[historical]   Advanced Valuation...", flush=True)
+    _sec_count += 1
+    _s_t0 = _dt.now()
     adv_val_rows = []
     try:
         from skills.cvm.calculations.metrics.wacc import wacc_at
@@ -287,6 +331,10 @@ def dashboard(company: str = "") -> dict:
             "columns": ["Métrica", "Valor"],
             "rows": adv_val_rows,
         })
+
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Advanced Valuation ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
     # Freshness footer
     freshness_footer = ""

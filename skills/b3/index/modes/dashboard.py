@@ -9,6 +9,7 @@ Multi-tab dashboard:
   IDIV      -- Dividend composition
 """
 from __future__ import annotations
+from datetime import datetime as _dt
 
 from skills.b3.index._registry import register_mode
 from skills.b3.index.report import build_kpi_card, build_index_tab
@@ -27,11 +28,18 @@ from data_sources.b3.index.query_engine import index as query_index, summary
 )
 def dashboard(**kwargs) -> dict:
     """Build the B3 index dashboard."""
-    print("[b3.index] Building dashboard...", flush=True)
+    _t0 = _dt.now()
+    print("[b3.index] Starting dashboard...", flush=True)
 
     summary_data = summary()
     if summary_data.get("status") != "ok":
         return summary_data
+
+    # [v5] One-line section timers (ratios pattern): 1 (Resumo) + N indices.
+    _n_indices = len(ACTIVE_INDICES)
+    _SEC_TOTAL = 1 + _n_indices
+    _sec_count = 0
+    _sec_t0 = _dt.now()
 
     # Build KPI cards (one per active index)
     kpis = []
@@ -47,7 +55,9 @@ def dashboard(**kwargs) -> dict:
     # Build tabs
     tabs = []
 
-    # Resumo tab
+    # ── Section 1/(1+N): Resumo ───────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
     overview_rows = []
     for idx in summary_data.get("indices", []):
         if idx["active"]:
@@ -66,13 +76,22 @@ def dashboard(**kwargs) -> dict:
             "rows": overview_rows,
         }],
     })
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Resumo ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # One tab per active index
+    # ── Sections 2..N: One tab per active index ───────────────────
     for code in ACTIVE_INDICES:
+        _sec_count += 1
+        _s_t0 = _dt.now()
         idx_data = query_index(code)
         tabs.append(build_index_tab(code, idx_data))
+        _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+        _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+        print(f"  [sections] {_sec_count}/{_SEC_TOTAL} {code} ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    print(f"[b3.index] Done! {len(tabs)} tabs, {len(kpis)} KPIs.", flush=True)
+    _total = (_dt.now() - _t0).total_seconds()
+    print(f"[b3.index] Done! {len(tabs)} tabs, {len(kpis)} KPIs in {_total:.1f}s.", flush=True)
 
     return {
         "status": "ok",

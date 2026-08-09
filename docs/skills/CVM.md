@@ -6,8 +6,72 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 
 **Key characteristics:**
 - **Read-only** — no sync. Skills call data_source query engines directly.
+- **Force-sync guard** — every CVM skill declares `required_sources` in `__init__.py`. The `route()` wrapper HEAD-checks CVM's server before EVERY dispatch (see below).
 - **Bridge auto-sync** — first ticker query auto-syncs the bridge transparently.
 - **Combine multiple sources** — each skill merges data from DFP, ITR, FRE, IPE, B3 dividends, etc.
+
+## 🔄 Force Sync (HEAD Check)
+
+Every CVM skill declares `REQUIRED_SOURCES` in its `__init__.py`. When you call
+`route(mode=..., company=...)`, the `route()` wrapper (from `skills/_base.py`)
+calls `ensure_fresh(REQUIRED_SOURCES)` BEFORE dispatching to the mode function.
+
+**CVM sources ALWAYS get a HEAD check** against CVM's server — not just a 24h
+freshness window. This catches new quarterly filings published within the 24h
+window. The 8 CVM sources and their HEAD-check URLs:
+
+| Source | HEAD URL |
+|--------|----------|
+| `dfp` | `dados.cvm.gov.br/.../DFP/DADOS/dfp_cia_aberta_{year}.zip` |
+| `itr` | `dados.cvm.gov.br/.../ITR/DADOS/itr_cia_aberta_{year}.zip` |
+| `fca` | `dados.cvm.gov.br/.../FCA/DADOS/fca_cia_aberta_{year}.zip` |
+| `fre` | `dados.cvm.gov.br/.../FRE/DADOS/fre_cia_aberta_{year}.zip` |
+| `ipe` | `dados.cvm.gov.br/.../IPE/DADOS/ipe_cia_aberta_{year}.zip` |
+| `vlmo` | `dados.cvm.gov.br/.../VLMO/DADOS/vlmo_cia_aberta_{year}.zip` |
+| `cgvn` | `dados.cvm.gov.br/.../CGVN/DADOS/cgvn_cia_aberta_{year}.zip` |
+| `cad` | `dados.cvm.gov.br/.../CAD/DADOS/cad_cia_aberta.csv` |
+
+**How it works** (visible in stderr):
+```
+  [sync] Checking CVM dfp HEAD...
+  [sync] dfp HEAD: up to date (no sync needed)       ← Last-Modified ≤ last sync
+  [sync] Checking CVM itr HEAD...
+  [sync] itr HEAD: new data available → force-sync   ← Last-Modified > last sync
+  [sync] Force-syncing itr (kwargs: {...})...
+  [sync] itr done.
+```
+
+If the HEAD request fails (network error, timeout), it syncs anyway (safer to
+sync than skip). Non-CVM sources in `REQUIRED_SOURCES` (e.g., `cotahist`,
+`brapi`, `bridge`) use a 24h freshness window — see [B3.md](B3.md) and
+[BCB.md](BCB.md) for those.
+
+**Escape hatches:** `CVM_SKIP_SYNC=1` env var (used in tests) or
+`skip_sync=True` kwarg.
+
+**Re-entrancy:** `ensure_fresh()` runs at most once per top-level `route()`
+call. If `dashboard()` internally calls `annual()` (which calls `route()`),
+the inner call skips the sync check — it's already been done by the outer call.
+
+## 📄 Auto-HTML Generation
+
+Every `route(mode="dashboard", ...)` call **auto-generates an HTML file** —
+the result dict includes an `html_path` key pointing to the rendered dashboard.
+The HTML file is written to the **reports root** with a company prefix:
+
+```
+workspace/reports/{company}_{skill}_dashboard.html
+```
+
+Example: `route(mode="dashboard", company="PETR4")` on valuation produces
+`workspace/reports/PETR4_valuation_dashboard.html`.
+
+```
+r = route(mode="dashboard", company="PETR4")
+print(r["html_path"])  # → workspace/reports/PETR4_valuation_dashboard.html
+```
+
+**Escape hatch:** `CVM_SKIP_HTML=1` env var (set automatically in tests).
 
 ## Skills
 
