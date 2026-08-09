@@ -136,6 +136,14 @@ CREATE TABLE IF NOT EXISTS engine_cache (
 
 CREATE INDEX IF NOT EXISTS idx_engine_cnpj ON engine_cache(cnpj);
 
+CREATE TABLE IF NOT EXISTS engine_periods (
+    engine_name   TEXT NOT NULL,
+    cnpj          TEXT NOT NULL,
+    periods_json  TEXT NOT NULL,
+    computed_at   TEXT NOT NULL,
+    PRIMARY KEY (engine_name, cnpj)
+);
+
 CREATE TABLE IF NOT EXISTS engine_cache_meta (
     engine_name     TEXT NOT NULL,
     cnpj            TEXT NOT NULL,
@@ -491,6 +499,77 @@ def set_cached(engine_name: str, company: str, date: str, value: float | None) -
         pass  # never break the engine call on cache write failure
 
 
+# ── Cache read/write — *_periods() (JSON-serialized lists) ───────────────────
+
+def get_cached_periods(engine_name: str, company: str) -> list | dict | None:
+    """Get cached *_periods() result (JSON-deserialized).
+
+    Used by the @engine_cached wrapper for periods_fn(company) calls.
+    Returns the deserialized list/dict, or None if not cached / invalid.
+    """
+    if not is_enabled():
+        return None
+    cnpj = resolve_cnpj(company)
+    if not cnpj:
+        return None
+    try:
+        with _lock:
+            conn = connect(read_only=True)
+            try:
+                row = conn.execute(
+                    "SELECT periods_json FROM engine_periods "
+                    "WHERE engine_name = ? AND cnpj = ?",
+                    (engine_name, cnpj),
+                ).fetchone()
+                if row is None:
+                    return None
+                import json as _json
+                return _json.loads(row["periods_json"])
+            finally:
+                conn.close()
+    except (FileNotFoundError, Exception):
+        return None
+
+
+def set_cached_periods(engine_name: str, company: str, periods: list | dict) -> None:
+    """Write *_periods() result to cache (JSON-serialized).
+
+    Called after computing a fresh periods_fn() result. Also updates
+    engine_cache_meta with the current fingerprint so future is_valid()
+    calls return True (until the underlying data changes).
+    """
+    if not is_enabled():
+        return
+    cnpj = resolve_cnpj(company)
+    if not cnpj:
+        return
+    current_fp = get_current_fingerprint(engine_name, company)
+    if current_fp is None:
+        return
+    now = datetime.now().isoformat()
+    try:
+        import json as _json
+        periods_json = _json.dumps(periods, default=str)
+        with _lock:
+            conn = connect(read_only=False)
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO engine_periods "
+                    "(engine_name, cnpj, periods_json, computed_at) VALUES (?, ?, ?, ?)",
+                    (engine_name, cnpj, periods_json, now),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO engine_cache_meta "
+                    "(engine_name, cnpj, source_version, cached_at) VALUES (?, ?, ?, ?)",
+                    (engine_name, cnpj, current_fp, now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        pass  # never break on cache write failure
+
+
 # ── Maintenance ──────────────────────────────────────────────────────────────
 
 def clear_cache(engine_name: str | None = None, cnpj: str | None = None) -> int:
@@ -518,6 +597,9 @@ def clear_cache(engine_name: str | None = None, cnpj: str | None = None) -> int:
                     f"DELETE FROM engine_cache {where}", params
                 )
                 conn.execute(
+                    f"DELETE FROM engine_periods {where}", params
+                )
+                conn.execute(
                     f"DELETE FROM engine_cache_meta {where}", params
                 )
                 conn.commit()
@@ -537,6 +619,9 @@ def cache_stats() -> dict:
                 total = conn.execute(
                     "SELECT COUNT(*) as n FROM engine_cache"
                 ).fetchone()["n"]
+                periods_total = conn.execute(
+                    "SELECT COUNT(*) as n FROM engine_periods"
+                ).fetchone()["n"]
                 engines = conn.execute(
                     "SELECT COUNT(DISTINCT engine_name) as n FROM engine_cache"
                 ).fetchone()["n"]
@@ -544,7 +629,8 @@ def cache_stats() -> dict:
                     "SELECT COUNT(DISTINCT cnpj) as n FROM engine_cache"
                 ).fetchone()["n"]
                 return {
-                    "total_entries": total,
+                    "total_at_entries": total,
+                    "total_periods_entries": periods_total,
                     "engines_cached": engines,
                     "companies_cached": companies,
                     "db_path": str(db_path()),

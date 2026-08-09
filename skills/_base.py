@@ -397,8 +397,12 @@ def _auto_generate_html(skill_name: str, mode: str, kwargs: dict, result: dict) 
         result["html_path"] = str(dst_html)
         print(f"  [html] {skill_name} dashboard → {dst_html}", flush=True)
     except Exception as e:
-        # Never break the dashboard — just warn
+        # Never break the dashboard — just warn + record in result for visibility
         print(f"  [html] {skill_name} dashboard HTML generation failed: {e}", flush=True)
+        if isinstance(result, dict):
+            if "_html_errors" not in result:
+                result["_html_errors"] = []
+            result["_html_errors"].append(str(e))
 
 
 def _route_with_sync_guard(
@@ -573,11 +577,8 @@ def engine_cached(fn: Callable) -> Callable:
                 return cache[key]
 
         # Layer 2: DB cache (persistent, cross-skill)
-        # Only for at_fn (has date arg), not periods_fn (no date).
-        # periods_fn results are lists — caching them needs JSON serialization
-        # and is handled by the in-memory cache within a single scope.
-        db_cached = None
-        if len(args) >= 2:  # at_fn has (company, date)
+        if len(args) >= 2:
+            # at_fn has (company, date) → use engine_cache table (REAL values)
             try:
                 from data_sources._cache import is_valid, get_cached, set_cached
                 company = str(args[0])
@@ -585,13 +586,26 @@ def engine_cached(fn: Callable) -> Callable:
                 if is_valid(fn.__name__, company):
                     db_cached = get_cached(fn.__name__, company, date)
                     if db_cached is not None:
-                        # DB cache hit — also write to in-memory cache
                         if cache is not None:
                             cache[key] = db_cached["value"]
                             cache["_db_hits"] = cache.get("_db_hits", 0) + 1
                         return db_cached["value"]
             except Exception:
-                pass  # never break the engine call on cache issues
+                pass
+        elif len(args) == 1:
+            # periods_fn has (company) → use engine_periods table (JSON values)
+            try:
+                from data_sources._cache import is_valid, get_cached_periods, set_cached_periods
+                company = str(args[0])
+                if is_valid(fn.__name__, company):
+                    db_periods = get_cached_periods(fn.__name__, company)
+                    if db_periods is not None:
+                        if cache is not None:
+                            cache[key] = db_periods
+                            cache["_db_hits"] = cache.get("_db_hits", 0) + 1
+                        return db_periods
+            except Exception:
+                pass
 
         # Layer 3: Real engine function
         if cache is not None:
@@ -602,15 +616,24 @@ def engine_cached(fn: Callable) -> Callable:
         if cache is not None:
             cache[key] = result
 
-        # Write to DB cache (only for at_fn with date arg)
+        # Write to DB cache
         if len(args) >= 2:
+            # at_fn → engine_cache table (REAL value)
             try:
                 from data_sources._cache import set_cached
                 company = str(args[0])
                 date = str(args[1])
                 set_cached(fn.__name__, company, date, result)
             except Exception:
-                pass  # never break on cache write failure
+                pass
+        elif len(args) == 1:
+            # periods_fn → engine_periods table (JSON-serialized list)
+            try:
+                from data_sources._cache import set_cached_periods
+                company = str(args[0])
+                set_cached_periods(fn.__name__, company, result)
+            except Exception:
+                pass
 
         return result
     return wrapper
@@ -698,6 +721,11 @@ from datetime import datetime, timedelta
 # route() call. Without this, dashboard() → annual() → quarterly() would
 # each trigger ensure_fresh() separately.
 _SYNC_CHECKED: ContextVar[bool] = ContextVar("_sync_checked", default=False)
+
+# [Tier 0 #3] Session-level bridge sync dedup — tracks which tickers have been
+# bridge-synced in this Python process. Prevents redundant bridge syncs when
+# multiple skills run for the same ticker (valuation → financials → historical).
+_BRIDGE_SYNCED_TICKERS: set[str] = set()
 
 # Freshness window (hours). A source is "stale" if its last sync is older
 # than this, or if it has no sync_state entry at all.
@@ -945,18 +973,34 @@ def ensure_fresh(
     # bridge, sgs, index) keep the 24h freshness window.
     _CVM_SOURCES = {"dfp", "itr", "fca", "fre", "ipe", "cad", "vlmo", "cgvn"}
 
+    # [Tier 0 #2] Parallelize CVM HEAD checks — was 8 sequential HTTP requests
+    # (3-40s), now concurrent (~5s max). The sync itself stays sequential
+    # (same DB files), but the HEAD check is the slow part.
+    cvm_sources_in_list = [s for s in sources if s in _CVM_SOURCES]
+    cvm_head_results: dict[str, bool] = {}  # source → has_new_data
+
+    if cvm_sources_in_list and not skip_sync:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        current_year = datetime.now().year
+        print(f"  [sync] Checking CVM HEAD for {len(cvm_sources_in_list)} sources (parallel)...", flush=True)
+
+        def _do_head_check(src):
+            return src, _cvm_has_new_data(src, current_year)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_do_head_check, s): s for s in cvm_sources_in_list}
+            for future in as_completed(futures):
+                src, has_new = future.result()
+                cvm_head_results[src] = has_new
+
     for source in sources:
-        # CVM sources: always HEAD-check against CVM's server (not just 24h).
-        # This catches new quarterly filings published within the 24h window.
-        # The HEAD check is visible so the user can see it happening.
+        # CVM sources: use the parallel HEAD-check results
         if source in _CVM_SOURCES:
             if skip_sync:
                 skipped.append(source)
                 continue
-            # HEAD check — only download if CVM server has new data
-            print(f"  [sync] Checking CVM {source} HEAD...", flush=True)
-            current_year = datetime.now().year
-            if not _cvm_has_new_data(source, current_year):
+            has_new = cvm_head_results.get(source, True)  # default True if missing
+            if not has_new:
                 print(f"  [sync] {source} HEAD: up to date (no sync needed)", flush=True)
                 fresh.append(source)
                 continue
@@ -974,6 +1018,15 @@ def ensure_fresh(
             continue
 
         # Non-CVM sources: use 24h freshness window
+        # [Tier 0 #3] Bridge dedup: skip bridge sync if this ticker was already
+        # synced in this Python session (valuation → financials → historical all
+        # sync bridge for the same PETR4 — only the first should actually sync).
+        if source == "bridge" and company:
+            if company.upper() in _BRIDGE_SYNCED_TICKERS:
+                print(f"  [sync] bridge: fresh (synced earlier this session for {company})", flush=True)
+                fresh.append(source)
+                continue
+
         if not _source_is_stale(source):
             _ts = _source_last_sync(source)
             _age = ""
@@ -997,6 +1050,9 @@ def ensure_fresh(
         # Treat both "ok" (synced) and "skipped" (already up-to-date) as success
         if sync_status in ("ok", "skipped"):
             synced.append(source)
+            # [Tier 0 #3] Record bridge sync for session dedup
+            if source == "bridge" and company:
+                _BRIDGE_SYNCED_TICKERS.add(company.upper())
         else:
             errors.append({
                 "source": source,
