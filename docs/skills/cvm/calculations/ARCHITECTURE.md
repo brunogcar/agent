@@ -6,7 +6,9 @@
 
 | File | Purpose |
 |---|---|
-| `skills/_base.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.8] `@engine_cached` decorator + `engine_cache_scope`** |
+| `skills/_base.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.9] `@engine_cached` decorator + `engine_cache_scope`** (3-layer: in-memory + DB cache + real fn) |
+| `data_sources/_cache.py` | **[engine-cache] Persistent engine result cache** — `memory_db/cache/engine_cache.db`. Cross-skill caching with per-company invalidation. See [DATA_SOURCES.md](../../../DATA_SOURCES.md#-engine-result-cache-_cachepy). |
+| `data_sources/cvm/_db.py` | **Shared CVM helpers** — paths, `connect_dfp/itr/fre/...`, `parse_escala`, `_get_company_fingerprint()` (cache invalidation) |
 | `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ + `compute_all_ratios()` (wraps loop in `engine_cache_scope()`) |
 | `skills/cvm/calculations/engines/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/calculations/engines/price.py` | COTAHIST daily close: `price_at()`, `price_series()` |

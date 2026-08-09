@@ -26,6 +26,16 @@ Shared calculations layer between raw `data_sources/` and user-facing skills (hi
 - **Multi-code sum** — debt engine sums BPP 2.01.04 + 2.02.01
 - **PT + EN aliases** on all 21 metrics
 - **Pattern template** for other skills that need extensibility
+- **3-layer engine cache** — `@engine_cached` decorator (in `skills/_base.py`) provides:
+  1. **In-memory cache** (ContextVar `engine_cache_scope`) — within one `route()` call
+  2. **DB cache** (`data_sources/_cache.py` → `memory_db/cache/engine_cache.db`) — persistent, cross-skill
+  3. **Real engine fn** — queries DFP/ITR/COTAHIST/SGS
+
+  The DB cache eliminates redundant engine computation across skills (valuation,
+  financials, historical, screener, comparison all compute the same engines for
+  the same company). Invalidated per-company via fingerprint (`MAX(versao) +
+  MAX(data_fim_exerc)` for DFP/ITR, `MAX(refdate)` for COTAHIST, etc.).
+  See [DATA_SOURCES.md](../../DATA_SOURCES.md#-engine-result-cache-_cachepy) for details.
 
 ---
 

@@ -28,6 +28,7 @@
 | Done | Magic Number (v1.11) | EV/EBITDA × ROIC — Greenblatt-inspired cheapness × quality metric |
 | Done | EV/EBIT + DL/EBIT + CAGR (v1.10) | 2 new metrics + CAGR function + margem_ebit alias |
 | Done | F7 engine cache (v1.9) | `@engine_cached` decorator + ContextVar scope — ~60% fewer DB queries |
+| Done | Engine DB cache (v2.2) | Persistent `memory_db/cache/engine_cache.db` — cross-skill caching with per-company invalidation via fingerprint (`MAX(versao) + MAX(data_fim_exerc)`). Eliminates redundant engine computation across valuation + financials + historical + screener + comparison. |
 | Done | Growth metrics (v1.7) | 9 growth metrics (3M/1Y/5Y) with period-specific gap tolerance |
 | Done | LLM-review fixes (v1.8) | DVA 4th engine fix, 7.11 fallback, PL 2.08, growth gap tolerance |
 

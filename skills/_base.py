@@ -524,6 +524,18 @@ def engine_cached(fn: Callable) -> Callable:
     module definition time. When no cache scope is active, the wrapper is
     a passthrough (zero overhead).
 
+    [v2.2] The decorator now has 3 layers:
+      1. In-memory cache (ContextVar — within one engine_cache_scope)
+      2. DB cache (persistent — cross-skill, cross-process)
+      3. Real engine fn (queries DFP/ITR/COTAHIST/SGS)
+
+    The DB cache (data_sources._cache) persists engine results across
+    route() calls so that when valuation computes revenue_at("PETR4",
+    "2024-06-30") and then financials computes the same, the second call
+    is a DB cache hit. Invalidation is per-company via a fingerprint
+    (MAX(versao) + MAX(data_fim_exerc) for DFP/ITR, MAX(refdate) for
+    COTAHIST, etc.) — see data_sources/_cache.py for details.
+
     Cache keys:
       - at_fn:      (fn.__name__, company, str(date))
       - periods_fn: (fn.__name__, company, "__periods__")
@@ -548,19 +560,59 @@ def engine_cached(fn: Callable) -> Callable:
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         cache = _ENGINE_CACHE.get()
-        if cache is None:
-            # No scope active → passthrough (zero overhead)
-            return fn(*args, **kwargs)
+
         # Build cache key from function name + positional args.
         # at_fn(company, date) → (fn_name, company, date)
         # periods_fn(company) → (fn_name, company) — no date arg
         key = (fn.__name__,) + tuple(str(a) for a in args)
-        if key in cache:
-            cache["_hits"] = cache.get("_hits", 0) + 1
-            return cache[key]
-        cache["_misses"] = cache.get("_misses", 0) + 1
-        cache[key] = fn(*args, **kwargs)
-        return cache[key]
+
+        # Layer 1: In-memory cache (within one engine_cache_scope)
+        if cache is not None:
+            if key in cache:
+                cache["_hits"] = cache.get("_hits", 0) + 1
+                return cache[key]
+
+        # Layer 2: DB cache (persistent, cross-skill)
+        # Only for at_fn (has date arg), not periods_fn (no date).
+        # periods_fn results are lists — caching them needs JSON serialization
+        # and is handled by the in-memory cache within a single scope.
+        db_cached = None
+        if len(args) >= 2:  # at_fn has (company, date)
+            try:
+                from data_sources._cache import is_valid, get_cached, set_cached
+                company = str(args[0])
+                date = str(args[1])
+                if is_valid(fn.__name__, company):
+                    db_cached = get_cached(fn.__name__, company, date)
+                    if db_cached is not None:
+                        # DB cache hit — also write to in-memory cache
+                        if cache is not None:
+                            cache[key] = db_cached["value"]
+                            cache["_db_hits"] = cache.get("_db_hits", 0) + 1
+                        return db_cached["value"]
+            except Exception:
+                pass  # never break the engine call on cache issues
+
+        # Layer 3: Real engine function
+        if cache is not None:
+            cache["_misses"] = cache.get("_misses", 0) + 1
+        result = fn(*args, **kwargs)
+
+        # Write to in-memory cache
+        if cache is not None:
+            cache[key] = result
+
+        # Write to DB cache (only for at_fn with date arg)
+        if len(args) >= 2:
+            try:
+                from data_sources._cache import set_cached
+                company = str(args[0])
+                date = str(args[1])
+                set_cached(fn.__name__, company, date, result)
+            except Exception:
+                pass  # never break on cache write failure
+
+        return result
     return wrapper
 
 

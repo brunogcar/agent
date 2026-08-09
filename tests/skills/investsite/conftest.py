@@ -23,3 +23,6 @@ os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 
 # [v5] Disable auto-HTML generation for investsite tests (same as CVM tests).
 os.environ.setdefault("CVM_SKIP_HTML", "1")
+
+# [engine-cache] Disable DB engine cache for investsite tests.
+os.environ.setdefault("CVM_SKIP_DB_CACHE", "1")

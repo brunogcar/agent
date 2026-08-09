@@ -386,3 +386,76 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
     """)
     conn.commit()
+
+
+# ── Company fingerprint (for engine cache invalidation) ─────────────────────
+
+
+def _get_company_fingerprint(cnpj: str) -> str | None:
+    """Get a data fingerprint for a company across DFP + ITR databases.
+
+    Returns MAX(versao) || '|' || MAX(data_fim_exerc) for that CNPJ.
+    This is used by data_sources._cache to determine if cached engine
+    results are still valid.
+
+    The fingerprint changes when:
+      - A new filing version is published (versao increments)
+      - A new period is added (data_fim_exerc changes)
+      - A restated filing replaces an old one
+
+    Queries both DFP and ITR (taking the MAX across both) so a new
+    quarterly ITR filing invalidates the cache even if DFP hasn't changed.
+
+    Args:
+        cnpj: 14-digit CNPJ string (digits only).
+
+    Returns:
+        Fingerprint string like "3|2025-12-31", or None if the company
+        isn't found in either database.
+    """
+    if not cnpj:
+        return None
+
+    # Normalize to digits
+    cnpj = "".join(c for c in cnpj if c.isdigit())
+    if len(cnpj) != 14:
+        return None
+
+    max_versao = 0
+    max_data_fim = ""
+
+    for connect_fn in (connect_dfp, connect_itr):
+        try:
+            conn = connect_fn(read_only=True)
+            try:
+                # Find empresa_ids for this CNPJ
+                rows = conn.execute(
+                    "SELECT id FROM empresas WHERE cnpj = ?",
+                    (cnpj,),
+                ).fetchall()
+                if not rows:
+                    continue
+                emp_ids = [str(r[0]) for r in rows]
+                emp_ph = ",".join("?" * len(emp_ids))
+
+                # Get MAX(versao) + MAX(data_fim_exerc) for this company
+                row = conn.execute(
+                    f"""SELECT MAX(versao) as max_v, MAX(data_fim_exerc) as max_d
+                        FROM contas
+                        WHERE id_empresa IN ({emp_ph})
+                          AND consolidado = 1""",
+                    emp_ids,
+                ).fetchone()
+                if row and row[0] is not None:
+                    max_versao = max(max_versao, int(row[0]))
+                if row and row[1] is not None and row[1] > max_data_fim:
+                    max_data_fim = row[1]
+            finally:
+                conn.close()
+        except (FileNotFoundError, Exception):
+            continue
+
+    if max_data_fim == "":
+        return None  # company not found in either DB
+
+    return f"{max_versao}|{max_data_fim}"

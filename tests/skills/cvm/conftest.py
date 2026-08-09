@@ -50,6 +50,12 @@ os.environ.setdefault("CVM_SKIP_SYNC", "1")
 # CVM_SKIP_HTML=0 locally.
 os.environ.setdefault("CVM_SKIP_HTML", "1")
 
+# [engine-cache] Disable DB engine cache for ALL CVM tests. The cache
+# persists engine results to memory_db/cache/engine_cache.db — tests use
+# synthetic DBs and shouldn't read/write the persistent cache. Individual
+# tests that need the DB cache set CVM_SKIP_DB_CACHE=0 locally.
+os.environ.setdefault("CVM_SKIP_DB_CACHE", "1")
+
 
 @pytest.fixture(autouse=True)
 def mock_freshness(monkeypatch):

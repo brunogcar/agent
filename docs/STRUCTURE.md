@@ -181,9 +181,14 @@ Raw data ingestion + query. Each sub-domain syncs data from an external API into
 ```text
 data_sources/
 ├── dispatcher.py              # @tool data_source(domain, sub_domain, mode, params)
+├── _cache.py                  # [engine-cache] Persistent engine result cache (cross-skill)
+│                              # → memory_db/cache/engine_cache.db
+│                              # 3-layer: in-memory (ContextVar) → DB cache → real engine fn
+│                              # Per-company invalidation via fingerprint (MAX(versao)+MAX(date))
 ├── cvm/                       # Brazilian SEC data
 │   ├── __init__.py            # Domain manifest + route
 │   ├── _db.py                 # Shared: paths, cnpj_digits(), parse_escala(), connect_*
+│   │                          # + _get_company_fingerprint() for cache invalidation
 │   ├── _bridge.py             # Shared: resolve_company() — ticker → CNPJ → empresa_ids
 │   ├── _freshness.py          # Shared: data freshness (sync timestamps for all DBs)
 │   ├── _meses.py              # Shared: rapinav2-compatible meses computation
@@ -197,12 +202,14 @@ data_sources/
 │   ├── cgvn/                  # Governance practices (Código de Governança)
 │   ├── fca/                   # Registration form (ticker → CNPJ + listing segment) — primary bridge
 │   └── bridge/                # B3-CVM identity bridge (FCA first → bridge.db → B3 API → ISIN)
-└── b3/                        # Brazilian stock exchange data
-    ├── __init__.py            # Domain manifest + route
-    ├── api/                   # Market data: instruments, trades, derivatives
-    ├── brapi/                 # brapi.dev quotes + OHLCV + ticker list
-    ├── cotahist/              # COTAHIST historical OHLCV (fixed-width ZIP)
-    └── dividends/             # Corporate actions: cash/stock dividends, subscriptions
+├── b3/                        # Brazilian stock exchange data
+│   ├── __init__.py            # Domain manifest + route
+│   ├── api/                   # Market data: instruments, trades, derivatives
+│   ├── brapi/                 # brapi.dev quotes + OHLCV + ticker list
+│   ├── cotahist/              # COTAHIST historical OHLCV (fixed-width ZIP)
+│   └── dividends/             # Corporate actions: cash/stock dividends, subscriptions
+└── bcb/                       # Brazilian Central Bank data
+    └── sgs/                   # SGS macro series (Selic, CDI, IPCA, etc.)
 ```
 
 **Each sub-domain has:** `__init__.py` (MANIFEST + route), `catalog.py` (schema), `sync_engine.py` (download), `query_engine.py` (read), `status_reporter.py` (stats).

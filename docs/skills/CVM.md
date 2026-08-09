@@ -73,6 +73,34 @@ print(r["html_path"])  # → workspace/reports/PETR4_valuation_dashboard.html
 
 **Escape hatch:** `CVM_SKIP_HTML=1` env var (set automatically in tests).
 
+## 🗄️ Engine Result Cache
+
+Engine `*_at(company, date)` results are cached persistently in
+`memory_db/cache/engine_cache.db` (via `data_sources/_cache.py`). This eliminates
+redundant engine computation across skills — when valuation computes
+`revenue_at("PETR4", "2024-06-30")` and then financials computes the same, the
+second call is a cache hit.
+
+**3-layer cache** (in `@engine_cached` decorator, `skills/_base.py`):
+1. **In-memory** (ContextVar `engine_cache_scope`) — within one `route()` call
+2. **DB cache** (persistent) — cross-skill, cross-process
+3. **Real engine fn** — queries DFP/ITR/COTAHIST/SGS
+
+**Invalidation is per-company** via fingerprint:
+- DFP/ITR engines: `MAX(versao) + MAX(data_fim_exerc)` for that CNPJ
+- COTAHIST engines: `MAX(refdate)` for that ticker
+- BCB SGS engines: `MAX(ref_date)` for the series
+- FRE engines: `MAX(data_referencia)` for that CNPJ
+
+If CVM publishes a new filing (new `versao` or new period), the fingerprint
+changes → cache miss → recompute. This is more precise than the HEAD-check
+timestamp (which is per-source, not per-company).
+
+**Escape hatch:** `CVM_SKIP_DB_CACHE=1` env var (set automatically in tests).
+
+See [DATA_SOURCES.md](../DATA_SOURCES.md#-engine-result-cache-_cachepy) for
+full architecture details.
+
 ## Skills
 
 | Skill | Modes | Data Sources |

@@ -18,9 +18,14 @@ Data sources are external data connectors that sync from APIs (CVM, B3, BCB) int
 data_sources/
 ├── dispatcher.py                  # @tool data_source(domain, sub_domain, mode, params)
 │
+├── _cache.py                      # [engine-cache] Shared: persistent engine result cache
+│                                  # → memory_db/cache/engine_cache.db
+│                                  # Cross-skill caching with per-company invalidation
+│
 ├── cvm/                           # CVM domain
 │   ├── __init__.py                # Domain hub
 │   ├── _db.py                     # Shared: paths, CNPJ, parse_escala, connect helpers
+│   │                              # + _get_company_fingerprint() for cache invalidation
 │   ├── _bridge.py                 # Shared: resolve_company (ticker → CNPJ → empresa_ids)
 │   ├── _meses.py                  # Shared: meses computation (rapinav2 formula)
 │   ├── dfp/                       # Annual financial statements → dfp.db
@@ -47,6 +52,39 @@ data_sources/
         ├── query_engine.py        # series / last / search / summary
         └── status_reporter.py     # DB stats
 ```
+
+## 🗄️ Engine Result Cache (`_cache.py`)
+
+`data_sources/_cache.py` is a **shared helper** (underscore prefix = internal) that
+provides a persistent SQLite cache for engine `*_at(company, date)` results. It sits
+BETWEEN the data sources and the skills:
+
+```
+skills (valuation, financials, historical, ...)
+  → skills/cvm/calculations/engines/*.py (@engine_cached wrapper)
+      → 1. In-memory cache (ContextVar — within one route() call)
+      → 2. DB cache (persistent — cross-skill, cross-process)  ← THIS MODULE
+      → 3. Real engine fn (queries DFP/ITR/COTAHIST/SGS)
+```
+
+**Why it exists:** Without the DB cache, PETR4's engines get recomputed 5 times
+across valuation + financials + historical + screener + comparison. The DB cache
+eliminates this redundancy — the first skill computes + caches, subsequent skills
+get cache hits.
+
+**Invalidation:** Per-company fingerprint (NOT the HEAD-check timestamp):
+- DFP/ITR engines: `MAX(versao) || '|' || MAX(data_fim_exerc)` for that CNPJ
+- COTAHIST engines: `MAX(refdate)` for that ticker
+- BCB SGS engines: `MAX(ref_date)` for the series
+- FRE engines: `MAX(data_referencia)` for that CNPJ
+
+If the fingerprint matches, the cache is valid. If CVM publishes a new filing
+(new `versao` or new period), the fingerprint changes → cache miss → recompute.
+
+**Location:** `memory_db/cache/engine_cache.db` (3 tables: `engine_cache`,
+`engine_cache_meta`, `sync_versions`).
+
+**Escape hatch:** `CVM_SKIP_DB_CACHE=1` env var (set automatically in tests).
 
 ## 🚀 Quick Start
 

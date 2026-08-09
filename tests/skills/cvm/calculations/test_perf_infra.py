@@ -17,6 +17,7 @@ os.environ.setdefault("EXECUTOR_MODEL", "test")
 os.environ.setdefault("EXECUTOR_PROVIDER", "test")
 os.environ.setdefault("CVM_SKIP_SYNC", "1")
 os.environ.setdefault("CVM_SKIP_HTML", "1")
+os.environ.setdefault("CVM_SKIP_DB_CACHE", "1")
 
 import pytest
 from skills._base import (
