@@ -15,6 +15,7 @@ Registered as "ttm" in skills.cvm.financials._registry.MODES via the
 """
 from __future__ import annotations
 
+from skills._base import engine_cache_scope
 from skills.cvm.financials._registry import register_mode
 from skills.cvm.financials.modes.quarterly import quarterly
 from skills.cvm.financials.metrics import compute_ttm_with_engines
@@ -86,39 +87,48 @@ def ttm(company: str = "", periods: int = 8, consolidado: int = 1) -> dict:
     print(f"[financials] TTM: Computing TTM for {len(all_quarters) - 3} periods...", flush=True)
 
     ttm_periods: list[dict] = []
-    # Iterate from the 4th quarter onward (first 3 can't produce TTM)
-    for i in range(3, len(all_quarters)):
-        if len(ttm_periods) >= periods:
-            break
+    # [v9] Wrap the TTM loop in engine_cache_scope() so the 8 engine calls
+    # per period (revenue_at, ebit_at, da_at, ttm_earnings_at, operating_cf_at,
+    # investing_cf_at, financing_cf_at, compute_ebitda_from_engines) share a
+    # single cache. Without this, each _get_dfp_* / _get_itr_* fetcher
+    # re-queries the DB on every call (8 periods × 8 engines = 64 redundant
+    # fetches). When called via the dashboard, the dashboard's outer scope
+    # (propagated via copy_context) already covers this — but when TTM is
+    # called standalone, this scope is essential.
+    with engine_cache_scope():
+        # Iterate from the 4th quarter onward (first 3 can't produce TTM)
+        for i in range(3, len(all_quarters)):
+            if len(ttm_periods) >= periods:
+                break
 
-        # Quarters up to and including position i (oldest-first)
-        window = all_quarters[:i + 1]
-        latest = window[-1]
-        year = latest.get("year")
-        qnum = latest.get("quarter")
+            # Quarters up to and including position i (oldest-first)
+            window = all_quarters[:i + 1]
+            latest = window[-1]
+            year = latest.get("year")
+            qnum = latest.get("quarter")
 
-        if year is None or qnum not in _QUARTER_END_SUFFIX:
-            continue
+            if year is None or qnum not in _QUARTER_END_SUFFIX:
+                continue
 
-        ttm_date = f"{year}-{_QUARTER_END_SUFFIX[qnum]}"
+            ttm_date = f"{year}-{_QUARTER_END_SUFFIX[qnum]}"
 
-        print(f"[financials] TTM:   {latest.get('period', '?')} (date={ttm_date})...", flush=True, end="")
+            print(f"[financials] TTM:   {latest.get('period', '?')} (date={ttm_date})...", flush=True, end="")
 
-        try:
-            ttm_result = compute_ttm_with_engines(company, ttm_date, window)
-            if ttm_result.get("status") == "ok":
-                ttm_periods.append({
-                    "period_range": ttm_result.get("period_range", ""),
-                    "ttm_date": ttm_date,
-                    "quarter": latest.get("period", ""),
-                    "metrics": ttm_result.get("metrics", {}),
-                    "ratios": ttm_result.get("ratios", {}),
-                })
-                print(" done.", flush=True)
-            else:
-                print(" skipped (insufficient).", flush=True)
-        except Exception as e:
-            print(f" error: {e}", flush=True)
+            try:
+                ttm_result = compute_ttm_with_engines(company, ttm_date, window)
+                if ttm_result.get("status") == "ok":
+                    ttm_periods.append({
+                        "period_range": ttm_result.get("period_range", ""),
+                        "ttm_date": ttm_date,
+                        "quarter": latest.get("period", ""),
+                        "metrics": ttm_result.get("metrics", {}),
+                        "ratios": ttm_result.get("ratios", {}),
+                    })
+                    print(" done.", flush=True)
+                else:
+                    print(" skipped (insufficient).", flush=True)
+            except Exception as e:
+                print(f" error: {e}", flush=True)
 
     print(f"[financials] TTM: Done! {len(ttm_periods)} TTM periods.", flush=True)
 

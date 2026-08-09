@@ -155,8 +155,26 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         }
 
         results: dict[str, object] = {}
+        # [v9 fix] Actually implement the copy_context propagation that the
+        # comment above claimed was already done. Without this, worker threads
+        # do NOT inherit the main thread's engine_cache_scope — every engine
+        # call in TTM/quarterly/yoy runs uncached, causing 149s TTM times.
+        #
+        # A Context object can only be .run() in one thread at a time, so we
+        # can't share one copy across all 6 workers. Instead, we pre-create
+        # one copy per worker. All copies reference the SAME cache dict
+        # (verified: same id()), so engine calls in one task hit the cache
+        # populated by another task — true cross-task cache sharing.
+        n_tasks = len(tasks)
+        ctx_copies = [contextvars.copy_context() for _ in range(n_tasks)]
+
+        def _run_with_ctx(ctx, fn):
+            return ctx.run(fn)
+
         with ThreadPoolExecutor(max_workers=6) as executor:
-            futures = {executor.submit(fn): name for name, fn in tasks.items()}
+            futures = {}
+            for i, (name, fn) in enumerate(tasks.items()):
+                futures[executor.submit(_run_with_ctx, ctx_copies[i], fn)] = name
             for future in as_completed(futures):
                 name = futures[future]
                 _elapsed = (_dt.now() - _t0).total_seconds()
