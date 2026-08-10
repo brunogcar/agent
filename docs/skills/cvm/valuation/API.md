@@ -12,7 +12,7 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
 |-----------|------|----------|-------------|
 | `domain` | `str` | **Yes** | Always `"cvm"` |
 | `sub_domain` | `str` | **Yes** | Always `"valuation"` |
-| `mode` | `str` | **Yes** | `ratios`, `summary`, or `dashboard` |
+| `mode` | `str` | **Yes** | `ratios`, `summary`, `dashboard`, or `historical_valuation` |
 | `params` | `str` (JSON) | **Yes** | JSON string: `{"company":"PETR4"}` |
 
 ---
@@ -23,26 +23,21 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
 
 Compute all valuation ratios from b3 price + CVM TTM financials + FRE shares.
 
-**v1.0.14 new metrics:**
-- **ROIC** = NOPAT / Invested Capital. NOPAT = EBIT × (1 - 0.34). Invested Capital = PL + Dívida Bruta - Caixa. Approximate (flat 34% tax rate). Flagged via `roic_tax_rate` field.
-- **Graham Number** = sqrt(22.5 × EPS × VPA). Only computed when EPS > 0 and VPA > 0 (Graham's constraint). Price below Graham = potentially undervalued.
-- **TTM financials** — uses trailing twelve months (sum of last 4 standalone quarters) instead of latest annual DFP. Falls back to annual when TTM key metrics are None.
-- **Data freshness** — `data_freshness` field shows last-sync timestamp for each database.
+**Manual ratios** (NOT in calculations registry):
+- **P/L** = market_cap / lucro_liquido. Market-cap-based (v1.0.9) — correct for both regular and UNIT tickers.
+- **P/VPA** = market_cap / patrimonio_liquido. None when PL ≤ 0.
+- **EV** = market_cap + divida_bruta - caixa.
+- **PSR** = market_cap / receita_liquida.
+- **P/EBIT** = market_cap / ebit.
+- **P/FCO** = market_cap / fco.
+- **P/FCF** = market_cap / fcf (where fcf = fco + fci).
+- **Dividend Yield** = dpa / price (dpa from dividends engine, TTM).
+- **Market Cap** = brapi_market_cap (authoritative for units) → price × shares fallback.
 
-**v1.4 new metrics (15 — sourced from calculations metrics via `_safe_call`):**
+**Calculations-backed ratios** (60 metrics via `compute_all_ratios()`):
+ROE, ROA, ROIC, Graham Number, margins (gross/operating/net/EBITDA/OCF/FCF), liquidity (current/quick/cash/working_capital), leverage (debt_equity/net_debt_ebitda/interest_coverage/cash_flow_to_debt), efficiency (asset/inventory/receivables/fixed_asset turnover, capex_revenue), growth (retention_ratio/sustainable_growth/revenue_growth_3m/1y/5y/net_income_growth_3m/1y/5y/gross_profit_growth_3m/1y/5y), EV multiples (ev_ebitda/ev_ebit/ev_fcf/ev_sales), per-share (lpa/vpa/dpa/rps/apa/ppa/rbpa/cgpa/dbpa), price ratios (p_ebit/p_ebitda/p_ev/p_fcf/p_fco/p_l/p_vpa/psr/price_to_tangible_book), tax (effective_tax_rate), valuation (graham_number/magic_number/altman_z/dupont), market risk (coe/beta), DCF (dcf_intrinsic_value/dcf_margin_of_safety/irr/wacc).
 
-| Family | Metric keys | Calculations source |
-|--------|-------------|---------------------|
-| EV multiples | `ev_sales`, `ev_fcf` | `metrics.ev_sales.ev_sales_at`, `metrics.ev_fcf.ev_fcf_at` |
-| Liquidity | `cash_ratio`, `quick_ratio` | `metrics.cash_ratio.cash_ratio_at`, `metrics.quick_ratio.quick_ratio_at` |
-| Margins | `ocf_margin`, `fcf_margin` | `metrics.ocf_margin.ocf_margin_at`, `metrics.fcf_margin.fcf_margin_at` |
-| Capital structure | `working_capital`, `cash_flow_to_debt` | `metrics.working_capital.working_capital_at`, `metrics.cash_flow_to_debt.cash_flow_to_debt_at` |
-| Growth | `retention_ratio`, `sustainable_growth` | `metrics.retention_ratio.retention_ratio_at`, `metrics.sustainable_growth.sustainable_growth_at` |
-| Coverage | `interest_coverage` | `metrics.interest_coverage.interest_coverage_at` |
-| Turnover | `inventory_turnover`, `receivables_turnover`, `fixed_asset_turnover` | `metrics.inventory_turnover.inventory_turnover_at`, `metrics.receivables_turnover.receivables_turnover_at`, `metrics.fixed_asset_turnover.fixed_asset_turnover_at` |
-| Price/tangible | `price_to_tangible_book` | `metrics.price_to_tangible_book.price_to_tangible_book_at` |
-
-Each metric is wrapped in `_safe_call(fn, ticker, today)` so a FileNotFoundError (e.g., ITR db missing in test env) returns None without poisoning the rest of the ratios result.
+**Data freshness** — `data_freshness` field shows last-sync timestamp for each database.
 
 Returns:
 ```json
@@ -50,88 +45,58 @@ Returns:
   "status": "ok",
   "ticker": "PETR4",
   "ratios": {
-    "price": 38.50,
-    "price_date": "2026-07-25",
+    "price": 40.87,
+    "price_date": "2026-08-09",
     "unit_ticker": false,
-    "market_cap": 496216309098.5,
+    "market_cap": 531310000000.0,
     "market_cap_source": "brapi",
-    "p_l": 4.13,
-    "p_l_source": "computed",
-    "p_vpa": 1.24,
-    "ev": 833216309098.5,
-    "ev_ebitda": 4.5,
-    "psr": 1.2,
-    "dividend_yield": 0.121,
-    "roic": 0.15,
-    "roic_tax_rate": 0.34,
-    "graham_number": 36.7,
-    "eps": 9.31,
-    "vpa": 31.04,
-    "dpa": 4.65,
-    "lucro_liquido": 120000000000.0,
-    "ebitda": 185000000000.0,
-    "ebit": 200000000000.0,
-    "receita_liquida": 400000000000.0,
-    "patrimonio_liquido": 400000000000.0,
-    "caixa": 34000000000.0,
-    "divida_bruta": 371000000000.0,
-    "fco": 180000000000.0,
-    "fcf": 150000000000.0,
-    "annual_dividends": 60000000000.0,
-    "ev_sales": 2.05,
-    "ev_fcf": 11.1,
-    "cash_ratio": 0.09,
-    "quick_ratio": 0.85,
-    "ocf_margin": 0.45,
-    "fcf_margin": 0.18,
-    "working_capital": 15000000000.0,
-    "cash_flow_to_debt": 0.48,
-    "retention_ratio": 0.50,
-    "sustainable_growth": 0.09,
-    "interest_coverage": 8.0,
-    "inventory_turnover": 5.5,
-    "receivables_turnover": 7.2,
-    "fixed_asset_turnover": 1.3,
-    "price_to_tangible_book": 1.6
+    "p_l": 4.17,
+    "p_vpa": 1.43,
+    "ev": 570500000000.0,
+    "ev_ebitda": 6.71,
+    "psr": 1.79,
+    "dividend_yield": 0.0481,
+    "roe": 0.28,
+    "roic": 0.18,
+    "graham_number": 75.0,
+    "eps": 9.23,
+    "vpa": 26.92,
+    "dpa": 1.85,
+    "apa": 32.40,
+    "ppa": 8.60,
+    "rbpa": 18.50,
+    "...": "..."
   },
   "sources": {
     "price": {"status": "ok", "source": "brapi"},
-    "financials": {"status": "ok", "source": "ttm", "period": "2T2025–1T2026"},
-    "shares": {"status": "ok", "source": "fre_distribuicao"}
+    "financials": {"status": "ok", "source": "calculations_engines", "period": "ttm"},
+    "shares": {"status": "ok", "source": "calculations_engine"}
   },
   "data_freshness": {
-    "dfp": "2026-07-23T14:26:04",
-    "itr": "2026-07-23T14:39:21",
-    "fre": "2026-07-23T14:41:08",
-    "cad": "2026-07-24T13:07:26",
-    "bridge": "",
-    "b3_dividends": "2026-07-24T22:51:18",
-    "cotahist": "2026-07-23"
+    "dfp": "2026-08-09T14:26:04",
+    "itr": "2026-08-09T14:39:21",
+    "fre": "2026-08-09T14:41:08",
+    "cotahist": "2026-08-09"
   }
 }
 ```
 
 ### `mode="summary"`
 
-Ratios + data source availability.
+Ratios + data source availability. Calls `ratios()` internally + adds a
+`data_availability` block.
 
-[v1.4] Adds a `headline_v13_metrics` block at the top level — the 10 most important v1.4 metrics (EV/Sales, EV/FCF, Quick Ratio, Cash Ratio, OCF Margin, FCF Margin, Interest Coverage, Cash Flow to Debt, Sustainable Growth, P/Tangible Book) surfaced for quick scanning without drilling into `ratios`.
+**Note (v1.3+):** The `headline_v13_metrics` block was REMOVED in v1.3 —
+all metrics are now in `ratios()` directly via `compute_all_ratios()`, so a
+separate headline block was redundant.
 
-Adds `data_availability` field:
+Returns:
 ```json
 {
-  "headline_v13_metrics": {
-    "ev_sales": 2.05,
-    "ev_fcf": 11.1,
-    "quick_ratio": 0.85,
-    "cash_ratio": 0.09,
-    "ocf_margin": 0.45,
-    "fcf_margin": 0.18,
-    "interest_coverage": 8.0,
-    "cash_flow_to_debt": 0.48,
-    "sustainable_growth": 0.09,
-    "price_to_tangible_book": 1.6
-  },
+  "status": "ok",
+  "ticker": "PETR4",
+  "ratios": { "...": "..." },
+  "sources": { "...": "..." },
   "data_availability": {
     "price": "ok",
     "price_source": "brapi",
@@ -141,47 +106,42 @@ Adds `data_availability` field:
 }
 ```
 
-### `mode="dashboard"` (v1.5 — 6-tab multi-tab dashboard)
+### `mode="dashboard"` (v1.10 — 6-tab multi-tab dashboard)
 
 Multi-tab valuation dashboard optimized for the report tool's `dashboard`
 action. Calls `ratios()` ONCE and passes the resulting dict to every tab
-builder (no per-tab re-fetching). Each tab builder is independently
-try/except-wrapped so a failure in one tab degrades to an error section
-in that tab, not a crash of the whole dashboard.
+builder. Each tab builder is independently try/except-wrapped via
+`_safe_build()` so a failure in one tab degrades to an error section, not
+a crash. The entire dashboard body is wrapped in `engine_cache_scope()` so
+DCF sensitivity + history charts reuse cached engines.
 
 **Returns:** `{"status": "ok", "company": ..., "tabs": [...], "kpis": [...]}`
 where `kpis` is a 6-card top-level list (P/L, P/VPA, EV/EBITDA, Div Yield,
 Market Cap, ROE) rendered above all tabs by the dashboard template.
 
-**6 tabs (v1.5):**
+**6 tabs (v1.10) in 3 sidebar groups:**
 
-| # | Tab | Sections |
-|---|-----|----------|
-| 1 | **Overview** | Key Metrics table (Preço, Market Cap, EV, EBITDA, headline ratios) + Price Details collapsible (price/date/source/shares/market-cap-source/UNIT) |
-| 2 | **Multiples** | Top-10 multiples table `[Métrica, Valor, Interpretação]` (P/L, P/VPA, P/EBIT, P/EBITDA, EV/EBIT, EV/EBITDA, PSR, P/EV, P/FCO, P/FCF) + bar chart (P/L, P/VPA, EV/EBITDA, PSR) + Less Common Multiples collapsible (P/Ativos, P/Passivos, P/RB, P/CG, P/DB, P/Tangible Book) |
-| 3 | **Per-share** | Per-share table `[Métrica, Valor (R$), Preço/Valor]` for LPA, VPA, DPA, RPA, RBPA, CGPA, DBPA, APA, PPA + bar chart (per-share values side-by-side) |
-| 4 | **Profitability** | `ratio_grid` with 1 category: ROE, ROA, ROIC, Gross Margin, Operating Margin, Net Margin, EBITDA Margin, OCF Margin, FCF Margin |
-| 5 | **Liquidity & Leverage** | `ratio_grid` with 2 categories (Liquidity: Current/Quick/Cash Ratio + Working Capital; Leverage: D/E, Net Debt/EBITDA, Financial Leverage, Interest Coverage, Cash Flow to Debt) + Detailed Leverage collapsible (DL/EBIT, DL/EBITDA, Gross D/E) |
-| 6 | **Efficiency & Growth** | Efficiency table (Asset/Inventory/Receivables/Fixed Asset Turnover, CapEx/Revenue) + Growth table (3M/1Y/5Y for Revenue/GP/NI — currently `—` pending historical engines) + growth bar chart (rendered when growth data is available) |
+| # | Tab | Group | Sections |
+|---|-----|-------|----------|
+| 1 | **Overview** | Resumo | Company header (FCA/CAD/COTAHIST) + historical price chart (Tudo/5A/1A/1M) + 3 metric tables (Mercado, Resultado TTM, Balanço) + Valor Intrínseco summary |
+| 2 | **Múltiplos** | Resumo | Subtabs: Preço (7 price multiples table + bar chart + per-share table + P/L-LPA-P/VP-VPA 5Y history chart [v1.10]), EV (5 EV multiples table + bar chart), Menos Comuns (P/Ativos, P/Passivos, P/RB, P/CG, P/DB, P/Tangible Book table — all with values + tooltips [v1.10 fix]) |
+| 3 | **Valor Intrínseco** | Resumo | DCF Intrinsic Value + Margin of Safety + TIR (IRR) + WACC + TIR-WACC spread table + DCF Sensitivity Analysis (5 scenarios table + bar chart) [v1.9] |
+| 4 | **Rentabilidade** | Fundamentos | Subtabs: Retornos (ratio_grid + ROIC/ROE/ROA 5Y step-line history chart [v1.10 rewrite]), Margens (ratio_grid + bar chart) |
+| 5 | **Liquidez e Alavancagem** | Fundamentos | Subtabs: Liquidez (ratio_grid + bar chart), Endividamento (ratio_grid + detailed table) |
+| 6 | **Eficiência e Crescimento** | Crescimento | Subtabs: Eficiência (efficiency table + growth tables for Receita/Luco Bruto/Luco Líquido with charts), Crescimento (growth tables) |
 
-**Section types used** (all already supported by the dashboard template):
+**Section types used** (all supported by the dashboard template):
 - `{"type": "table", ...}` — for tabular metrics
 - `{"type": "ratio_grid", "categories": [...]}` — for categorized metric cards
-- `{"type": "chart", "chart_data": {...}}` — Chart.js bar chart
-- `{"type": "collapsible", "title": ..., "text": ..., "open": False}` — collapsible text block for less-important metrics
+- `{"type": "chart", "chart_data": {...}}` — Chart.js line/bar chart
+- `{"type": "subtabs", "tabs": [{name, sections}]}` — nested sub-tabs within a tab
+- `{"type": "company_info", "company_header": {...}}` — company header card
 - `{"type": "text", "text": ...}` — for error sections
 
-**Derived metrics:** The Multiples tab uses `_derive_multiples()` to compute
-P/EBITDA (= market_cap / ebitda), EV/EBIT (= ev / ebit), P/EV
-(= market_cap / ev), P/CG (= market_cap / working_capital), P/DB
-(= market_cap / divida_bruta) from components already in `ratios_dict`.
-The Per-share tab uses `_derive_per_share()` to compute CGPA
-(= working_capital / shares) and DBPA (= divida_bruta / shares). The
-Detailed Leverage collapsible uses `_derive_detailed_leverage()` to
-compute DL/EBIT and Gross D/E. P/Ativos, P/Passivos, P/RB, RBPA, APA,
-PPA are NOT yet computable (require total_assets / total_liabilities /
-gross_revenue engines) — they render as `—` and are tracked in
-[ROADMAP.md](ROADMAP.md).
+**v1.10 chart details:**
+- **P/L, LPA, P/VP, VPA 5Y history chart** — step-line chart in Múltiplos > Preço. Merges `lpa_history()` + `vpa_history()`. LPA/VPA step quarterly (stepped:'after'), P/L and P/VP vary daily. Colors: P/L dark blue, LPA light blue, P/VP red, VPA pink.
+- **ROIC/ROE/ROA 5Y history chart** — step-line chart in Rentabilidade > Retornos. Uses `roe_history()`/`roa_history()`/`roic_history()` (quarterly step data, ~20 points over 5Y). Colors: ROIC dark green, ROE olive, ROA bright green. Forward-filled to carry forward last known value.
+- **Graham Number overlay REMOVED** — the Overview price chart now uses the default shared `build_price_chart()` output unmodified.
 
 **Example:**
 
@@ -195,23 +155,49 @@ Returns:
 {
   "status": "ok",
   "company": "PETR4",
+  "company_header": {"name": "Petrobras", "...": "..."},
   "kpis": [
     {"label": "P/L",            "value": "4,17"},
     {"label": "P/VPA",          "value": "1,43"},
     {"label": "EV/EBITDA",      "value": "6,71"},
     {"label": "Dividend Yield", "value": "4,81%"},
-    {"label": "Market Cap",     "value": "R$ 500,50 B"},
+    {"label": "Market Cap",     "value": "R$ 531,31 B"},
     {"label": "ROE",            "value": "28,00%"}
   ],
   "tabs": [
-    {"name": "Overview",             "sections": [...]},
-    {"name": "Multiples",            "sections": [...]},
-    {"name": "Per-share",            "sections": [...]},
-    {"name": "Profitability",        "sections": [...]},
-    {"name": "Liquidity & Leverage", "sections": [...]},
-    {"name": "Efficiency & Growth",  "sections": [...]}
-  ]
+    {"name": "Overview",                "group": "Resumo",      "sections": [...]},
+    {"name": "Múltiplos",               "group": "Resumo",      "sections": [...]},
+    {"name": "Valor Intrínseco",        "group": "Resumo",      "sections": [...]},
+    {"name": "Rentabilidade",           "group": "Fundamentos", "sections": [...]},
+    {"name": "Liquidez e Alavancagem",  "group": "Fundamentos", "sections": [...]},
+    {"name": "Eficiência e Crescimento","group": "Crescimento", "sections": [...]}
+  ],
+  "freshness_footer": "DFP: 2026-08-09 (até 2025-12-31) • ITR: 2026-08-09 (até 2026-03-31) • ..."
 }
+```
+
+### `mode="historical_valuation"` (v1.8)
+
+Historical valuation multiples time series (5Y default). Fetches daily
+history for 9 metrics via the calculations registry's `*_history()`
+functions: EV/EBITDA, EV/EBIT, EV/Sales, P/EBIT, P/EBITDA, Earnings Yield,
+Graham Number, ROE, ROIC.
+
+**Params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `company` | `str` | (required) | B3 ticker |
+| `years` | `int` | `5` | Number of years of history |
+
+**Returns:** `{"status": "ok", "company": ..., "metrics": [...], "series": [...]}`
+where `metrics` is a list of `{"label", "key"}` for charting and `series`
+is a list of `{"date", "<metric_key>": value, ...}` sorted oldest-first.
+
+**Example:**
+
+```
+skill(domain="cvm", sub_domain="valuation", mode="historical_valuation",
+      params='{"company":"PETR4", "years": 5}')
 ```
 
 ---
@@ -223,11 +209,17 @@ Returns:
 | P/L | market_cap / lucro_liquido | Market-cap-based (v1.0.9). Correct for UNIT tickers. |
 | P/VPA | market_cap / patrimonio_liquido | None when PL ≤ 0 |
 | EV | market_cap + divida_bruta - caixa | |
-| EV/EBITDA | ev / ebitda | |
+| EV/EBITDA | ev / ebitda | From calculations registry |
 | PSR | market_cap / receita_liquida | |
-| ROIC | (ebit × (1 - 0.34)) / (pl + divida_bruta - caixa) | **v1.0.14**. Approximate — 34% flat tax rate. |
-| Graham Number | sqrt(22.5 × eps × vpa) | **v1.0.14**. Only when EPS > 0 and VPA > 0. |
-| Dividend Yield | (annual_dividends / shares) / price | |
+| ROIC | NOPAT / Invested Capital | Uses actual tax rate (not flat 34%) |
+| Graham Number | sqrt(22.5 × eps × vpa) | Only when EPS > 0 and VPA > 0 |
+| Dividend Yield | dpa / price | dpa from dividends engine (TTM) |
+| P/Ativo (APA) | price / (total_assets / shares) | From calculations registry (v1.10) |
+| P/Passivo (PPA) | price / ((total_assets - pl) / shares) | From calculations registry (v1.10) |
+| P/RB (RBPA) | price / (gross_profit / shares) | From calculations registry (v1.10) |
+| DCF Intrinsic Value | Σ FCF/(1+WACC)^t + TV | v1.9 |
+| IRR (TIR) | rate where NPV(price) = 0 | v1.9 |
+| WACC | COE × E/(D+E) + Kd×(1-tax) × D/(D+E) | v1.9 |
 
 ---
 
@@ -237,7 +229,8 @@ Returns:
 |---------|----------------|
 | `valuation_ratios` | KPI strip (Preço, P/L, P/VPA, EV/EBITDA, ROIC, Graham, Div Yield, Market Cap) + full indicator table |
 | `valuation_summary` | Ratios table + data-source availability table |
+| `valuation_dashboard` | Multi-tab dashboard (6 tabs, 3 sidebar groups) — used by `mode="dashboard"` |
 
 ---
 
-*Last updated: 2026-07-29 (v1.5).*
+*Last updated: 2026-08-10 (v1.10).*

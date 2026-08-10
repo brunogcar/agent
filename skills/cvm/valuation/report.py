@@ -168,14 +168,15 @@ _MULTIPLES_TOP: list[tuple[str, str, str, str]] = [
     ("P/FCF",     "p_fcf",     "num", "Cheap if < 15; expensive if > 30"),
 ]
 
-# Less-common multiples (collapsible). Key is ratios_dict key — when missing,
-# we attempt to compute from components in the builder.
+# Less-common multiples. Key is ratios_dict key. P/Ativo, P/Passivo, P/RB
+# come from the calculations registry (metric names apa/ppa/rbpa hold the
+# ratio value). P/CG and P/DB are derived from components in _derive_multiples.
 _MULTIPLES_LESS_COMMON: list[tuple[str, str, str, str]] = [
-    ("P/Ativos",        "p_ativos",   "num", "Cheap if < 1; expensive if > 2"),
-    ("P/Passivos",      "p_passivos", "num", "Higher = more leveraged"),
-    ("P/RB",            "p_rb",       "num", "Cheap if < 1; expensive if > 3"),
-    ("P/CG",            "p_cg",       "num", "Higher = pricier vs working capital"),
-    ("P/DB",            "p_db",       "num", "Higher = pricier vs gross debt"),
+    ("P/Ativos",        "apa",                    "num", "Cheap if < 1; expensive if > 2"),
+    ("P/Passivos",      "ppa",                    "num", "Higher = more leveraged"),
+    ("P/RB",            "rbpa",                   "num", "Cheap if < 1; expensive if > 3"),
+    ("P/CG",            "p_cg",                   "num", "Higher = pricier vs working capital"),
+    ("P/DB",            "p_db",                   "num", "Higher = pricier vs gross debt"),
     ("P/Tangible Book", "price_to_tangible_book", "num", "Cheap if < 1; expensive if > 3"),
 ]
 
@@ -199,8 +200,9 @@ def _derive_multiples(ratios_dict: dict | None) -> dict[str, float | None]:
       - p_ev     = market_cap / ev
       - p_cg     = market_cap / working_capital
       - p_db     = market_cap / divida_bruta
-      - p_ativos, p_passivos, p_rb = NOT derivable (total_assets, total_liab,
-        gross_revenue not in ratios_dict) — return None, surface as '—'.
+
+    P/Ativo (apa), P/Passivo (ppa), P/RB (rbpa) now come from the
+    calculations registry — they are NOT derived here.
 
     Returns a dict {metric_key: value_or_None} suitable for merging with
     ratios_dict via _safe_get-style accessors.
@@ -221,10 +223,6 @@ def _derive_multiples(ratios_dict: dict | None) -> dict[str, float | None]:
         "p_ev":       _safe_div(market_cap, ev),
         "p_cg":       _safe_div(market_cap, wc),
         "p_db":       _safe_div(market_cap, db),
-        # p_ativos, p_passivos, p_rb NOT derivable — left as None.
-        "p_ativos":   None,
-        "p_passivos": None,
-        "p_rb":       None,
     }
 
 
@@ -1162,124 +1160,294 @@ def build_dcf_sensitivity_section(company: str, date: str) -> list[dict]:
     return sections
 
 
-# ── V5: ROE / ROA / ROIC 5Y trend chart ──────────────────────────────────────
+# ── V6: Historical evolution charts (step-line, 5Y) ──────────────────────────
 #
-# Uses annual_periods (from financials.modes.annual) to plot ROE, ROA, ROIC
-# across the last 6 years. ROE and ROA come straight from each period's
-# ``ratios`` dict (already computed by financials.compute_ratios). ROIC is
-# computed inline from each period's ``metrics`` dict
-# (EBIT × (1-tax) / (PL + Debt - Cash)) since financials.compute_ratios
-# doesn't emit ROIC.
+# Two new charts replacing the v5 annual-points approach:
+#   1. build_pl_lpa_pvp_vpa_history_chart — P/L, LPA, P/VP, VPA daily evolution
+#   2. build_roe_trend_chart — ROE/ROA/ROIC quarterly step-line evolution
+#
+# Both use the calculations registry's *_history() functions which return
+# step-function data (fundamentals change quarterly, price changes daily).
+# The step-line visual style (tension:0, stepped:'after') matches the
+# reference design: staircase lines holding constant between reporting dates.
 
-def _compute_roic_from_metrics(metrics: dict) -> float | None:
-    """Approximate ROIC from a financials metrics dict (no tax/EBT available).
 
-    ROIC = NOPAT / Invested Capital
-      NOPAT            = EBIT × (1 - 0.34)   (Brazilian combined IRPJ+CSLL)
-      Invested Capital = PL + Debt - Cash
+def build_pl_lpa_pvp_vpa_history_chart(company: str) -> dict | None:
+    """Build the P/L + LPA + P/VP + VPA 5Y historical evolution chart.
 
-    Returns None when EBIT <= 0, PL <= 0, or invested capital <= 0.
+    Merges lpa_history() and vpa_history() (both daily, keyed by date) into
+    a single step-line chart with 4 datasets. LPA/VPA are per-share BRL
+    values (step-like — change quarterly). P/L and P/VP are price ratios
+    (vary daily with price).
+
+    All 4 share a single Y-axis (matching the reference design) so the
+    viewer can compare their relative evolution over time. The description
+    notes the scale difference.
+
+    Returns a chart section dict, or None if no history data is available.
     """
-    if not isinstance(metrics, dict):
-        return None
-    ebit = metrics.get("ebit")
-    pl = metrics.get("patrimonio_liquido")
-    debt = metrics.get("divida_bruta")
-    cash = metrics.get("caixa") or 0.0
-    if ebit is None or ebit <= 0:
-        return None
-    if pl is None or pl <= 0:
-        return None
-    if debt is None:
-        return None
-    invested = pl + debt - (cash or 0.0)
-    if invested <= 0:
-        return None
-    nopat = ebit * (1.0 - 0.34)
-    return nopat / invested
-
-
-def build_roe_trend_chart(company: str, annual_periods: list[dict]) -> dict | None:
-    """Build the ROE/ROA/ROIC 5Y trend chart section.
-
-    Plots 3 lines (ROE teal, ROA blue, ROIC orange) across up to 6 annual
-    periods from ``annual_periods`` (fetched from financials.modes.annual).
-
-    Args:
-        company: Ticker (unused for computation but kept for the chart title).
-        annual_periods: list of period dicts from financials.modes.annual(),
-            each with ``period`` (year string), ``data_fim_exerc``, ``metrics``
-            and ``ratios`` sub-dicts.
-
-    Returns:
-        A ``chart`` section dict, or None if fewer than 2 annual periods are
-        available.
-    """
-    if not annual_periods or len(annual_periods) < 2:
+    try:
+        from datetime import date, timedelta
+        from skills.cvm.calculations.metrics.lpa import lpa_history
+        from skills.cvm.calculations.metrics.vpa import vpa_history
+    except ImportError:
         return None
 
-    # Sort oldest-first by period (year string) or data_fim_exerc.
-    def _period_key(p: dict) -> str:
-        return str(p.get("period") or (p.get("data_fim_exerc") or "")[:4] or "")
+    today = date.today()
+    date_from = (today - timedelta(days=365 * 5)).isoformat()
+    date_to = today.isoformat()
 
-    periods = sorted(annual_periods, key=_period_key)
+    try:
+        lpa_series = lpa_history(company, date_from, date_to)
+        vpa_series = vpa_history(company, date_from, date_to)
+    except Exception:
+        return None
 
-    years: list[str] = []
-    roe_vals: list[float | None] = []
-    roa_vals: list[float | None] = []
-    roic_vals: list[float | None] = []
+    if not lpa_series and not vpa_series:
+        return None
 
-    for p in periods:
-        year = _period_key(p)
-        if not year:
+    # Merge by date. Both series are daily (from price_series), so dates
+    # should largely overlap. Build a unified dict {date: {pe, lpa, pvpa, vpa}}.
+    merged: dict[str, dict] = {}
+    for pt in lpa_series:
+        d = pt.get("date", "")
+        if d:
+            merged[d] = {
+                "pe":  pt.get("pe"),
+                "lpa": pt.get("lpa"),
+            }
+    for pt in vpa_series:
+        d = pt.get("date", "")
+        if not d:
             continue
-        years.append(year)
-        ratios = p.get("ratios") or {}
-        metrics = p.get("metrics") or {}
-        roe = ratios.get("roe")
-        roa = ratios.get("roa")
-        roic = _compute_roic_from_metrics(metrics)
-        roe_vals.append(roe * 100 if roe is not None else None)
-        roa_vals.append(roa * 100 if roa is not None else None)
-        roic_vals.append(roic * 100 if roic is not None else None)
+        if d not in merged:
+            merged[d] = {}
+        merged[d]["pvpa"] = pt.get("pvpa")
+        merged[d]["vpa"]  = pt.get("vpa")
 
-    if len(years) < 2:
+    sorted_dates = sorted(merged.keys())
+    if len(sorted_dates) < 2:
         return None
+
+    labels: list[str] = []
+    pe_vals: list[float | None] = []
+    lpa_vals: list[float | None] = []
+    pvpa_vals: list[float | None] = []
+    vpa_vals: list[float | None] = []
+
+    for d in sorted_dates:
+        entry = merged[d]
+        labels.append(d)
+        pe_vals.append(entry.get("pe"))
+        lpa_vals.append(entry.get("lpa"))
+        pvpa_vals.append(entry.get("pvpa"))
+        vpa_vals.append(entry.get("vpa"))
 
     chart_data = {
         "type": "line",
         "data": {
-            "labels": years,
+            "labels": labels,
             "datasets": [
                 {
-                    "label": "ROE",
-                    "data": roe_vals,
-                    "borderColor": "#0d9488",
-                    "backgroundColor": "rgba(13,148,136,0.1)",
-                    "tension": 0.15,
+                    "label": "P/L",
+                    "data": pe_vals,
+                    "borderColor": "#1e40af",   # dark blue
+                    "backgroundColor": "rgba(30,64,175,0.1)",
+                    "tension": 0,
                     "fill": False,
-                    "pointRadius": 3,
-                    "pointHoverRadius": 5,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
                 },
                 {
-                    "label": "ROA",
-                    "data": roa_vals,
-                    "borderColor": "#3b82f6",
-                    "backgroundColor": "rgba(59,130,246,0.1)",
-                    "tension": 0.15,
+                    "label": "LPA",
+                    "data": lpa_vals,
+                    "borderColor": "#60a5fa",   # light blue
+                    "backgroundColor": "rgba(96,165,250,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
                     "fill": False,
-                    "pointRadius": 3,
-                    "pointHoverRadius": 5,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
                 },
                 {
-                    "label": "ROIC",
+                    "label": "P/VP",
+                    "data": pvpa_vals,
+                    "borderColor": "#dc2626",   # red
+                    "backgroundColor": "rgba(220,38,38,0.1)",
+                    "tension": 0,
+                    "fill": False,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
+                },
+                {
+                    "label": "VPA",
+                    "data": vpa_vals,
+                    "borderColor": "#f9a8d4",   # pink/salmon
+                    "backgroundColor": "rgba(249,168,212,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
+                    "fill": False,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
+                },
+            ],
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "scales": {
+                "y": {
+                    "beginAtZero": True,
+                    "title": {"display": True, "text": "Valor (R$ / múltiplo)"},
+                },
+                "x": {
+                    "title": {"display": True, "text": "Data"},
+                    "ticks": {"maxTicksLimit": 12},
+                },
+            },
+            "plugins": {
+                "legend": {"display": True, "position": "top"},
+                "tooltip": {"mode": "index", "intersect": False},
+            },
+        },
+    }
+
+    return {
+        "type": "chart",
+        "title": f"P/L, LPA, P/VP, VPA — Evolução 5A — {company}",
+        "description": (
+            "Evolução histórica de P/L (azul), LPA (azul claro), P/VP "
+            "(vermelho) e VPA (rosa). LPA/VPA mudam trimestralmente (escada); "
+            "P/L e P/VP variam diariamente com o preço. Eixo único — "
+            "comparar a evolução relativa, não o valor absoluto."
+        ),
+        "chart_data": chart_data,
+    }
+
+
+def build_roe_trend_chart(company: str) -> dict | None:
+    """Build the ROE/ROA/ROIC 5Y historical step-line chart.
+
+    Uses roe_history(), roa_history(), roic_history() from the calculations
+    registry. These return quarterly step-function data (fundamentals change
+    only when new ITR/DFP filings arrive). The chart uses stepped:'after'
+    styling to produce the staircase visual matching the reference design.
+
+    Returns a chart section dict, or None if fewer than 2 data points.
+    """
+    try:
+        from datetime import date, timedelta
+        from skills.cvm.calculations.metrics.roe import roe_history
+        from skills.cvm.calculations.metrics.roa import roa_history
+        from skills.cvm.calculations.metrics.roic import roic_history
+    except ImportError:
+        return None
+
+    today = date.today()
+    date_from = (today - timedelta(days=365 * 5)).isoformat()
+    date_to = today.isoformat()
+
+    try:
+        roe_series = roe_history(company, date_from, date_to)
+        roa_series = roa_history(company, date_from, date_to)
+        roic_series = roic_history(company, date_from, date_to)
+    except Exception:
+        return None
+
+    if not roe_series and not roa_series and not roic_series:
+        return None
+
+    # Build per-metric {date: value} dicts, then merge into a unified
+    # date axis with forward-fill (carry forward last known value).
+    roe_map: dict[str, float | None] = {}
+    roa_map: dict[str, float | None] = {}
+    roic_map: dict[str, float | None] = {}
+
+    for pt in roe_series:
+        d = pt.get("date", "")
+        if d:
+            roe_map[d] = pt.get("roe")
+    for pt in roa_series:
+        d = pt.get("date", "")
+        if d:
+            roa_map[d] = pt.get("roa")
+    for pt in roic_series:
+        d = pt.get("date", "")
+        if d:
+            roic_map[d] = pt.get("roic")
+
+    all_dates = sorted(set(roe_map) | set(roa_map) | set(roic_map))
+    if len(all_dates) < 2:
+        return None
+
+    # Forward-fill: for each date, carry forward the last known value.
+    labels: list[str] = []
+    roe_vals: list[float | None] = []
+    roa_vals: list[float | None] = []
+    roic_vals: list[float | None] = []
+
+    _last_roe: float | None = None
+    _last_roa: float | None = None
+    _last_roic: float | None = None
+
+    for d in all_dates:
+        labels.append(d)
+        v = roe_map.get(d)
+        _last_roe = v if v is not None else _last_roe
+        roe_vals.append(_last_roe * 100 if _last_roe is not None else None)
+
+        v = roa_map.get(d)
+        _last_roa = v if v is not None else _last_roa
+        roa_vals.append(_last_roa * 100 if _last_roa is not None else None)
+
+        v = roic_map.get(d)
+        _last_roic = v if v is not None else _last_roic
+        roic_vals.append(_last_roic * 100 if _last_roic is not None else None)
+
+    chart_data = {
+        "type": "line",
+        "data": {
+            "labels": labels,
+            "datasets": [
+                {
+                    "label": "ROIC %",
                     "data": roic_vals,
-                    "borderColor": "#f59e0b",
-                    "backgroundColor": "rgba(245,158,11,0.1)",
-                    "tension": 0.15,
+                    "borderColor": "#166534",   # dark green
+                    "backgroundColor": "rgba(22,101,52,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
                     "fill": False,
-                    "pointRadius": 3,
-                    "pointHoverRadius": 5,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
+                },
+                {
+                    "label": "ROE %",
+                    "data": roe_vals,
+                    "borderColor": "#65a30d",   # olive/khaki green
+                    "backgroundColor": "rgba(101,163,13,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
+                    "fill": False,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
+                },
+                {
+                    "label": "ROA %",
+                    "data": roa_vals,
+                    "borderColor": "#22c55e",   # bright green
+                    "backgroundColor": "rgba(34,197,94,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
+                    "fill": False,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
                 },
             ],
         },
@@ -1291,7 +1459,10 @@ def build_roe_trend_chart(company: str, annual_periods: list[dict]) -> dict | No
                     "beginAtZero": True,
                     "title": {"display": True, "text": "%"},
                 },
-                "x": {"title": {"display": True, "text": "Ano"}},
+                "x": {
+                    "title": {"display": True, "text": "Data"},
+                    "ticks": {"maxTicksLimit": 12},
+                },
             },
             "plugins": {
                 "legend": {"display": True, "position": "top"},
@@ -1302,11 +1473,11 @@ def build_roe_trend_chart(company: str, annual_periods: list[dict]) -> dict | No
 
     return {
         "type": "chart",
-        "title": f"ROE / ROA / ROIC — Tendência {years[0]}-{years[-1]}",
+        "title": f"ROIC / ROE / ROA — Evolução 5A — {company}",
         "description": (
-            "Evolução anual dos retornos. ROE = rentabilidade do capital dos "
-            "acionistas; ROA = eficiência do uso dos ativos; ROIC = retorno "
-            "sobre o capital investido (NOPAT / (PL + Dívida - Caixa))."
+            "Evolução histórica dos retornos (escada trimestral). ROIC = "
+            "retorno sobre capital investido; ROE = rentabilidade do capital "
+            "dos acionistas; ROA = eficiência do uso dos ativos."
         ),
         "chart_data": chart_data,
     }

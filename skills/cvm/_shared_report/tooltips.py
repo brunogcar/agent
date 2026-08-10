@@ -87,6 +87,12 @@ _METRIC_TOOLTIPS = {
     "dcf_intrinsic_value": "DCF = Σ FCF/(1+WACC)^t + TV. Valor intrínseco por ação. Margem de segurança vs preço atual.",
     "dcf_margin_of_safety": "Margem de Segurança = (Valor Intrínseco - Preço) / Valor Intrínseco. >25% subavaliado, <0 supervalorizado.",
     "irr": "TIR = taxa de retorno anualizada se comprar ao preço atual. >WACC subavaliado, <WACC supervalorizado. >15% atrativo.",
+    # [v1.10] Less-common per-share multiples (metric-name keys)
+    "apa": "P/Ativo = Preço / (Ativo Total / Ações). Market cap vs total asset base. <1 barato, >2 caro.",
+    "ppa": "P/Passivo = Preço / (Passivo Total / Ações). Market cap vs total liabilities. Maior = mais alavancado.",
+    "rbpa": "P/RB = Preço / (Resultado Bruto / Ações). Market cap vs gross profit. <1 barato, >3 caro.",
+    "p_cg": "P/Capital de Giro = Market Cap / Capital de Giro. Maior = mais caro vs capital de giro.",
+    "p_db": "P/Dívida Bruta = Market Cap / Dívida Bruta. Maior = mais caro vs dívida bruta.",
 }
 
 

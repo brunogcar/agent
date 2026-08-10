@@ -7,7 +7,7 @@ its own isolated MODES dict + to provide a stable import path for mode files:
 """
 from __future__ import annotations
 
-from skills._base import make_registry, build_manifest_modes, list_modes, get_mode
+from skills._base import make_registry
 
 # Create valuation's own isolated MODES dict + register_mode decorator.
 MODES, register_mode = make_registry()

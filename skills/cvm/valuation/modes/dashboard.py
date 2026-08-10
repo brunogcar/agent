@@ -40,6 +40,7 @@ from skills.cvm.valuation.report import (
     build_efficiency_growth_sections,
     build_dcf_sensitivity_section,
     build_roe_trend_chart,
+    build_pl_lpa_pvp_vpa_history_chart,
 )
 
 
@@ -55,6 +56,7 @@ def _safe_build(fn, *args):
                              f"{type(sections).__name__}"}]
         return sections
     except Exception as e:
+        print(f"[valuation] _safe_build({fn.__name__}) failed: {e}", flush=True)
         return [{"type": "text", "text": f"Section unavailable: {e}"}]
 
 
@@ -131,35 +133,8 @@ def dashboard(company: str = "") -> dict:
         company_header = build_company_header(company)
         price_chart = build_price_chart(company)
 
-        # [v1.9] Graham Number horizontal line overlay on the price chart.
-        if price_chart and isinstance(ratios_dict, dict):
-            graham_val = ratios_dict.get("graham_number")
-            if graham_val is not None:
-                try:
-                    graham_val = float(graham_val)
-                    chart_data = price_chart.get("chart_data") or {}
-                    data_block = chart_data.get("data") or {}
-                    labels = data_block.get("labels") or []
-                    datasets = data_block.get("datasets") or []
-                    datasets.append({
-                        "label": "Graham Number",
-                        "data": [graham_val] * len(labels),
-                        "borderColor": "#ef4444",
-                        "type": "line",
-                        "fill": False,
-                        "tension": 0,
-                        "pointRadius": 0,
-                        "borderWidth": 2,
-                        "borderDash": [8, 4],
-                    })
-                    data_block["datasets"] = datasets
-                    chart_data["data"] = data_block
-                    price_chart["chart_data"] = chart_data
-                    full_labels = price_chart.get("price_full_labels") or labels
-                    price_chart["price_full_labels"] = full_labels
-                except (TypeError, ValueError):
-                    pass
-
+        # [v1.10] Graham Number overlay REMOVED — the price chart now uses
+        # the default shared build_price_chart() output unmodified.
         _hdr_elapsed = (_dt.now() - _hdr_start).total_seconds()
         print(f"[valuation] Header+chart done ({_hdr_elapsed:.1f}s).", flush=True)
 
@@ -207,6 +182,14 @@ def dashboard(company: str = "") -> dict:
                 price_secs.append(s)
         price_secs.extend(per_share_sections)
 
+        # [v1.10] P/L, LPA, P/VP, VPA 5Y historical evolution chart.
+        try:
+            pl_lpa_chart = build_pl_lpa_pvp_vpa_history_chart(company)
+            if pl_lpa_chart:
+                price_secs.append(pl_lpa_chart)
+        except Exception as e:
+            print(f"[valuation] P/L-LPA history chart failed: {e}", flush=True)
+
         multiples_tab_sections: list[dict] = []
         if price_secs or ev_secs or less_secs:
             multiples_subtabs: list[dict] = []
@@ -243,9 +226,9 @@ def dashboard(company: str = "") -> dict:
                 if s.get("type") == "chart":
                     seen_returns_chart = True
 
-        # V5 — ROE / ROA / ROIC 5Y trend chart goes in the Retornos subtab.
+        # [v1.10] ROIC/ROE/ROA 5Y historical step-line chart (uses *_history()).
         try:
-            roe_trend = build_roe_trend_chart(company, annual_periods)
+            roe_trend = build_roe_trend_chart(company)
             if roe_trend:
                 ret_secs.append(roe_trend)
         except Exception as e:
