@@ -50,6 +50,7 @@ from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.bpa.intangibles import intangibles_at, intangibles_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: Tangible Book / Ação = (PL - Intangibles) / shares ──────
@@ -163,24 +164,15 @@ def p_tangible_book_history(company: str, date_from: str, date_to: str) -> list[
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Find most recent intangibles <= date
         intangibles = None
-        for ip in reversed(intan_periods_list):
-            if ip["date"] <= date:
-                intangibles = ip["intangibles"]
-                break
+        intangibles = lookup_lte(intan_periods_list, date, "intangibles")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute Tangible Book per Share = (PL - Intangibles) / shares
         tangible_book_ps = None

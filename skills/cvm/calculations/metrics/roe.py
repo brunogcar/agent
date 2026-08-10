@@ -35,6 +35,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_earnings_periods
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Ratio: ROE = earnings / PL ----------------------------------------------
@@ -115,17 +116,11 @@ def roe_history(company: str, date_from: str, date_to: str) -> list[dict]:
     for date in sorted_dates:
         # Find most recent TTM earnings <= date
         ttm = None
-        for ep in reversed(earnings_periods):
-            if ep["date"] <= date:
-                ttm = ep["ttm"]
-                break
+        ttm = lookup_lte(earnings_periods, date, "ttm")
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Compute ROE = earnings / PL
         roe = None

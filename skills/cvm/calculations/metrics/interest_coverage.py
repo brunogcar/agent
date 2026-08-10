@@ -54,6 +54,7 @@ from skills.cvm.calculations.engines.dre.financial_result import (
     financial_result_at, financial_result_periods,
 )
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def interest_coverage_at(company: str, date: str) -> float | None:
@@ -107,15 +108,9 @@ def interest_coverage_history(company: str, date_from: str, date_to: str) -> lis
     result = []
     for date in sorted(all_dates):
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
         ttm_fr = None
-        for fp in reversed(fr_periods_list):
-            if fp["date"] <= date:
-                ttm_fr = fp["ttm_financial_result"]
-                break
+        ttm_fr = lookup_lte(fr_periods_list, date, "ttm_financial_result")
         icr = None
         if (ttm_ebit is not None and ttm_ebit > 0
                 and ttm_fr is not None and ttm_fr < 0):

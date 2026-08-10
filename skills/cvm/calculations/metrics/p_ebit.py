@@ -35,6 +35,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: EBIT/Ação = EBIT / shares ───────────────────────────────
@@ -129,17 +130,11 @@ def p_ebit_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent TTM EBIT <= date
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute EBIT/Ação = TTM EBIT / shares
         ebit_ps = None

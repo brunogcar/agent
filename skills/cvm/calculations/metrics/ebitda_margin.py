@@ -21,6 +21,7 @@ from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.dfc.da import da_at, da_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def ebitda_margin_at(company: str, date: str) -> float | None:
@@ -57,20 +58,11 @@ def ebitda_margin_history(company: str, date_from: str, date_to: str) -> list[di
     result = []
     for date in sorted(all_dates):
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
         ttm_da = None
-        for dap in reversed(da_periods_list):
-            if dap["date"] <= date:
-                ttm_da = dap["ttm_da"]
-                break
+        ttm_da = lookup_lte(da_periods_list, date, "ttm_da")
         ttm_rev = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(revenue_periods_list, date, "ttm_rev")
         ebitda = None
         if ttm_ebit is not None and ttm_da is not None:
             ebitda = ttm_ebit + ttm_da

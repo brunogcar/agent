@@ -33,6 +33,7 @@ from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
 from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def dl_ebit_at(company: str, date: str) -> float | None:
@@ -79,24 +80,15 @@ def dl_ebit_history(company: str, date_from: str, date_to: str) -> list[dict]:
     for date in sorted(all_dates):
         # Find most recent debt <= date
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         # Find most recent cash <= date
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
 
         # Find most recent EBIT <= date
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         dl_ebit = None
         if (debt is not None and cash is not None

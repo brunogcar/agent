@@ -35,6 +35,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: DBPA = debt / shares ────────────────────────────────────
@@ -129,17 +130,11 @@ def dbpa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent debt <= date
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute DBPA = debt / shares
         dbpa = None

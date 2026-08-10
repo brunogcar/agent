@@ -23,6 +23,7 @@ from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
 from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.dfc.da import da_at, da_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def net_debt_ebitda_at(company: str, date: str) -> float | None:
@@ -64,25 +65,13 @@ def net_debt_ebitda_history(company: str, date_from: str, date_to: str) -> list[
     result = []
     for date in sorted(all_dates):
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
         ttm_da = None
-        for dap in reversed(da_periods_list):
-            if dap["date"] <= date:
-                ttm_da = dap["ttm_da"]
-                break
+        ttm_da = lookup_lte(da_periods_list, date, "ttm_da")
         ebitda = None
         if ttm_ebit is not None and ttm_da is not None:
             ebitda = ttm_ebit + ttm_da

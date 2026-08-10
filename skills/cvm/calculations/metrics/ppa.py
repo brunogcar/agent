@@ -41,6 +41,7 @@ from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, to
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: PPA = (total_assets - pl) / shares ──────────────────────
@@ -148,24 +149,15 @@ def ppa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent total_assets <= date
         total_assets = None
-        for tap in reversed(ta_periods_list):
-            if tap["date"] <= date:
-                total_assets = tap["total_assets"]
-                break
+        total_assets = lookup_lte(ta_periods_list, date, "total_assets")
 
         # Find most recent pl <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute PPA = (Ativo - PL) / shares
         ppa = None

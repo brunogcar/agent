@@ -24,6 +24,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dfc.capex import capex_at, capex_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def capex_revenue_at(company: str, date: str) -> float | None:
@@ -53,15 +54,9 @@ def capex_revenue_history(company: str, date_from: str, date_to: str) -> list[di
     result = []
     for date in sorted(all_dates):
         ttm_capex = None
-        for cp in reversed(capex_periods_list):
-            if cp["date"] <= date:
-                ttm_capex = cp["ttm_capex"]
-                break
+        ttm_capex = lookup_lte(capex_periods_list, date, "ttm_capex")
         ttm_rev = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(revenue_periods_list, date, "ttm_rev")
         capex_revenue = None
         if ttm_capex is not None and ttm_rev is not None and ttm_rev > 0:
             capex_revenue = ttm_capex / ttm_rev

@@ -49,6 +49,7 @@ from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
 from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
 from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at, investing_cf_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def _resolve_fcf(company: str, date: str) -> tuple[float | None, str | None]:
@@ -163,22 +164,13 @@ def ev_fcf_history(company: str, date_from: str, date_to: str) -> list[dict]:
         price = p["close"]
 
         shares = None
-        for sp in reversed(shares_periods_list):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(shares_periods_list, date, "shares")
 
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
 
         # Resolve FCO + FCI (alignment guard inside)
         ttm_fco = None

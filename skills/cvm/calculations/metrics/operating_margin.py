@@ -26,6 +26,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Ratio: Operating Margin = EBIT / revenue --------------------------------
@@ -90,16 +91,10 @@ def operating_margin_history(company: str, date_from: str, date_to: str) -> list
     result = []
     for date in sorted_dates:
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         ttm_rev = None
-        for rp in reversed(rev_periods):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(rev_periods, date, "ttm_rev")
 
         operating_margin = None
         if (ttm_ebit is not None and ttm_ebit > 0

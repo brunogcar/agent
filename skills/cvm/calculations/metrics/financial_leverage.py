@@ -29,6 +29,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def financial_leverage_at(company: str, date: str) -> float | None:
@@ -58,15 +59,9 @@ def financial_leverage_history(company: str, date_from: str, date_to: str) -> li
     result = []
     for date in sorted(all_dates):
         total_assets = None
-        for tap in reversed(ta_periods_list):
-            if tap["date"] <= date:
-                total_assets = tap["total_assets"]
-                break
+        total_assets = lookup_lte(ta_periods_list, date, "total_assets")
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
         financial_leverage = None
         if (total_assets is not None and total_assets > 0
             and pl is not None and pl > 0):

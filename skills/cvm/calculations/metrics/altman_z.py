@@ -77,6 +77,7 @@ from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_peri
 from skills.cvm.calculations.engines.price import price_at
 from skills.cvm.calculations.engines.shares import shares_at
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # Altman's coefficients (original 1968 manufacturing model)
@@ -227,24 +228,15 @@ def altman_z_history(company: str, date_from: str, date_to: str) -> list[dict]:
     for date in sorted_dates:
         # Find most recent total_assets <= date
         total_assets = None
-        for tp in reversed(total_assets_periods_list):
-            if tp["date"] <= date:
-                total_assets = tp["total_assets"]
-                break
+        total_assets = lookup_lte(total_assets_periods_list, date, "total_assets")
 
         # Find most recent TTM revenue <= date
         revenue = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                revenue = rp["ttm_rev"]
-                break
+        revenue = lookup_lte(revenue_periods_list, date, "ttm_rev")
 
         # Find most recent TTM EBIT <= date
         ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ebit = ep["ttm_ebit"]
-                break
+        ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         # Snapshot engines — call *_at for point-in-time values
         pl = pl_at(company, date)

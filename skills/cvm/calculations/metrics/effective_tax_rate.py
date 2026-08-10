@@ -27,6 +27,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.tax import tax_at, tax_periods
 from skills.cvm.calculations.engines.dre.ebt import ebt_at, ebt_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def effective_tax_rate_at(company: str, date: str) -> float | None:
@@ -74,15 +75,9 @@ def effective_tax_rate_history(company: str, date_from: str, date_to: str) -> li
     result = []
     for date in sorted(all_dates):
         ttm_tax = None
-        for tp in reversed(tax_periods_list):
-            if tp["date"] <= date:
-                ttm_tax = tp["ttm_tax"]
-                break
+        ttm_tax = lookup_lte(tax_periods_list, date, "ttm_tax")
         ttm_ebt = None
-        for ep in reversed(ebt_periods_list):
-            if ep["date"] <= date:
-                ttm_ebt = ep["ttm_ebt"]
-                break
+        ttm_ebt = lookup_lte(ebt_periods_list, date, "ttm_ebt")
 
         etr = None
         if (ttm_ebt is not None and ttm_ebt > 0

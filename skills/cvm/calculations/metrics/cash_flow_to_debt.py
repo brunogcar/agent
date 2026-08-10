@@ -27,6 +27,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
 from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def cash_flow_to_debt_at(company: str, date: str) -> float | None:
@@ -67,15 +68,9 @@ def cash_flow_to_debt_history(company: str, date_from: str, date_to: str) -> lis
     result = []
     for date in sorted(all_dates):
         ttm_fco = None
-        for fp in reversed(fco_periods_list):
-            if fp["date"] <= date:
-                ttm_fco = fp["ttm_fco"]
-                break
+        ttm_fco = lookup_lte(fco_periods_list, date, "ttm_fco")
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
         cfd = None
         if (ttm_fco is not None
             and debt is not None and debt > 0):

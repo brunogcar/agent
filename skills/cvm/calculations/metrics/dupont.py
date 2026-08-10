@@ -59,6 +59,7 @@ from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_peri
 from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def _compute_components(
@@ -175,31 +176,19 @@ def dupont_history(company: str, date_from: str, date_to: str) -> list[dict]:
     for date in sorted_dates:
         # Find most recent TTM earnings <= date
         earnings = None
-        for ep in reversed(earnings_periods):
-            if ep["date"] <= date:
-                earnings = ep["ttm"]
-                break
+        earnings = lookup_lte(earnings_periods, date, "ttm")
 
         # Find most recent TTM revenue <= date
         revenue = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                revenue = rp["ttm_rev"]
-                break
+        revenue = lookup_lte(revenue_periods_list, date, "ttm_rev")
 
         # Find most recent total assets <= date
         total_assets = None
-        for tp in reversed(total_assets_periods_list):
-            if tp["date"] <= date:
-                total_assets = tp["total_assets"]
-                break
+        total_assets = lookup_lte(total_assets_periods_list, date, "total_assets")
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         net_margin, asset_turnover, equity_multiplier, roe = _compute_components(
             earnings, revenue, total_assets, pl

@@ -49,6 +49,7 @@ from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, op
 from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at, investing_cf_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: FCF/Ação = (FCO + FCI) / shares ─────────────────────────
@@ -173,10 +174,7 @@ def p_fcf_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute FCF = FCO + FCI
         # Alignment guard: only sum if both resolved to the SAME period-end

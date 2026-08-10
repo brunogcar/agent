@@ -23,6 +23,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Per-share value: RPS = revenue / shares ----------------------------------
@@ -116,17 +117,11 @@ def rps_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent TTM revenue <= date
         ttm_rev = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(revenue_periods_list, date, "ttm_rev")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute RPS = TTM revenue / shares
         rps = None

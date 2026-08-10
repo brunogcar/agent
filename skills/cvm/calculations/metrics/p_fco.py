@@ -41,6 +41,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: FCO/Ação = FCO / shares ─────────────────────────────────
@@ -135,17 +136,11 @@ def p_fco_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent TTM FCO <= date
         ttm_fco = None
-        for fp in reversed(fco_periods_list):
-            if fp["date"] <= date:
-                ttm_fco = fp["ttm_fco"]
-                break
+        ttm_fco = lookup_lte(fco_periods_list, date, "ttm_fco")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute FCO/Ação = TTM FCO / shares
         fco_ps = None

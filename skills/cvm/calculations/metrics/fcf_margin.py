@@ -42,6 +42,7 @@ from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, op
 from skills.cvm.calculations.engines.dfc.investing_cf import investing_cf_at, investing_cf_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def _resolve_fcf(company: str, date: str) -> tuple[float | None, str | None]:
@@ -119,10 +120,7 @@ def fcf_margin_history(company: str, date_from: str, date_to: str) -> list[dict]
                 break
 
         ttm_rev = None
-        for rp in reversed(rev_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(rev_periods_list, date, "ttm_rev")
 
         # Alignment guard
         fcf = None

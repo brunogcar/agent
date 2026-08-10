@@ -31,6 +31,7 @@ from skills.cvm.calculations.engines.dividends import dividends_at, dividends_pe
 from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_earnings_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: DPA = trailing 12 months dividends per share ────────────
@@ -172,24 +173,15 @@ def dpa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent DPA <= date (step function)
         dpa = None
-        for dp in reversed(dpa_periods):
-            if dp["date"] <= date:
-                dpa = dp["dpa"]
-                break
+        dpa = lookup_lte(dpa_periods, date, "dpa")
 
         # Find most recent TTM earnings <= date
         ttm = None
-        for ep in reversed(earnings_periods):
-            if ep["date"] <= date:
-                ttm = ep["ttm"]
-                break
+        ttm = lookup_lte(earnings_periods, date, "ttm")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute Div Yield = DPA / price
         dy = None

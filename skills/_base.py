@@ -66,6 +66,7 @@ import importlib
 import inspect
 import os
 import sys
+import threading
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -568,6 +569,7 @@ def engine_cached(fn: Callable) -> Callable:
         # Build cache key from function name + positional args.
         # at_fn(company, date) → (fn_name, company, date)
         # periods_fn(company) → (fn_name, company) — no date arg
+        # periods_fn(company, date_from, date_to) → (fn_name, company, date_from, date_to)
         key = (fn.__name__,) + tuple(str(a) for a in args)
 
         # Layer 1: In-memory cache (within one engine_cache_scope)
@@ -579,19 +581,41 @@ def engine_cached(fn: Callable) -> Callable:
         # Layer 2: DB cache (persistent, cross-skill)
         if len(args) >= 2:
             # at_fn has (company, date) → use engine_cache table (REAL values)
-            try:
-                from data_sources._cache import is_valid, get_cached, set_cached
-                company = str(args[0])
-                date = str(args[1])
-                if is_valid(fn.__name__, company):
-                    db_cached = get_cached(fn.__name__, company, date)
-                    if db_cached is not None:
-                        if cache is not None:
-                            cache[key] = db_cached["value"]
-                            cache["_db_hits"] = cache.get("_db_hits", 0) + 1
-                        return db_cached["value"]
-            except Exception:
-                pass
+            # Check: is this an at_fn or a multi-arg periods_fn?
+            # at_fn returns float|None, periods_fn returns list|dict.
+            # Heuristic: if the function name ends with "_at", it's an at_fn.
+            # Otherwise, if len(args) > 2, it's a multi-arg periods_fn.
+            if fn.__name__.endswith("_at") or (len(args) == 2 and not fn.__name__.endswith("_periods")):
+                # at_fn → engine_cache table
+                try:
+                    from data_sources._cache import is_valid, get_cached, set_cached
+                    company = str(args[0])
+                    date = str(args[1])
+                    if is_valid(fn.__name__, company):
+                        db_cached = get_cached(fn.__name__, company, date)
+                        if db_cached is not None:
+                            if cache is not None:
+                                cache[key] = db_cached["value"]
+                                cache["_db_hits"] = cache.get("_db_hits", 0) + 1
+                            return db_cached["value"]
+                except Exception:
+                    pass
+            else:
+                # Multi-arg periods_fn (e.g., price_series(ticker, date_from, date_to))
+                # → use engine_periods table with args_suffix
+                try:
+                    from data_sources._cache import is_valid, get_cached_periods, set_cached_periods
+                    company = str(args[0])
+                    args_suffix = "_".join(str(a) for a in args[1:])
+                    if is_valid(fn.__name__, company):
+                        db_periods = get_cached_periods(fn.__name__, company, args_suffix)
+                        if db_periods is not None:
+                            if cache is not None:
+                                cache[key] = db_periods
+                                cache["_db_hits"] = cache.get("_db_hits", 0) + 1
+                            return db_periods
+                except Exception:
+                    pass
         elif len(args) == 1:
             # periods_fn has (company) → use engine_periods table (JSON values)
             try:
@@ -618,14 +642,24 @@ def engine_cached(fn: Callable) -> Callable:
 
         # Write to DB cache
         if len(args) >= 2:
-            # at_fn → engine_cache table (REAL value)
-            try:
-                from data_sources._cache import set_cached
-                company = str(args[0])
-                date = str(args[1])
-                set_cached(fn.__name__, company, date, result)
-            except Exception:
-                pass
+            if fn.__name__.endswith("_at") or (len(args) == 2 and not fn.__name__.endswith("_periods")):
+                # at_fn → engine_cache table (REAL value)
+                try:
+                    from data_sources._cache import set_cached
+                    company = str(args[0])
+                    date = str(args[1])
+                    set_cached(fn.__name__, company, date, result)
+                except Exception:
+                    pass
+            else:
+                # Multi-arg periods_fn → engine_periods table with args_suffix
+                try:
+                    from data_sources._cache import set_cached_periods
+                    company = str(args[0])
+                    args_suffix = "_".join(str(a) for a in args[1:])
+                    set_cached_periods(fn.__name__, company, result, args_suffix)
+                except Exception:
+                    pass
         elif len(args) == 1:
             # periods_fn → engine_periods table (JSON-serialized list)
             try:
@@ -725,7 +759,14 @@ _SYNC_CHECKED: ContextVar[bool] = ContextVar("_sync_checked", default=False)
 # [Tier 0 #3] Session-level bridge sync dedup — tracks which tickers have been
 # bridge-synced in this Python process. Prevents redundant bridge syncs when
 # multiple skills run for the same ticker (valuation → financials → historical).
+# [P1 #8] Protected by _bridge_lock to prevent TOCTOU race in concurrent execution.
 _BRIDGE_SYNCED_TICKERS: set[str] = set()
+_bridge_lock = threading.Lock()
+
+# [P1 #6] HEAD check cache — 60min TTL. Prevents 104 redundant HTTP HEAD requests
+# when running all 13 dashboards (13 skills × 8 CVM sources = 104 HEADs).
+_HEAD_CACHE: dict[str, tuple[bool, float]] = {}  # key → (has_new_data, timestamp)
+_HEAD_TTL = 3600  # 1 hour
 
 # Freshness window (hours). A source is "stale" if its last sync is older
 # than this, or if it has no sync_state entry at all.
@@ -839,6 +880,28 @@ def _cvm_has_new_data(source: str, year: int) -> bool:
     except Exception:
         # Network error, timeout, parse error → safer to sync than skip
         return True
+
+
+def _cvm_has_new_data_cached(source: str, year: int) -> bool:
+    """HEAD check with 60min in-memory TTL.
+
+    [P1 #6] Prevents 104 redundant HTTP HEAD requests when running all 13
+    dashboards (13 skills × 8 CVM sources = 104 HEADs). The HEAD result
+    only changes when CVM publishes new data (daily at most), so 1h TTL
+    is more than enough.
+    """
+    import time as _time
+    key = f"{source}:{year}"
+    now = _time.time()
+
+    if key in _HEAD_CACHE:
+        result, ts = _HEAD_CACHE[key]
+        if now - ts < _HEAD_TTL:
+            return result
+
+    result = _cvm_has_new_data(source, year)
+    _HEAD_CACHE[key] = (result, now)
+    return result
 
 
 def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -> dict:
@@ -985,7 +1048,7 @@ def ensure_fresh(
         print(f"  [sync] Checking CVM HEAD for {len(cvm_sources_in_list)} sources (parallel)...", flush=True)
 
         def _do_head_check(src):
-            return src, _cvm_has_new_data(src, current_year)
+            return src, _cvm_has_new_data_cached(src, current_year)
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(_do_head_check, s): s for s in cvm_sources_in_list}
@@ -1021,11 +1084,13 @@ def ensure_fresh(
         # [Tier 0 #3] Bridge dedup: skip bridge sync if this ticker was already
         # synced in this Python session (valuation → financials → historical all
         # sync bridge for the same PETR4 — only the first should actually sync).
+        # [P1 #8] Protected by _bridge_lock to prevent TOCTOU race.
         if source == "bridge" and company:
-            if company.upper() in _BRIDGE_SYNCED_TICKERS:
-                print(f"  [sync] bridge: fresh (synced earlier this session for {company})", flush=True)
-                fresh.append(source)
-                continue
+            with _bridge_lock:
+                if company.upper() in _BRIDGE_SYNCED_TICKERS:
+                    print(f"  [sync] bridge: fresh (synced earlier this session for {company})", flush=True)
+                    fresh.append(source)
+                    continue
 
         if not _source_is_stale(source):
             _ts = _source_last_sync(source)
@@ -1051,8 +1116,10 @@ def ensure_fresh(
         if sync_status in ("ok", "skipped"):
             synced.append(source)
             # [Tier 0 #3] Record bridge sync for session dedup
+            # [P1 #8] Protected by _bridge_lock
             if source == "bridge" and company:
-                _BRIDGE_SYNCED_TICKERS.add(company.upper())
+                with _bridge_lock:
+                    _BRIDGE_SYNCED_TICKERS.add(company.upper())
         else:
             errors.append({
                 "source": source,

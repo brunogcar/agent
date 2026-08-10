@@ -139,9 +139,10 @@ CREATE INDEX IF NOT EXISTS idx_engine_cnpj ON engine_cache(cnpj);
 CREATE TABLE IF NOT EXISTS engine_periods (
     engine_name   TEXT NOT NULL,
     cnpj          TEXT NOT NULL,
+    args_suffix   TEXT NOT NULL DEFAULT '',
     periods_json  TEXT NOT NULL,
     computed_at   TEXT NOT NULL,
-    PRIMARY KEY (engine_name, cnpj)
+    PRIMARY KEY (engine_name, cnpj, args_suffix)
 );
 
 CREATE TABLE IF NOT EXISTS engine_cache_meta (
@@ -151,41 +152,92 @@ CREATE TABLE IF NOT EXISTS engine_cache_meta (
     cached_at       TEXT NOT NULL,
     PRIMARY KEY (engine_name, cnpj)
 );
-
-CREATE TABLE IF NOT EXISTS sync_versions (
-    source     TEXT NOT NULL,
-    cnpj       TEXT,
-    version    TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (source, cnpj)
-);
 """
 
 
-# ── Connection (thread-safe via check_same_thread=False + lock) ──────────────
+# ── Connection (WAL + per-thread connection pool) ────────────────────────────
+# [P2 #10] Drop the global threading.Lock — WAL mode allows concurrent readers
+# + 1 writer. Per-thread connection pool avoids opening/closing on every call.
 
-_lock = threading.Lock()
+import threading as _threading
+
+_tls = _threading.local()
 
 
 def connect(read_only: bool = False) -> sqlite3.Connection:
-    """Open a connection to engine_cache.db.
+    """Open or reuse a connection to engine_cache.db.
+
+    Uses per-thread connection pooling (threading.local) + WAL mode for
+    concurrent read access without a global lock.
 
     Args:
         read_only: If True, opens in read-only mode (for get/is_valid queries).
                    If False, opens for writes (creates the DB + schema if missing).
     """
+    cache_key = f"{'ro' if read_only else 'rw'}"
+    conn = getattr(_tls, cache_key, None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")
+            return conn
+        except Exception:
+            # Connection went stale — recreate
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+
     path = db_path()
     if read_only:
         if not path.exists():
             raise FileNotFoundError(f"Cache DB not found at {path}")
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True,
+                               check_same_thread=False, timeout=10)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(path))
+        conn = sqlite3.connect(str(path), check_same_thread=False, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(_SCHEMA)
         conn.commit()
     conn.row_factory = sqlite3.Row
+    setattr(_tls, cache_key, conn)
     return conn
+
+
+# Lock for fingerprint cache + bridge dedup (NOT for DB ops — WAL handles that)
+_aux_lock = _threading.Lock()
+
+
+# ── Fingerprint cache (60s TTL) ──────────────────────────────────────────────
+# [P1 #5] Cache fingerprints in-memory so we don't open DFP/ITR DBs on every
+# is_valid() call. The fingerprint only changes when CVM publishes a new filing
+# (quarterly max), so 60s TTL eliminates 99% of fingerprint queries.
+
+_FP_TTL = 60  # seconds
+_fp_cache: dict[str, tuple[str | None, float]] = {}  # key → (fingerprint, timestamp)
+
+
+def _get_cached_fingerprint(engine_name: str, company: str) -> str | None:
+    """Get fingerprint with 60s in-memory TTL."""
+    key = f"{engine_name}|{company}"
+    now = _threading.get_ident()  # not used for time, just to get module
+    import time as _time
+    now = _time.time()
+
+    with _aux_lock:
+        if key in _fp_cache:
+            fp, ts = _fp_cache[key]
+            if now - ts < _FP_TTL:
+                return fp
+
+    fp = get_current_fingerprint_uncached(engine_name, company)
+
+    with _aux_lock:
+        _fp_cache[key] = (fp, now)
+
+    return fp
 
 
 # ── Escape hatch ─────────────────────────────────────────────────────────────
@@ -350,14 +402,36 @@ _ENGINE_SOURCE_MAP: dict[str, str] = {
     # FRE engines
     "shares": "fre",
     # B3 dividends engine — uses cotahist-style (per-ticker)
-    "dividends": "cotahist",
+    "dividends": "dividends",
+}
+
+# [P1 #7] BCB SGS engine → series code mapping
+_SGS_ENGINE_TO_SERIES: dict[str, int] = {
+    "selic": 11,
 }
 
 
-def get_current_fingerprint(engine_name: str, company: str) -> str | None:
-    """Get the current data fingerprint for an engine + company.
+def _get_dividends_fingerprint(ticker: str) -> str | None:
+    """Returns MAX(data_pagamento) for dividends — only changes when a new dividend is paid."""
+    try:
+        from data_sources.b3.dividends.catalog import connect as connect_div
+        conn = connect_div(read_only=True)
+        try:
+            row = conn.execute(
+                "SELECT MAX(data_pagamento) as max_date FROM proventos WHERE ticker = ?",
+                (ticker,),
+            ).fetchone()
+            return row["max_date"] if row and row["max_date"] else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
 
-    Returns a string like "3|2025-12-31" (DFP) or "2026-08-09" (COTAHIST).
+
+def get_current_fingerprint_uncached(engine_name: str, company: str) -> str | None:
+    """Get the current data fingerprint for an engine + company (no TTL cache).
+
+    Returns a string like "3|2025-12-31|47|1250" (DFP) or "2026-08-09" (COTAHIST).
     Returns None if the fingerprint can't be determined (→ cache miss).
     """
     source = _ENGINE_SOURCE_MAP.get(engine_name, "dfp")
@@ -368,11 +442,14 @@ def get_current_fingerprint(engine_name: str, company: str) -> str | None:
             return None
         return _get_dfp_fingerprint(cnpj)
     elif source == "cotahist":
-        # For cotahist, use the ticker directly (already uppercase)
         ticker = company.strip().upper()
         return _get_cotahist_fingerprint(ticker)
+    elif source == "dividends":
+        ticker = company.strip().upper()
+        return _get_dividends_fingerprint(ticker)
     elif source == "sgs":
-        return _get_sgs_fingerprint(11)  # Selic series
+        series_code = _SGS_ENGINE_TO_SERIES.get(engine_name, 11)
+        return _get_sgs_fingerprint(series_code)
     elif source == "fre":
         cnpj = resolve_cnpj(company)
         if not cnpj:
@@ -380,6 +457,27 @@ def get_current_fingerprint(engine_name: str, company: str) -> str | None:
         return _get_fre_fingerprint(cnpj)
     else:
         return None
+
+
+def get_current_fingerprint(engine_name: str, company: str) -> str | None:
+    """Get the current data fingerprint (with 60s in-memory TTL cache)."""
+    return _get_cached_fingerprint(engine_name, company)
+
+
+# ── Strict JSON encoder ──────────────────────────────────────────────────────
+# [P1 #5] Replace default=str with a strict encoder that raises on unknown types
+# instead of silently stringifying them (which could corrupt the cache).
+
+class _StrictJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        if isinstance(obj, (set, frozenset)):
+            return list(obj)
+        raise TypeError(
+            f"Object of type {type(obj).__name__} is not JSON serializable. "
+            f"Engine periods must return list[dict] of str/float/int values."
+        )
 
 
 # ── Cache read/write ─────────────────────────────────────────────────────────
@@ -402,22 +500,16 @@ def is_valid(engine_name: str, company: str) -> bool:
         return False  # can't determine → don't trust cache
 
     try:
-        with _lock:
-            conn = connect(read_only=True)
-            try:
-                row = conn.execute(
-                    "SELECT source_version FROM engine_cache_meta "
-                    "WHERE engine_name = ? AND cnpj = ?",
-                    (engine_name, cnpj),
-                ).fetchone()
-                if row is None:
-                    return False  # no cache entry → miss
-                return row["source_version"] == current_fp
-            finally:
-                conn.close()
-    except FileNotFoundError:
-        return False
-    except Exception:
+        conn = connect(read_only=True)
+        row = conn.execute(
+            "SELECT source_version FROM engine_cache_meta "
+            "WHERE engine_name = ? AND cnpj = ?",
+            (engine_name, cnpj),
+        ).fetchone()
+        if row is None:
+            return False  # no cache entry → miss
+        return row["source_version"] == current_fp
+    except (FileNotFoundError, Exception):
         return False
 
 
@@ -435,77 +527,64 @@ def get_cached(engine_name: str, company: str, date: str) -> dict | None:
         return None
 
     try:
-        with _lock:
-            conn = connect(read_only=True)
-            try:
-                row = conn.execute(
-                    "SELECT value, computed_at FROM engine_cache "
-                    "WHERE engine_name = ? AND cnpj = ? AND date = ?",
-                    (engine_name, cnpj, str(date)),
-                ).fetchone()
-                if row is None:
-                    return None
-                return {"value": row["value"], "computed_at": row["computed_at"]}
-            finally:
-                conn.close()
-    except FileNotFoundError:
-        return None
-    except Exception:
+        conn = connect(read_only=True)
+        row = conn.execute(
+            "SELECT value, computed_at FROM engine_cache "
+            "WHERE engine_name = ? AND cnpj = ? AND date = ?",
+            (engine_name, cnpj, str(date)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"value": row["value"], "computed_at": row["computed_at"]}
+    except (FileNotFoundError, Exception):
         return None
 
 
 def set_cached(engine_name: str, company: str, date: str, value: float | None) -> None:
-    """Write an engine value to the cache + update the meta fingerprint.
-
-    Called after computing a fresh engine value. Also updates
-    engine_cache_meta with the current fingerprint so future is_valid()
-    calls return True (until the underlying data changes).
-    """
+    """Write an engine value to the cache + update the meta fingerprint."""
     if not is_enabled():
         return
 
     cnpj = resolve_cnpj(company)
     if not cnpj:
-        return  # can't cache without CNPJ
+        return
 
     current_fp = get_current_fingerprint(engine_name, company)
     if current_fp is None:
-        return  # can't cache without fingerprint
+        return
 
     now = datetime.now().isoformat()
 
     try:
-        with _lock:
-            conn = connect(read_only=False)
-            try:
-                # Write the value
-                conn.execute(
-                    "INSERT OR REPLACE INTO engine_cache "
-                    "(engine_name, cnpj, date, value, computed_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (engine_name, cnpj, str(date), value, now),
-                )
-                # Update the meta fingerprint
-                conn.execute(
-                    "INSERT OR REPLACE INTO engine_cache_meta "
-                    "(engine_name, cnpj, source_version, cached_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (engine_name, cnpj, current_fp, now),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+        conn = connect(read_only=False)
+        conn.execute(
+            "INSERT OR REPLACE INTO engine_cache "
+            "(engine_name, cnpj, date, value, computed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (engine_name, cnpj, str(date), value, now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO engine_cache_meta "
+            "(engine_name, cnpj, source_version, cached_at) "
+            "VALUES (?, ?, ?, ?)",
+            (engine_name, cnpj, current_fp, now),
+        )
+        conn.commit()
     except Exception:
         pass  # never break the engine call on cache write failure
 
 
 # ── Cache read/write — *_periods() (JSON-serialized lists) ───────────────────
 
-def get_cached_periods(engine_name: str, company: str) -> list | dict | None:
+def get_cached_periods(engine_name: str, company: str, args_suffix: str = "") -> list | dict | None:
     """Get cached *_periods() result (JSON-deserialized).
 
-    Used by the @engine_cached wrapper for periods_fn(company) calls.
-    Returns the deserialized list/dict, or None if not cached / invalid.
+    Args:
+        engine_name: Engine name (e.g., "price")
+        company: Company ticker/CNPJ
+        args_suffix: For multi-arg periods functions (e.g., price_series(ticker, date_from, date_to)),
+                     this is the serialized suffix of extra args (e.g., "2021-01-01_2026-01-01").
+                     For 1-arg periods functions, this is "" (empty string).
     """
     if not is_enabled():
         return None
@@ -513,31 +592,22 @@ def get_cached_periods(engine_name: str, company: str) -> list | dict | None:
     if not cnpj:
         return None
     try:
-        with _lock:
-            conn = connect(read_only=True)
-            try:
-                row = conn.execute(
-                    "SELECT periods_json FROM engine_periods "
-                    "WHERE engine_name = ? AND cnpj = ?",
-                    (engine_name, cnpj),
-                ).fetchone()
-                if row is None:
-                    return None
-                import json as _json
-                return _json.loads(row["periods_json"])
-            finally:
-                conn.close()
+        conn = connect(read_only=True)
+        row = conn.execute(
+            "SELECT periods_json FROM engine_periods "
+            "WHERE engine_name = ? AND cnpj = ? AND args_suffix = ?",
+            (engine_name, cnpj, args_suffix),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["periods_json"])
     except (FileNotFoundError, Exception):
         return None
 
 
-def set_cached_periods(engine_name: str, company: str, periods: list | dict) -> None:
-    """Write *_periods() result to cache (JSON-serialized).
-
-    Called after computing a fresh periods_fn() result. Also updates
-    engine_cache_meta with the current fingerprint so future is_valid()
-    calls return True (until the underlying data changes).
-    """
+def set_cached_periods(engine_name: str, company: str, periods: list | dict,
+                       args_suffix: str = "") -> None:
+    """Write *_periods() result to cache (JSON-serialized with strict encoder)."""
     if not is_enabled():
         return
     cnpj = resolve_cnpj(company)
@@ -548,24 +618,19 @@ def set_cached_periods(engine_name: str, company: str, periods: list | dict) -> 
         return
     now = datetime.now().isoformat()
     try:
-        import json as _json
-        periods_json = _json.dumps(periods, default=str)
-        with _lock:
-            conn = connect(read_only=False)
-            try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO engine_periods "
-                    "(engine_name, cnpj, periods_json, computed_at) VALUES (?, ?, ?, ?)",
-                    (engine_name, cnpj, periods_json, now),
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO engine_cache_meta "
-                    "(engine_name, cnpj, source_version, cached_at) VALUES (?, ?, ?, ?)",
-                    (engine_name, cnpj, current_fp, now),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+        periods_json = json.dumps(periods, cls=_StrictJSONEncoder)
+        conn = connect(read_only=False)
+        conn.execute(
+            "INSERT OR REPLACE INTO engine_periods "
+            "(engine_name, cnpj, args_suffix, periods_json, computed_at) VALUES (?, ?, ?, ?, ?)",
+            (engine_name, cnpj, args_suffix, periods_json, now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO engine_cache_meta "
+            "(engine_name, cnpj, source_version, cached_at) VALUES (?, ?, ?, ?)",
+            (engine_name, cnpj, current_fp, now),
+        )
+        conn.commit()
     except Exception:
         pass  # never break on cache write failure
 
@@ -573,39 +638,24 @@ def set_cached_periods(engine_name: str, company: str, periods: list | dict) -> 
 # ── Maintenance ──────────────────────────────────────────────────────────────
 
 def clear_cache(engine_name: str | None = None, cnpj: str | None = None) -> int:
-    """Clear cache entries. Returns count of deleted rows.
-
-    Args:
-        engine_name: If specified, only clear this engine. None = all engines.
-        cnpj: If specified, only clear this company. None = all companies.
-    """
+    """Clear cache entries. Returns count of deleted rows."""
     try:
-        with _lock:
-            conn = connect(read_only=False)
-            try:
-                clauses = []
-                params = []
-                if engine_name:
-                    clauses.append("engine_name = ?")
-                    params.append(engine_name)
-                if cnpj:
-                    clauses.append("cnpj = ?")
-                    params.append(cnpj)
-                where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        conn = connect(read_only=False)
+        clauses = []
+        params = []
+        if engine_name:
+            clauses.append("engine_name = ?")
+            params.append(engine_name)
+        if cnpj:
+            clauses.append("cnpj = ?")
+            params.append(cnpj)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-                cur = conn.execute(
-                    f"DELETE FROM engine_cache {where}", params
-                )
-                conn.execute(
-                    f"DELETE FROM engine_periods {where}", params
-                )
-                conn.execute(
-                    f"DELETE FROM engine_cache_meta {where}", params
-                )
-                conn.commit()
-                return cur.rowcount
-            finally:
-                conn.close()
+        cur = conn.execute(f"DELETE FROM engine_cache {where}", params)
+        conn.execute(f"DELETE FROM engine_periods {where}", params)
+        conn.execute(f"DELETE FROM engine_cache_meta {where}", params)
+        conn.commit()
+        return cur.rowcount
     except Exception:
         return 0
 
@@ -613,33 +663,19 @@ def clear_cache(engine_name: str | None = None, cnpj: str | None = None) -> int:
 def cache_stats() -> dict:
     """Return cache statistics for monitoring."""
     try:
-        with _lock:
-            conn = connect(read_only=True)
-            try:
-                total = conn.execute(
-                    "SELECT COUNT(*) as n FROM engine_cache"
-                ).fetchone()["n"]
-                periods_total = conn.execute(
-                    "SELECT COUNT(*) as n FROM engine_periods"
-                ).fetchone()["n"]
-                engines = conn.execute(
-                    "SELECT COUNT(DISTINCT engine_name) as n FROM engine_cache"
-                ).fetchone()["n"]
-                companies = conn.execute(
-                    "SELECT COUNT(DISTINCT cnpj) as n FROM engine_cache"
-                ).fetchone()["n"]
-                return {
-                    "total_at_entries": total,
-                    "total_periods_entries": periods_total,
-                    "engines_cached": engines,
-                    "companies_cached": companies,
-                    "db_path": str(db_path()),
-                }
-            finally:
-                conn.close()
-    except FileNotFoundError:
-        return {"total_entries": 0, "engines_cached": 0, "companies_cached": 0,
-                "db_path": str(db_path())}
+        conn = connect(read_only=True)
+        total = conn.execute("SELECT COUNT(*) as n FROM engine_cache").fetchone()["n"]
+        periods_total = conn.execute("SELECT COUNT(*) as n FROM engine_periods").fetchone()["n"]
+        engines = conn.execute("SELECT COUNT(DISTINCT engine_name) as n FROM engine_cache").fetchone()["n"]
+        companies = conn.execute("SELECT COUNT(DISTINCT cnpj) as n FROM engine_cache").fetchone()["n"]
+        return {
+            "total_at_entries": total,
+            "total_periods_entries": periods_total,
+            "engines_cached": engines,
+            "companies_cached": companies,
+            "db_path": str(db_path()),
+        }
     except Exception:
-        return {"total_entries": 0, "engines_cached": 0, "companies_cached": 0,
-                "db_path": str(db_path()), "error": "stats failed"}
+        return {"total_at_entries": 0, "total_periods_entries": 0,
+                "engines_cached": 0, "companies_cached": 0,
+                "db_path": str(db_path())}

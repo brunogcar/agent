@@ -30,6 +30,7 @@ from skills.cvm.calculations.engines.bpp.current_liabilities import (
     current_liabilities_periods,
 )
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def cash_ratio_at(company: str, date: str) -> float | None:
@@ -69,15 +70,9 @@ def cash_ratio_history(company: str, date_from: str, date_to: str) -> list[dict]
     result = []
     for date in sorted(all_dates):
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
         current_liab = None
-        for clp in reversed(cl_periods_list):
-            if clp["date"] <= date:
-                current_liab = clp["current_liabilities"]
-                break
+        current_liab = lookup_lte(cl_periods_list, date, "current_liabilities")
         cash_ratio = None
         if (cash is not None
             and current_liab is not None and current_liab > 0):

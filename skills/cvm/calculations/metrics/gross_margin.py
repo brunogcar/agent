@@ -26,6 +26,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_at, gross_profit_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Ratio: Gross Margin = gross_profit / revenue ----------------------------
@@ -90,16 +91,10 @@ def gross_margin_history(company: str, date_from: str, date_to: str) -> list[dic
     result = []
     for date in sorted_dates:
         ttm_gp = None
-        for gp in reversed(gp_periods):
-            if gp["date"] <= date:
-                ttm_gp = gp["ttm_gp"]
-                break
+        ttm_gp = lookup_lte(gp_periods, date, "ttm_gp")
 
         ttm_rev = None
-        for rp in reversed(rev_periods):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(rev_periods, date, "ttm_rev")
 
         gross_margin = None
         if (ttm_gp is not None and ttm_gp > 0

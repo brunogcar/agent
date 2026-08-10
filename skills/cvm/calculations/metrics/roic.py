@@ -39,6 +39,7 @@ from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.metrics.effective_tax_rate import effective_tax_rate_at
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # Maximum effective tax rate we apply when computing NOPAT. Brazil's combined
@@ -172,45 +173,27 @@ def roic_history(company: str, date_from: str, date_to: str) -> list[dict]:
     for date in sorted_dates:
         # Find most recent EBIT <= date
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         # Find most recent tax <= date
         ttm_tax = None
-        for tp in reversed(tax_periods_list):
-            if tp["date"] <= date:
-                ttm_tax = tp["ttm_tax"]
-                break
+        ttm_tax = lookup_lte(tax_periods_list, date, "ttm_tax")
 
         # Find most recent EBT <= date (v2.0)
         ttm_ebt = None
-        for ep in reversed(ebt_periods_list):
-            if ep["date"] <= date:
-                ttm_ebt = ep["ttm_ebt"]
-                break
+        ttm_ebt = lookup_lte(ebt_periods_list, date, "ttm_ebt")
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Find most recent debt <= date
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         # Find most recent cash <= date (v1.9)
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
 
         # Compute NOPAT = EBIT × (1 - effective_tax_rate)  (v2.0)
         # NOTE: This duplicates the tax-rate formula from effective_tax_rate_at()

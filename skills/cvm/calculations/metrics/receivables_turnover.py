@@ -43,6 +43,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations.engines.bpa.receivables import receivables_at, receivables_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def receivables_turnover_at(company: str, date: str) -> float | None:
@@ -87,15 +88,9 @@ def receivables_turnover_history(company: str, date_from: str, date_to: str) -> 
     result = []
     for date in sorted(all_dates):
         ttm_rev = None
-        for rp in reversed(rev_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(rev_periods_list, date, "ttm_rev")
         receivables = None
-        for rp in reversed(recv_periods_list):
-            if rp["date"] <= date:
-                receivables = rp["receivables"]
-                break
+        receivables = lookup_lte(recv_periods_list, date, "receivables")
         rto = None
         if (ttm_rev is not None and ttm_rev > 0
                 and receivables is not None and receivables > 0):

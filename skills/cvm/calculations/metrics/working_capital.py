@@ -39,6 +39,7 @@ from skills.cvm.calculations.engines.bpp.current_liabilities import (
     current_liabilities_periods,
 )
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def working_capital_at(company: str, date: str) -> float | None:
@@ -79,15 +80,9 @@ def working_capital_history(company: str, date_from: str, date_to: str) -> list[
     result = []
     for date in sorted(all_dates):
         current_assets = None
-        for ap in reversed(assets_periods_list):
-            if ap["date"] <= date:
-                current_assets = ap["current_assets"]
-                break
+        current_assets = lookup_lte(assets_periods_list, date, "current_assets")
         current_liab = None
-        for clp in reversed(cl_periods_list):
-            if clp["date"] <= date:
-                current_liab = clp["current_liabilities"]
-                break
+        current_liab = lookup_lte(cl_periods_list, date, "current_liabilities")
         working_capital = None
         if current_assets is not None and current_liab is not None:
             working_capital = current_assets - current_liab

@@ -35,6 +35,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def gross_debt_equity_at(company: str, date: str) -> float | None:
@@ -64,15 +65,9 @@ def gross_debt_equity_history(company: str, date_from: str, date_to: str) -> lis
     result = []
     for date in sorted(all_dates):
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
         gross_debt_equity = None
         if (debt is not None and debt >= 0
             and pl is not None and pl > 0):

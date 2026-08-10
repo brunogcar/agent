@@ -47,6 +47,7 @@ from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
 from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Per-share value: EBIT per share = EBIT / shares --------------------------
@@ -161,31 +162,19 @@ def ev_ebit_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(shares_periods_list):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(shares_periods_list, date, "shares")
 
         # Find most recent debt <= date
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         # Find most recent cash <= date
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
 
         # Find most recent EBIT <= date
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         # Compute EBIT per share
         ebit_ps = None

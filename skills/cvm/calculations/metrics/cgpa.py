@@ -39,6 +39,7 @@ from skills.cvm.calculations.engines.bpp.current_liabilities import (
 )
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: CGPA = (current_assets - current_liabilities) / shares ──
@@ -145,24 +146,15 @@ def cgpa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent current_assets <= date
         ca = None
-        for cap in reversed(ca_periods_list):
-            if cap["date"] <= date:
-                ca = cap["current_assets"]
-                break
+        ca = lookup_lte(ca_periods_list, date, "current_assets")
 
         # Find most recent current_liabilities <= date
         cl = None
-        for clp in reversed(cl_periods_list):
-            if clp["date"] <= date:
-                cl = clp["current_liabilities"]
-                break
+        cl = lookup_lte(cl_periods_list, date, "current_liabilities")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute CGPA = (CA - CL) / shares
         cgpa = None

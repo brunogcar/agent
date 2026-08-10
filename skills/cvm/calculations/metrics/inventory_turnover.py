@@ -54,6 +54,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.cogs import cogs_at, cogs_periods
 from skills.cvm.calculations.engines.bpa.inventory import inventory_at, inventory_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def inventory_turnover_at(company: str, date: str) -> float | None:
@@ -98,15 +99,9 @@ def inventory_turnover_history(company: str, date_from: str, date_to: str) -> li
     result = []
     for date in sorted(all_dates):
         ttm_cogs = None
-        for cp in reversed(cogs_periods_list):
-            if cp["date"] <= date:
-                ttm_cogs = cp["ttm_cogs"]
-                break
+        ttm_cogs = lookup_lte(cogs_periods_list, date, "ttm_cogs")
         inventory = None
-        for ip in reversed(inv_periods_list):
-            if ip["date"] <= date:
-                inventory = ip["inventory"]
-                break
+        inventory = lookup_lte(inv_periods_list, date, "inventory")
         ito = None
         if (ttm_cogs is not None
                 and inventory is not None and inventory > 0):

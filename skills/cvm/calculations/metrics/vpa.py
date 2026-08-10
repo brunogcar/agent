@@ -23,6 +23,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: VPA = PL / shares ───────────────────────────────────────
@@ -115,17 +116,11 @@ def vpa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute VPA = PL / shares
         vpa = None

@@ -27,6 +27,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.selic import selic_at, selic_periods
 from skills.cvm.calculations.engines.beta import beta_stats_at, beta_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # Default equity risk premium for Brazil (Damodaran 2024: ~5.5% for emerging markets)
@@ -119,10 +120,7 @@ def coe_history(company: str, date_from: str, date_to: str,
     for date in sorted_dates:
         # Find most recent Selic <= date (selic is in percent -> convert to fraction)
         selic_pct = None
-        for s in reversed(selic_data):
-            if s["date"] <= date:
-                selic_pct = s["selic"]
-                break
+        selic_pct = lookup_lte(selic_data, date, "selic")
         selic_frac = selic_pct / 100.0 if selic_pct is not None else None
 
         # Find most recent Beta <= date

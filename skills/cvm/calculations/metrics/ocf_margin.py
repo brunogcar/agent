@@ -30,6 +30,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at, operating_cf_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def ocf_margin_at(company: str, date: str) -> float | None:
@@ -70,15 +71,9 @@ def ocf_margin_history(company: str, date_from: str, date_to: str) -> list[dict]
     result = []
     for date in sorted(all_dates):
         ttm_fco = None
-        for fp in reversed(fco_periods_list):
-            if fp["date"] <= date:
-                ttm_fco = fp["ttm_fco"]
-                break
+        ttm_fco = lookup_lte(fco_periods_list, date, "ttm_fco")
         ttm_rev = None
-        for rp in reversed(rev_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(rev_periods_list, date, "ttm_rev")
         ocf_margin = None
         if (ttm_fco is not None
             and ttm_rev is not None and ttm_rev > 0):

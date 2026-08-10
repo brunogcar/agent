@@ -34,6 +34,7 @@ from skills.cvm.calculations.engines.price import price_at, price_series
 from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_at, gross_profit_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: RBPA = gross_profit / shares ────────────────────────────
@@ -128,17 +129,11 @@ def rbpa_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent TTM gross profit <= date
         ttm_gp = None
-        for gp in reversed(gp_periods_list):
-            if gp["date"] <= date:
-                ttm_gp = gp["ttm_gp"]
-                break
+        ttm_gp = lookup_lte(gp_periods_list, date, "ttm_gp")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute RBPA = TTM GP / shares
         rbpa = None

@@ -394,24 +394,27 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def _get_company_fingerprint(cnpj: str) -> str | None:
     """Get a data fingerprint for a company across DFP + ITR databases.
 
-    Returns MAX(versao) || '|' || MAX(data_fim_exerc) for that CNPJ.
+    Returns MAX(versao)|MAX(data_fim_exerc)|SUM(versao)|COUNT(*) for that CNPJ.
     This is used by data_sources._cache to determine if cached engine
     results are still valid.
 
     The fingerprint changes when:
-      - A new filing version is published (versao increments)
-      - A new period is added (data_fim_exerc changes)
-      - A restated filing replaces an old one
+      - A new filing version is published (MAX(versao) increments)
+      - A new period is added (MAX(data_fim_exerc) changes, COUNT(*) increments)
+      - A restated filing replaces an old one (SUM(versao) changes even if
+        MAX(versao) doesn't — this catches per-period restatements that the
+        old MAX-only fingerprint missed)
+      - A filing is withdrawn (COUNT(*) drops)
 
-    Queries both DFP and ITR (taking the MAX across both) so a new
+    Queries both DFP and ITR (taking the MAX/SUM/COUNT across both) so a new
     quarterly ITR filing invalidates the cache even if DFP hasn't changed.
 
     Args:
         cnpj: 14-digit CNPJ string (digits only).
 
     Returns:
-        Fingerprint string like "3|2025-12-31", or None if the company
-        isn't found in either database.
+        Fingerprint string like "3|2025-12-31|47|1250", or None if the
+        company isn't found in either database.
     """
     if not cnpj:
         return None
@@ -423,6 +426,8 @@ def _get_company_fingerprint(cnpj: str) -> str | None:
 
     max_versao = 0
     max_data_fim = ""
+    sum_versao = 0
+    count_rows = 0
 
     for connect_fn in (connect_dfp, connect_itr):
         try:
@@ -438,9 +443,12 @@ def _get_company_fingerprint(cnpj: str) -> str | None:
                 emp_ids = [str(r[0]) for r in rows]
                 emp_ph = ",".join("?" * len(emp_ids))
 
-                # Get MAX(versao) + MAX(data_fim_exerc) for this company
+                # Get MAX(versao) + MAX(data_fim_exerc) + SUM(versao) + COUNT(*)
+                # SUM(versao) catches per-period restatements that MAX(versao) misses
+                # COUNT(*) catches row additions/deletions
                 row = conn.execute(
-                    f"""SELECT MAX(versao) as max_v, MAX(data_fim_exerc) as max_d
+                    f"""SELECT MAX(versao) as max_v, MAX(data_fim_exerc) as max_d,
+                               SUM(versao) as sum_v, COUNT(*) as cnt
                         FROM contas
                         WHERE id_empresa IN ({emp_ph})
                           AND consolidado = 1""",
@@ -450,6 +458,10 @@ def _get_company_fingerprint(cnpj: str) -> str | None:
                     max_versao = max(max_versao, int(row[0]))
                 if row and row[1] is not None and row[1] > max_data_fim:
                     max_data_fim = row[1]
+                if row and row[2] is not None:
+                    sum_versao += int(row[2])
+                if row and row[3] is not None:
+                    count_rows += int(row[3])
             finally:
                 conn.close()
         except (FileNotFoundError, Exception):
@@ -458,4 +470,4 @@ def _get_company_fingerprint(cnpj: str) -> str | None:
     if max_data_fim == "":
         return None  # company not found in either DB
 
-    return f"{max_versao}|{max_data_fim}"
+    return f"{max_versao}|{max_data_fim}|{sum_versao}|{count_rows}"

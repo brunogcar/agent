@@ -31,6 +31,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_earnings_periods
 from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Ratio: ROA = earnings / total_assets -------------------------------------
@@ -98,16 +99,10 @@ def roa_history(company: str, date_from: str, date_to: str) -> list[dict]:
     result = []
     for date in sorted_dates:
         ttm = None
-        for ep in reversed(earnings_periods):
-            if ep["date"] <= date:
-                ttm = ep["ttm"]
-                break
+        ttm = lookup_lte(earnings_periods, date, "ttm")
 
         total_assets = None
-        for tap in reversed(ta_periods_list):
-            if tap["date"] <= date:
-                total_assets = tap["total_assets"]
-                break
+        total_assets = lookup_lte(ta_periods_list, date, "total_assets")
 
         roa = None
         if (ttm is not None and ttm > 0

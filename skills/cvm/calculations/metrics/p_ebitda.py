@@ -37,6 +37,7 @@ from skills.cvm.calculations.engines.dre.ebit import ebit_at, ebit_periods
 from skills.cvm.calculations.engines.dfc.da import da_at, da_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # ── Per-share value: EBITDA/Ação = (EBIT + D&A) / shares ─────────────────────
@@ -142,24 +143,15 @@ def p_ebitda_history(company: str, date_from: str, date_to: str) -> list[dict]:
 
         # Find most recent TTM EBIT <= date
         ttm_ebit = None
-        for ep in reversed(ebit_periods_list):
-            if ep["date"] <= date:
-                ttm_ebit = ep["ttm_ebit"]
-                break
+        ttm_ebit = lookup_lte(ebit_periods_list, date, "ttm_ebit")
 
         # Find most recent TTM D&A <= date
         ttm_da = None
-        for dap in reversed(da_periods_list):
-            if dap["date"] <= date:
-                ttm_da = dap["ttm_da"]
-                break
+        ttm_da = lookup_lte(da_periods_list, date, "ttm_da")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute EBITDA = EBIT + D&A, then EBITDA/Ação = EBITDA / shares
         ebitda_ps = None

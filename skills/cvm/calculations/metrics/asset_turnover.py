@@ -26,6 +26,7 @@ from __future__ import annotations
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at, total_assets_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 def asset_turnover_at(company: str, date: str) -> float | None:
@@ -55,15 +56,9 @@ def asset_turnover_history(company: str, date_from: str, date_to: str) -> list[d
     result = []
     for date in sorted(all_dates):
         ttm_rev = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(revenue_periods_list, date, "ttm_rev")
         total_assets = None
-        for tap in reversed(ta_periods_list):
-            if tap["date"] <= date:
-                total_assets = tap["total_assets"]
-                break
+        total_assets = lookup_lte(ta_periods_list, date, "total_assets")
         asset_turnover = None
         if (ttm_rev is not None and ttm_rev > 0
             and total_assets is not None and total_assets > 0):

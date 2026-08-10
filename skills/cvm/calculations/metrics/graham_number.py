@@ -51,6 +51,7 @@ from skills.cvm.calculations.engines.dre.earnings import ttm_earnings_at, ttm_ea
 from skills.cvm.calculations.engines.bpp.pl import pl_at, pl_periods
 from skills.cvm.calculations.engines.shares import shares_at, shares_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # Graham's constant: 22.5 = 15 (max P/L) × 1.5 (max P/VPA)
@@ -156,24 +157,15 @@ def graham_number_history(company: str, date_from: str, date_to: str) -> list[di
     for date in sorted_dates:
         # Find most recent TTM earnings <= date
         ttm = None
-        for ep in reversed(earnings_periods):
-            if ep["date"] <= date:
-                ttm = ep["ttm"]
-                break
+        ttm = lookup_lte(earnings_periods, date, "ttm")
 
         # Find most recent PL <= date
         pl = None
-        for pp in reversed(pl_periods_list):
-            if pp["date"] <= date:
-                pl = pp["pl"]
-                break
+        pl = lookup_lte(pl_periods_list, date, "pl")
 
         # Find most recent shares <= date
         shares = None
-        for sp in reversed(sh_periods):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(sh_periods, date, "shares")
 
         # Compute LPA = earnings / shares
         lpa = None

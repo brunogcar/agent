@@ -42,6 +42,7 @@ from skills.cvm.calculations.engines.bpp.debt import debt_at, debt_periods
 from skills.cvm.calculations.engines.bpa.cash import cash_at, cash_periods
 from skills.cvm.calculations.engines.dre.revenue import revenue_at, revenue_periods
 from skills.cvm.calculations._registry import MetricSpec, register_metric
+from skills.cvm.calculations.periods_helpers import lookup_lte
 
 
 # -- Ratio: EV/Sales = (price × shares + debt - cash) / Revenue ---------------
@@ -129,28 +130,16 @@ def ev_sales_history(company: str, date_from: str, date_to: str) -> list[dict]:
         price = p["close"]
 
         shares = None
-        for sp in reversed(shares_periods_list):
-            if sp["date"] <= date:
-                shares = sp["shares"]
-                break
+        shares = lookup_lte(shares_periods_list, date, "shares")
 
         debt = None
-        for dp in reversed(debt_periods_list):
-            if dp["date"] <= date:
-                debt = dp["debt"]
-                break
+        debt = lookup_lte(debt_periods_list, date, "debt")
 
         cash = None
-        for cp in reversed(cash_periods_list):
-            if cp["date"] <= date:
-                cash = cp["cash"]
-                break
+        cash = lookup_lte(cash_periods_list, date, "cash")
 
         ttm_rev = None
-        for rp in reversed(revenue_periods_list):
-            if rp["date"] <= date:
-                ttm_rev = rp["ttm_rev"]
-                break
+        ttm_rev = lookup_lte(revenue_periods_list, date, "ttm_rev")
 
         ev = None
         ev_sales = None
