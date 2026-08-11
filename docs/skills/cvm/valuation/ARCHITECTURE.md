@@ -156,4 +156,4 @@ This skill uses `validate_ticker()` and `parse_escala()` from `core/br_validator
 
 ---
 
-*Last updated: 2026-08-10 (v1.10 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-10 (v1.11 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*

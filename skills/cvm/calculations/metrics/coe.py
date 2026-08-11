@@ -34,6 +34,13 @@ from skills.cvm.calculations.periods_helpers import lookup_lte
 # In PERCENT (5.5 = 5.5%). Converted to fraction internally.
 DEFAULT_RISK_PREMIUM = 5.5
 
+# [v1.12] Default risk-free rate when SGS DB is missing or stale.
+# As of 2026, Brazil's Selic target rate is ~10.5%. Using this default
+# ensures DCF/WACC/COE produce values even when sgs.db hasn't been synced
+# (e.g., user only ran valuation, not bcb.macro). The default is conservative
+# — it's better to have an approximate DCF than no DCF at all.
+DEFAULT_RF_PCT = 10.5
+
 
 def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:
     """Compute COE (Cost of Equity) via CAPM at a specific date.
@@ -41,6 +48,8 @@ def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:
     COE = Rf + Beta * (Rm - Rf)
 
     [v4 P2] Returns FRACTION (0.166 = 16.6%) for cross-metric consistency.
+    [v1.12] Falls back to DEFAULT_RF_PCT (10.5%) when SGS DB is missing,
+    so DCF/WACC/COE always produce values.
 
     Args:
         company: B3 ticker (PETR4).
@@ -49,16 +58,16 @@ def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:
 
     Returns:
         COE as a FRACTION (e.g., 0.166 for 16.6%), or None if:
-        - Selic not available (BCB SGS not synced)
-        - Beta not available (insufficient price history)
+        - Beta not available (insufficient price history or R² < 0.3)
     """
     if risk_premium is None:
         risk_premium = DEFAULT_RISK_PREMIUM
 
     # Rf = Selic annualized (% a.a.) -> convert to fraction
+    # [v1.12] Fallback to DEFAULT_RF_PCT if SGS DB missing/stale
     rf_pct = selic_at(company, date)
     if rf_pct is None:
-        return None
+        rf_pct = DEFAULT_RF_PCT
     rf = rf_pct / 100.0  # Convert percent to fraction
 
     # [v4 P0] Use beta_stats_at() for full regression stats

@@ -545,7 +545,9 @@ def engine_cached(fn: Callable) -> Callable:
       - at_fn:      (fn.__name__, company, str(date))
       - periods_fn: (fn.__name__, company, "__periods__")
 
-    None values ARE cached (prevents re-querying missing data).
+    None values ARE cached in-memory (prevents re-querying within one run)
+    but are NOT stored in the DB cache (prevents stale Nones across runs).
+    See data_sources/_cache.py:get_cached + set_cached for the DB-layer fix.
 
     Usage in engines/earnings.py:
         from skills._base import engine_cached

@@ -135,16 +135,14 @@ def wacc_at(company: str, date: str) -> float | None:
     if coe is None:
         # [v4 fix] COE returns None when Beta is unavailable (brapi ^BVSP
         # fails + COTAHIST proxy fails). Instead of giving up, compute a
-        # rough COE = Selic + ERP (assuming Beta = 1.0, market-average risk).
-        # This is a reasonable default — if we can't measure Beta, assume
-        # the stock moves with the market.
+        # rough COE = Rf + ERP (assuming Beta = 1.0, market-average risk).
+        # [v1.12] Falls back to DEFAULT_RF_PCT when SGS DB is missing.
         selic_pct = selic_at(company, date)
-        if selic_pct is not None:
-            rf = selic_pct / 100.0
-            erp = 0.055  # Damodaran 2024 EM ERP
-            coe = rf + 1.0 * erp  # Beta = 1.0 default
-        else:
-            return None
+        if selic_pct is None:
+            selic_pct = 10.5  # DEFAULT_RF_PCT — current Brazilian Selic target
+        rf = selic_pct / 100.0
+        erp = 0.055  # Damodaran 2024 EM ERP
+        coe = rf + 1.0 * erp  # Beta = 1.0 default
 
     price = price_at(company, date)
     if price is None or price <= 0:
@@ -177,13 +175,11 @@ def wacc_at(company: str, date: str) -> float | None:
     if kd is None:
         # [v3 fix] If neither interest_paid nor financial_result is available,
         # use a default Kd = Selic + 3% credit spread (common for Brazilian
-        # corporates). This prevents WACC from returning None when DVA/DRE
-        # interest data is missing, while still producing a reasonable estimate.
+        # corporates). [v1.12] Falls back to DEFAULT_RF_PCT when SGS missing.
         selic_pct = selic_at(company, date)
-        if selic_pct is not None:
-            kd = (selic_pct + 3.0) / 100.0  # Selic (fraction) + 3% spread
-        else:
-            kd = 0.10  # 10% default if Selic unavailable
+        if selic_pct is None:
+            selic_pct = 10.5  # DEFAULT_RF_PCT
+        kd = (selic_pct + 3.0) / 100.0  # Selic (fraction) + 3% spread
 
     # Effective tax rate (default to Brazilian 25% if missing)
     tax = effective_tax_rate_at(company, date)

@@ -23,10 +23,18 @@ from skills._base import engine_cached  # [v1.8 F7]
 
 
 def _sgs_db() -> Path:
-    """Return path to BCB SGS database."""
+    """Return path to BCB SGS database.
+
+    [v1.10 fix] Was: cvm_db_path().parent / "bcb" / "sgs.db" → resolved to
+    memory_db/cvm/bcb/sgs.db (WRONG — sgs.db lives at memory_db/bcb/sgs.db).
+    This bug caused selic_at() to always return None (FileNotFoundError caught
+    silently), which cascaded to COE=None → WACC=None → DCF=None → Margin of
+    Safety=None. Only IRR worked (it doesn't depend on WACC).
+    Fix: use the BCB SGS catalog's db_path() directly — single source of truth.
+    """
     try:
-        from data_sources.cvm._db import cvm_db_path
-        return cvm_db_path().parent / "bcb" / "sgs.db"
+        from data_sources.bcb.sgs.catalog import db_path as _sgs_db_path
+        return _sgs_db_path()
     except Exception:
         return Path.cwd() / "memory_db" / "bcb" / "sgs.db"
 
@@ -52,12 +60,21 @@ def selic_at(company: str, date: str) -> float | None:
     Returns:
         Annualized Selic rate as a PERCENT (% a.a.), e.g. 10.40 for 10.40%.
         Returns None if SGS DB not synced or no data before date.
+
+    [v1.12] Added debug logging — prints the sgs.db path + whether it exists
+    + whether the query returned data. Previously, all failures were silent
+    (bare `except: return None`), making it impossible to diagnose why
+    DCF/WACC/COE returned None.
     """
     try:
+        path = _sgs_db()
+        if not path.exists():
+            print(f"[selic] sgs.db NOT FOUND at {path} — run bcb.macro dashboard to sync", flush=True)
+            return None
         conn = _connect()
         # Series 11 = Selic daily rate (% a.d., base 252)
         row = conn.execute(
-            "SELECT value FROM series_observations "
+            "SELECT value, ref_date FROM series_observations "
             "WHERE series_code = 11 AND ref_date <= ? AND value IS NOT NULL "
             "ORDER BY ref_date DESC LIMIT 1",
             (date,),
@@ -65,20 +82,17 @@ def selic_at(company: str, date: str) -> float | None:
         conn.close()
 
         if not row or row["value"] is None:
+            print(f"[selic] sgs.db exists at {path} but series 11 has no data before {date}", flush=True)
             return None
 
         # Annualize: compound (geometric) annualization on base 252.
-        # [new commit] Was simple multiplication (daily_rate * 252), which
-        # underestimates the annual rate. BCB series 11 is the daily accrued
-        # rate (% a.d.) — the correct annualization is compound:
-        #   annual = ((1 + daily/100)^252 - 1) * 100
-        # Example: daily=0.041% → simple=10.33% → compound=10.88% (55bps diff).
-        # Found by external LLM review (Qwen). O(1) math, no perf impact.
         daily_rate = float(row["value"])
         daily_frac = daily_rate / 100.0
         annual_frac = (1.0 + daily_frac) ** 252 - 1.0
-        return annual_frac * 100.0
-    except Exception:
+        result = annual_frac * 100.0
+        return result
+    except Exception as e:
+        print(f"[selic] ERROR: {type(e).__name__}: {e}", flush=True)
         return None
 
 

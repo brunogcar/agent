@@ -41,6 +41,7 @@ from skills.cvm.valuation.report import (
     build_dcf_sensitivity_section,
     build_roe_trend_chart,
     build_pl_lpa_pvp_vpa_history_chart,
+    build_margin_trend_chart,
 )
 
 
@@ -233,6 +234,14 @@ def dashboard(company: str = "") -> dict:
                 ret_secs.append(roe_trend)
         except Exception as e:
             print(f"[valuation] ROE trend chart failed: {e}", flush=True)
+
+        # [v1.11] Margins 5Y historical step-line chart in Margens subtab.
+        try:
+            margin_trend = build_margin_trend_chart(company)
+            if margin_trend:
+                mar_secs.append(margin_trend)
+        except Exception as e:
+            print(f"[valuation] Margin trend chart failed: {e}", flush=True)
 
         profitability_tab_sections: list[dict] = []
         if ret_secs or mar_secs:

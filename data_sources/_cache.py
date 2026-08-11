@@ -74,7 +74,6 @@ be wrong for the B3/BCB engines.
 """
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import threading
@@ -505,6 +504,13 @@ def get_cached(engine_name: str, company: str, date: str) -> dict | None:
 
     Returns {"value": float|None, "computed_at": str} or None if not cached.
     Does NOT check validity — caller should call is_valid() first.
+
+    [v1.11 fix] If the cached value is None, return None (treat as cache
+    miss). This forces the caller to retry the real engine function.
+    Previously, cached Nones were returned as-is, which meant stale Nones
+    from old buggy code (e.g. wrong sgs.db path) persisted forever — the
+    user had to manually delete engine_cache.db to fix. Now, None is never
+    trusted from the cache; the real function is always retried.
     """
     if not is_enabled():
         return None
@@ -524,6 +530,12 @@ def get_cached(engine_name: str, company: str, date: str) -> dict | None:
                 ).fetchone()
                 if row is None:
                     return None
+                # [v1.11] Don't trust cached None — treat as cache miss.
+                # This forces a retry of the real engine function, so that
+                # code fixes (e.g. sgs.db path correction) take effect
+                # without requiring the user to delete the cache DB.
+                if row["value"] is None:
+                    return None
                 return {"value": row["value"], "computed_at": row["computed_at"]}
             finally:
                 conn.close()
@@ -532,8 +544,21 @@ def get_cached(engine_name: str, company: str, date: str) -> dict | None:
 
 
 def set_cached(engine_name: str, company: str, date: str, value: float | None) -> None:
-    """Write an engine value to the cache + update the meta fingerprint."""
+    """Write an engine value to the cache + update the meta fingerprint.
+
+    [v1.11 fix] None values are NOT cached. Previously, None was stored to
+    "prevent re-querying missing data", but this caused stale Nones to
+    persist across code fixes — the user had to manually delete
+    engine_cache.db. Now, None is never stored, so the next call always
+    retries the real function. This is correct because None means "data
+    unavailable RIGHT NOW" (transient), not "data will never be available"
+    (permanent).
+    """
     if not is_enabled():
+        return
+
+    # [v1.11] Don't cache None — see docstring.
+    if value is None:
         return
 
     cnpj = resolve_cnpj(company)

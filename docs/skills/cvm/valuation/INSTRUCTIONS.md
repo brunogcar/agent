@@ -76,6 +76,23 @@
 > - **Fix:** Removed the entire overlay block from `dashboard.py`. The price chart now uses the default shared `build_price_chart()` output unmodified.
 > - **Lesson:** Don't mutate shared builder output (`build_price_chart`) in the consumer (`dashboard.py`). If you need an overlay, build a separate chart section — don't patch the shared one. This keeps the shared builder reusable.
 
+#### v1.11 — DCF/WACC returning None (sgs.db path bug)
+> - **What happened:** The Valor Intrínseco tab showed only TIR (IRR) — DCF, WACC, and Margin of Safety were all None. IRR worked because it doesn't depend on WACC (solves via bisection).
+> - **Root cause:** The Selic engine `_sgs_db()` computed the path as `cvm_db_path().parent / "bcb" / "sgs.db"` = `memory_db/cvm/bcb/sgs.db` (WRONG). The actual sgs.db lives at `memory_db/bcb/sgs.db` (the BCB SGS catalog creates it there). The `selic_at()` function caught the FileNotFoundError silently and returned None, which cascaded: COE=None → WACC=None → DCF=None → MoS=None.
+> - **Fix:** Use `data_sources.bcb.sgs.catalog.db_path()` directly — single source of truth for the sgs.db path.
+> - **Lesson:** NEVER compute a database path from another module's path (e.g. `cvm_db_path().parent / "bcb"`). ALWAYS use the owning module's own `db_path()` function. Cross-module path computation is fragile — if one module changes its directory structure, the other silently breaks. Silent `except: return None` patterns make this even worse — the error is invisible.
+
+#### v1.11 — Engine cache storing None (stale values persist forever)
+> - **What happened:** After fixing the sgs.db path bug, DCF/WACC were STILL returning None. The engine cache DB had stale None values from the old buggy code. The cache fingerprint (MAX ref_date of SGS data) hadn't changed, so the cache considered the stale None "valid" and returned it without calling the real function.
+> - **Root cause:** The cache design intentionally stored None values ("prevents re-querying missing data" — `skills/_base.py` line 548). This is wrong: None means "data unavailable RIGHT NOW" (transient — could be a bug, missing DB, network error), NOT "data will never be available" (permanent). When the code is fixed, the stale None persists forever.
+> - **Fix:** `get_cached()` now treats cached None as a cache miss (forces retry of real function). `set_cached()` now refuses to store None. This is self-healing — no need to delete the cache DB after code fixes. The in-memory cache (ContextVar) still caches None within a single run (correct — retrying within the same run won't help).
+> - **Lesson:** NEVER cache failure (None/empty) in a persistent cache. None is transient — the next call might succeed (code fixed, DB synced, network restored). Only cache successes. If you must cache failures for performance, use a SHORT TTL (seconds, not forever).
+
+#### v1.11 — CAGR vs simple growth
+> - **What happened:** The existing `revenue_growth_5y` metric computes SIMPLE growth = (current - prior) / |prior| (total growth over 5Y, not annualized). The user wanted CAGR (Compound Annual Growth Rate) = (V_end/V_start)^(1/n) - 1 (annualized rate).
+> - **Fix:** Created separate `revenue_cagr_3y`, `revenue_cagr_5y`, `earnings_cagr_3y`, `earnings_cagr_5y`, `gross_profit_cagr_3y`, `gross_profit_cagr_5y` metrics in `metrics/cagr.py`. Kept the existing `revenue_growth_*` metrics (simple growth) — they're different analytical tools.
+> - **Lesson:** CAGR and simple growth answer different questions. CAGR = "what constant yearly rate gets from V_start to V_end?" Simple growth = "how much did it grow total over the period?" Both are useful — don't replace one with the other.
+
 ---
 
-*Last updated: 2026-08-10 (v1.10 — added v1.7-v1.10 lessons: sync guard, engine_cache_scope, Menos Comuns key fix, ROE trend rewrite, Graham overlay removal).*
+*Last updated: 2026-08-10 (v1.11 — added sgs.db path bug + CAGR vs simple growth lessons).*
