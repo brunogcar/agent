@@ -42,6 +42,8 @@ from skills.cvm.valuation.report import (
     build_roe_trend_chart,
     build_pl_lpa_pvp_vpa_history_chart,
     build_margin_trend_chart,
+    build_valuation_radar,
+    build_valuation_heatmap,
 )
 
 
@@ -242,6 +244,20 @@ def dashboard(company: str = "") -> dict:
                 mar_secs.append(margin_trend)
         except Exception as e:
             print(f"[valuation] Margin trend chart failed: {e}", flush=True)
+
+        # [v1.11] Radar + Heatmap in Overview tab.
+        try:
+            radar = build_valuation_radar(ratios_dict)
+            if radar:
+                overview_sections.append(radar)
+        except Exception as e:
+            print(f"[valuation] Radar chart failed: {e}", flush=True)
+        try:
+            heatmap = build_valuation_heatmap(ratios_dict)
+            if heatmap:
+                overview_sections.append(heatmap)
+        except Exception as e:
+            print(f"[valuation] Heatmap failed: {e}", flush=True)
 
         profitability_tab_sections: list[dict] = []
         if ret_secs or mar_secs:

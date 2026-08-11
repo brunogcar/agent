@@ -34,12 +34,11 @@ from skills.cvm.calculations.periods_helpers import lookup_lte
 # In PERCENT (5.5 = 5.5%). Converted to fraction internally.
 DEFAULT_RISK_PREMIUM = 5.5
 
-# [v1.12] Default risk-free rate when SGS DB is missing or stale.
-# As of 2026, Brazil's Selic target rate is ~10.5%. Using this default
-# ensures DCF/WACC/COE produce values even when sgs.db hasn't been synced
-# (e.g., user only ran valuation, not bcb.macro). The default is conservative
-# — it's better to have an approximate DCF than no DCF at all.
-DEFAULT_RF_PCT = 10.5
+# [v1.11] Default risk-free rate when SGS DB is missing or stale.
+# As of August 2026, Brazil's Selic target rate is ~14.0% (Copom raised
+# rates in 2025-2026 to combat inflation). Using this default ensures
+# DCF/WACC/COE produce values even when sgs.db hasn't been synced.
+DEFAULT_RF_PCT = 14.0
 
 
 def coe_at(company: str, date: str, risk_premium: float = None) -> float | None:

@@ -139,7 +139,7 @@ def wacc_at(company: str, date: str) -> float | None:
         # [v1.12] Falls back to DEFAULT_RF_PCT when SGS DB is missing.
         selic_pct = selic_at(company, date)
         if selic_pct is None:
-            selic_pct = 10.5  # DEFAULT_RF_PCT — current Brazilian Selic target
+            selic_pct = 14.0  # DEFAULT_RF_PCT — current Brazilian Selic target
         rf = selic_pct / 100.0
         erp = 0.055  # Damodaran 2024 EM ERP
         coe = rf + 1.0 * erp  # Beta = 1.0 default
@@ -178,7 +178,7 @@ def wacc_at(company: str, date: str) -> float | None:
         # corporates). [v1.12] Falls back to DEFAULT_RF_PCT when SGS missing.
         selic_pct = selic_at(company, date)
         if selic_pct is None:
-            selic_pct = 10.5  # DEFAULT_RF_PCT
+            selic_pct = 14.0  # DEFAULT_RF_PCT — current Brazilian Selic target
         kd = (selic_pct + 3.0) / 100.0  # Selic (fraction) + 3% spread
 
     # Effective tax rate (default to Brazilian 25% if missing)

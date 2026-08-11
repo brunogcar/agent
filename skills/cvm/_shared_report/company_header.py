@@ -41,6 +41,7 @@ def build_company_header(company: str) -> dict:
         "isin": "",
         "last_close": None,
         "fiscal_year_end": "",
+        "last_synced_trimester": "",  # e.g. "2T2026" — latest ITR period
     }
 
     ticker = (company or "").strip().upper()
@@ -134,6 +135,25 @@ def build_company_header(company: str) -> dict:
             if close_row and close_row["close"] is not None:
                 header["last_close"] = float(close_row["close"])
             conn.close()
+    except Exception:
+        pass
+
+    # ── Last synced trimester (e.g. "2T2026") from ITR ──────────────────
+    # Shows the latest quarterly financial statement available. Uses the
+    # shared freshness helper which queries ITR's MAX(data_fim_exerc).
+    try:
+        from skills.cvm._freshness import get_last_synced_period
+        periods = get_last_synced_period()
+        itr_period = periods.get("itr", "")
+        if itr_period:
+            # Convert "2026-06-30" → "2T2026"
+            parts = itr_period.split("-")
+            if len(parts) == 3:
+                year = parts[0]
+                month = int(parts[1])
+                trimester = {3: "1T", 6: "2T", 9: "3T", 12: "4T"}.get(month, "")
+                if trimester:
+                    header["last_synced_trimester"] = f"{trimester}{year}"
     except Exception:
         pass
 

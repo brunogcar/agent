@@ -85,11 +85,24 @@ def selic_at(company: str, date: str) -> float | None:
             print(f"[selic] sgs.db exists at {path} but series 11 has no data before {date}", flush=True)
             return None
 
-        # Annualize: compound (geometric) annualization on base 252.
-        daily_rate = float(row["value"])
-        daily_frac = daily_rate / 100.0
-        annual_frac = (1.0 + daily_frac) ** 252 - 1.0
+        # Annualize: BCB SGS series 11 is "Taxa Selic acumulada no mês" —
+        # a MONTHLY accumulated rate (~0.95%/month for 14% annual).
+        # [v1.11 fix] Was: compound (1 + daily/100)^252 assuming DAILY rate.
+        # But series 11 is MONTHLY, so ^252 produced ~990% (absurd).
+        # Fix: compound (1 + monthly/100)^12 for correct annualization.
+        # [v1.11 fix 2] Guard against stale DB cache values > 50% (no Selic
+        # rate has ever exceeded 50% in Brazil's history). If the cached or
+        # computed value is > 50%, it's clearly wrong — return None so the
+        # COE/WACC fallback (14%) kicks in.
+        monthly_rate = float(row["value"])
+        monthly_frac = monthly_rate / 100.0
+        annual_frac = (1.0 + monthly_frac) ** 12 - 1.0
         result = annual_frac * 100.0
+        # Sanity check: Brazilian Selic has never exceeded ~45% (2003 peak).
+        # If > 50%, the value format is wrong or cache is stale.
+        if result > 50.0:
+            print(f"[selic] WARNING: computed {result:.2f}% (> 50% — invalid). Value={monthly_rate}, treating as cache miss.", flush=True)
+            return None
         return result
     except Exception as e:
         print(f"[selic] ERROR: {type(e).__name__}: {e}", flush=True)
@@ -126,7 +139,7 @@ def selic_periods(company: str) -> list[dict]:
         ).fetchall()
         conn.close()
 
-        return [{"date": r["ref_date"], "selic": float(r["value"]) * 252.0}
+        return [{"date": r["ref_date"], "selic": ((1.0 + float(r["value"]) / 100.0) ** 12 - 1.0) * 100.0}
                 for r in rows if r["value"] is not None]
     except (FileNotFoundError, Exception):
         return []
