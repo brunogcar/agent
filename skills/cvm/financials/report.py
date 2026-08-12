@@ -2114,134 +2114,28 @@ def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
                 },
             },
         },
+        "price_range_selector": True,
+        "price_full_labels": [f"{l}-12-31" for l in labels],
+        "price_full_datasets": [
+            {"data": revenue},
+            {"data": ebitda},
+            {"data": net_income},
+        ],
+        "price_full_data": revenue,
     }
 
 
-def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> dict | None:
-    """Build the accounting equation chart: Ativo = Passivo + PL over years.
+def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> list[dict]:
+    """Build the Balanço Completo charts: absolute + percentage stacked bars.
 
-    [new commit] MAJOR REWRITE per user feedback:
-    - 3 separate LINES (not 2 combined): Ativo Total / Passivo Total / PL.
-      User: "do lines for each not passivo + pl" and "passivo = ativo - pl".
-      The accounting identity Ativo = Passivo + PL is shown visually by
-      having the Passivo + PL lines sum to the Ativo line at every period.
-    - Quarterly preference: when ``bpa_result``/``bpp_result`` carry
-      quarterly (ITR) periods, those are shown; otherwise falls back to
-      annual. (Currently the dashboard fetches annual-only BPA/BPP via
-      ``_fetch_all_statements_annual(periods=4)`` — quarterly BPA/BPP
-      would require a separate fetch, so this branch is forward-compatible
-      but typically degrades to the annual periods already present.)
-    """
-    bpa_periods = (bpa_result or {}).get("periods") or []
-    bpp_periods = (bpp_result or {}).get("periods") or []
-    if not bpa_periods or not bpp_periods:
-        return None
-
-    # [new commit] Prefer quarterly periods when present. Each period dict
-    # exposes ``meses`` (12 for DFP, 3/6/9 for ITR) and ``data_fim_exerc``.
-    # If any ITR-style period exists in either result, restrict to ITR.
-    def _is_quarterly(p: dict) -> bool:
-        meses = p.get("meses")
-        if meses in (3, 6, 9):
-            return True
-        # Some legacy shapes store meses via the periodo label "T1/T2/T3".
-        return False
-
-    bpa_quarterly = any(_is_quarterly(p) for p in bpa_periods)
-    bpp_quarterly = any(_is_quarterly(p) for p in bpp_periods)
-    prefer_quarterly = bpa_quarterly and bpp_quarterly
-    if prefer_quarterly:
-        bpa_periods = [p for p in bpa_periods if _is_quarterly(p)]
-        bpp_periods = [p for p in bpp_periods if _is_quarterly(p)]
-
-    bpa_by_year: dict[str, dict] = {}
-    for p in bpa_periods:
-        period_label = p.get("period") or p.get("data_fim_exerc") or ""
-        if period_label:
-            bpa_by_year[str(period_label)] = p.get("accounts") or {}
-
-    bpp_by_year: dict[str, dict] = {}
-    for p in bpp_periods:
-        period_label = p.get("period") or p.get("data_fim_exerc") or ""
-        if period_label:
-            bpp_by_year[str(period_label)] = p.get("accounts") or {}
-
-    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
-    if len(years) < 2:
-        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
-    if len(years) < 2:
-        return None
-
-    def _val(accounts: dict, *codes: str) -> float | None:
-        for code in codes:
-            acc = accounts.get(code)
-            if acc and acc.get("valor_brl") is not None:
-                try:
-                    return float(acc["valor_brl"])
-                except (TypeError, ValueError):
-                    pass
-        return None
-
-    ativo_total, passivo_total, pl = [], [], []
-    for year in years:
-        bpa_acc = bpa_by_year.get(year, {})
-        bpp_acc = bpp_by_year.get(year, {})
-        # BPP 2.03 = PL (old chart) or 2.08 (new chart). Prefer 2.03 then 2.08.
-        pl_val = _val(bpp_acc, "2.03")
-        if pl_val is None:
-            pl_val = _val(bpp_acc, "2.08")
-        ativo_total.append(_num_or_none(_val(bpa_acc, "1")))
-        pl.append(_num_or_none(pl_val))
-        passivo_total.append(_num_or_none(_val(bpp_acc, "2")))
-
-    # [new commit] 3 separate lines (was 2: Ativo vs Passivo+PL combined).
-    # The user's spec: "do lines for each not passivo + pl" — visually
-    # Ativo should equal Passivo + PL at every period. Showing them
-    # separately makes divergences easier to spot.
-    return {
-        "type": "chart",
-        "title": "Equação Contábil: Ativo = Passivo + PL",
-        "description": (
-            "Visualização da equação contábil fundamental: três linhas "
-            "separadas para Ativo Total, Passivo Total e Patrimônio "
-            "Líquido. As linhas de Passivo + PL devem somar à linha de "
-            "Ativo em cada período — divergências indicam inconsistência."
-        ),
-        "chart_data": {
-            "type": "line",
-            "data": {
-                "labels": years,
-                "datasets": [
-                    {"label": "Ativo Total", "data": ativo_total,
-                     "borderColor": "#0d9488", "backgroundColor": "#0d9488",
-                     "fill": False, "tension": 0.1},
-                    {"label": "Passivo Total", "data": passivo_total,
-                     "borderColor": "#f59e0b", "backgroundColor": "#f59e0b",
-                     "fill": False, "tension": 0.1},
-                    {"label": "Patrimônio Líquido", "data": pl,
-                     "borderColor": "#3b82f6", "backgroundColor": "#3b82f6",
-                     "fill": False, "tension": 0.1},
-                ],
-            },
-            "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
-                "scales": {"y": {"ticks": {},
-                                 "title": {"display": True, "text": "R$"}}},
-                "plugins": {
-                    "title": {"display": True, "text": "Ativo, Passivo e PL por Período"},
-                },
-            },
-        },
-    }
-
-
-def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict]:
-    """Build decomposition charts: Ativo = Circ + Não Circ, Passivo = Circ + Não Circ + PL.
-
-    [new commit] New function per user feedback:
-    "add chart to Ativo Total = Ativo Circulante + Ativo Não Circulante
-    and same to passivo total = passivo c + passivo n c, then pl"
+    [v1.22 v2] REWRITE per user reference images:
+    - 2 stacked bar charts (not line charts):
+      1. Absolute values: 5 components stacked (Ativo Circ, Ativo Não Circ,
+         Passivo Circ, Passivo Não Circ, PL)
+      2. 100% percentage composition: same 5 components, normalized to 100%
+    - Colors match reference: Navy blue (Ativo Circ), Light blue (Ativo Não
+      Circ), Dark red (Passivo Circ), Light pink (Passivo Não Circ), Green (PL)
+    - Returns a LIST of 2 chart sections (was 1 dict).
     """
     bpa_periods = (bpa_result or {}).get("periods") or []
     bpp_periods = (bpp_result or {}).get("periods") or []
@@ -2285,53 +2179,255 @@ def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict
         ativo_ncirc.append(_num_or_none(_val(bpa_acc, "1.02")))
         passivo_circ.append(_num_or_none(_val(bpp_acc, "2.01")))
         passivo_ncirc.append(_num_or_none(_val(bpp_acc, "2.02")))
-        pl.append(_num_or_none(_val(bpp_acc, "2.03")))
+        pl_val = _val(bpp_acc, "2.03")
+        if pl_val is None:
+            pl_val = _val(bpp_acc, "2.08")
+        pl.append(_num_or_none(pl_val))
+
+    # Colors matching reference images
+    _CIRC_A = "#1e3a5f"      # Navy blue (Ativo Circulante)
+    _NCIRC_A = "#60a5fa"     # Light blue (Ativo Não Circulante)
+    _CIRC_P = "#991b1b"      # Dark red (Passivo Circulante)
+    _NCIRC_P = "#fca5a5"     # Light pink (Passivo Não Circulante)
+    _PL = "#22c55e"          # Green (Patrimônio Líquido)
+
+    datasets_abs = [
+        {"label": "Ativo Circulante", "data": ativo_circ, "backgroundColor": _CIRC_A},
+        {"label": "Ativo Não Circulante", "data": ativo_ncirc, "backgroundColor": _NCIRC_A},
+        {"label": "Passivo Circulante", "data": passivo_circ, "backgroundColor": _CIRC_P},
+        {"label": "Passivo Não Circulante", "data": passivo_ncirc, "backgroundColor": _NCIRC_P},
+        {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": _PL},
+    ]
+
+    # Compute percentage datasets (normalize each period to 100%)
+    def _pct_series(*series_list):
+        """Normalize multiple series to 100% per period."""
+        result = []
+        for i in range(len(years)):
+            total = sum(s[i] or 0 for s in series_list)
+            if total == 0:
+                result.append([None] * len(series_list))
+            else:
+                result.append([(s[i] or 0) / total * 100 for s in series_list])
+        # Transpose: return list of series, each with per-period values
+        return [[result[i][j] for i in range(len(years))] for j in range(len(series_list))]
+
+    pct_data = _pct_series(ativo_circ, ativo_ncirc, passivo_circ, passivo_ncirc, pl)
+    datasets_pct = [
+        {"label": "Ativo Circulante", "data": pct_data[0], "backgroundColor": _CIRC_A},
+        {"label": "Ativo Não Circulante", "data": pct_data[1], "backgroundColor": _NCIRC_A},
+        {"label": "Passivo Circulante", "data": pct_data[2], "backgroundColor": _CIRC_P},
+        {"label": "Passivo Não Circulante", "data": pct_data[3], "backgroundColor": _NCIRC_P},
+        {"label": "Patrimônio Líquido", "data": pct_data[4], "backgroundColor": _PL},
+    ]
+
+    return [
+        {
+            "type": "chart",
+            "title": "Balanço Completo — Valores Absolutos",
+            "description": "Ativo (Circ + Não Circ) e Passivo + PL (Circ + Não Circ + PL). Barras empilhadas mostram a evolução absoluta.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": years, "datasets": datasets_abs},
+                "options": {
+                    "responsive": True, "maintainAspectRatio": False,
+                    "scales": {
+                        "x": {"stacked": True},
+                        "y": {"stacked": True, "ticks": {},
+                              "title": {"display": True, "text": "R$"}},
+                    },
+                    "plugins": {
+                        "title": {"display": True, "text": "Balanço Patrimonial — Absoluto"},
+                        "legend": {"display": True, "position": "top"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "chart",
+            "title": "Balanço Completo — Composição Percentual",
+            "description": "Mesmos componentes, normalizados para 100% por período. Mostra a mudança na estrutura do balanço.",
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": years, "datasets": datasets_pct},
+                "options": {
+                    "responsive": True, "maintainAspectRatio": False,
+                    "scales": {
+                        "x": {"stacked": True},
+                        "y": {"stacked": True, "min": 0, "max": 100,
+                              "ticks": {"callback": "{}%"},
+                              "title": {"display": True, "text": "%"}},
+                    },
+                    "plugins": {
+                        "title": {"display": True, "text": "Balanço Patrimonial — % Composição"},
+                        "legend": {"display": True, "position": "top"},
+                        "tooltip": {"callbacks": {"label": "{}%"}},
+                    },
+                },
+            },
+        },
+    ]
+
+
+def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict]:
+    """Build BPA + BPP decomposition charts: 4 stacked bars (absolute + percentage each).
+
+    [v1.22 v2] REWRITE per user reference images:
+    - BPA: 2 charts (absolute + percentage) — Ativo Circ + Ativo Não Circ
+    - BPP: 2 charts (absolute + percentage) — Passivo Circ + Passivo Não Circ + PL
+    - Returns 4 chart sections total.
+    """
+    bpa_periods = (bpa_result or {}).get("periods") or []
+    bpp_periods = (bpp_result or {}).get("periods") or []
+    if not bpa_periods or not bpp_periods:
+        return []
+
+    bpa_by_year: dict[str, dict] = {}
+    for p in bpa_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpa_by_year[str(period_label)] = p.get("accounts") or {}
+
+    bpp_by_year: dict[str, dict] = {}
+    for p in bpp_periods:
+        period_label = p.get("period") or p.get("data_fim_exerc") or ""
+        if period_label:
+            bpp_by_year[str(period_label)] = p.get("accounts") or {}
+
+    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
+    if len(years) < 2:
+        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
+    if len(years) < 2:
+        return []
+
+    def _val(accounts: dict, *codes: str) -> float | None:
+        for code in codes:
+            acc = accounts.get(code)
+            if acc and acc.get("valor_brl") is not None:
+                try:
+                    return float(acc["valor_brl"])
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    ativo_circ, ativo_ncirc = [], []
+    passivo_circ, passivo_ncirc, pl = [], [], []
+    for year in years:
+        bpa_acc = bpa_by_year.get(year, {})
+        bpp_acc = bpp_by_year.get(year, {})
+        ativo_circ.append(_num_or_none(_val(bpa_acc, "1.01")))
+        ativo_ncirc.append(_num_or_none(_val(bpa_acc, "1.02")))
+        passivo_circ.append(_num_or_none(_val(bpp_acc, "2.01")))
+        passivo_ncirc.append(_num_or_none(_val(bpp_acc, "2.02")))
+        pl_val = _val(bpp_acc, "2.03")
+        if pl_val is None:
+            pl_val = _val(bpp_acc, "2.08")
+        pl.append(_num_or_none(pl_val))
+
+    # Colors matching reference
+    _CIRC_A = "#1e3a5f"      # Navy blue
+    _NCIRC_A = "#60a5fa"     # Light blue
+    _CIRC_P = "#991b1b"      # Dark red
+    _NCIRC_P = "#fca5a5"     # Light pink
+    _PL = "#22c55e"          # Green
+
+    def _pct(*series_list):
+        result = []
+        for i in range(len(years)):
+            total = sum(s[i] or 0 for s in series_list)
+            if total == 0:
+                result.append([None] * len(series_list))
+            else:
+                result.append([(s[i] or 0) / total * 100 for s in series_list])
+        return [[result[i][j] for i in range(len(years))] for j in range(len(series_list))]
+
+    bpa_pct = _pct(ativo_circ, ativo_ncirc)
+    bpp_pct = _pct(passivo_circ, passivo_ncirc, pl)
 
     charts: list[dict] = []
 
-    # Chart: Ativo Total = Ativo Circulante + Ativo Não Circulante
+    # BPA Absolute
     charts.append({
         "type": "chart",
-        "title": "Ativo Total = Circulante + Não Circulante",
-        "description": "Decomposição do Ativo Total em circulante e não circulante.",
+        "title": "Ativo — Valores Absolutos",
+        "description": "Ativo Circulante + Ativo Não Circulante. Barras empilhadas.",
         "chart_data": {
             "type": "bar",
-            "data": {
-                "labels": years,
-                "datasets": [
-                    {"label": "Ativo Circulante", "data": ativo_circ, "backgroundColor": "#0d9488"},
-                    {"label": "Ativo Não Circulante", "data": ativo_ncirc, "backgroundColor": "#14b8a6"},
-                ],
-            },
+            "data": {"labels": years, "datasets": [
+                {"label": "Ativo Circulante", "data": ativo_circ, "backgroundColor": _CIRC_A},
+                {"label": "Ativo Não Circulante", "data": ativo_ncirc, "backgroundColor": _NCIRC_A},
+            ]},
             "options": {
                 "responsive": True, "maintainAspectRatio": False,
-                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "ticks": {},
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True,
                     "title": {"display": True, "text": "R$"}}},
-                "plugins": {"title": {"display": True, "text": "Composição do Ativo"}},
+                "plugins": {"title": {"display": True, "text": "Ativo — Absoluto"},
+                            "legend": {"display": True, "position": "top"}},
             },
         },
     })
 
-    # Chart: Passivo Total = Circ + Não Circ + PL
+    # BPA Percentage
     charts.append({
         "type": "chart",
-        "title": "Passivo + PL = Circulante + Não Circulante + PL",
-        "description": "Decomposição do Passivo + Patrimônio Líquido.",
+        "title": "Ativo — Composição Percentual",
+        "description": "Ativo Circulante vs Não Circulante, normalizado para 100%.",
         "chart_data": {
             "type": "bar",
-            "data": {
-                "labels": years,
-                "datasets": [
-                    {"label": "Passivo Circulante", "data": passivo_circ, "backgroundColor": "#ef4444"},
-                    {"label": "Passivo Não Circulante", "data": passivo_ncirc, "backgroundColor": "#f97316"},
-                    {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": "#3b82f6"},
-                ],
-            },
+            "data": {"labels": years, "datasets": [
+                {"label": "Ativo Circulante", "data": bpa_pct[0], "backgroundColor": _CIRC_A},
+                {"label": "Ativo Não Circulante", "data": bpa_pct[1], "backgroundColor": _NCIRC_A},
+            ]},
             "options": {
                 "responsive": True, "maintainAspectRatio": False,
-                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "ticks": {},
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "min": 0, "max": 100,
+                    "ticks": {"callback": "{}%"}, "title": {"display": True, "text": "%"}}},
+                "plugins": {"title": {"display": True, "text": "Ativo — % Composição"},
+                            "legend": {"display": True, "position": "top"}},
+            },
+        },
+    })
+
+    # BPP Absolute
+    charts.append({
+        "type": "chart",
+        "title": "Passivo + PL — Valores Absolutos",
+        "description": "Passivo Circulante + Passivo Não Circulante + Patrimônio Líquido. Barras empilhadas.",
+        "chart_data": {
+            "type": "bar",
+            "data": {"labels": years, "datasets": [
+                {"label": "Passivo Circulante", "data": passivo_circ, "backgroundColor": _CIRC_P},
+                {"label": "Passivo Não Circulante", "data": passivo_ncirc, "backgroundColor": _NCIRC_P},
+                {"label": "Patrimônio Líquido", "data": pl, "backgroundColor": _PL},
+            ]},
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True,
                     "title": {"display": True, "text": "R$"}}},
-                "plugins": {"title": {"display": True, "text": "Composição do Passivo + PL"}},
+                "plugins": {"title": {"display": True, "text": "Passivo + PL — Absoluto"},
+                            "legend": {"display": True, "position": "top"}},
+            },
+        },
+    })
+
+    # BPP Percentage
+    charts.append({
+        "type": "chart",
+        "title": "Passivo + PL — Composição Percentual",
+        "description": "Passivo Circulante vs Não Circulante vs PL, normalizado para 100%.",
+        "chart_data": {
+            "type": "bar",
+            "data": {"labels": years, "datasets": [
+                {"label": "Passivo Circulante", "data": bpp_pct[0], "backgroundColor": _CIRC_P},
+                {"label": "Passivo Não Circulante", "data": bpp_pct[1], "backgroundColor": _NCIRC_P},
+                {"label": "Patrimônio Líquido", "data": bpp_pct[2], "backgroundColor": _PL},
+            ]},
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "scales": {"x": {"stacked": True}, "y": {"stacked": True, "min": 0, "max": 100,
+                    "ticks": {"callback": "{}%"}, "title": {"display": True, "text": "%"}}},
+                "plugins": {"title": {"display": True, "text": "Passivo + PL — % Composição"},
+                            "legend": {"display": True, "position": "top"}},
             },
         },
     })
@@ -2528,6 +2624,158 @@ def build_wacc_section(ratios_payload: dict) -> dict | None:
         "title": "WACC — Custo de Capital vs Retorno",
         "description": "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E). Se ROE/ROIC > WACC, a empresa cria valor.",
         "type": "table",
+        "columns": ["Métrica", "Valor"],
+        "rows": rows,
+    }
+
+
+# ── v1.22: Radar chart + Heatmap (adapted from valuation v2.0) ───────────────
+
+def build_financials_radar(ratios_payload: dict | None) -> dict | None:
+    """Build a radar chart comparing key financial dimensions.
+
+    Shows 6 axes: Rentabilidade (ROE), Crescimento (revenue_growth_1y),
+    Liquidez (current_ratio), Alavancagem (inverse of D/E), Margem (net_margin),
+    Eficiência (asset_turnover). All values normalized to 0-100 scale.
+
+    Returns a chart section dict, or None if fewer than 3 metrics available.
+    """
+    if not isinstance(ratios_payload, dict):
+        return None
+    # [v1.22 fix] In financials, ratios_payload is a FLAT dict ({"roe": 0.31, ...}),
+    # NOT wrapped in {"ratios": {...}}. Use it directly.
+    ratios = ratios_payload
+
+    def _norm_pct(val, max_val=0.5):
+        if val is None: return None
+        return max(0, min(100, (val / max_val) * 100))
+
+    def _norm_ratio(val, max_val=3.0):
+        if val is None: return None
+        return max(0, min(100, (val / max_val) * 100))
+
+    def _norm_inverse(val, max_val=3.0):
+        if val is None: return None
+        return max(0, 100 - min(100, (val / max_val) * 100))
+
+    roe_score = _norm_pct(ratios.get("roe"), 0.4)
+    growth_score = _norm_pct(ratios.get("revenue_growth_1y"), 0.3)
+    liq_score = _norm_ratio(ratios.get("current_ratio"), 3.0)
+    lev_score = _norm_inverse(ratios.get("debt_equity"), 3.0)
+    margin_score = _norm_pct(ratios.get("net_margin"), 0.3)
+    eff_score = _norm_ratio(ratios.get("asset_turnover"), 2.0)
+
+    scores = [roe_score, growth_score, liq_score, lev_score, margin_score, eff_score]
+    if sum(1 for s in scores if s is not None) < 3:
+        return None
+
+    chart_data = {
+        "type": "radar",
+        "data": {
+            "labels": ["Rentabilidade", "Crescimento", "Liquidez", "Alavancagem", "Margem", "Eficiência"],
+            "datasets": [{
+                "label": "Score (0-100)",
+                "data": scores,
+                "borderColor": "#0d9488",
+                "backgroundColor": "rgba(13,148,136,0.15)",
+                "pointBackgroundColor": "#0d9488",
+                "pointBorderColor": "#fff",
+                "pointHoverBackgroundColor": "#fff",
+                "pointHoverBorderColor": "#0d9488",
+                "borderWidth": 2,
+            }],
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "scales": {
+                "r": {
+                    "beginAtZero": True,
+                    "max": 100,
+                    "ticks": {"stepSize": 20},
+                    "pointLabels": {"font": {"size": 12}},
+                },
+            },
+            "plugins": {
+                "legend": {"display": True, "position": "top"},
+                "tooltip": {"mode": "index", "intersect": False},
+            },
+        },
+    }
+
+    return {
+        "type": "chart",
+        "title": "Radar Financeiro — Visão Multidimensional",
+        "description": (
+            "Score 0-100 por dimensão. Rentabilidade: ROE. Crescimento: receita 1Y. "
+            "Liquidez: corrente. Alavancagem: D/E inverso (menor = melhor). "
+            "Margem: líquida. Eficiência: giro do ativo."
+        ),
+        "chart_data": chart_data,
+    }
+
+
+def build_financials_heatmap(ratios_payload: dict | None) -> dict | None:
+    """Build a heatmap table of financial metrics with color coding.
+
+    Each metric is color-coded: green (good), yellow (neutral), red (bad).
+    Colors are based on standard financial thresholds.
+
+    Returns a heatmap section dict, or None if no data available.
+    """
+    if not isinstance(ratios_payload, dict):
+        return None
+    # [v1.22 fix] In financials, ratios_payload is a FLAT dict — use directly.
+    ratios = ratios_payload
+
+    def _heat(val, good, bad, reverse=False):
+        if val is None:
+            return {"text": "—", "bg": "", "color": ""}
+        if reverse:
+            if val <= good:
+                return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+            elif val <= bad:
+                return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+            else:
+                return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+        else:
+            if val >= good:
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+            elif val >= bad:
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+            else:
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+
+    def _heat_ratio(val, good_min, bad_min):
+        if val is None:
+            return {"text": "—", "bg": "", "color": ""}
+        if val >= good_min:
+            return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+        elif val >= bad_min:
+            return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+        else:
+            return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+
+    rows = [
+        ["ROE", _heat(ratios.get("roe"), 0.20, 0.10)],
+        ["ROA", _heat(ratios.get("roa"), 0.10, 0.05)],
+        ["ROIC", _heat(ratios.get("roic"), 0.12, 0.07)],
+        ["Margem Líquida", _heat(ratios.get("net_margin"), 0.15, 0.05)],
+        ["Margem EBITDA", _heat(ratios.get("ebitda_margin"), 0.25, 0.10)],
+        ["Margem Operacional", _heat(ratios.get("operating_margin"), 0.15, 0.05)],
+        ["D/E", _heat(ratios.get("debt_equity"), 0.5, 2.0, reverse=True)],
+        ["Dív. Líq./EBITDA", _heat(ratios.get("net_debt_ebitda"), 1.5, 3.5, reverse=True)],
+        ["Liquidez Corrente", _heat_ratio(ratios.get("current_ratio"), 1.5, 1.0)],
+        ["Cresc. Receita 1Y", _heat(ratios.get("revenue_growth_1y"), 0.10, 0.0)],
+    ]
+
+    return {
+        "type": "heatmap",
+        "title": "Heatmap Financeiro — Indicadores Coloridos",
+        "description": (
+            "Verde = bom, Amarelo = neutro, Vermelho = ruim. "
+            "Thresholds baseados em práticas para B3."
+        ),
         "columns": ["Métrica", "Valor"],
         "rows": rows,
     }

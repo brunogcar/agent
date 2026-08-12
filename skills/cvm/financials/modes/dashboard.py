@@ -61,6 +61,8 @@ from skills.cvm.financials.report import (
     build_dupont_section,
     build_altman_z_section,
     build_wacc_section,
+    build_financials_radar,
+    build_financials_heatmap,
     build_error_section,
     build_ttm_chart,
     build_ttm_table,
@@ -288,6 +290,20 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] Altman Z section failed: {e}", flush=True)
 
+    # [v1.22] Radar + Heatmap in Overview tab.
+    try:
+        radar = build_financials_radar(ratios_payload)
+        if radar:
+            overview_sections.append(radar)
+    except Exception as e:
+        print(f"[financials] Radar failed: {e}", flush=True)
+    try:
+        heatmap = build_financials_heatmap(ratios_payload)
+        if heatmap:
+            overview_sections.append(heatmap)
+    except Exception as e:
+        print(f"[financials] Heatmap failed: {e}", flush=True)
+
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Overview ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
@@ -322,18 +338,14 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
         balanco_section = build_balanco_section(bpa_result, bpp_result)
-        # [v1.16] Add a balance-sheet structure chart (Caixa/Ativo/Dívida/PL).
-        balanco_chart = build_balanco_chart(bpa_result, bpp_result)
-        # [new commit] Add decomposition charts: Ativo = Circ + Não Circ,
-        # Passivo = Circ + Não Circ + PL. User feedback: "add chart to
-        # Ativo Total = Ativo Circulante + Ativo Não Circulante and same
-        # to passivo total = passivo c + passivo n c, then pl".
+        # [v1.22 v2] build_balanco_chart now returns a LIST of 2 charts (absolute + percentage).
+        balanco_charts = build_balanco_chart(bpa_result, bpp_result)
+        # [v1.22 v2] build_balanco_decomp_charts returns 4 charts (BPA abs+pct, BPP abs+pct).
         balanco_decomp = build_balanco_decomp_charts(bpa_result, bpp_result)
         # The Balanço tab is a single subtabs section; append the charts as
         # top-level sections after the subtabs so they render below.
         balanco_sections = [balanco_section]
-        if balanco_chart:
-            balanco_sections.append(balanco_chart)
+        balanco_sections.extend(balanco_charts)
         balanco_sections.extend(balanco_decomp)
     else:
         balanco_sections = [build_error_section("Balanço", "BPA/BPP indisponível")]

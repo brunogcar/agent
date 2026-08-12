@@ -62,20 +62,20 @@ def _normalize_date(dmy: str) -> str:
 
 
 def _parse_value(raw) -> float | None:
-    """Parse BCB `valor` (string, comma decimal) -> float.
+    """Parse BCB `valor` (string) -> float.
 
-    [v3] Uses core.br_validator.parse_brl() for consistency.
+    [v2.0 fix] BCB SGS API returns values with DOT decimal separator (e.g.
+    "14.00"), NOT Brazilian comma format. The old code used parse_brl()
+    which treats "." as thousands separator → "14.00" became 1400.0 (wrong).
+    Fix: use float() directly with comma→dot replacement. This handles
+    both "14.00" (dot) and "14,00" (comma) correctly.
     """
     if raw is None or raw == "":
         return None
     try:
-        from core.br_validator import parse_brl
-        return parse_brl(str(raw))
-    except Exception:
-        try:
-            return float(str(raw).replace(",", "."))
-        except (ValueError, TypeError):
-            return None
+        return float(str(raw).replace(",", "."))
+    except (ValueError, TypeError):
+        return None
 
 
 def fetch_series(code: int, start: str = "", end: str = "",
