@@ -70,6 +70,11 @@ from skills.cvm.financials.report import (
     build_yoy_table,
     build_period_table,
     build_period_chart,
+    # [v1.23 F4] New per-statement trend chart builders.
+    build_statement_trend_chart,
+    build_dfc_trend_chart,
+    build_dva_trend_chart,
+    build_multi_period_table,
 )
 
 
@@ -252,7 +257,9 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         overview_sections.insert(1, price_chart)
 
     # [v1.16.1] Annual trend chart (Receita/EBITDA/Lucro) — after price chart.
-    overview_trend = build_overview_trend_chart(annual_periods)
+    # [v1.23 F2] Pass `company` so a year-end price overlay (right Y-axis,
+    # purple dashed line) is rendered alongside the fundamentals.
+    overview_trend = build_overview_trend_chart(annual_periods, company)
     if overview_trend:
         overview_sections.append(overview_trend)
 
@@ -359,8 +366,9 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _s_t0 = _dt.now()
     # Tab 5: DRE
     if dre_result.get("status") == "ok":
+        # [v1.23 F4] Pass `company` so the DRE trend chart gets a price overlay.
         dre_sections = build_dre_sections(
-            dre_result, annual_periods, latest_annual_period)
+            dre_result, annual_periods, latest_annual_period, company=company)
     else:
         dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
@@ -373,8 +381,9 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _s_t0 = _dt.now()
     # Tab 6: DFC
     if dfc_result.get("status") == "ok":
+        # [v1.23 F4] Pass `company` so the DFC trend chart gets a price overlay.
         dfc_sections = build_dfc_sections(
-            dfc_result, annual_periods, latest_annual_period)
+            dfc_result, annual_periods, latest_annual_period, company=company)
     else:
         dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
     # [new commit] F12 — DFC quality analysis (appended after existing DFC
@@ -399,7 +408,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _s_t0 = _dt.now()
     # Tab 7: DVA
     if dva_result.get("status") == "ok":
-        dva_sections = build_dva_sections(dva_result)
+        # [v1.23 F4] Pass `company` so the DVA trend chart gets a price overlay.
+        dva_sections = build_dva_sections(dva_result, company=company)
     else:
         dva_sections = [build_error_section("DVA", dva_result.get("error", "unknown"))]
     # [new commit] F13 — Dividend sustainability (appended to DVA tab — DVA

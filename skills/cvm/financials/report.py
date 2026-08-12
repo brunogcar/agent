@@ -169,22 +169,41 @@ def build_overview_sections(
     if latest_annual_period:
         m = latest_annual_period.get("metrics") or {}
         r = latest_annual_period.get("ratios") or {}
+        # [v1.23 F1] Each value cell uses {"text", "tooltip"} so the
+        # data_table macro renders an info icon + PT-BR formula tooltip.
+        def _cell(val, spec: str, tooltip: str) -> dict:
+            return {"text": _fmt(val, spec), "tooltip": tooltip}
+
         rows = [
             ["Período",           latest_annual_period.get("period", "—")],
-            ["Receita Líquida",   _fmt(m.get("receita_liquida"),   "brl")],
-            ["Lucro Bruto",       _fmt(m.get("lucro_bruto"),       "brl")],
-            ["EBIT",              _fmt(m.get("ebit"),              "brl")],
-            ["EBITDA",            _fmt(m.get("ebitda"),            "brl")],
-            ["Lucro Líquido",     _fmt(m.get("lucro_liquido"),     "brl")],
-            ["Margem Bruta",      _fmt(r.get("marg_bruta"),        "pct")],
-            ["Margem EBITDA",     _fmt(r.get("marg_ebitda"),       "pct")],
-            ["Margem Líquida",    _fmt(r.get("marg_liquida"),      "pct")],
-            ["Ativo Total",       _fmt(m.get("ativo_total"),       "brl")],
-            ["Patrimônio Liq.",   _fmt(m.get("patrimonio_liquido"),"brl")],
-            ["Caixa",             _fmt(m.get("caixa"),             "brl")],
-            ["Divida Bruta",      _fmt(m.get("divida_bruta"),      "brl")],
-            ["FCO",               _fmt(m.get("fco"),               "brl")],
-            ["FCI",               _fmt(m.get("fci"),               "brl")],
+            ["Receita Líquida",   _cell(m.get("receita_liquida"),   "brl",
+                "Receita Líquida = DRE 3.01 (Receita de Vendas)")],
+            ["Lucro Bruto",       _cell(m.get("lucro_bruto"),       "brl",
+                "Lucro Bruto = DRE 3.02 (Receita - CPV)")],
+            ["EBIT",              _cell(m.get("ebit"),              "brl",
+                "EBIT = DRE 3.05 (Resultado antes de juros e impostos)")],
+            ["EBITDA",            _cell(m.get("ebitda"),            "brl",
+                "EBITDA = EBIT + D&A (DFC 6.01.01.02)")],
+            ["Lucro Líquido",     _cell(m.get("lucro_liquido"),     "brl",
+                "Lucro Líquido = DRE 3.09 (Resultado do período)")],
+            ["Margem Bruta",      _cell(r.get("marg_bruta"),        "pct",
+                "Margem Bruta = Lucro Bruto / Receita Líquida")],
+            ["Margem EBITDA",     _cell(r.get("marg_ebitda"),       "pct",
+                "Margem EBITDA = EBITDA / Receita Líquida")],
+            ["Margem Líquida",    _cell(r.get("marg_liquida"),      "pct",
+                "Margem Líquida = Lucro Líquido / Receita Líquida")],
+            ["Ativo Total",       _cell(m.get("ativo_total"),       "brl",
+                "Ativo Total = BPA 1")],
+            ["Patrimônio Liq.",   _cell(m.get("patrimonio_liquido"),"brl",
+                "PL = BPP 2.03")],
+            ["Caixa",             _cell(m.get("caixa"),             "brl",
+                "Caixa = BPA 1.01.01")],
+            ["Divida Bruta",      _cell(m.get("divida_bruta"),      "brl",
+                "Dívida Bruta = BPP 2.01.04 + 2.02.01")],
+            ["FCO",               _cell(m.get("fco"),               "brl",
+                "Fluxo de Caixa Operacional = DFC 6.01")],
+            ["FCI",               _cell(m.get("fci"),               "brl",
+                "Fluxo de Caixa de Investimento = DFC 6.02")],
         ]
         sections.append({
             "title": "Latest Annual Summary",
@@ -735,6 +754,78 @@ def _statement_table_section(title: str, accounts_dict: dict) -> dict:
     }
 
 
+def build_multi_period_table(
+    title: str, periods: list[dict], statement_type: str,
+) -> dict | None:
+    """[v1.23 F3] Build a multi-period comparison table for a statement.
+
+    Shows up to 4 annual periods side-by-side so users can compare each
+    account code across years without flipping tabs. Used as the FIRST
+    section in each of the Balanço / DRE / DFC / DVA tabs.
+
+    Args:
+        title: table title.
+        periods: list of period dicts (each has ``period`` label + ``accounts``
+            dict of ``{codigo: {label, section, valor_brl}}``). Periods are
+            assumed to be newest-first (the standard statement-mode order).
+        statement_type: "BPA" / "BPP" / "DRE" / "DFC" / "DVA" — used for the
+            note caption.
+
+    Returns:
+        A ``type: "table"`` section, or None when no periods / no accounts.
+    """
+    valid_periods = [p for p in (periods or []) if p.get("accounts")]
+    if not valid_periods:
+        return None
+    # Cap at 4 periods (newest-first).
+    valid_periods = valid_periods[:4]
+
+    period_labels = [
+        str(p.get("period") or p.get("data_fim_exerc") or "—")
+        for p in valid_periods
+    ]
+    columns = ["Código", "Descrição"] + period_labels
+
+    # Build a unified code→{label, section} map preserving first-seen order.
+    code_meta: dict[str, dict] = {}
+    for p in valid_periods:
+        for codigo, acc in (p.get("accounts") or {}).items():
+            if codigo not in code_meta:
+                code_meta[codigo] = {
+                    "label": acc.get("label") or codigo,
+                    "section": acc.get("section") or "",
+                }
+
+    rows: list[list] = []
+    last_section: str | None = None
+    n_periods = len(valid_periods)
+    for codigo, meta in code_meta.items():
+        section = meta["section"]
+        if section and section != last_section:
+            # Section header row — span all columns.
+            header_row = [f"— {section} —", ""]
+            header_row.extend([""] * n_periods)
+            rows.append(header_row)
+            last_section = section
+        row: list = [codigo, meta["label"]]
+        for p in valid_periods:
+            acc = (p.get("accounts") or {}).get(codigo) or {}
+            val = acc.get("valor_brl")
+            row.append(_fmt(val, "brl") if val is not None else "—")
+        rows.append(row)
+
+    return {
+        "title": title,
+        "type": "table",
+        "columns": columns,
+        "rows": rows,
+        "note": (
+            f"Comparativo de {n_periods} período(s) anuais ({statement_type}). "
+            "Valores em R$ (formato compacto)."
+        ),
+    }
+
+
 def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
     """Build the Balanço tab as a `type: "subtabs"` section with BPA + BPP.
 
@@ -768,12 +859,19 @@ def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
         latest_bpa = bpa_periods[0]
         accounts = latest_bpa.get("accounts") or {}
         if accounts:
+            bpa_sections: list[dict] = []
+            # [v1.23 F3] Multi-period comparison table FIRST.
+            multi_bpa = build_multi_period_table(
+                "Ativo — Comparativo Anual", bpa_periods, "BPA")
+            if multi_bpa:
+                bpa_sections.append(multi_bpa)
+            bpa_sections.append(_statement_table_section(
+                f"Ativo — {latest_bpa.get('period') or latest_bpa.get('data_fim_exerc') or 'Latest'}",
+                accounts,
+            ))
             sub_tabs.append({
                 "name": "BPA",
-                "sections": [_statement_table_section(
-                    f"Ativo — {latest_bpa.get('period') or latest_bpa.get('data_fim_exerc') or 'Latest'}",
-                    accounts,
-                )],
+                "sections": bpa_sections,
             })
     if not any(st["name"] == "BPA" for st in sub_tabs):
         sub_tabs.append({
@@ -789,12 +887,19 @@ def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
         latest_bpp = bpp_periods[0]
         accounts = latest_bpp.get("accounts") or {}
         if accounts:
+            bpp_sections: list[dict] = []
+            # [v1.23 F3] Multi-period comparison table FIRST.
+            multi_bpp = build_multi_period_table(
+                "Passivo — Comparativo Anual", bpp_periods, "BPP")
+            if multi_bpp:
+                bpp_sections.append(multi_bpp)
+            bpp_sections.append(_statement_table_section(
+                f"Passivo — {latest_bpp.get('period') or latest_bpp.get('data_fim_exerc') or 'Latest'}",
+                accounts,
+            ))
             sub_tabs.append({
                 "name": "BPP",
-                "sections": [_statement_table_section(
-                    f"Passivo — {latest_bpp.get('period') or latest_bpp.get('data_fim_exerc') or 'Latest'}",
-                    accounts,
-                )],
+                "sections": bpp_sections,
             })
     if not any(st["name"] == "BPP" for st in sub_tabs):
         sub_tabs.append({
@@ -817,12 +922,25 @@ def build_dre_sections(
     dre_result: dict,
     annual_periods: list[dict],
     latest_annual_period: dict | None,
+    company: str | None = None,
 ) -> list[dict]:
-    """Build the DRE tab: latest annual accounts table + 5Y margin trend chart."""
+    """Build the DRE tab: latest annual accounts table + 5Y margin trend chart.
+
+    [v1.23 F4] Now appends a statement-level trend chart (Receita/EBITDA/
+    Lucro Líq. + price overlay on right axis) at the END of the sections.
+    Backward-compatible: ``company`` is optional; when None the overlay is
+    skipped.
+    """
     sections: list[dict] = []
 
     # DRE table from the standalone dre() mode (latest period).
     dre_periods = (dre_result or {}).get("periods") or []
+    # [v1.23 F3] Multi-period comparison table FIRST.
+    if dre_periods:
+        multi_dre = build_multi_period_table(
+            "DRE — Comparativo Anual", dre_periods, "DRE")
+        if multi_dre:
+            sections.append(multi_dre)
     if dre_periods:
         latest = dre_periods[0]
         accounts = latest.get("accounts") or {}
@@ -966,6 +1084,12 @@ def build_dre_sections(
                 },
             })
 
+    # [v1.23 F4] Statement-level trend chart with price overlay (appended
+    # at the END of the DRE tab).
+    dre_trend = build_statement_trend_chart(annual_periods, company, "DRE")
+    if dre_trend:
+        sections.append(dre_trend)
+
     return sections
 
 
@@ -985,11 +1109,22 @@ def build_dfc_sections(
     dfc_result: dict,
     annual_periods: list[dict],
     latest_annual_period: dict | None,
+    company: str | None = None,
 ) -> list[dict]:
-    """Build the DFC tab: latest annual accounts table + 5Y FCO/FCI/FCF chart."""
+    """Build the DFC tab: latest annual accounts table + 5Y FCO/FCI/FCF chart.
+
+    [v1.23 F4] Now appends a DFC trend chart (FCO/FCI/FCF + price overlay on
+    right axis) at the END of the sections. Backward-compatible.
+    """
     sections: list[dict] = []
 
     dfc_periods = (dfc_result or {}).get("periods") or []
+    # [v1.23 F3] Multi-period comparison table FIRST.
+    if dfc_periods:
+        multi_dfc = build_multi_period_table(
+            "DFC — Comparativo Anual", dfc_periods, "DFC")
+        if multi_dfc:
+            sections.append(multi_dfc)
     if dfc_periods:
         latest = dfc_periods[0]
         accounts = latest.get("accounts") or {}
@@ -1065,6 +1200,11 @@ def build_dfc_sections(
             },
         })
 
+    # [v1.23 F4] DFC trend chart with price overlay (appended at the END).
+    dfc_trend = build_dfc_trend_chart(annual_periods, company)
+    if dfc_trend:
+        sections.append(dfc_trend)
+
     return sections
 
 
@@ -1079,8 +1219,14 @@ def _num_or_none(value: Any) -> float | None:
 
 # ── Tab 7: DVA (table + doughnut chart) ──────────────────────────────────────
 
-def build_dva_sections(dva_result: dict) -> list[dict]:
-    """Build the DVA tab: generation + distribution table + doughnut chart."""
+def build_dva_sections(dva_result: dict, company: str | None = None) -> list[dict]:
+    """Build the DVA tab: generation + distribution table + doughnut chart.
+
+    [v1.23 F4] Now appends a DVA trend chart (VA Bruta/VA Líquida/Total a
+    Distribuir + price overlay on right axis) at the END of the sections.
+    Backward-compatible: ``company`` is optional; when None the overlay is
+    skipped.
+    """
     sections: list[dict] = []
 
     dva_periods = (dva_result or {}).get("periods") or []
@@ -1099,6 +1245,12 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
             "text": "DVA accounts not found for the latest period.",
         })
         return sections
+
+    # [v1.23 F3] Multi-period comparison table FIRST.
+    multi_dva = build_multi_period_table(
+        "DVA — Comparativo Anual", dva_periods, "DVA")
+    if multi_dva:
+        sections.append(multi_dva)
 
     # Build the table grouped by section (Geração / Distribuição).
     sections.append(_statement_table_section(
@@ -1271,6 +1423,12 @@ def build_dva_sections(dva_result: dict) -> list[dict]:
     gen_chart = _build_dva_generation_chart(accounts, latest)
     if gen_chart is not None:
         sections.append(gen_chart)
+
+    # [v1.23 F4] DVA trend chart with price overlay (appended at the END).
+    # Reads codes 7.04 / 7.06 / 7.08 from each DVA period's accounts dict.
+    dva_trend = build_dva_trend_chart(dva_periods, company)
+    if dva_trend:
+        sections.append(dva_trend)
 
     return sections
 
@@ -2059,12 +2217,57 @@ def build_period_table(periods: list[dict], label: str) -> dict:
 
 # ── New chart builders (v1.16) ────────────────────────────────────────────────
 
-def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
+def _fetch_year_end_prices(company: str, year_labels: list[str]) -> list[float | None]:
+    """Fetch Dec-31 (or closest prior trading day) close price for each year label.
+
+    [v1.23 F2] Used by Overview/DFC/DVA trend charts to add a price overlay
+    on a secondary right-axis. Returns a list aligned with ``year_labels``
+    (None entries when price data is missing or fetch fails).
+
+    Args:
+        company: B3 ticker (e.g. "PETR4").
+        year_labels: list of year strings (e.g. ["2020", "2021", "2022"]).
+    """
+    if not company or not year_labels:
+        return [None] * len(year_labels)
+    try:
+        from skills.cvm.calculations.engines.price import price_series
+    except Exception:
+        return [None] * len(year_labels)
+    # Single fetch for the full year range — much cheaper than N round-trips.
+    first_year = min(year_labels)
+    last_year = max(year_labels)
+    date_from = f"{first_year}-01-01"
+    date_to = f"{last_year}-12-31"
+    try:
+        series = price_series(company, date_from, date_to)
+    except Exception:
+        series = []
+    if not series:
+        return [None] * len(year_labels)
+    # Index by year (YYYY). Prefer the latest available date <= Dec-31 of that
+    # year; price_series already filters refdate within [date_from, date_to]
+    # and returns oldest-first. Take the last entry of each year.
+    by_year: dict[str, float] = {}
+    for point in series:
+        d = point.get("date") or ""
+        if len(d) >= 4:
+            by_year[d[:4]] = float(point.get("close"))
+    return [by_year.get(y) for y in year_labels]
+
+
+def build_overview_trend_chart(
+    annual_periods: list[dict], company: str | None = None,
+) -> dict | None:
     """Build a multi-line chart showing Receita/EBITDA/Lucro Líq. over annual periods.
 
     [v1.16] New chart for the Overview tab — gives users an immediate
     visual sense of the company's revenue + earnings trajectory without
     having to navigate to the DRE or Anual tabs.
+
+    [v1.23 F2] Now accepts an optional ``company`` parameter; when provided,
+    a 4th dataset (year-end closing price) is added on a secondary right
+    Y-axis so users can compare fundamentals with share-price trajectory.
     """
     sorted_periods = sorted(
         [p for p in annual_periods if p.get("period")],
@@ -2084,31 +2287,61 @@ def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
     if not any(v is not None for v in revenue + ebitda + net_income):
         return None
 
+    datasets = [
+        {"label": "Receita Líquida", "data": revenue,
+         "borderColor": "#0d9488", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "EBITDA", "data": ebitda,
+         "borderColor": "#f59e0b", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "Lucro Líquido", "data": net_income,
+         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+    ]
+
+    scales: dict = {
+        "y": {"type": "linear", "position": "left", "ticks": {},
+              "title": {"display": True, "text": "R$"}},
+    }
+
+    # [v1.23 F2] Price overlay on right Y-axis (purple dashed line).
+    if company:
+        price_series_data = _fetch_year_end_prices(company, labels)
+        if any(v is not None for v in price_series_data):
+            datasets.append({
+                "label": "Preço (R$)",
+                "data": price_series_data,
+                "borderColor": "#a855f7",
+                "backgroundColor": "#a855f7",
+                "borderDash": [5, 5],
+                "fill": False,
+                "tension": 0.3,
+                "yAxisID": "y1",
+                "pointRadius": 3,
+            })
+            scales["y1"] = {
+                "type": "linear", "position": "right",
+                "grid": {"drawOnChartArea": False},
+                "ticks": {},
+                "title": {"display": True, "text": "Preço (R$)"},
+            }
+
     return {
         "type": "chart",
         "title": "Trajetória de Receita e Lucro (Anual)",
         "description": (
             "Receita Líquida, EBITDA e Lucro Líquido anuais. Mostra a "
             "trajetória de crescimento e rentabilidade da empresa."
+            + (" Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+               if company and "y1" in scales else "")
         ),
         "chart_data": {
             "type": "line",
-            "data": {
-                "labels": labels,
-                "datasets": [
-                    {"label": "Receita Líquida", "data": revenue,
-                     "borderColor": "#0d9488", "fill": False, "tension": 0.3},
-                    {"label": "EBITDA", "data": ebitda,
-                     "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
-                    {"label": "Lucro Líquido", "data": net_income,
-                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
-                ],
-            },
+            "data": {"labels": labels, "datasets": datasets},
             "options": {
                 "responsive": True,
                 "maintainAspectRatio": False,
-                "scales": {"y": {"ticks": {},
-                                 "title": {"display": True, "text": "R$"}}},
+                "scales": scales,
                 "plugins": {
                     "title": {"display": True, "text": "Receita, EBITDA e Lucro Líquido"},
                 },
@@ -2122,6 +2355,257 @@ def build_overview_trend_chart(annual_periods: list[dict]) -> dict | None:
             {"data": net_income},
         ],
         "price_full_data": revenue,
+    }
+
+
+def _attach_price_overlay(
+    datasets: list[dict], scales: dict, company: str | None, labels: list[str],
+) -> bool:
+    """[v1.23 F4] Append a year-end price dataset + right-axis scale.
+
+    Mutates ``datasets`` and ``scales`` in place. Returns True when an
+    overlay was added (caller can use this to amend the description).
+    """
+    if not company or not labels:
+        return False
+    prices = _fetch_year_end_prices(company, labels)
+    if not any(v is not None for v in prices):
+        return False
+    datasets.append({
+        "label": "Preço (R$)",
+        "data": prices,
+        "borderColor": "#a855f7",
+        "backgroundColor": "#a855f7",
+        "borderDash": [5, 5],
+        "fill": False,
+        "tension": 0.3,
+        "yAxisID": "y1",
+        "pointRadius": 3,
+    })
+    scales["y1"] = {
+        "type": "linear", "position": "right",
+        "grid": {"drawOnChartArea": False},
+        "ticks": {},
+        "title": {"display": True, "text": "Preço (R$)"},
+    }
+    return True
+
+
+def build_statement_trend_chart(
+    periods: list[dict], company: str | None, label: str,
+) -> dict | None:
+    """[v1.23 F4] Receita/EBITDA/Lucro Líq. trend chart with optional price overlay.
+
+    Used by the DRE tab (income-statement metrics). Same concept as the
+    Overview trend chart, but accepts a custom ``label`` so the same builder
+    can be reused by future tabs.
+
+    Args:
+        periods: annual period dicts (each has ``metrics``).
+        company: B3 ticker for the price overlay; None skips the overlay.
+        label: chart title suffix (e.g. "DRE").
+    """
+    sorted_periods = sorted(
+        [p for p in periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+    labels = [str(p.get("period")) for p in sorted_periods]
+    revenue, ebitda, net_income = [], [], []
+    for p in sorted_periods:
+        m = p.get("metrics") or {}
+        revenue.append(_num_or_none(m.get("receita_liquida")))
+        ebitda.append(_num_or_none(m.get("ebitda")))
+        net_income.append(_num_or_none(m.get("lucro_liquido")))
+    if not any(v is not None for v in revenue + ebitda + net_income):
+        return None
+
+    datasets = [
+        {"label": "Receita Líquida", "data": revenue,
+         "borderColor": "#0d9488", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "EBITDA", "data": ebitda,
+         "borderColor": "#f59e0b", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "Lucro Líquido", "data": net_income,
+         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+    ]
+    scales: dict = {
+        "y": {"type": "linear", "position": "left", "ticks": {},
+              "title": {"display": True, "text": "R$"}},
+    }
+    has_overlay = _attach_price_overlay(datasets, scales, company, labels)
+    description = (
+        f"Receita Líquida, EBITDA e Lucro Líquido anuais ({label}). "
+        "Trajetória de crescimento e rentabilidade."
+    )
+    if has_overlay:
+        description += (
+            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+        )
+    return {
+        "type": "chart",
+        "title": f"Trajetória de Receita e Lucro — {label}",
+        "description": description,
+        "chart_data": {
+            "type": "line",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": scales,
+                "plugins": {
+                    "title": {"display": True,
+                              "text": f"Receita, EBITDA e Lucro — {label}"},
+                },
+            },
+        },
+    }
+
+
+def build_dfc_trend_chart(
+    periods: list[dict], company: str | None,
+) -> dict | None:
+    """[v1.23 F4] FCO/FCI/FCF trend chart with optional price overlay.
+
+    Used by the DFC tab. Plots the 3 DFC sub-totals across annual periods.
+
+    Args:
+        periods: annual period dicts (each has ``metrics`` with fco/fci/fcf).
+        company: B3 ticker for the price overlay; None skips the overlay.
+    """
+    sorted_periods = sorted(
+        [p for p in periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+    labels = [str(p.get("period")) for p in sorted_periods]
+    fco, fci, fcf = [], [], []
+    for p in sorted_periods:
+        m = p.get("metrics") or {}
+        fco.append(_num_or_none(m.get("fco")))
+        fci.append(_num_or_none(m.get("fci")))
+        fcf.append(_num_or_none(m.get("fcf")))
+    if not any(v is not None for v in fco + fci + fcf):
+        return None
+
+    datasets = [
+        {"label": "FCO", "data": fco,
+         "borderColor": "#22c55e", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "FCI", "data": fci,
+         "borderColor": "#ef4444", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "FCF", "data": fcf,
+         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+    ]
+    scales: dict = {
+        "y": {"type": "linear", "position": "left", "ticks": {},
+              "title": {"display": True, "text": "R$"}},
+    }
+    has_overlay = _attach_price_overlay(datasets, scales, company, labels)
+    description = (
+        "Fluxos de Caixa Operacional (FCO), de Investimento (FCI) e de "
+        "Financiamento (FCF) anuais."
+    )
+    if has_overlay:
+        description += (
+            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+        )
+    return {
+        "type": "chart",
+        "title": "Trajetória dos Fluxos de Caixa (Anual)",
+        "description": description,
+        "chart_data": {
+            "type": "line",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": scales,
+                "plugins": {
+                    "title": {"display": True, "text": "FCO, FCI e FCF por Ano"},
+                },
+            },
+        },
+    }
+
+
+def build_dva_trend_chart(
+    periods: list[dict], company: str | None,
+) -> dict | None:
+    """[v1.23 F4] VA Bruta/VA Líquida/Total a Distribuir trend chart with overlay.
+
+    Used by the DVA tab. Reads DVA account codes:
+      - 7.04 → VA Bruto
+      - 7.06 → VA Líquido
+      - 7.08 → Total a Distribuir
+
+    Args:
+        periods: DVA period dicts (each has ``period`` + ``accounts``).
+        company: B3 ticker for the price overlay; None skips the overlay.
+    """
+    sorted_periods = sorted(
+        [p for p in periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+    labels = [str(p.get("period")) for p in sorted_periods]
+    va_bruta, va_liquida, total_dist = [], [], []
+    for p in sorted_periods:
+        accounts = p.get("accounts") or {}
+        va_bruta.append(_num_or_none((accounts.get("7.04") or {}).get("valor_brl")))
+        va_liquida.append(_num_or_none((accounts.get("7.06") or {}).get("valor_brl")))
+        total_dist.append(_num_or_none((accounts.get("7.08") or {}).get("valor_brl")))
+    if not any(v is not None for v in va_bruta + va_liquida + total_dist):
+        return None
+
+    datasets = [
+        {"label": "VA Bruta", "data": va_bruta,
+         "borderColor": "#0d9488", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "VA Líquida", "data": va_liquida,
+         "borderColor": "#f59e0b", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+        {"label": "Total a Distribuir", "data": total_dist,
+         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
+         "yAxisID": "y"},
+    ]
+    scales: dict = {
+        "y": {"type": "linear", "position": "left", "ticks": {},
+              "title": {"display": True, "text": "R$"}},
+    }
+    has_overlay = _attach_price_overlay(datasets, scales, company, labels)
+    description = (
+        "Valor Adicionado Bruto (7.04), Líquido (7.06) e Total a "
+        "Distribuir (7.08) anuais."
+    )
+    if has_overlay:
+        description += (
+            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+        )
+    return {
+        "type": "chart",
+        "title": "Trajetória da Geração de Valor (Anual)",
+        "description": description,
+        "chart_data": {
+            "type": "line",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "scales": scales,
+                "plugins": {
+                    "title": {"display": True,
+                              "text": "Geração de Valor Adicionado por Ano"},
+                },
+            },
+        },
     }
 
 
@@ -2576,8 +3060,10 @@ def build_altman_z_section(ratios_payload: dict) -> dict | None:
         zone_color = "#ef4444"
 
     rows = [
-        ["Altman Z-Score", f"{altman_z:.2f}"],
-        ["Zona", zone],
+        ["Altman Z-Score", {"text": f"{altman_z:.2f}",
+            "tooltip": "Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5"}],
+        ["Zona", {"text": zone,
+            "tooltip": "Z > 2.99 seguro, 1.81-2.99 cinzento, < 1.81 risco"}],
     ]
 
     return {
@@ -2605,10 +3091,17 @@ def build_wacc_section(ratios_payload: dict) -> dict | None:
     roe = ratios_payload.get("roe")
     roic = ratios_payload.get("roic")
 
+    # [v1.23 F1] Tooltips on each value cell (PT-BR formula).
+    def _cell(val, spec: str, tooltip: str) -> dict:
+        return {"text": _fmt(val, spec), "tooltip": tooltip}
+
     rows = [
-        ["WACC", _fmt(wacc, "pct")],
-        ["ROE", _fmt(roe, "pct")],
-        ["ROIC", _fmt(roic, "pct")],
+        ["WACC", _cell(wacc, "pct",
+            "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E)")],
+        ["ROE",  _cell(roe,  "pct",
+            "ROE = Lucro Líquido / Patrimônio Líquido")],
+        ["ROIC", _cell(roic, "pct",
+            "ROIC = NOPAT / Capital Investido")],
     ]
 
     # Value creation assessment
@@ -2618,7 +3111,8 @@ def build_wacc_section(ratios_payload: dict) -> dict | None:
             assessment = f"Criando valor (ROE - WACC = +{spread*100:.1f}%)"
         else:
             assessment = f"Destruindo valor (ROE - WACC = {spread*100:.1f}%)"
-        rows.append(["Avaliação", assessment])
+        rows.append(["Avaliação", {"text": assessment,
+            "tooltip": "Se ROE > WACC, a empresa cria valor"}])
 
     return {
         "title": "WACC — Custo de Capital vs Retorno",
