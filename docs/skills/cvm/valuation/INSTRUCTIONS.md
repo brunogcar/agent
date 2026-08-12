@@ -93,6 +93,22 @@
 > - **Fix:** Created separate `revenue_cagr_3y`, `revenue_cagr_5y`, `earnings_cagr_3y`, `earnings_cagr_5y`, `gross_profit_cagr_3y`, `gross_profit_cagr_5y` metrics in `metrics/cagr.py`. Kept the existing `revenue_growth_*` metrics (simple growth) — they're different analytical tools.
 > - **Lesson:** CAGR and simple growth answer different questions. CAGR = "what constant yearly rate gets from V_start to V_end?" Simple growth = "how much did it grow total over the period?" Both are useful — don't replace one with the other.
 
+#### v2.0 — Selic series 11 vs 432 (corrupt values)
+> - **What happened:** The Selic engine used BCB SGS series 11 ("Selic diária, % a.d."). The catalog said it's a daily rate, but the BCB API actually returns "Taxa Selic acumulada no mês" (monthly accumulated). The compound annualization formula `(1 + monthly/100)^252` produced absurd values (51660%) or overflowed. The sanity check (>50% → None) caught it, but that meant COE/WACC/DCF all fell back to the 14% default — no real Selic data was ever used.
+> - **Root cause:** The BCB SGS catalog description for series 11 is WRONG. It says "% a.d." (daily), but the API returns monthly accumulated values. This is a BCB metadata issue, not our code.
+> - **Fix:** Switched to series 432 ("Meta Selic Copom, % a.a.") — the actual Copom policy rate. It's already annual (% a.a.), values are 5-45%, no compound annualization needed, no overflow possible.
+> - **Lesson:** Don't trust data source metadata (unit, frequency) without verifying against actual API responses. BCB's catalog says "daily" but returns monthly. Always add a sanity check on the computed value (e.g. "Brazilian Selic has never exceeded 45%") to catch metadata mismatches.
+
+#### v2.0 — ITR HEAD check unreliable (CVM doesn't update Last-Modified)
+> - **What happened:** The sync guard does a HEAD request to CVM's ZIP URL and compares the `Last-Modified` header to the last sync timestamp. For ITR (quarterly), this said "up to date" even when CVM had published new 2T2026 filings — because CVM doesn't update the `Last-Modified` header when they ADD new filings to an existing ZIP. The header only changes when a NEW ZIP file is created (annually).
+> - **Fix:** ITR now skips the HEAD check and uses the 24h freshness window (like non-CVM sources). DFP/FCA keep the HEAD check (they're annual — one ZIP per year, header is reliable).
+> - **Lesson:** HEAD check with `Last-Modified` only works for sources that create NEW files on each update. For sources that APPEND to existing files (like CVM ITR ZIPs), the header doesn't change — use a time-based freshness window instead.
+
+#### v2.0 — Report package split pattern
+> - **What happened:** `report.py` grew to 1859 lines with 17 functions. Hard to navigate, hard to add new builders without conflicts.
+> - **Fix:** Split into `report/` package (9 files). Each file contains builders for one dashboard tab. `__init__.py` re-exports all public builders. No `report.py` file — the package directory wins (Python 3.3+).
+> - **Lesson:** When a module exceeds ~1000 lines, split it into a package. One file per concern (tab, chart type, etc.). `__init__.py` re-exports for backward compat — no import changes needed. This pattern is reusable for financials/historical when they grow.
+
 ---
 
-*Last updated: 2026-08-10 (v1.11 — added sgs.db path bug + CAGR vs simple growth lessons).*
+*Last updated: 2026-08-12 (v2.0 — added Selic series 432 + ITR Head check + report split lessons).*

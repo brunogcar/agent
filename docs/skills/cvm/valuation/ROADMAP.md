@@ -79,4 +79,4 @@ fix) + per-(ticker,day) cache (engine cache DB) all done. Remaining:
 
 ---
 
-*Last updated: 2026-08-10 (v1.11). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-12 (v2.0). See [CHANGELOG.md](CHANGELOG.md) for version history.*

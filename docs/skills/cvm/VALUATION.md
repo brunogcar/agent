@@ -69,4 +69,4 @@ EV/EBITDA, Div Yield, Market Cap) + a full indicator table. See
 
 ---
 
-*Last updated: 2026-08-10 (v1.11 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup; see CHANGELOG.md).*
+*Last updated: 2026-08-12 (v2.0 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup; see CHANGELOG.md).*

@@ -1038,6 +1038,14 @@ def ensure_fresh(
     # bridge, sgs, index) keep the 24h freshness window.
     _CVM_SOURCES = {"dfp", "itr", "fca", "fre", "ipe", "cad", "vlmo", "cgvn"}
 
+    # [v2.0 fix] ITR is quarterly — CVM adds new filings to the same ZIP file
+    # throughout the year without updating the Last-Modified header. So the
+    # HEAD check says "up to date" even when new quarterly data was published.
+    # Fix: ITR always uses the 24h freshness window (like non-CVM sources),
+    # skipping the unreliable HEAD check. DFP/FCA are annual (published once
+    # a year) — the HEAD check works for them.
+    _CVM_HEAD_SKIP = {"itr"}  # sources that skip HEAD check, use 24h window
+
     # [Tier 0 #2] Parallelize CVM HEAD checks — was 8 sequential HTTP requests
     # (3-40s), now concurrent (~5s max). The sync itself stays sequential
     # (same DB files), but the HEAD check is the slow part.
@@ -1060,7 +1068,8 @@ def ensure_fresh(
 
     for source in sources:
         # CVM sources: use the parallel HEAD-check results
-        if source in _CVM_SOURCES:
+        # [v2.0] ITR skips HEAD check (unreliable Last-Modified) — uses 24h window
+        if source in _CVM_SOURCES and source not in _CVM_HEAD_SKIP:
             if skip_sync:
                 skipped.append(source)
                 continue

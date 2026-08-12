@@ -1,10 +1,15 @@
 """engines/selic.py -- Selic risk-free rate engine.
 
-Fetches the Selic daily rate from BCB SGS (series 11, already synced in
-sgs.db). Returns the ANNUALIZED rate (% a.a.) for CAPM calculations.
+[v2.0] Switched from series 11 (Selic diária, % a.d.) to series 432
+(Meta Selic Copom, % a.a. — already annual). Series 11 was producing
+corrupt values (51660% — the BCB API was returning accumulated monthly
+values that the compound formula couldn't handle). Series 432 is:
+  - Already annual (% a.a.) — no compound annualization needed
+  - The actual Copom policy rate (currently ~14.25%)
+  - Simple + reliable — values are always 5-45% range
+  - No overflow possible
 
-The BCB SGS series 11 is a DAILY rate (% a.d., base 252). This engine
-annualizes it: rate_a.a. = rate_a.d. * 252.
+Returns the annualized rate as a PERCENT (% a.a.) for CAPM calculations.
 
 Design decision: We query sgs.db directly (not the BCB API) because:
   1. The data is already synced via data_sources.bcb.sgs.sync_all()
@@ -13,7 +18,7 @@ Design decision: We query sgs.db directly (not the BCB API) because:
 
 Usage:
     from skills.cvm.calculations.engines.selic import selic_at
-    r = selic_at("PETR4", "2024-06-30")  # -> 10.40 (annualized % a.a.)
+    r = selic_at("PETR4", "2024-06-30")  # -> 14.25 (annual % a.a.)
 """
 from __future__ import annotations
 
@@ -22,15 +27,15 @@ from pathlib import Path
 from skills._base import engine_cached  # [v1.8 F7]
 
 
+# [v2.0] Series 432 = Meta Selic Copom (annual % a.a.)
+# Was series 11 (Selic diária % a.d.) — produced corrupt values.
+SELIC_SERIES_CODE = 432
+
+
 def _sgs_db() -> Path:
     """Return path to BCB SGS database.
 
-    [v1.10 fix] Was: cvm_db_path().parent / "bcb" / "sgs.db" → resolved to
-    memory_db/cvm/bcb/sgs.db (WRONG — sgs.db lives at memory_db/bcb/sgs.db).
-    This bug caused selic_at() to always return None (FileNotFoundError caught
-    silently), which cascaded to COE=None → WACC=None → DCF=None → Margin of
-    Safety=None. Only IRR worked (it doesn't depend on WACC).
-    Fix: use the BCB SGS catalog's db_path() directly — single source of truth.
+    Uses the BCB SGS catalog's db_path() directly — single source of truth.
     """
     try:
         from data_sources.bcb.sgs.catalog import db_path as _sgs_db_path
@@ -50,21 +55,18 @@ def _connect() -> sqlite3.Connection:
 
 @engine_cached
 def selic_at(company: str, date: str) -> float | None:
-    """Get the annualized Selic rate at or before a given date.
+    """Get the Selic target rate (Meta Copom) at or before a given date.
+
+    [v2.0] Uses series 432 (Meta Selic Copom, % a.a.) — already annual.
+    No compound annualization needed. Values are typically 5-45%.
 
     Args:
-        company: Ticker (unused - Selic is a macro rate, not company-specific.
-                 Accepted for API consistency with other engines).
+        company: Ticker (unused - Selic is a macro rate, not company-specific).
         date: YYYY-MM-DD.
 
     Returns:
-        Annualized Selic rate as a PERCENT (% a.a.), e.g. 10.40 for 10.40%.
+        Selic rate as a PERCENT (% a.a.), e.g. 14.25 for 14.25%.
         Returns None if SGS DB not synced or no data before date.
-
-    [v1.12] Added debug logging — prints the sgs.db path + whether it exists
-    + whether the query returned data. Previously, all failures were silent
-    (bare `except: return None`), making it impossible to diagnose why
-    DCF/WACC/COE returned None.
     """
     try:
         path = _sgs_db()
@@ -72,37 +74,25 @@ def selic_at(company: str, date: str) -> float | None:
             print(f"[selic] sgs.db NOT FOUND at {path} — run bcb.macro dashboard to sync", flush=True)
             return None
         conn = _connect()
-        # Series 11 = Selic daily rate (% a.d., base 252)
         row = conn.execute(
             "SELECT value, ref_date FROM series_observations "
-            "WHERE series_code = 11 AND ref_date <= ? AND value IS NOT NULL "
+            "WHERE series_code = ? AND ref_date <= ? AND value IS NOT NULL "
             "ORDER BY ref_date DESC LIMIT 1",
-            (date,),
+            (SELIC_SERIES_CODE, date),
         ).fetchone()
         conn.close()
 
         if not row or row["value"] is None:
-            print(f"[selic] sgs.db exists at {path} but series 11 has no data before {date}", flush=True)
+            print(f"[selic] sgs.db exists but series {SELIC_SERIES_CODE} has no data before {date}", flush=True)
             return None
 
-        # Annualize: BCB SGS series 11 is "Taxa Selic acumulada no mês" —
-        # a MONTHLY accumulated rate (~0.95%/month for 14% annual).
-        # [v1.11 fix] Was: compound (1 + daily/100)^252 assuming DAILY rate.
-        # But series 11 is MONTHLY, so ^252 produced ~990% (absurd).
-        # Fix: compound (1 + monthly/100)^12 for correct annualization.
-        # [v1.11 fix 2] Guard against stale DB cache values > 50% (no Selic
-        # rate has ever exceeded 50% in Brazil's history). If the cached or
-        # computed value is > 50%, it's clearly wrong — return None so the
-        # COE/WACC fallback (14%) kicks in.
-        monthly_rate = float(row["value"])
-        monthly_frac = monthly_rate / 100.0
-        annual_frac = (1.0 + monthly_frac) ** 12 - 1.0
-        result = annual_frac * 100.0
+        result = float(row["value"])
+
         # Sanity check: Brazilian Selic has never exceeded ~45% (2003 peak).
-        # If > 50%, the value format is wrong or cache is stale.
-        if result > 50.0:
-            print(f"[selic] WARNING: computed {result:.2f}% (> 50% — invalid). Value={monthly_rate}, treating as cache miss.", flush=True)
+        if result > 50.0 or result < 0.0:
+            print(f"[selic] WARNING: value {result}% is out of range (0-50%). Treating as cache miss.", flush=True)
             return None
+
         return result
     except Exception as e:
         print(f"[selic] ERROR: {type(e).__name__}: {e}", flush=True)
@@ -117,29 +107,26 @@ def selic_periods(company: str) -> list[dict]:
     oldest-first. Uses monthly sampling (last observation per month) to keep
     the list manageable (~60 points for 5 years).
 
-    [P0 fix] Was MAX(ref_date), MAX(value) as independent aggregates — if
-    Selic changed mid-month (e.g. 13.25% -> 11.75%), MAX(value) returned
-    13.25% (the highest), not the value at the latest date. Now uses a
-    correlated subquery to get the value AT the max date.
+    [v2.0] Series 432 values are already annual (% a.a.) — return directly.
     """
     try:
         conn = _connect()
-        # Get the value at the latest ref_date within each month.
         rows = conn.execute(
             """SELECT t.ref_date as ref_date, t.value as value
                FROM series_observations t
                INNER JOIN (
                    SELECT MAX(ref_date) as max_date
                    FROM series_observations
-                   WHERE series_code = 11 AND value IS NOT NULL
+                   WHERE series_code = ? AND value IS NOT NULL
                    GROUP BY substr(ref_date, 1, 7)
                ) m ON t.ref_date = m.max_date
-               WHERE t.series_code = 11 AND t.value IS NOT NULL
+               WHERE t.series_code = ? AND t.value IS NOT NULL
                ORDER BY t.ref_date ASC""",
+            (SELIC_SERIES_CODE, SELIC_SERIES_CODE),
         ).fetchall()
         conn.close()
 
-        return [{"date": r["ref_date"], "selic": ((1.0 + float(r["value"]) / 100.0) ** 12 - 1.0) * 100.0}
+        return [{"date": r["ref_date"], "selic": float(r["value"])}
                 for r in rows if r["value"] is not None]
     except (FileNotFoundError, Exception):
         return []
@@ -153,6 +140,6 @@ register_engine(EngineSpec(
     quantity="selic",
     at_fn=selic_at,
     periods_fn=selic_periods,
-    source="BCB SGS series 11 (Selic diaria, base 252) -> annualized",
+    source="BCB SGS series 432 (Meta Selic Copom, % a.a.)",
     category="market",
 ))

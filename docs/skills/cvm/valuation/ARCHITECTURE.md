@@ -12,18 +12,25 @@ skills/cvm/valuation/
 │   ├── __init__.py    minimal package marker
 │   ├── ratios.py      @register_mode("ratios")      — include_in_all=True (default)
 │   ├── summary.py     @register_mode("summary")     — include_in_all=False
-│   ├── dashboard.py   @register_mode("dashboard")   — include_in_all=False (v1.4 5-tab,
-│                     v1.5 reorganized to 6 tabs, v1.8 sidebar groups, v1.9 Valor Intrínseco,
-│                     v1.10 Graham overlay removed + P/L-LPA history chart + ROE trend rewrite)
+│   ├── dashboard.py   @register_mode("dashboard")   — include_in_all=False (v2.0 6-tab)
 │   └── historical_valuation.py  @register_mode("historical_valuation") — v1.8, 5Y daily history
 ├── fetchers.py        price fetching (_get_price / _get_price_brapi /
 │                     _get_price_investsite / _get_latest_price — b3 trades.db fallback)
 ├── helpers.py         _safe_call, _safe_div (shared utilities)
-└── report.py          dashboard section builders (v1.10: 10 builders for the 6-tab payload,
-                       incl. _safe_get defensive accessor, _fmt formatter, _derive_multiples
-                       / _derive_per_share / _derive_detailed_leverage helpers, build_dcf_sensitivity_section,
-                       build_pl_lpa_pvp_vpa_history_chart [v1.10], build_roe_trend_chart [v1.10 rewritten])
+└── report/            [v2.0] Split from monolithic report.py into package
+    ├── __init__.py    thin re-exports all 13 public builders (backward compat)
+    ├── _helpers.py    _safe_get, _fmt, _safe_div, _derive_*, all constants
+    ├── overview.py    build_overview_kpis, build_overview_sections,
+    │                  build_valuation_radar, build_valuation_heatmap
+    ├── multiples.py   build_multiples_sections, build_per_share_sections
+    ├── profitability.py  build_profitability_section, build_margin_trend_chart
+    ├── liquidity.py   build_liquidity_leverage_sections
+    ├── efficiency.py  build_efficiency_growth_sections
+    ├── intrinsic.py   _dcf_at_growth, build_dcf_sensitivity_section
+    └── history_charts.py  build_pl_lpa_pvp_vpa_history_chart, build_roe_trend_chart
 ```
+
+**v2.0 report split:** The monolithic `report.py` (1859 lines) was split into a `report/` package (9 files). Each file contains builders for one dashboard tab/concern. The `__init__.py` re-exports all 13 public builders, so `from skills.cvm.valuation.report import build_overview_kpis` still works without changes. This pattern can be applied to financials/historical when they bump to 2.0.
 
 **v1.10 changes:**
 - `build_roe_trend_chart` signature changed from `(company, annual_periods)` to `(company)` — now uses `roe_history()`/`roa_history()`/`roic_history()` instead of annual_periods.
@@ -156,4 +163,4 @@ This skill uses `validate_ticker()` and `parse_escala()` from `core/br_validator
 
 ---
 
-*Last updated: 2026-08-10 (v1.11 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-12 (v2.0 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*

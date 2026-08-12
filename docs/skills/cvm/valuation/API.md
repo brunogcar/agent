@@ -233,4 +233,4 @@ skill(domain="cvm", sub_domain="valuation", mode="historical_valuation",
 
 ---
 
-*Last updated: 2026-08-10 (v1.11).*
+*Last updated: 2026-08-12 (v2.0).*
