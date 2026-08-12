@@ -71,7 +71,6 @@
         {% if ch.control_type %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Controle:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.control_type }}</span></div>{% endif %}
         {% if ch.uf %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">UF:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.uf }}</span></div>{% endif %}
         {% if ch.fiscal_year_end %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Fim Exerc.:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.fiscal_year_end }}</span></div>{% endif %}
-        {% if ch.last_synced_trimester %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Último Bal.:</span> <span style="color: var(--brand); font-weight: 600;">{{ ch.last_synced_trimester }}</span></div>{% endif %}
         {% if ch.website %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Web:</span> <a href="{{ ch.website }}" target="_blank" style="color: var(--brand); text-decoration: none;">{{ ch.website }}</a></div>{% endif %}
       </div>
     </div>
@@ -86,35 +85,11 @@
     </div>
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
+    {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
     {{ m.data_table(sec.columns, sec.rows) }}
+    {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
-    {% endif %}
-    {% if sec.type == 'heatmap' and sec.columns and sec.rows %}
-    <div class="heatmap-table" style="overflow-x: auto;">
-      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-        <thead>
-          <tr>
-            {% for col in sec.columns %}
-            <th style="padding: 8px 12px; text-align: {{ 'left' if loop.first else 'center' }}; border-bottom: 2px solid var(--border); color: var(--text-sec); font-weight: 600; font-size: 12px;">{{ col }}</th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in sec.rows %}
-          <tr>
-            {% for cell in row %}
-            {% if loop.first %}
-            <td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>
-            {% else %}
-            <td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;">{{ cell.text if cell.text is defined else cell }}</td>
-            {% endif %}
-            {% endfor %}
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
     {% endif %}
     {% if sec.note %}
     <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
@@ -152,6 +127,11 @@
     {% endif %}
     {% if sec.type == 'subtabs' and sec.tabs %}
     {{ m.subtabs(sec.tabs, 'tab-' + outer_loop.index|string + '-sub-' + loop.index|string) }}
+    {% endif %}
+    {% if sec.type == 'period_toggle' %}
+    {# [v1.24] Top-level period_toggle (used by DRE/DFC/DVA tabs which are
+       flat section lists, not subtabs). Same macro as used inside subtabs. #}
+    {{ m.period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), 'tab-' + outer_loop.index|string + '-pt-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
@@ -202,7 +182,6 @@
   var _priceChartFullData = {};
 
   // [v1.18] Filter a price chart by time range (all/5y/1y/1m).
-  // [v1.11] Now supports multi-dataset charts (stores + updates ALL datasets).
   function filterPriceChart(btn, canvasId, range) {
     var entry = _chartRegistry.find(function(e) { return e.canvas && e.canvas.id === canvasId; });
     if (!entry) return;
@@ -222,36 +201,26 @@
 
     // Filter by range.
     var labels = full.labels;
-    // full.datasets = [{data: [...]}, {data: [...]}, ...] (multi-dataset)
-    // OR full.data = [...] (single-dataset, backward compat)
-    var datasets = full.datasets || [{data: full.data}];
+    var data = full.data;
     if (range !== 'all') {
       var days = range === '5y' ? 1825 : range === '1y' ? 365 : 30;
       var cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
       var cutoffStr = cutoff.toISOString().slice(0, 10);
-      var filteredLabels = [];
-      var filteredDatasets = datasets.map(function() { return []; });
+      var filtered = [];
       for (var i = 0; i < labels.length; i++) {
         if (labels[i] >= cutoffStr) {
-          filteredLabels.push(labels[i]);
-          for (var d = 0; d < datasets.length; d++) {
-            filteredDatasets[d].push(datasets[d].data[i]);
-          }
+          filtered.push({label: labels[i], value: data[i]});
         }
       }
-      labels = filteredLabels;
-      datasets = filteredDatasets.map(function(d) { return {data: d}; });
+      labels = filtered.map(function(f) { return f.label; });
+      data = filtered.map(function(f) { return f.value; });
     }
 
     // Update the chart.
     if (entry.chart) {
       entry.chart.data.labels = labels;
-      for (var d = 0; d < datasets.length; d++) {
-        if (entry.chart.data.datasets[d]) {
-          entry.chart.data.datasets[d].data = datasets[d].data;
-        }
-      }
+      entry.chart.data.datasets[0].data = data;
       entry.chart.update('none');
     }
   }
@@ -287,6 +256,40 @@
     var chart = new Chart(canvas.getContext('2d'), config);
     _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
   }
+
+  // [v1.24] Period toggle: switch between annual + quarterly tables.
+  // btn: the clicked <button> element.
+  // prefix: unique container prefix (e.g. "tab-4-sub-1-pt-1") used to build
+  //         panel IDs "{prefix}-quarterly" + "{prefix}-annual".
+  function togglePeriod(btn, prefix) {
+    var container = btn.closest('.period-toggle-container');
+    if (!container) return;
+
+    // Update button styles (active = brand-dim background, inactive = transparent)
+    var siblings = container.querySelectorAll('.period-toggle-btn');
+    siblings.forEach(function(s) {
+      s.classList.remove('active');
+      s.style.background = 'transparent';
+      s.style.color = 'var(--text-sec)';
+    });
+    btn.classList.add('active');
+    btn.style.background = 'var(--brand-dim)';
+    btn.style.color = 'var(--brand)';
+
+    // Toggle panel visibility — show the one matching btn's data-period,
+    // hide the other. Display is '' (default) for visible, 'none' for hidden.
+    var targetPeriod = btn.getAttribute('data-period');
+    var panels = container.querySelectorAll('.period-toggle-panel');
+    panels.forEach(function(p) {
+      var isTarget = p.getAttribute('data-period') === targetPeriod;
+      p.style.display = isTarget ? '' : 'none';
+      if (isTarget) {
+        p.classList.add('active');
+      } else {
+        p.classList.remove('active');
+      }
+    });
+  }
 </script>
 
 {% for tab in tabs %}
@@ -296,7 +299,7 @@
     {% if sec.type == 'chart' and sec.chart_data %}
     <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
     {% if sec.price_range_selector %}
-    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}};</script>
+    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | tojson }}, data: {{ sec.price_full_data | tojson }}};</script>
     {% endif %}
     {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
@@ -307,9 +310,6 @@
         {% for sub_sec in subtab.sections %}
           {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
           <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
-          {% if sub_sec.price_range_selector %}
-          <script>_priceChartFullData['tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sub_sec.price_full_labels | default([]) | tojson }}, datasets: {{ sub_sec.price_full_datasets | default([]) | tojson }}, data: {{ sub_sec.price_full_data | default([]) | tojson }}};</script>
-          {% endif %}
           {% endif %}
         {% endfor %}
       {% endfor %}

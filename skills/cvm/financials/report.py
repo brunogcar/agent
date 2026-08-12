@@ -754,14 +754,50 @@ def _statement_table_section(title: str, accounts_dict: dict) -> dict:
     }
 
 
+def _format_period_label(p: dict) -> str:
+    """[v1.24] Format a period label for table column headers.
+
+    Annual  → "2023"           (from ``period`` or ``data_fim_exerc`` "2023-12-31")
+    Quarterly → "2T2026"       (from ``period`` or ``data_fim_exerc`` "2026-06-30")
+
+    Falls back to the raw date string when the month isn't a standard
+    quarter-end (3/6/9/12) — graceful degradation for non-calendar filers.
+    """
+    if p.get("period"):
+        return str(p["period"])
+    date = p.get("data_fim_exerc") or ""
+    if not date:
+        return "—"
+    try:
+        year = date[:4]
+        month = int(date[5:7])
+    except (ValueError, IndexError):
+        return date
+    if month == 12:
+        return year  # annual
+    quarter_map = {3: "1T", 6: "2T", 9: "3T", 12: "4T"}
+    q_label = quarter_map.get(month)
+    if q_label:
+        return f"{q_label}{year}"
+    return date
+
+
 def build_multi_period_table(
     title: str, periods: list[dict], statement_type: str,
 ) -> dict | None:
-    """[v1.23 F3] Build a multi-period comparison table for a statement.
+    """[v1.23 F3 / v1.24] Build a multi-period comparison table for a statement.
 
-    Shows up to 4 annual periods side-by-side so users can compare each
-    account code across years without flipping tabs. Used as the FIRST
-    section in each of the Balanço / DRE / DFC / DVA tabs.
+    Shows up to 20 periods (annual OR quarterly) side-by-side so users can
+    compare each account code across periods without flipping tabs. Used as
+    the FIRST section in each of the Balanço / DRE / DFC / DVA tabs.
+
+    [v1.24] Changes vs v1.23:
+      - Cap raised from 4 → 20 periods (quarterly mode fetches up to 5Y).
+      - Period labels now derived via ``_format_period_label``: "2023" for
+        annual, "2T2026" for quarterly.
+      - ``wide: True`` flag set on the section when >6 periods so the
+        template wraps the table in ``overflow-x: auto``.
+      - Note caption is period-aware ("anuais" vs "trimestrais").
 
     Args:
         title: table title.
@@ -777,13 +813,10 @@ def build_multi_period_table(
     valid_periods = [p for p in (periods or []) if p.get("accounts")]
     if not valid_periods:
         return None
-    # Cap at 4 periods (newest-first).
-    valid_periods = valid_periods[:4]
+    # Cap at 20 periods (newest-first). v1.24: was 4.
+    valid_periods = valid_periods[:20]
 
-    period_labels = [
-        str(p.get("period") or p.get("data_fim_exerc") or "—")
-        for p in valid_periods
-    ]
+    period_labels = [_format_period_label(p) for p in valid_periods]
     columns = ["Código", "Descrição"] + period_labels
 
     # Build a unified code→{label, section} map preserving first-seen order.
@@ -814,106 +847,169 @@ def build_multi_period_table(
             row.append(_fmt(val, "brl") if val is not None else "—")
         rows.append(row)
 
+    # Detect period type for the caption
+    is_quarterly = any(p.get("quarter") is not None for p in valid_periods)
+    period_word = "trimestrais" if is_quarterly else "anuais"
+
     return {
         "title": title,
         "type": "table",
         "columns": columns,
         "rows": rows,
+        # [v1.24] Wrap wide tables (≥7 columns → "Código" + "Descrição" + 5+ periods)
+        # in a horizontally-scrollable container so the layout doesn't blow out.
+        "wide": n_periods > 5,
         "note": (
-            f"Comparativo de {n_periods} período(s) anuais ({statement_type}). "
+            f"Comparativo de {n_periods} período(s) {period_word} ({statement_type}). "
             "Valores em R$ (formato compacto)."
         ),
     }
 
 
-def build_balanco_section(bpa_result: dict, bpp_result: dict) -> dict:
+def _merge_bpa_bpp_periods(
+    bpa_periods: list[dict], bpp_periods: list[dict],
+) -> list[dict]:
+    """[v1.24] Merge BPA + BPP periods into a single list with combined accounts.
+
+    For each period present in EITHER input, merge the accounts dicts (BPA
+    accounts first, then BPP accounts — same order as the Completo sub-tab
+    visual: Ativo section first, then Passivo). Periods are returned
+    newest-first, keyed by ``period`` (or ``data_fim_exerc`` as fallback).
+
+    Used by the Balanço "Completo" sub-tab so the multi-period comparison
+    table shows both sides of the balance sheet side-by-side across periods.
+    """
+    by_period: dict[str, dict] = {}
+    for p in bpa_periods + bpp_periods:
+        period_key = p.get("period") or p.get("data_fim_exerc") or ""
+        if not period_key:
+            continue
+        if period_key not in by_period:
+            by_period[period_key] = {
+                "period": period_key,
+                "data_fim_exerc": p.get("data_fim_exerc"),
+                "year": p.get("year"),
+                "quarter": p.get("quarter"),
+                "accounts": {},
+            }
+        # Merge accounts (BPA first, then BPP — preserves visual grouping)
+        for codigo, acc in (p.get("accounts") or {}).items():
+            by_period[period_key]["accounts"][codigo] = acc
+
+    return sorted(
+        by_period.values(),
+        key=lambda p: (p.get("year") or 0, p.get("quarter") or 0),
+        reverse=True,
+    )
+
+
+def _build_period_toggle_sections(
+    label: str,
+    annual_periods: list[dict],
+    quarterly_periods: list[dict] | None,
+    statement_type: str,
+) -> list[dict]:
+    """[v1.24] Build a section list with optional period toggle.
+
+    - When ``quarterly_periods`` is non-empty: returns a single
+      ``type: "period_toggle"`` section wrapping two ``build_multi_period_table``
+      calls (annual + quarterly). Quarterly is visible by default.
+    - When ``quarterly_periods`` is empty/None: returns just the annual
+      multi-period table (backward-compatible with v1.23 callers).
+
+    Args:
+        label: statement label used in table titles (e.g. "Ativo", "DRE").
+        annual_periods: annual period dicts (reshaped — accounts as dict).
+        quarterly_periods: quarterly period dicts, or None/[] when unavailable.
+        statement_type: BPA / BPP / DRE / DFC / DVA — used in note caption.
+
+    Returns:
+        List of 0-1 sections (empty when no annual data either).
+    """
+    annual_table = build_multi_period_table(
+        f"{label} — Comparativo Anual", annual_periods, statement_type)
+
+    if quarterly_periods:
+        quarterly_table = build_multi_period_table(
+            f"{label} — Comparativo Trimestral", quarterly_periods, statement_type)
+        if annual_table or quarterly_table:
+            return [{
+                "type": "period_toggle",
+                "annual_sections": [annual_table] if annual_table else [],
+                "quarterly_sections": [quarterly_table] if quarterly_table else [],
+            }]
+        return []
+
+    if annual_table:
+        return [annual_table]
+    return []
+
+
+def build_balanco_section(
+    bpa_result: dict, bpp_result: dict,
+    bpa_result_q: dict | None = None,
+    bpp_result_q: dict | None = None,
+) -> dict:
     """Build the Balanço tab as a `type: "subtabs"` section with BPA + BPP.
 
-    [new commit] Added "Completo" sub-tab (first) showing BPA + BPP combined
-    in one table. User feedback: "add first tab being full bpa+bpp".
+    [v1.24] Quarterly support:
+      - Accepts optional ``bpa_result_q`` / ``bpp_result_q`` (quarterly
+        statement results from ``_fetch_all_statements(period="quarterly")``).
+      - Each sub-tab (Completo / BPA / BPP) wraps its multi-period table in a
+        ``type: "period_toggle"`` section so the user can switch between
+        annual + quarterly views. When no quarterly data is provided, the
+        toggle is omitted (backward-compatible with v1.23 callers).
+      - Removed the single-period ``_statement_table_section()`` call — the
+        multi-period table is now the ONLY table per sub-tab. The Completo
+        sub-tab now uses ``build_multi_period_table()`` with merged BPA+BPP
+        periods (was a single-period merge in v1.23).
     """
     sub_tabs: list[dict] = []
 
     bpa_periods = (bpa_result or {}).get("periods") or []
     bpp_periods = (bpp_result or {}).get("periods") or []
+    bpa_periods_q = (bpa_result_q or {}).get("periods") or []
+    bpp_periods_q = (bpp_result_q or {}).get("periods") or []
 
-    # [new commit] First sub-tab: "Completo" — BPA + BPP combined
+    # ── "Completo" sub-tab: BPA + BPP merged, multi-period ──────────────
     if bpa_periods and bpp_periods:
-        latest_bpa = bpa_periods[0]
-        latest_bpp = bpp_periods[0]
-        bpa_accounts = latest_bpa.get("accounts") or {}
-        bpp_accounts = latest_bpp.get("accounts") or {}
-        if bpa_accounts and bpp_accounts:
-            # Merge into a single table with Ativo section first, then Passivo
-            merged_section = _statement_table_section(
-                f"Balanço Completo — {latest_bpa.get('period') or 'Latest'}",
-                {**bpa_accounts, **bpp_accounts},
-            )
-            sub_tabs.append({
-                "name": "Completo",
-                "sections": [merged_section],
-            })
+        merged_annual = _merge_bpa_bpp_periods(bpa_periods, bpp_periods)
+        merged_quarterly = (
+            _merge_bpa_bpp_periods(bpa_periods_q, bpp_periods_q)
+            if (bpa_periods_q and bpp_periods_q) else []
+        )
+        completo_sections = _build_period_toggle_sections(
+            "Balanço Completo", merged_annual, merged_quarterly, "BPA+BPP")
+        if completo_sections:
+            sub_tabs.append({"name": "Completo", "sections": completo_sections})
 
-    # BPA sub-tab
+    # ── BPA sub-tab ─────────────────────────────────────────────────────
     if bpa_periods:
-        latest_bpa = bpa_periods[0]
-        accounts = latest_bpa.get("accounts") or {}
-        if accounts:
-            bpa_sections: list[dict] = []
-            # [v1.23 F3] Multi-period comparison table FIRST.
-            multi_bpa = build_multi_period_table(
-                "Ativo — Comparativo Anual", bpa_periods, "BPA")
-            if multi_bpa:
-                bpa_sections.append(multi_bpa)
-            bpa_sections.append(_statement_table_section(
-                f"Ativo — {latest_bpa.get('period') or latest_bpa.get('data_fim_exerc') or 'Latest'}",
-                accounts,
-            ))
-            sub_tabs.append({
-                "name": "BPA",
-                "sections": bpa_sections,
-            })
+        bpa_sections = _build_period_toggle_sections(
+            "Ativo", bpa_periods, bpa_periods_q, "BPA")
+        if bpa_sections:
+            sub_tabs.append({"name": "BPA", "sections": bpa_sections})
     if not any(st["name"] == "BPA" for st in sub_tabs):
         sub_tabs.append({
             "name": "BPA",
-            "sections": [{
-                "type": "text",
-                "text": "BPA data unavailable for this company.",
-            }],
+            "sections": [{"type": "text",
+                          "text": "BPA data unavailable for this company."}],
         })
 
-    # BPP sub-tab
+    # ── BPP sub-tab ─────────────────────────────────────────────────────
     if bpp_periods:
-        latest_bpp = bpp_periods[0]
-        accounts = latest_bpp.get("accounts") or {}
-        if accounts:
-            bpp_sections: list[dict] = []
-            # [v1.23 F3] Multi-period comparison table FIRST.
-            multi_bpp = build_multi_period_table(
-                "Passivo — Comparativo Anual", bpp_periods, "BPP")
-            if multi_bpp:
-                bpp_sections.append(multi_bpp)
-            bpp_sections.append(_statement_table_section(
-                f"Passivo — {latest_bpp.get('period') or latest_bpp.get('data_fim_exerc') or 'Latest'}",
-                accounts,
-            ))
-            sub_tabs.append({
-                "name": "BPP",
-                "sections": bpp_sections,
-            })
+        bpp_sections = _build_period_toggle_sections(
+            "Passivo", bpp_periods, bpp_periods_q, "BPP")
+        if bpp_sections:
+            sub_tabs.append({"name": "BPP", "sections": bpp_sections})
     if not any(st["name"] == "BPP" for st in sub_tabs):
         sub_tabs.append({
             "name": "BPP",
-            "sections": [{
-                "type": "text",
-                "text": "BPP data unavailable for this company.",
-            }],
+            "sections": [{"type": "text",
+                          "text": "BPP data unavailable for this company."}],
         })
 
-    return {
-        "type": "subtabs",
-        "tabs": sub_tabs,
-    }
+    return {"type": "subtabs", "tabs": sub_tabs}
 
 
 # ── Tab 5: DRE (table + margin trend chart) ──────────────────────────────────
@@ -923,32 +1019,33 @@ def build_dre_sections(
     annual_periods: list[dict],
     latest_annual_period: dict | None,
     company: str | None = None,
+    dre_result_q: dict | None = None,
 ) -> list[dict]:
-    """Build the DRE tab: latest annual accounts table + 5Y margin trend chart.
+    """Build the DRE tab: multi-period comparison table + 5Y margin trend chart.
 
-    [v1.23 F4] Now appends a statement-level trend chart (Receita/EBITDA/
+    [v1.24] Quarterly support:
+      - Accepts optional ``dre_result_q`` (quarterly DRE statement result).
+      - The multi-period table is wrapped in a ``period_toggle`` section so
+        the user can switch between annual + quarterly views.
+      - Removed the single-period ``_statement_table_section()`` call — the
+        multi-period table is now the ONLY table.
+      - Trend chart now prefers quarterly periods (when available) so the
+        price-overlay line chart shows finer-grained movement.
+
+    [v1.23 F4] Appends a statement-level trend chart (Receita/EBITDA/
     Lucro Líq. + price overlay on right axis) at the END of the sections.
     Backward-compatible: ``company`` is optional; when None the overlay is
     skipped.
     """
     sections: list[dict] = []
 
-    # DRE table from the standalone dre() mode (latest period).
     dre_periods = (dre_result or {}).get("periods") or []
-    # [v1.23 F3] Multi-period comparison table FIRST.
-    if dre_periods:
-        multi_dre = build_multi_period_table(
-            "DRE — Comparativo Anual", dre_periods, "DRE")
-        if multi_dre:
-            sections.append(multi_dre)
-    if dre_periods:
-        latest = dre_periods[0]
-        accounts = latest.get("accounts") or {}
-        if accounts:
-            sections.append(_statement_table_section(
-                f"DRE — {latest.get('period') or latest.get('data_fim_exerc') or 'Latest'}",
-                accounts,
-            ))
+    dre_periods_q = (dre_result_q or {}).get("periods") or []
+
+    # [v1.24] Multi-period table (annual + quarterly via period_toggle).
+    sections.extend(_build_period_toggle_sections(
+        "DRE", dre_periods, dre_periods_q, "DRE"))
+
     # Fallback: latest_annual_period metrics table (DRE codes).
     if not sections and latest_annual_period:
         m = latest_annual_period.get("metrics") or {}
@@ -1084,9 +1181,10 @@ def build_dre_sections(
                 },
             })
 
-    # [v1.23 F4] Statement-level trend chart with price overlay (appended
-    # at the END of the DRE tab).
-    dre_trend = build_statement_trend_chart(annual_periods, company, "DRE")
+    # [v1.23 F4 / v1.24] Statement-level trend chart with price overlay.
+    # [v1.24] Prefer quarterly periods when available (finer-grained trend).
+    trend_periods = dre_periods_q if dre_periods_q else annual_periods
+    dre_trend = build_statement_trend_chart(trend_periods, company, "DRE")
     if dre_trend:
         sections.append(dre_trend)
 
@@ -1110,29 +1208,30 @@ def build_dfc_sections(
     annual_periods: list[dict],
     latest_annual_period: dict | None,
     company: str | None = None,
+    dfc_result_q: dict | None = None,
 ) -> list[dict]:
-    """Build the DFC tab: latest annual accounts table + 5Y FCO/FCI/FCF chart.
+    """Build the DFC tab: multi-period comparison table + 5Y FCO/FCI/FCF chart.
 
-    [v1.23 F4] Now appends a DFC trend chart (FCO/FCI/FCF + price overlay on
+    [v1.24] Quarterly support:
+      - Accepts optional ``dfc_result_q`` (quarterly DFC statement result).
+      - The multi-period table is wrapped in a ``period_toggle`` section so
+        the user can switch between annual + quarterly views.
+      - Removed the single-period ``_statement_table_section()`` call — the
+        multi-period table is now the ONLY table.
+      - Trend chart now prefers quarterly periods (when available).
+
+    [v1.23 F4] Appends a DFC trend chart (FCO/FCI/FCF + price overlay on
     right axis) at the END of the sections. Backward-compatible.
     """
     sections: list[dict] = []
 
     dfc_periods = (dfc_result or {}).get("periods") or []
-    # [v1.23 F3] Multi-period comparison table FIRST.
-    if dfc_periods:
-        multi_dfc = build_multi_period_table(
-            "DFC — Comparativo Anual", dfc_periods, "DFC")
-        if multi_dfc:
-            sections.append(multi_dfc)
-    if dfc_periods:
-        latest = dfc_periods[0]
-        accounts = latest.get("accounts") or {}
-        if accounts:
-            sections.append(_statement_table_section(
-                f"DFC — {latest.get('period') or latest.get('data_fim_exerc') or 'Latest'}",
-                accounts,
-            ))
+    dfc_periods_q = (dfc_result_q or {}).get("periods") or []
+
+    # [v1.24] Multi-period table (annual + quarterly via period_toggle).
+    sections.extend(_build_period_toggle_sections(
+        "DFC", dfc_periods, dfc_periods_q, "DFC"))
+
     if not sections and latest_annual_period:
         m = latest_annual_period.get("metrics") or {}
         rows = [
@@ -1200,8 +1299,10 @@ def build_dfc_sections(
             },
         })
 
-    # [v1.23 F4] DFC trend chart with price overlay (appended at the END).
-    dfc_trend = build_dfc_trend_chart(annual_periods, company)
+    # [v1.23 F4 / v1.24] DFC trend chart with price overlay.
+    # [v1.24] Prefer quarterly periods when available.
+    trend_periods = dfc_periods_q if dfc_periods_q else annual_periods
+    dfc_trend = build_dfc_trend_chart(trend_periods, company)
     if dfc_trend:
         sections.append(dfc_trend)
 
@@ -1217,12 +1318,77 @@ def _num_or_none(value: Any) -> float | None:
         return None
 
 
+def _metrics_from_period(p: dict) -> dict:
+    """[v1.24] Extract named metrics from a period dict, supporting BOTH the
+    annual shape (``metrics`` field pre-computed by annual/quarterly summary
+    builders) AND the quarterly-statement shape (``accounts`` dict only — no
+    pre-computed metrics, because ``_fetch_all_statements_quarterly`` returns
+    raw accounts).
+
+    Used by ``build_statement_trend_chart`` and ``build_dfc_trend_chart`` so
+    they can consume either period type transparently.
+
+    Codes extracted (matches ``_extract_metrics`` in fetchers.py):
+      - receita_liquida  ← 3.01
+      - ebit             ← 3.05
+      - da               ← 6.01.01.02 (fallback 6.02.01.02 — direct method)
+      - ebitda           ← ebit + da (ebit_only fallback when da missing)
+      - lucro_liquido    ← 3.11
+      - fco              ← 6.01
+      - fci              ← 6.02
+      - fcf              ← 6.03
+    """
+    m = p.get("metrics")
+    if m is not None:
+        return m
+    accounts = p.get("accounts") or {}
+
+    def _v(code: str) -> float | None:
+        a = accounts.get(code)
+        if a is None:
+            return None
+        return _num_or_none(a.get("valor_brl"))
+
+    receita = _v("3.01")
+    ebit = _v("3.05")
+    da = _v("6.01.01.02")
+    if da is None:
+        da = _v("6.02.01.02")  # DFC_MD direct-method fallback
+    ebitda: float | None = None
+    if ebit is not None and da is not None:
+        ebitda = ebit + da
+    elif ebit is not None:
+        ebitda = ebit  # ebit_only fallback
+
+    return {
+        "receita_liquida": receita,
+        "ebit": ebit,
+        "ebitda": ebitda,
+        "lucro_liquido": _v("3.11"),
+        "fco": _v("6.01"),
+        "fci": _v("6.02"),
+        "fcf": _v("6.03"),
+    }
+
+
 # ── Tab 7: DVA (table + doughnut chart) ──────────────────────────────────────
 
-def build_dva_sections(dva_result: dict, company: str | None = None) -> list[dict]:
+def build_dva_sections(
+    dva_result: dict,
+    company: str | None = None,
+    dva_result_q: dict | None = None,
+) -> list[dict]:
     """Build the DVA tab: generation + distribution table + doughnut chart.
 
-    [v1.23 F4] Now appends a DVA trend chart (VA Bruta/VA Líquida/Total a
+    [v1.24] Quarterly support:
+      - Accepts optional ``dva_result_q`` (quarterly DVA statement result).
+      - The multi-period table is wrapped in a ``period_toggle`` section so
+        the user can switch between annual + quarterly views.
+      - Removed the single-period ``_statement_table_section()`` call — the
+        multi-period table is now the ONLY table.
+      - Trend chart now prefers quarterly periods (when available).
+
+    [v1.23 F4] Appends a DVA trend chart (VA Bruta/VA Líquida/Total a
     Distribuir + price overlay on right axis) at the END of the sections.
     Backward-compatible: ``company`` is optional; when None the overlay is
     skipped.
@@ -1230,6 +1396,7 @@ def build_dva_sections(dva_result: dict, company: str | None = None) -> list[dic
     sections: list[dict] = []
 
     dva_periods = (dva_result or {}).get("periods") or []
+    dva_periods_q = (dva_result_q or {}).get("periods") or []
     if not dva_periods:
         sections.append({
             "type": "text",
@@ -1246,17 +1413,17 @@ def build_dva_sections(dva_result: dict, company: str | None = None) -> list[dic
         })
         return sections
 
-    # [v1.23 F3] Multi-period comparison table FIRST.
-    multi_dva = build_multi_period_table(
-        "DVA — Comparativo Anual", dva_periods, "DVA")
-    if multi_dva:
-        sections.append(multi_dva)
+    # [v1.24] Multi-period table (annual + quarterly via period_toggle).
+    sections.extend(_build_period_toggle_sections(
+        "DVA", dva_periods, dva_periods_q, "DVA"))
 
-    # Build the table grouped by section (Geração / Distribuição).
-    sections.append(_statement_table_section(
-        f"DVA — {latest.get('period') or latest.get('data_fim_exerc') or 'Latest'}",
-        accounts,
-    ))
+    # If neither annual nor quarterly table could be built, fall back to a
+    # bare text notice so the tab isn't empty.
+    if not sections:
+        sections.append({
+            "type": "text",
+            "text": "DVA multi-period comparison unavailable.",
+        })
 
     # Doughnut chart: wealth distribution.
     # [v1.16 DVA-fix] Two fixes vs the v1.15 builder:
@@ -1424,9 +1591,11 @@ def build_dva_sections(dva_result: dict, company: str | None = None) -> list[dic
     if gen_chart is not None:
         sections.append(gen_chart)
 
-    # [v1.23 F4] DVA trend chart with price overlay (appended at the END).
+    # [v1.23 F4 / v1.24] DVA trend chart with price overlay (appended at the END).
     # Reads codes 7.04 / 7.06 / 7.08 from each DVA period's accounts dict.
-    dva_trend = build_dva_trend_chart(dva_periods, company)
+    # [v1.24] Prefer quarterly periods when available (finer-grained trend).
+    trend_periods = dva_periods_q if dva_periods_q else dva_periods
+    dva_trend = build_dva_trend_chart(trend_periods, company)
     if dva_trend:
         sections.append(dva_trend)
 
@@ -2391,30 +2560,55 @@ def _attach_price_overlay(
     return True
 
 
+def _period_sort_key(p: dict) -> tuple:
+    """[v1.24] Chronological sort key for period dicts.
+
+    Annual periods ("2023") sort by year. Quarterly periods ("2T2026") sort
+    by (year, quarter) so 4T2025 < 1T2026 — alphabetical string sort would
+    put "1T2026" before "4T2025" which is wrong.
+
+    Falls back to string sort when year/quarter metadata is missing.
+    """
+    year = p.get("year")
+    quarter = p.get("quarter")
+    if year is not None:
+        # (year, quarter) — quarter is None for annual (sorts first within year)
+        return (int(year), int(quarter) if quarter is not None else 0)
+    # Fallback: alphabetical on period label
+    return (0, 0, str(p.get("period") or p.get("data_fim_exerc") or ""))
+
+
 def build_statement_trend_chart(
     periods: list[dict], company: str | None, label: str,
 ) -> dict | None:
-    """[v1.23 F4] Receita/EBITDA/Lucro Líq. trend chart with optional price overlay.
+    """[v1.23 F4 / v1.24] Receita/EBITDA/Lucro Líq. trend chart with optional price overlay.
 
     Used by the DRE tab (income-statement metrics). Same concept as the
     Overview trend chart, but accepts a custom ``label`` so the same builder
     can be reused by future tabs.
 
+    [v1.24] Now accepts BOTH annual + quarterly periods (quarterly preferred
+    by callers when available). Uses ``_metrics_from_period`` so quarterly
+    periods (which only have ``accounts``, no pre-computed ``metrics``) work
+    transparently. Sort key upgraded to ``_period_sort_key`` so quarterly
+    labels like "4T2025" + "1T2026" sort chronologically (alphabetical sort
+    would put "1T2026" before "4T2025" — wrong).
+
     Args:
-        periods: annual period dicts (each has ``metrics``).
+        periods: annual OR quarterly period dicts.
         company: B3 ticker for the price overlay; None skips the overlay.
         label: chart title suffix (e.g. "DRE").
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
-        key=lambda p: str(p.get("period")),
+        key=_period_sort_key,
     )
     if len(sorted_periods) < 2:
         return None
     labels = [str(p.get("period")) for p in sorted_periods]
     revenue, ebitda, net_income = [], [], []
     for p in sorted_periods:
-        m = p.get("metrics") or {}
+        m = _metrics_from_period(p)
         revenue.append(_num_or_none(m.get("receita_liquida")))
         ebitda.append(_num_or_none(m.get("ebitda")))
         net_income.append(_num_or_none(m.get("lucro_liquido")))
@@ -2438,12 +2632,12 @@ def build_statement_trend_chart(
     }
     has_overlay = _attach_price_overlay(datasets, scales, company, labels)
     description = (
-        f"Receita Líquida, EBITDA e Lucro Líquido anuais ({label}). "
+        f"Receita Líquida, EBITDA e Lucro Líquido ({label}). "
         "Trajetória de crescimento e rentabilidade."
     )
     if has_overlay:
         description += (
-            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+            " Linha roxa tracejada = preço de fechamento de fim de período (eixo direito)."
         )
     return {
         "type": "chart",
@@ -2468,24 +2662,28 @@ def build_statement_trend_chart(
 def build_dfc_trend_chart(
     periods: list[dict], company: str | None,
 ) -> dict | None:
-    """[v1.23 F4] FCO/FCI/FCF trend chart with optional price overlay.
+    """[v1.23 F4 / v1.24] FCO/FCI/FCF trend chart with optional price overlay.
 
-    Used by the DFC tab. Plots the 3 DFC sub-totals across annual periods.
+    Used by the DFC tab. Plots the 3 DFC sub-totals across periods.
+
+    [v1.24] Now accepts BOTH annual + quarterly periods. Uses
+    ``_metrics_from_period`` for quarterly support. Sort key upgraded to
+    ``_period_sort_key`` for chronological quarterly ordering.
 
     Args:
-        periods: annual period dicts (each has ``metrics`` with fco/fci/fcf).
+        periods: annual OR quarterly period dicts.
         company: B3 ticker for the price overlay; None skips the overlay.
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
-        key=lambda p: str(p.get("period")),
+        key=_period_sort_key,
     )
     if len(sorted_periods) < 2:
         return None
     labels = [str(p.get("period")) for p in sorted_periods]
     fco, fci, fcf = [], [], []
     for p in sorted_periods:
-        m = p.get("metrics") or {}
+        m = _metrics_from_period(p)
         fco.append(_num_or_none(m.get("fco")))
         fci.append(_num_or_none(m.get("fci")))
         fcf.append(_num_or_none(m.get("fcf")))
@@ -2510,15 +2708,15 @@ def build_dfc_trend_chart(
     has_overlay = _attach_price_overlay(datasets, scales, company, labels)
     description = (
         "Fluxos de Caixa Operacional (FCO), de Investimento (FCI) e de "
-        "Financiamento (FCF) anuais."
+        "Financiamento (FCF)."
     )
     if has_overlay:
         description += (
-            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+            " Linha roxa tracejada = preço de fechamento de fim de período (eixo direito)."
         )
     return {
         "type": "chart",
-        "title": "Trajetória dos Fluxos de Caixa (Anual)",
+        "title": "Trajetória dos Fluxos de Caixa",
         "description": description,
         "chart_data": {
             "type": "line",
@@ -2528,7 +2726,7 @@ def build_dfc_trend_chart(
                 "maintainAspectRatio": False,
                 "scales": scales,
                 "plugins": {
-                    "title": {"display": True, "text": "FCO, FCI e FCF por Ano"},
+                    "title": {"display": True, "text": "FCO, FCI e FCF por Período"},
                 },
             },
         },
@@ -2538,12 +2736,16 @@ def build_dfc_trend_chart(
 def build_dva_trend_chart(
     periods: list[dict], company: str | None,
 ) -> dict | None:
-    """[v1.23 F4] VA Bruta/VA Líquida/Total a Distribuir trend chart with overlay.
+    """[v1.23 F4 / v1.24] VA Bruta/VA Líquida/Total a Distribuir trend chart with overlay.
 
     Used by the DVA tab. Reads DVA account codes:
       - 7.04 → VA Bruto
       - 7.06 → VA Líquido
       - 7.08 → Total a Distribuir
+
+    [v1.24] Sort key upgraded to ``_period_sort_key`` for chronological
+    quarterly ordering. Reads from ``accounts`` dict (works for both annual
+    + quarterly — both have ``accounts`` post-reshape).
 
     Args:
         periods: DVA period dicts (each has ``period`` + ``accounts``).
@@ -2551,7 +2753,7 @@ def build_dva_trend_chart(
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
-        key=lambda p: str(p.get("period")),
+        key=_period_sort_key,
     )
     if len(sorted_periods) < 2:
         return None
@@ -2583,15 +2785,15 @@ def build_dva_trend_chart(
     has_overlay = _attach_price_overlay(datasets, scales, company, labels)
     description = (
         "Valor Adicionado Bruto (7.04), Líquido (7.06) e Total a "
-        "Distribuir (7.08) anuais."
+        "Distribuir (7.08)."
     )
     if has_overlay:
         description += (
-            " Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+            " Linha roxa tracejada = preço de fechamento de fim de período (eixo direito)."
         )
     return {
         "type": "chart",
-        "title": "Trajetória da Geração de Valor (Anual)",
+        "title": "Trajetória da Geração de Valor",
         "description": description,
         "chart_data": {
             "type": "line",
@@ -2602,14 +2804,18 @@ def build_dva_trend_chart(
                 "scales": scales,
                 "plugins": {
                     "title": {"display": True,
-                              "text": "Geração de Valor Adicionado por Ano"},
+                              "text": "Geração de Valor Adicionado por Período"},
                 },
             },
         },
     }
 
 
-def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> list[dict]:
+def build_balanco_chart(
+    bpa_result: dict, bpp_result: dict,
+    bpa_result_q: dict | None = None,
+    bpp_result_q: dict | None = None,
+) -> list[dict]:
     """Build the Balanço Completo charts: absolute + percentage stacked bars.
 
     [v1.22 v2] REWRITE per user reference images:
@@ -2620,9 +2826,19 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> list[dict]:
     - Colors match reference: Navy blue (Ativo Circ), Light blue (Ativo Não
       Circ), Dark red (Passivo Circ), Light pink (Passivo Não Circ), Green (PL)
     - Returns a LIST of 2 chart sections (was 1 dict).
+
+    [v1.24] Quarterly support: when ``bpa_result_q`` + ``bpp_result_q`` are
+    provided, the chart uses quarterly periods (up to 20) instead of annual.
+    Quarterly data shows finer-grained balance-sheet evolution. Falls back
+    to annual when quarterly is unavailable.
     """
-    bpa_periods = (bpa_result or {}).get("periods") or []
-    bpp_periods = (bpp_result or {}).get("periods") or []
+    # [v1.24] Prefer quarterly periods when available
+    if bpa_result_q and bpp_result_q:
+        bpa_periods = (bpa_result_q or {}).get("periods") or []
+        bpp_periods = (bpp_result_q or {}).get("periods") or []
+    else:
+        bpa_periods = (bpa_result or {}).get("periods") or []
+        bpp_periods = (bpp_result or {}).get("periods") or []
     if not bpa_periods or not bpp_periods:
         return []
 
@@ -2638,9 +2854,29 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> list[dict]:
         if period_label:
             bpp_by_year[str(period_label)] = p.get("accounts") or {}
 
-    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
+    # [v1.24] Sort period labels chronologically (handles both "2023" annual
+    # and "2T2026" quarterly — alphabetical sort would put "1T2026" before
+    # "4T2025" which is wrong).
+    def _label_sort_key(lbl: str) -> tuple:
+        # Quarterly labels look like "2T2026" → (year, quarter)
+        if "T" in lbl and len(lbl) >= 6:
+            try:
+                q = int(lbl.split("T")[0])
+                y = int(lbl.split("T")[1])
+                return (y, q)
+            except (ValueError, IndexError):
+                pass
+        # Annual labels look like "2023" → (year, 0)
+        try:
+            return (int(lbl), 0)
+        except ValueError:
+            return (0, 0, lbl)
+
+    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()),
+                   key=_label_sort_key)
     if len(years) < 2:
-        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
+        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()),
+                       key=_label_sort_key)
     if len(years) < 2:
         return []
 
@@ -2753,16 +2989,29 @@ def build_balanco_chart(bpa_result: dict, bpp_result: dict) -> list[dict]:
     ]
 
 
-def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict]:
+def build_balanco_decomp_charts(
+    bpa_result: dict, bpp_result: dict,
+    bpa_result_q: dict | None = None,
+    bpp_result_q: dict | None = None,
+) -> list[dict]:
     """Build BPA + BPP decomposition charts: 4 stacked bars (absolute + percentage each).
 
     [v1.22 v2] REWRITE per user reference images:
     - BPA: 2 charts (absolute + percentage) — Ativo Circ + Ativo Não Circ
     - BPP: 2 charts (absolute + percentage) — Passivo Circ + Passivo Não Circ + PL
     - Returns 4 chart sections total.
+
+    [v1.24] Quarterly support: when ``bpa_result_q`` + ``bpp_result_q`` are
+    provided, the chart uses quarterly periods (up to 20) instead of annual.
+    Falls back to annual when quarterly is unavailable.
     """
-    bpa_periods = (bpa_result or {}).get("periods") or []
-    bpp_periods = (bpp_result or {}).get("periods") or []
+    # [v1.24] Prefer quarterly periods when available
+    if bpa_result_q and bpp_result_q:
+        bpa_periods = (bpa_result_q or {}).get("periods") or []
+        bpp_periods = (bpp_result_q or {}).get("periods") or []
+    else:
+        bpa_periods = (bpa_result or {}).get("periods") or []
+        bpp_periods = (bpp_result or {}).get("periods") or []
     if not bpa_periods or not bpp_periods:
         return []
 
@@ -2778,9 +3027,29 @@ def build_balanco_decomp_charts(bpa_result: dict, bpp_result: dict) -> list[dict
         if period_label:
             bpp_by_year[str(period_label)] = p.get("accounts") or {}
 
-    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()))
+    # [v1.24] Sort period labels chronologically (handles both "2023" annual
+    # and "2T2026" quarterly — alphabetical sort would put "1T2026" before
+    # "4T2025" which is wrong).
+    def _label_sort_key(lbl: str) -> tuple:
+        # Quarterly labels look like "2T2026" → (year, quarter)
+        if "T" in lbl and len(lbl) >= 6:
+            try:
+                q = int(lbl.split("T")[0])
+                y = int(lbl.split("T")[1])
+                return (y, q)
+            except (ValueError, IndexError):
+                pass
+        # Annual labels look like "2023" → (year, 0)
+        try:
+            return (int(lbl), 0)
+        except ValueError:
+            return (0, 0, lbl)
+
+    years = sorted(set(bpa_by_year.keys()) & set(bpp_by_year.keys()),
+                   key=_label_sort_key)
     if len(years) < 2:
-        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()))
+        years = sorted(set(bpa_by_year.keys()) | set(bpp_by_year.keys()),
+                       key=_label_sort_key)
     if len(years) < 2:
         return []
 

@@ -21,6 +21,58 @@
 </table>
 {% endmacro %}
 
+{% macro _section_inner(sec) %}
+{# [v1.24] Shared section-content renderer used by both top-level + subtab
+   section iteration. Renders title, description, text, table (with optional
+   overflow-x wrapper for `wide` tables), note, and chart canvases. #}
+{% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
+{% if sec.description %}
+<div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
+{% endif %}
+{% if sec.text %}
+<div class="text-block">{{ sec.text }}</div>
+{% endif %}
+{% if sec.type == 'table' and sec.columns and sec.rows %}
+{% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
+{{ data_table(sec.columns, sec.rows) }}
+{% if sec.wide %}</div>{% endif %}
+{% elif sec.type == 'table' %}
+<div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+{% endif %}
+{% if sec.note %}
+<div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
+{% endif %}
+{% endmacro %}
+
+{% macro period_toggle(annual_sections, quarterly_sections, prefix) %}
+{# [v1.24] Period-toggle container: 2 buttons (Trimestral / Anual) + 2 panels.
+   Quarterly panel is visible by default; annual panel is hidden.
+   Each panel renders its child sections via _section_inner (so tables get
+   the overflow-x wrapper for `wide` multi-period tables). #}
+<div class="period-toggle-container" style="margin-bottom: 16px;">
+  <div class="period-toggle-bar" style="display: inline-flex; gap: 6px; margin-bottom: 12px; padding: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
+    <button class="period-toggle-btn active" data-period="quarterly" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Trimestral</button>
+    <button class="period-toggle-btn" data-period="annual" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: transparent; color: var(--text-sec); border-radius: 6px; cursor: pointer;">Anual</button>
+  </div>
+  <div class="period-toggle-panel active" id="{{ prefix }}-quarterly" data-period="quarterly">
+    {% for sec in quarterly_sections %}
+    <div class="section">{{ _section_inner(sec) }}</div>
+    {% endfor %}
+    {% if not quarterly_sections %}
+    <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados trimestrais indisponíveis.</div>
+    {% endif %}
+  </div>
+  <div class="period-toggle-panel" id="{{ prefix }}-annual" data-period="annual" style="display: none;">
+    {% for sec in annual_sections %}
+    <div class="section">{{ _section_inner(sec) }}</div>
+    {% endfor %}
+    {% if not annual_sections %}
+    <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados anuais indisponíveis.</div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
 {% macro bug_card(severity, location, title, description, fix=None) %}
 <div class="bug-card {{ severity }}" data-severity="{{ severity }}">
   <div class="bug-location">{{ location }}</div>
@@ -64,6 +116,10 @@
     {% set sub_loop = loop %}
     {% for sec in t.sections %}
     <div class="section">
+      {# [v1.24] period_toggle: 2 buttons + 2 panels (annual + quarterly). #}
+      {% if sec.type == 'period_toggle' %}
+      {{ period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), prefix + '-' + sub_loop.index|string + '-pt-' + loop.index|string) }}
+      {% endif %}
       {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
       {% if sec.description %}
       <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
@@ -72,7 +128,10 @@
       <div class="text-block">{{ sec.text }}</div>
       {% endif %}
       {% if sec.type == 'table' and sec.columns and sec.rows %}
+      {# [v1.24] Wrap wide tables (>5 period columns) in overflow-x: auto. #}
+      {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
       {{ data_table(sec.columns, sec.rows) }}
+      {% if sec.wide %}</div>{% endif %}
       {% elif sec.type == 'table' %}
       <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
       {% endif %}

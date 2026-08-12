@@ -11,6 +11,7 @@ Functions:
 
   Cumulative-data fetcher:
     - _fetch_quarterly_cumulative: ITR (meses=3/6/9) or DFP (meses=12) bulk fetch
+    - _fetch_cumulative_full     : same but for arbitrary codes + preserves metadata
     - _build_quarter_labels      : last-N-quarters label list
 
   Per-quarter value getters (used by both summary + complete modes):
@@ -24,6 +25,11 @@ Functions:
   Complete-mode fetchers:
     - _fetch_complete_annual     : full key-code statements from DFP
     - _fetch_complete_quarterly  : full key-code statements from ITR + DFP
+
+  [v1.24] Multi-statement fetchers (5 statements in ONE SQL query):
+    - _fetch_all_statements_annual    : DFP-only annual (BPA/BPP/DRE/DFC/DVA)
+    - _fetch_all_statements_quarterly : ITR+DFP quarterly standalone (BPA/BPP snapshot,
+                                        DRE/DFC/DVA flow = curr_cum − prev_cum)
 """
 from __future__ import annotations
 
@@ -298,6 +304,83 @@ def _fetch_quarterly_cumulative(
             result[year][meses] = {}
         escala = parse_escala(r["escala"])
         result[year][meses][r["codigo"]] = float(r["valor"] or 0) * escala
+
+    return result
+
+
+def _fetch_cumulative_full(
+    empresa_ids: list[int],
+    consolidado: int,
+    years_needed: int,
+    source: str,
+    codes: list[str],
+) -> dict:
+    """[v1.24] Like _fetch_quarterly_cumulative() but for arbitrary codes AND
+    preserves ``descricao`` + ``grupo`` metadata.
+
+    Returns:
+        ``{year: {meses: {codigo: {"valor", "descricao", "grupo"}}}}``
+
+    The leaf is a dict (not a bare float) so callers building complete-mode
+    statement tables can reuse the official CVM ``descricao`` label without
+    re-querying the DB. ``_build_quarter_labels`` still works because it
+    only checks ``data[year][meses]`` for truthiness — a non-empty dict is
+    truthy.
+
+    Used by ``_fetch_all_statements_quarterly()`` which needs ALL
+    ``KEY_CODES_BY_GRUPO`` codes (not just ``SUMMARY_CODES``) so the
+    quarterly statement tabs can render the same code-level detail as the
+    annual tabs.
+    """
+    if not empresa_ids or not codes:
+        return {}
+
+    emp_ph = ",".join("?" * len(empresa_ids))
+    code_ph = ",".join("?" * len(codes))
+
+    if source == "ITR":
+        conn = connect_itr(read_only=True)
+        meses_filter = "AND meses IN (3, 6, 9)"
+    else:  # DFP
+        conn = connect_dfp(read_only=True)
+        meses_filter = "AND meses = 12"
+
+    n_emp = max(len(empresa_ids), 1)
+    safety_limit = years_needed * len(codes) * n_emp * 5
+
+    try:
+        rows = conn.execute(
+            f"""SELECT codigo, descricao, grupo, data_fim_exerc, meses, valor, escala
+                FROM contas
+                WHERE id_empresa IN ({emp_ph})
+                AND codigo IN ({code_ph})
+                AND consolidado = ?
+                {meses_filter}
+                ORDER BY data_fim_exerc DESC
+                LIMIT ?""",
+            (*empresa_ids, *codes, consolidado, safety_limit),
+        ).fetchall()
+    except FileNotFoundError:
+        return {}
+    finally:
+        conn.close()
+
+    result: dict = {}
+    for r in rows:
+        year = int(r["data_fim_exerc"][:4])
+        meses = r["meses"]
+        if year not in result:
+            result[year] = {}
+        if meses not in result[year]:
+            result[year][meses] = {}
+        escala = parse_escala(r["escala"])
+        # Last write wins (DESC order means the most recent empresa_id wins
+        # when multiple consolidated subsidiaries return the same code).
+        result[year][meses][r["codigo"]] = {
+            "valor": float(r["valor"] or 0) * escala,
+            "descricao": r["descricao"],
+            "grupo": r["grupo"],
+        }
 
     return result
 
@@ -639,3 +722,192 @@ def _fetch_all_statements_annual(company, consolidado, periods) -> dict[str, dic
         return {"status": "not_synced", "error": str(e)}
     finally:
         conn.close()
+
+
+# ── Single-fetch: ALL statements for QUARTERLY periods ─────────────────────
+
+def _fetch_all_statements_quarterly(
+    company: str, consolidado: int, periods: int,
+) -> dict[str, dict]:
+    """[v1.24] Fetch ALL statement codes (from ``KEY_CODES_BY_GRUPO``) for
+    quarterly periods via ITR + DFP, partitioned by grupo.
+
+    Same return shape as ``_fetch_all_statements_annual()`` but with quarterly
+    period labels like ``"2T2026"`` and STANDALONE flow values (DRE/DFC/DVA) —
+    NOT cumulative.
+
+    Logic:
+      1. Resolve empresa_ids separately for DFP and ITR (separate DBs, IDs
+         may differ — same P0 fix as ``_build_quarterly_summary``).
+      2. Fetch ITR cumulative data (meses IN 3/6/9) for ALL key codes via
+         ``_fetch_cumulative_full()`` (preserves ``descricao`` so the table
+         can render official CVM labels).
+      3. Fetch DFP annual data (meses=12) for the same codes — used for Q4.
+      4. For each quarter (up to ``periods``, newest-first):
+         - BPA/BPP (SNAPSHOT): direct period-end value (Q1-Q3 ITR, Q4 DFP).
+         - DRE/DFC/DVA (FLOW):
+           * Q1 (Jan-Mar): standalone = Q1 cumulative (fiscal year resets).
+           * Q2 (Apr-Jun): standalone = ITR(meses=6) − ITR(meses=3).
+           * Q3 (Jul-Sep): standalone = ITR(meses=9) − ITR(meses=6).
+           * Q4 (Oct-Dec): standalone = DFP(meses=12) − ITR(meses=9).
+      5. Return ``{"BPA": {...}, "BPP": {...}, "DRE": {...},
+         "DFC_MI": {...}, "DVA": {...}}`` — same structure as annual.
+
+    Args:
+        company: ticker / name / CNPJ.
+        consolidado: 1 for consolidated, 0 for individual.
+        periods: max number of quarters to return (newest-first). Up to 20
+            (5 years) — caller typically passes 20 for the dashboard's
+            quarterly comparison tables.
+
+    Returns:
+        Per-grupo result dict. Each value has the same structure as
+        ``_fetch_all_statements_annual()``'s per-grupo result, but
+        ``period_type = "quarterly"`` and each period has
+        ``{period, year, quarter, data_fim_exerc, accounts}`` where
+        ``accounts`` is a list of ``{codigo, descricao, grupo, valor_brl}``
+        dicts with STANDALONE values.
+    """
+    from skills.cvm.financials.metrics import KEY_CODES_BY_GRUPO
+
+    # Build union of all codes + reverse lookup (code → grupo)
+    all_codes: list[str] = []
+    code_to_grupo: dict[str, str] = {}
+    for grupo, codes in KEY_CODES_BY_GRUPO.items():
+        for code in codes:
+            if code not in code_to_grupo:
+                all_codes.append(code)
+                code_to_grupo[code] = grupo
+
+    # ── Resolve empresa_ids SEPARATELY for DFP and ITR ───────────────────
+    # DFP and ITR are separate SQLite files with independent autoincrement IDs.
+    try:
+        dfp_conn = connect_dfp(read_only=True)
+        try:
+            dfp_empresa_ids, company_name = resolve_company(dfp_conn, company)
+            if not dfp_empresa_ids:
+                return {"status": "not_found",
+                        "error": f"Company '{company}' not found in DFP"}
+        finally:
+            dfp_conn.close()
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        itr_conn = connect_itr(read_only=True)
+        try:
+            itr_empresa_ids, _ = resolve_company(itr_conn, company)
+        finally:
+            itr_conn.close()
+    except (FileNotFoundError, Exception):
+        # ITR not synced — Q1-Q3 derivation will be incomplete, Q4 still works.
+        itr_empresa_ids = []
+
+    years_needed = (periods // 4) + 2  # current + prior + buffer
+
+    # Fetch cumulative data WITH metadata (descricao, grupo)
+    itr_data = _fetch_cumulative_full(
+        itr_empresa_ids, consolidado, years_needed, "ITR", all_codes)
+    dfp_data = _fetch_cumulative_full(
+        dfp_empresa_ids, consolidado, years_needed, "DFP", all_codes)
+
+    if not itr_data and not dfp_data:
+        return {"status": "not_found",
+                "error": f"No quarterly data found for '{company}'"}
+
+    all_quarters = _build_quarter_labels(itr_data, dfp_data, periods)
+
+    # Local value-getter helpers for the new dict shape
+    # {year: {meses: {codigo: {"valor": float, "descricao": str, "grupo": str}}}}
+    def _snap(code: str, year: int, q_num: int) -> float | None:
+        """Snapshot/cumulative value: Q1-Q3 from ITR (meses 3/6/9), Q4 from DFP."""
+        if q_num == 4:
+            leaf = dfp_data.get(year, {}).get(12, {}).get(code)
+        else:
+            meses = {1: 3, 2: 6, 3: 9}[q_num]
+            leaf = itr_data.get(year, {}).get(meses, {}).get(code)
+        return leaf.get("valor") if leaf else None
+
+    def _meta(code: str, year: int, q_num: int) -> dict:
+        """Metadata (descricao, grupo) for a code at a given quarter."""
+        if q_num == 4:
+            return dfp_data.get(year, {}).get(12, {}).get(code) or {}
+        meses = {1: 3, 2: 6, 3: 9}[q_num]
+        return itr_data.get(year, {}).get(meses, {}).get(code) or {}
+
+    def _prev_cum(code: str, year: int, q_num: int) -> float | None:
+        """Previous quarter cumulative value (for standalone derivation).
+        Q1 needs no prev (fiscal year resets). Q2→Q1, Q3→Q2, Q4→Q3 (all ITR).
+        """
+        if q_num == 1:
+            return None
+        prev_meses = {2: 3, 3: 6, 4: 9}[q_num]
+        leaf = itr_data.get(year, {}).get(prev_meses, {}).get(code)
+        return leaf.get("valor") if leaf else None
+
+    # ── Build per-grupo, per-quarter accounts with STANDALONE values ─────
+    by_grupo: dict[str, dict[str, list]] = {}
+    for q_label, year, q_num in all_quarters:
+        for code in all_codes:
+            grupo = code_to_grupo[code]
+            is_snapshot = grupo in ("BPA", "BPP")
+
+            if is_snapshot:
+                # Snapshot (balance sheet): direct period-end value
+                val = _snap(code, year, q_num)
+            else:
+                # Flow (income/cash flow): derive standalone
+                curr_cum = _snap(code, year, q_num)
+                if curr_cum is None:
+                    val = None
+                elif q_num == 1:
+                    # Q1 standalone = Q1 cumulative (fiscal year resets Jan 1)
+                    val = curr_cum
+                else:
+                    prev_cum = _prev_cum(code, year, q_num)
+                    val = (curr_cum - prev_cum) if prev_cum is not None else None
+
+            if val is None:
+                continue
+
+            meta = _meta(code, year, q_num)
+            descricao = meta.get("descricao") or code
+
+            by_grupo.setdefault(grupo, {}).setdefault(q_label, []).append({
+                "codigo": code,
+                "descricao": descricao,
+                "grupo": grupo,
+                "valor_brl": val,
+            })
+
+    # Month-end date for each quarter (used for data_fim_exerc)
+    month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
+
+    # Build complete-result dicts per grupo (same structure as annual)
+    result: dict[str, dict] = {}
+    for grupo, by_quarter in by_grupo.items():
+        result[grupo] = {
+            "status": "ok",
+            "company": company_name,
+            "period_type": "quarterly",
+            "grupo_filter": grupo,
+            "periods": [
+                {
+                    "period": q_label,
+                    "year": year,
+                    "quarter": q_num,
+                    "data_fim_exerc": f"{year}-{month_end[q_num]}",
+                    "accounts": by_quarter.get(q_label, []),
+                }
+                for (q_label, year, q_num) in all_quarters
+                if q_label in by_quarter
+            ],
+        }
+
+    # Ensure all 5 grupos are present (even if empty)
+    for grupo in KEY_CODES_BY_GRUPO:
+        if grupo not in result:
+            result[grupo] = {"status": "not_found",
+                             "error": f"No {grupo} data for '{company}'"}
+
+    return result

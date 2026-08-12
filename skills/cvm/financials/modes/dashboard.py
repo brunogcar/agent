@@ -132,7 +132,10 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             return _safe_call(quarterly, company=company, periods=8, consolidado=consolidado)
 
         def _fetch_statements():
-            return _fetch_all_statements(company, consolidado)
+            return _fetch_all_statements(company, consolidado, period="annual")
+
+        def _fetch_statements_q():
+            return _fetch_all_statements(company, consolidado, period="quarterly")
 
         def _fetch_ttm():
             return _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
@@ -156,6 +159,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             "annual": _fetch_annual,
             "quarterly": _fetch_quarterly,
             "statements": _fetch_statements,
+            "statements_q": _fetch_statements_q,
             "ttm": _fetch_ttm,
             "yoy": _fetch_yoy,
             "ratios": _fetch_ratios,
@@ -178,7 +182,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         def _run_with_ctx(ctx, fn):
             return ctx.run(fn)
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        # [v1.24] max_workers bumped 6 → 7 for the new statements_q task.
+        with ThreadPoolExecutor(max_workers=7) as executor:
             futures = {}
             for i, (name, fn) in enumerate(tasks.items()):
                 futures[executor.submit(_run_with_ctx, ctx_copies[i], fn)] = name
@@ -195,6 +200,10 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         annual_payload = results.get("annual", {})
         quarterly_payload = results.get("quarterly", {})
         bpa_result, bpp_result, dre_result, dfc_result, dva_result = results.get("statements", ({}, {}, {}, {}, {}))
+        # [v1.24] Quarterly statement results (parallel-fetched alongside annual).
+        # Each tuple element matches the annual tuple shape (5 statement results).
+        bpa_result_q, bpp_result_q, dre_result_q, dfc_result_q, dva_result_q = (
+            results.get("statements_q", ({}, {}, {}, {}, {})))
         ttm_result = results.get("ttm", {})
         yoy_result = results.get("yoy", {})
         ratios_payload.update(results.get("ratios", {}))
@@ -344,11 +353,21 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _s_t0 = _dt.now()
     # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
-        balanco_section = build_balanco_section(bpa_result, bpp_result)
+        # [v1.24] Pass quarterly BPA/BPP results so the period_toggle wraps
+        # the multi-period table (annual + quarterly) and the charts use
+        # quarterly periods when available.
+        balanco_section = build_balanco_section(
+            bpa_result, bpp_result,
+            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
         # [v1.22 v2] build_balanco_chart now returns a LIST of 2 charts (absolute + percentage).
-        balanco_charts = build_balanco_chart(bpa_result, bpp_result)
+        # [v1.24] Pass quarterly results so the charts use quarterly periods.
+        balanco_charts = build_balanco_chart(
+            bpa_result, bpp_result,
+            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
         # [v1.22 v2] build_balanco_decomp_charts returns 4 charts (BPA abs+pct, BPP abs+pct).
-        balanco_decomp = build_balanco_decomp_charts(bpa_result, bpp_result)
+        balanco_decomp = build_balanco_decomp_charts(
+            bpa_result, bpp_result,
+            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
         # The Balanço tab is a single subtabs section; append the charts as
         # top-level sections after the subtabs so they render below.
         balanco_sections = [balanco_section]
@@ -367,8 +386,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Tab 5: DRE
     if dre_result.get("status") == "ok":
         # [v1.23 F4] Pass `company` so the DRE trend chart gets a price overlay.
+        # [v1.24] Pass `dre_result_q` so the multi-period table is wrapped in
+        # a period_toggle (annual + quarterly) and the trend chart uses
+        # quarterly periods when available.
         dre_sections = build_dre_sections(
-            dre_result, annual_periods, latest_annual_period, company=company)
+            dre_result, annual_periods, latest_annual_period,
+            company=company, dre_result_q=dre_result_q)
     else:
         dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
@@ -382,8 +405,10 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Tab 6: DFC
     if dfc_result.get("status") == "ok":
         # [v1.23 F4] Pass `company` so the DFC trend chart gets a price overlay.
+        # [v1.24] Pass `dfc_result_q` for quarterly period_toggle + trend chart.
         dfc_sections = build_dfc_sections(
-            dfc_result, annual_periods, latest_annual_period, company=company)
+            dfc_result, annual_periods, latest_annual_period,
+            company=company, dfc_result_q=dfc_result_q)
     else:
         dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
     # [new commit] F12 — DFC quality analysis (appended after existing DFC
@@ -409,7 +434,9 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Tab 7: DVA
     if dva_result.get("status") == "ok":
         # [v1.23 F4] Pass `company` so the DVA trend chart gets a price overlay.
-        dva_sections = build_dva_sections(dva_result, company=company)
+        # [v1.24] Pass `dva_result_q` for quarterly period_toggle + trend chart.
+        dva_sections = build_dva_sections(
+            dva_result, company=company, dva_result_q=dva_result_q)
     else:
         dva_sections = [build_error_section("DVA", dva_result.get("error", "unknown"))]
     # [new commit] F13 — Dividend sustainability (appended to DVA tab — DVA
@@ -550,22 +577,38 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
 
 # ── Statement-mode call helpers ──────────────────────────────────────────────
 
-def _fetch_all_statements(company: str, consolidado: int) -> tuple:
-    """[v1.2] Single-fetch: get ALL 5 statements in ONE SQL query, then reshape.
+def _fetch_all_statements(
+    company: str, consolidado: int, period: str = "annual",
+) -> tuple:
+    """[v1.2 / v1.24] Single-fetch: get ALL 5 statements in ONE SQL query, then reshape.
 
     Replaces 5 separate _call_bpa/_call_bpp/_call_dre/_call_dfc/_call_dva calls
     (each doing 3 SQL round-trips = 15 total) with a single fetch (3 round-trips).
 
+    [v1.24] Now accepts a ``period`` parameter:
+      - ``"annual"`` (default): calls ``_fetch_all_statements_annual(periods=4)``.
+      - ``"quarterly"``: calls ``_fetch_all_statements_quarterly(periods=20)``
+        which fetches ITR cumulative (meses IN 3/6/9) + DFP annual (meses=12)
+        and derives standalone flow values (DRE/DFC/DVA = curr_cum − prev_cum).
+        BPA/BPP are snapshot (direct period-end values).
+
+    Backward-compatible: callers that don't pass ``period`` get annual (the
+    pre-v1.24 behavior).
+
     Returns: (bpa_result, bpp_result, dre_result, dfc_result, dva_result)
     Each result has the same structure as the corresponding mode function.
     """
-    from skills.cvm.financials.fetchers import _fetch_all_statements_annual
     from skills.cvm.financials.modes._statement_sections import (
         bpa_section_for, bpp_section_for, dre_section_for,
         dfc_section_for, dva_section_for, reshape_statement_periods,
     )
 
-    all_data = _fetch_all_statements_annual(company, consolidado, periods=4)
+    if period == "quarterly":
+        from skills.cvm.financials.fetchers import _fetch_all_statements_quarterly
+        all_data = _fetch_all_statements_quarterly(company, consolidado, periods=20)
+    else:
+        from skills.cvm.financials.fetchers import _fetch_all_statements_annual
+        all_data = _fetch_all_statements_annual(company, consolidado, periods=4)
 
     # If the fetch itself failed (not_found/not_synced), return error for all 5
     if all_data.get("status") != "ok" and "status" in all_data:
