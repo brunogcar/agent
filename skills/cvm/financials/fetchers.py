@@ -271,7 +271,7 @@ def _fetch_quarterly_cumulative(
     # `* n_emp` ensures we don't cut off older quarters when the company
     # has multiple consolidated empresa_ids.
     n_emp = max(len(empresa_ids), 1)
-    safety_limit = years_needed * len(codes) * n_emp * 5
+    safety_limit = years_needed * len(codes) * n_emp * 10  # [v1.25 v6] was *5, bumped to *10 to avoid cutting off BPA/BPP codes
 
     try:
         rows = conn.execute(
@@ -340,13 +340,17 @@ def _fetch_cumulative_full(
 
     if source == "ITR":
         conn = connect_itr(read_only=True)
-        meses_filter = "AND meses IN (3, 6, 9)"
+        # [v1.25 v7] ITR stores BPA/BPP (snapshot) with meses=12 (annual),
+        # NOT meses=3/6/9. Flow statements (DRE/DFC/DVA) have meses=3/6/9.
+        # Query ALL meses so BPA/BPP annual data is available for snapshot
+        # carry-forward (Q1-Q3 use the most recent annual value).
+        meses_filter = "AND meses IN (3, 6, 9, 12)"
     else:  # DFP
         conn = connect_dfp(read_only=True)
         meses_filter = "AND meses = 12"
 
     n_emp = max(len(empresa_ids), 1)
-    safety_limit = years_needed * len(codes) * n_emp * 5
+    safety_limit = years_needed * len(codes) * n_emp * 15  # [v1.25 v7] bumped to *15 for ITR meses=12 rows
 
     try:
         rows = conn.execute(
@@ -820,20 +824,59 @@ def _fetch_all_statements_quarterly(
     # Local value-getter helpers for the new dict shape
     # {year: {meses: {codigo: {"valor": float, "descricao": str, "grupo": str}}}}
     def _snap(code: str, year: int, q_num: int) -> float | None:
-        """Snapshot/cumulative value: Q1-Q3 from ITR (meses 3/6/9), Q4 from DFP."""
+        """Snapshot/cumulative value.
+
+        [v1.25 v7] BPA/BPP (snapshot) carry-forward logic:
+        - Q4: from DFP (meses=12) or ITR (meses=12, fallback)
+        - Q1-Q3: from ITR (meses=3/6/9). If not found, carry forward the
+          most recent available value: ITR meses=12 of the SAME year (if
+          available), or DFP meses=12 of the PREVIOUS year. This handles
+          companies like Petrobras that file BPA/BPP only annually in ITR
+          (meses=12) but not quarterly (meses=3/6/9).
+        """
         if q_num == 4:
+            # Q4: prefer DFP, fallback ITR meses=12
             leaf = dfp_data.get(year, {}).get(12, {}).get(code)
+            if not leaf:
+                leaf = itr_data.get(year, {}).get(12, {}).get(code)
+            return leaf.get("valor") if leaf else None
         else:
+            # Q1-Q3: try ITR meses=3/6/9 first
             meses = {1: 3, 2: 6, 3: 9}[q_num]
             leaf = itr_data.get(year, {}).get(meses, {}).get(code)
-        return leaf.get("valor") if leaf else None
+            if leaf:
+                return leaf.get("valor")
+            # Carry-forward: try ITR meses=12 of same year
+            leaf = itr_data.get(year, {}).get(12, {}).get(code)
+            if leaf:
+                return leaf.get("valor")
+            # Carry-forward: try DFP meses=12 of previous year
+            leaf = dfp_data.get(year - 1, {}).get(12, {}).get(code)
+            if leaf:
+                return leaf.get("valor")
+            # Carry-forward: try ITR meses=12 of previous year
+            leaf = itr_data.get(year - 1, {}).get(12, {}).get(code)
+            if leaf:
+                return leaf.get("valor")
+            return None
 
     def _meta(code: str, year: int, q_num: int) -> dict:
         """Metadata (descricao, grupo) for a code at a given quarter."""
         if q_num == 4:
-            return dfp_data.get(year, {}).get(12, {}).get(code) or {}
+            meta = dfp_data.get(year, {}).get(12, {}).get(code)
+            if not meta:
+                meta = itr_data.get(year, {}).get(12, {}).get(code)
+            return meta or {}
         meses = {1: 3, 2: 6, 3: 9}[q_num]
-        return itr_data.get(year, {}).get(meses, {}).get(code) or {}
+        meta = itr_data.get(year, {}).get(meses, {}).get(code)
+        if not meta:
+            # Carry-forward metadata from ITR meses=12 or DFP
+            meta = itr_data.get(year, {}).get(12, {}).get(code)
+            if not meta:
+                meta = dfp_data.get(year - 1, {}).get(12, {}).get(code)
+            if not meta:
+                meta = itr_data.get(year - 1, {}).get(12, {}).get(code)
+        return meta or {}
 
     def _prev_cum(code: str, year: int, q_num: int) -> float | None:
         """Previous quarter cumulative value (for standalone derivation).
@@ -884,6 +927,10 @@ def _fetch_all_statements_quarterly(
     month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
 
     # Build complete-result dicts per grupo (same structure as annual)
+    # [v1.25 v5] Include ALL quarters from all_quarters, even if some codes
+    # have no data for that quarter. This ensures BPA/BPP tables show 20
+    # columns (same as DRE) instead of only Q4 (where DFP has data).
+    # Quarters with no data get an empty accounts list → table shows "—".
     result: dict[str, dict] = {}
     for grupo, by_quarter in by_grupo.items():
         result[grupo] = {
@@ -900,7 +947,6 @@ def _fetch_all_statements_quarterly(
                     "accounts": by_quarter.get(q_label, []),
                 }
                 for (q_label, year, q_num) in all_quarters
-                if q_label in by_quarter
             ],
         }
 

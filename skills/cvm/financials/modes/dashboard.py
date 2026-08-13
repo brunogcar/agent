@@ -129,7 +129,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             return _safe_call(annual, company=company, periods=6, consolidado=consolidado)
 
         def _fetch_quarterly():
-            return _safe_call(quarterly, company=company, periods=8, consolidado=consolidado)
+            return _safe_call(quarterly, company=company, periods=20, consolidado=consolidado)
 
         def _fetch_statements():
             return _fetch_all_statements(company, consolidado, period="annual")
@@ -138,7 +138,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             return _fetch_all_statements(company, consolidado, period="quarterly")
 
         def _fetch_ttm():
-            return _safe_call(ttm_mode, company=company, periods=8, consolidado=consolidado)
+            return _safe_call(ttm_mode, company=company, periods=20, consolidado=consolidado)
 
         def _fetch_yoy():
             return _safe_call(yoy_mode, company=company, years=5, consolidado=consolidado)
@@ -353,26 +353,59 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _s_t0 = _dt.now()
     # Tab 4: Balanço
     if bpa_result.get("status") == "ok" or bpp_result.get("status") == "ok":
+        # [v1.25 v4] Build per-subtab charts for BOTH annual + quarterly
+        # versions. The charts are passed into ``build_balanco_section`` which
+        # puts them INSIDE the period_toggle (per subtab: Completo/BPA/BPP).
+        # This replaces the old ``balanco_sections.extend(charts)`` pattern
+        # where the 6 stacked-bar charts were top-level (outside the toggle)
+        # and only switched when the user manually re-rendered.
+
+        # Annual versions (no quarterly args → uses annual periods).
+        # build_balanco_chart returns 2 charts (Completo abs + pct).
+        completo_charts_annual = build_balanco_chart(bpa_result, bpp_result)
+        # build_balanco_decomp_charts returns 4 charts: BPA abs+pct then
+        # BPP abs+pct. Slice into BPA [0:2] and BPP [2:4].
+        decomp_annual = build_balanco_decomp_charts(bpa_result, bpp_result)
+        bpa_charts_annual = decomp_annual[:2]
+        bpp_charts_annual = decomp_annual[2:]
+
+        # Quarterly versions (with quarterly args → uses quarterly periods).
+        # Only built when both quarterly BPA + BPP are available.
+        if bpa_result_q and bpp_result_q:
+            completo_charts_quarterly = build_balanco_chart(
+                bpa_result, bpp_result,
+                bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
+            decomp_quarterly = build_balanco_decomp_charts(
+                bpa_result, bpp_result,
+                bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
+            bpa_charts_quarterly = decomp_quarterly[:2]
+            bpp_charts_quarterly = decomp_quarterly[2:]
+        else:
+            completo_charts_quarterly = []
+            bpa_charts_quarterly = []
+            bpp_charts_quarterly = []
+
         # [v1.24] Pass quarterly BPA/BPP results so the period_toggle wraps
-        # the multi-period table (annual + quarterly) and the charts use
-        # quarterly periods when available.
+        # the multi-period table (annual + quarterly).
+        # [v1.25 v4] Pass per-subtab annual + quarterly charts so they live
+        # INSIDE the period_toggle (switch with Anual/Trimestral button).
         balanco_section = build_balanco_section(
             bpa_result, bpp_result,
-            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
-        # [v1.22 v2] build_balanco_chart now returns a LIST of 2 charts (absolute + percentage).
-        # [v1.24] Pass quarterly results so the charts use quarterly periods.
-        balanco_charts = build_balanco_chart(
-            bpa_result, bpp_result,
-            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
-        # [v1.22 v2] build_balanco_decomp_charts returns 4 charts (BPA abs+pct, BPP abs+pct).
-        balanco_decomp = build_balanco_decomp_charts(
-            bpa_result, bpp_result,
-            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
-        # The Balanço tab is a single subtabs section; append the charts as
-        # top-level sections after the subtabs so they render below.
+            bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q,
+            subtab_charts_annual={
+                "Completo": completo_charts_annual,
+                "BPA": bpa_charts_annual,
+                "BPP": bpp_charts_annual,
+            },
+            subtab_charts_quarterly={
+                "Completo": completo_charts_quarterly,
+                "BPA": bpa_charts_quarterly,
+                "BPP": bpp_charts_quarterly,
+            },
+        )
+        # [v1.25 v4] The 6 stacked-bar charts are now INSIDE the toggle —
+        # no longer appended as top-level sections.
         balanco_sections = [balanco_section]
-        balanco_sections.extend(balanco_charts)
-        balanco_sections.extend(balanco_decomp)
     else:
         balanco_sections = [build_error_section("Balanço", "BPA/BPP indisponível")]
 
@@ -389,9 +422,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         # [v1.24] Pass `dre_result_q` so the multi-period table is wrapped in
         # a period_toggle (annual + quarterly) and the trend chart uses
         # quarterly periods when available.
+        # [v1.25 v4] Pass `quarterly_periods` so the margins + absolute-values
+        # charts have quarterly versions inside the toggle.
         dre_sections = build_dre_sections(
             dre_result, annual_periods, latest_annual_period,
-            company=company, dre_result_q=dre_result_q)
+            company=company, dre_result_q=dre_result_q,
+            quarterly_periods=quarterly_periods)
     else:
         dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
@@ -406,9 +442,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if dfc_result.get("status") == "ok":
         # [v1.23 F4] Pass `company` so the DFC trend chart gets a price overlay.
         # [v1.24] Pass `dfc_result_q` for quarterly period_toggle + trend chart.
+        # [v1.25 v4] Pass `quarterly_periods` so the stacked-bar + FCO-vs-LL
+        # charts have quarterly versions inside the toggle.
         dfc_sections = build_dfc_sections(
             dfc_result, annual_periods, latest_annual_period,
-            company=company, dfc_result_q=dfc_result_q)
+            company=company, dfc_result_q=dfc_result_q,
+            quarterly_periods=quarterly_periods)
     else:
         dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
     # [new commit] F12 — DFC quality analysis (appended after existing DFC

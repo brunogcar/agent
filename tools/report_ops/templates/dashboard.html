@@ -278,6 +278,8 @@
 
     // Toggle panel visibility — show the one matching btn's data-period,
     // hide the other. Display is '' (default) for visible, 'none' for hidden.
+    // [v1.25 v2] Also resize charts in the newly-visible panel so they render
+    // correctly (Chart.js doesn't render in display:none containers).
     var targetPeriod = btn.getAttribute('data-period');
     var panels = container.querySelectorAll('.period-toggle-panel');
     panels.forEach(function(p) {
@@ -285,6 +287,14 @@
       p.style.display = isTarget ? '' : 'none';
       if (isTarget) {
         p.classList.add('active');
+        // Resize all charts inside this panel
+        var canvases = p.querySelectorAll('canvas');
+        canvases.forEach(function(c) {
+          var entry = _chartRegistry.find(function(e) { return e.canvas && e.canvas.id === c.id; });
+          if (entry && entry.chart) {
+            entry.chart.resize();
+          }
+        });
       } else {
         p.classList.remove('active');
       }
@@ -299,8 +309,22 @@
     {% if sec.type == 'chart' and sec.chart_data %}
     <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
     {% if sec.price_range_selector %}
-    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | tojson }}, data: {{ sec.price_full_data | tojson }}};</script>
+    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}};</script>
     {% endif %}
+    {% endif %}
+    {# Top-level period_toggle charts #}
+    {% if sec.type == 'period_toggle' %}
+      {% set pt_idx = loop.index %}
+      {% for pt_sec in sec.annual_sections %}
+        {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+        <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-a-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+        {% endif %}
+      {% endfor %}
+      {% for pt_sec in sec.quarterly_sections %}
+        {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+        <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+        {% endif %}
+      {% endfor %}
     {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
     {% if sec.type == 'subtabs' and sec.tabs %}
@@ -310,6 +334,20 @@
         {% for sub_sec in subtab.sections %}
           {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
           <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
+          {% endif %}
+          {# Subtab period_toggle charts #}
+          {% if sub_sec.type == 'period_toggle' %}
+            {% set spt_idx = loop.index %}
+            {% for pt_sec in sub_sec.annual_sections %}
+              {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+              <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-a-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+              {% endif %}
+            {% endfor %}
+            {% for pt_sec in sub_sec.quarterly_sections %}
+              {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+              <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+              {% endif %}
+            {% endfor %}
           {% endif %}
         {% endfor %}
       {% endfor %}

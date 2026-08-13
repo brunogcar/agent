@@ -69,7 +69,8 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
             continue
         if p_date <= target:
             # Get the value from whichever key holds the data
-            val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit")
+            # [v1.25 fix] Added ttm_rev (revenue_periods) + ttm_gp (gross_profit_periods)
+            val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit") or p.get("ttm_rev") or p.get("ttm_gp")
             if val is not None and val > 0:
                 v_end = float(val)
                 end_date = p_date
@@ -90,7 +91,7 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
             continue
         if p_date > target:
             break
-        val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit")
+        val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit") or p.get("ttm_rev") or p.get("ttm_gp")
         if val is not None and val > 0:
             diff = abs((p_date - target_start).days)
             if best_diff is None or diff < best_diff:

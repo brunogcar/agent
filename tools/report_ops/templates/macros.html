@@ -21,10 +21,11 @@
 </table>
 {% endmacro %}
 
-{% macro _section_inner(sec) %}
+{% macro _section_inner(sec, canvas_id='') %}
 {# [v1.24] Shared section-content renderer used by both top-level + subtab
    section iteration. Renders title, description, text, table (with optional
-   overflow-x wrapper for `wide` tables), note, and chart canvases. #}
+   overflow-x wrapper for `wide` tables), note, chart canvases, heatmaps,
+   and price range selectors. #}
 {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
 {% if sec.description %}
 <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
@@ -39,16 +40,42 @@
 {% elif sec.type == 'table' %}
 <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
 {% endif %}
+{% if sec.type == 'heatmap' and sec.columns and sec.rows %}
+<div class="heatmap-table" style="overflow-x: auto;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <thead><tr>
+      {% for col in sec.columns %}<th style="padding: 8px 12px; text-align: {{ 'left' if loop.first else 'center' }}; border-bottom: 2px solid var(--border); color: var(--text-sec); font-weight: 600; font-size: 12px;">{{ col }}</th>{% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for row in sec.rows %}<tr>
+        {% for cell in row %}
+        {% if loop.first %}<td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>{% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;">{{ cell.text if cell.text is defined else cell }}</td>{% endif %}
+        {% endfor %}
+      </tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% if sec.note %}
 <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
+{% endif %}
+{% if sec.price_range_selector %}
+<div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
+  <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, '{{ canvas_id }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+  <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, '{{ canvas_id }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
+  <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, '{{ canvas_id }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+  <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, '{{ canvas_id }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
+</div>
+{% endif %}
+{% if sec.type == 'chart' and sec.chart_data %}
+<div class="chart-box"><canvas id="{{ canvas_id }}"></canvas></div>
 {% endif %}
 {% endmacro %}
 
 {% macro period_toggle(annual_sections, quarterly_sections, prefix) %}
-{# [v1.24] Period-toggle container: 2 buttons (Trimestral / Anual) + 2 panels.
-   Quarterly panel is visible by default; annual panel is hidden.
-   Each panel renders its child sections via _section_inner (so tables get
-   the overflow-x wrapper for `wide` multi-period tables). #}
+{# [v1.25 v4] Period-toggle container: 2 buttons + 2 panels.
+   Each panel renders child sections via _section_inner with unique canvas IDs
+   so charts inside the toggle get rendered + can be resized on toggle. #}
 <div class="period-toggle-container" style="margin-bottom: 16px;">
   <div class="period-toggle-bar" style="display: inline-flex; gap: 6px; margin-bottom: 12px; padding: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
     <button class="period-toggle-btn active" data-period="quarterly" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Trimestral</button>
@@ -56,7 +83,7 @@
   </div>
   <div class="period-toggle-panel active" id="{{ prefix }}-quarterly" data-period="quarterly">
     {% for sec in quarterly_sections %}
-    <div class="section">{{ _section_inner(sec) }}</div>
+    <div class="section">{{ _section_inner(sec, prefix ~ '-q-chart-' ~ loop.index) }}</div>
     {% endfor %}
     {% if not quarterly_sections %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados trimestrais indisponíveis.</div>
@@ -64,7 +91,7 @@
   </div>
   <div class="period-toggle-panel" id="{{ prefix }}-annual" data-period="annual" style="display: none;">
     {% for sec in annual_sections %}
-    <div class="section">{{ _section_inner(sec) }}</div>
+    <div class="section">{{ _section_inner(sec, prefix ~ '-a-chart-' ~ loop.index) }}</div>
     {% endfor %}
     {% if not annual_sections %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados anuais indisponíveis.</div>
