@@ -62,12 +62,18 @@
 {% if sec.price_range_selector %}
 <div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
   <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, '{{ canvas_id }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+  <button class="price-range-btn" data-range="10y" onclick="filterPriceChart(this, '{{ canvas_id }}', '10y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">10A</button>
   <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, '{{ canvas_id }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
   <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, '{{ canvas_id }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+  <button class="price-range-btn" data-range="6m" onclick="filterPriceChart(this, '{{ canvas_id }}', '6m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">6M</button>
+  <button class="price-range-btn" data-range="3m" onclick="filterPriceChart(this, '{{ canvas_id }}', '3m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">3M</button>
   <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, '{{ canvas_id }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
 </div>
 {% endif %}
 {% if sec.type == 'chart' and sec.chart_data %}
+<div class="chart-box"><canvas id="{{ canvas_id }}"></canvas></div>
+{% endif %}
+{% if sec.type == 'candlestick' and sec.chart_data %}
 <div class="chart-box"><canvas id="{{ canvas_id }}"></canvas></div>
 {% endif %}
 {% endmacro %}
@@ -194,12 +200,18 @@
       {% if sec.price_range_selector %}
       <div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
         <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+        <button class="price-range-btn" data-range="10y" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '10y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">10A</button>
         <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
         <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+        <button class="price-range-btn" data-range="6m" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '6m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">6M</button>
+        <button class="price-range-btn" data-range="3m" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '3m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">3M</button>
         <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, '{{ prefix }}-{{ sub_loop.index }}-chart-{{ loop.index }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
       </div>
       {% endif %}
       {% if sec.type == 'chart' and sec.chart_data %}
+      {{ chart_canvas(prefix + '-' + sub_loop.index|string + '-chart-' + loop.index|string) }}
+      {% endif %}
+      {% if sec.type == 'candlestick' and sec.chart_data %}
       {{ chart_canvas(prefix + '-' + sub_loop.index|string + '-chart-' + loop.index|string) }}
       {% endif %}
       {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}

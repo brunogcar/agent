@@ -97,12 +97,18 @@
     {% if sec.price_range_selector %}
     <div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
       <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+      <button class="price-range-btn" data-range="10y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '10y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">10A</button>
       <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
       <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+      <button class="price-range-btn" data-range="6m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '6m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">6M</button>
+      <button class="price-range-btn" data-range="3m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '3m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">3M</button>
       <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
     </div>
     {% endif %}
     {% if sec.type == 'chart' and sec.chart_data %}
+    {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
+    {% endif %}
+    {% if sec.type == 'candlestick' and sec.chart_data %}
     {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'mermaid' %}
@@ -152,6 +158,7 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.0/dist/chartjs-chart-financial.min.js"></script>
 {# ── Chart-rendering infrastructure ────────────────────────────────────────
    [v1.13 review-fix] Two issues addressed here:
 
@@ -183,7 +190,12 @@
   // [v1.18] Price chart full datasets for time-range filtering.
   var _priceChartFullData = {};
 
-  // [v1.18] Filter a price chart by time range (all/5y/1y/1m).
+  // [v1.18] Filter a price chart by time range (all/10y/5y/1y/6m/3m/1m).
+  // [b3.price v2] Now filters ALL datasets (not just datasets[0]) so
+  // multi-series charts (Médias Móveis, Bollinger, dual-axis price overlays)
+  // stay aligned when a range button is clicked. Also syncs the OHLC wick
+  // array (chart._ohlc) for vanilla candlesticks. Backward compatible:
+  // charts with a single price_full_datasets entry behave exactly as before.
   function filterPriceChart(btn, canvasId, range) {
     var entry = _chartRegistry.find(function(e) { return e.canvas && e.canvas.id === canvasId; });
     if (!entry) return;
@@ -201,29 +213,55 @@
     btn.style.background = 'var(--brand-dim)';
     btn.style.color = 'var(--brand)';
 
-    // Filter by range.
+    // Determine which indices survive the date cutoff.
     var labels = full.labels;
-    var data = full.data;
-    if (range !== 'all') {
-      var days = range === '5y' ? 1825 : range === '1y' ? 365 : 30;
+    var keep;
+    if (range === 'all') {
+      keep = labels.map(function() { return true; });
+    } else {
+      var days = range === '10y' ? 3650
+               : range === '5y'  ? 1825
+               : range === '1y'  ? 365
+               : range === '6m'  ? 182
+               : range === '3m'  ? 91
+               : range === '1m'  ? 30
+               : 30;
       var cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
       var cutoffStr = cutoff.toISOString().slice(0, 10);
-      var filtered = [];
-      for (var i = 0; i < labels.length; i++) {
-        if (labels[i] >= cutoffStr) {
-          filtered.push({label: labels[i], value: data[i]});
-        }
-      }
-      labels = filtered.map(function(f) { return f.label; });
-      data = filtered.map(function(f) { return f.value; });
+      keep = labels.map(function(l) { return l >= cutoffStr; });
     }
 
+    // Filter labels.
+    var newLabels = [];
+    for (var i = 0; i < labels.length; i++) { if (keep[i]) newLabels.push(labels[i]); }
+
     // Update the chart.
-    if (entry.chart) {
-      entry.chart.data.labels = labels;
-      entry.chart.data.datasets[0].data = data;
-      entry.chart.update('none');
+    var chart = entry.chart;
+    if (chart) {
+      chart.data.labels = newLabels;
+      if (full.datasets && full.datasets.length) {
+        // Multi-dataset path: filter every dataset in lock-step with labels.
+        for (var d = 0; d < full.datasets.length; d++) {
+          var src = full.datasets[d].data;
+          var arr = [];
+          for (var j = 0; j < (src || []).length; j++) { if (keep[j]) arr.push(src[j]); }
+          if (chart.data.datasets[d]) { chart.data.datasets[d].data = arr; }
+        }
+      } else if (full.data) {
+        // Legacy single-dataset fallback.
+        var arr0 = [];
+        for (var k = 0; k < full.data.length; k++) { if (keep[k]) arr0.push(full.data[k]); }
+        if (chart.data.datasets[0]) { chart.data.datasets[0].data = arr0; }
+      }
+      // [b3.price v2] Keep the OHLC wick array in sync so the wick plugin
+      // draws the correct high/low range after filtering.
+      if (full.ohlc) {
+        var ohlcArr = [];
+        for (var m = 0; m < full.ohlc.length; m++) { if (keep[m]) ohlcArr.push(full.ohlc[m]); }
+        chart._ohlc = ohlcArr;
+      }
+      chart.update('none');
     }
   }
 
@@ -248,11 +286,91 @@
     };
   }
 
+  // [b3.price v2] Vanilla OHLC candlestick renderer — no external plugin.
+  //   The chartjs-chart-financial plugin forced a `time` x-scale which
+  //   requires a date adapter (chartjs-adapter-date-fns). Without the
+  //   adapter the chart threw "This method is not implemented" and rendered
+  //   blank. This renderer draws candle BODIES as floating bars
+  //   [min(o,c), max(o,c)] and WICKS (high→low) via an inline
+  //   beforeDatasetsDraw plugin, all on a plain category axis. Body colors
+  //   are scriptable from chart._ohlc so they auto-adapt when the range
+  //   selector filters. chartData contract (built by cotacao.py):
+  //     chartData._ohlc        = true  (routing flag)
+  //     chartData._ohlc_data   = [{o,h,l,c}, ...]  (wick source)
+  //     chartData.data.labels  = [YYYY-MM-DD, ...]
+  //     chartData.data.datasets[0] = {label, data: [[bodyLo, bodyHi], ...]}
+  //     chartData.data.datasets[1..N] = MA line datasets (nullable warmup)
+  function _renderOHLCChart(canvas, chartData) {
+    var UP = '#22c55e', DOWN = '#ef4444';
+    var ohlc = chartData._ohlc_data || [];
+    var bodyDs = chartData.data.datasets[0];
+    var bodyData = bodyDs.data;
+    var ticker = bodyDs.label || '';
+    // MA line datasets pass through unchanged; spanGaps handles warmup nulls.
+    var maDatasets = chartData.data.datasets.slice(1).map(function(ds) {
+      return Object.assign({}, ds, {spanGaps: true});
+    });
+    var bodyColor = function(ctx) {
+      var d = ctx.chart._ohlc && ctx.chart._ohlc[ctx.dataIndex];
+      return d ? (d.c >= d.o ? UP : DOWN) : UP;
+    };
+    var config = {
+      type: 'bar',
+      data: {
+        labels: chartData.data.labels,
+        datasets: [{
+          type: 'bar', label: ticker, data: bodyData,
+          backgroundColor: bodyColor, borderColor: bodyColor, borderWidth: 0,
+          barPercentage: 0.7, categoryPercentage: 1.0, order: 3
+        }].concat(maDatasets)
+      },
+      options: Object.assign({
+        responsive: true, maintainAspectRatio: false,
+        interaction: {mode: 'index', intersect: false}
+      }, chartData.options || {}),
+      plugins: [{
+        id: 'candleWicks',
+        beforeDatasetsDraw: function(chart) {
+          var meta = chart.getDatasetMeta(0);
+          if (!meta || !meta.data) return;
+          var ctx = chart.ctx;
+          var o = chart._ohlc || [];
+          ctx.save();
+          ctx.lineWidth = 1;
+          for (var i = 0; i < meta.data.length; i++) {
+            var bar = meta.data[i];
+            if (!bar) continue;
+            var d = o[i];
+            if (!d) continue;
+            var x = bar.x;
+            var yH = chart.scales.y.getPixelForValue(d.h);
+            var yL = chart.scales.y.getPixelForValue(d.l);
+            ctx.strokeStyle = d.c >= d.o ? UP : DOWN;
+            ctx.beginPath();
+            ctx.moveTo(x, yH);
+            ctx.lineTo(x, yL);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }]
+    };
+    var chart = new Chart(canvas.getContext('2d'), config);
+    chart._ohlc = ohlc;
+    return chart;
+  }
+
   // Render a single chart by canvas ID.  Deep-copies chartData so the
   // original (with _tooltipPercent flag) is preserved in the registry.
+  // [b3.price v2] Routes OHLC candlesticks through _renderOHLCChart.
   function _renderChart(canvasId, chartData) {
     var canvas = document.getElementById(canvasId);
     if (!canvas) { return; }
+    if (chartData && chartData._ohlc) {
+      var ohlcChart = _renderOHLCChart(canvas, chartData);
+      _chartRegistry.push({canvas: canvas, chartData: chartData, chart: ohlcChart});
+      return;
+    }
     var config = JSON.parse(JSON.stringify(chartData));
     _applyTooltipPercent(config);
     var chart = new Chart(canvas.getContext('2d'), config);
@@ -311,7 +429,14 @@
     {% if sec.type == 'chart' and sec.chart_data %}
     <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
     {% if sec.price_range_selector %}
-    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}};</script>
+    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}, ohlc: {{ sec.price_full_ohlc | default([]) | tojson }}};</script>
+    {% endif %}
+    {% endif %}
+    {# Top-level candlestick chart (b3 price skill) #}
+    {% if sec.type == 'candlestick' and sec.chart_data %}
+    <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
+    {% if sec.price_range_selector %}
+    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}, ohlc: {{ sec.price_full_ohlc | default([]) | tojson }}};</script>
     {% endif %}
     {% endif %}
     {# Top-level period_toggle charts #}
@@ -341,6 +466,9 @@
         {% set sub_loop = loop %}
         {% for sub_sec in subtab.sections %}
           {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
+          <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
+          {% endif %}
+          {% if sub_sec.type == 'candlestick' and sub_sec.chart_data %}
           <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
           {% endif %}
           {# Subtab period_toggle charts #}
@@ -380,9 +508,15 @@
         if (entry.chart) {
           entry.chart.destroy();
         }
-        var config = JSON.parse(JSON.stringify(entry.chartData));
-        _applyTooltipPercent(config);
-        entry.chart = new Chart(entry.canvas.getContext('2d'), config);
+        // [b3.price v2] Re-render OHLC candlesticks through the vanilla
+        // renderer so wicks + scriptable colors survive a theme switch.
+        if (entry.chartData && entry.chartData._ohlc) {
+          entry.chart = _renderOHLCChart(entry.canvas, entry.chartData);
+        } else {
+          var config = JSON.parse(JSON.stringify(entry.chartData));
+          _applyTooltipPercent(config);
+          entry.chart = new Chart(entry.canvas.getContext('2d'), config);
+        }
       });
     };
   }

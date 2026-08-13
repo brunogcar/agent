@@ -47,7 +47,7 @@ Use this for EVERY change. No exceptions.
 - **Wait for greenlight** — do not start coding until the user approves
 
 ### Step 3: Build a Zip
-Build a zip at `/home/z/my-project/<feature-name>.zip`:
+Build a zip at `/home/z/my-project/zips/<feature-name>.zip`:
 - **Repo-relative paths** — no wrapper folder, no `__pycache__`
 - Example structure:
   ```
