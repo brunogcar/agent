@@ -1,27 +1,18 @@
 """metrics/cagr.py -- CAGR (Compound Annual Growth Rate) metrics.
 
-CAGR = (V_end / V_start)^(1/n) - 1
+[v2.1 v2] Changed horizons from 3Y/5Y to 3M/1Y/5Y to match the Crescimento
+layout. The user wants the same 3 horizons for both simple growth and CAGR.
 
-Unlike the existing revenue_growth_* metrics which compute SIMPLE growth
-((current - prior) / |prior|), CAGR gives the ANNUALIZED compound rate —
-the constant yearly rate that would take V_start to V_end over n years.
+CAGR = (V_end / V_start)^(365/lookback_days) - 1
 
-Example:
-  Revenue 2020: 100B
-  Revenue 2025: 200B
-  Simple growth (5Y) = (200 - 100) / 100 = 100% (total over 5Y)
-  CAGR (5Y) = (200/100)^(1/5) - 1 = 0.1487 = 14.87% per year
+- CAGR 3M (90 days): Annualized 3-month growth rate
+- CAGR 1A (365 days): Annualized 1-year growth (= simple 1Y growth)
+- CAGR 5A (1825 days): Annualized 5-year growth
 
-CAGR is more useful for comparing growth across different time windows
-because it normalizes to a per-year rate.
-
-Metrics registered (6 total):
-  - revenue_cagr_3y, revenue_cagr_5y
-  - earnings_cagr_3y, earnings_cagr_5y
-  - gross_profit_cagr_3y, gross_profit_cagr_5y
-
-Engines composed: revenue, ttm_earnings, gross_profit (each provides
-*_periods() for the historical lookback)
+Metrics registered (9 total, 3 per metric × 3 horizons):
+  - revenue_cagr_3m, revenue_cagr_1y, revenue_cagr_5y
+  - earnings_cagr_3m, earnings_cagr_1y, earnings_cagr_5y
+  - gross_profit_cagr_3m, gross_profit_cagr_1y, gross_profit_cagr_5y
 
 Usage:
     from skills.cvm.calculations.metrics.cagr import revenue_cagr_5y_at
@@ -35,22 +26,19 @@ from skills.cvm.calculations.engines.dre.gross_profit import gross_profit_at, gr
 from skills.cvm.calculations._registry import MetricSpec, register_metric
 
 
-def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float | None:
+def _cagr_at(periods: list[dict], target_date: str, lookback_days: int,
+             value_key: str = "value") -> float | None:
     """Compute CAGR at target_date over a lookback window.
 
     CAGR = (V_end / V_start)^(365/lookback_days) - 1
 
-    - V_end   = the most recent period on or before target_date with non-None value.
-    - V_start = the period closest to (target_date - lookback_days) with
-                non-None, non-zero, positive value.
-
-    Returns None if either endpoint is unavailable, if V_start <= 0,
-    or if V_end <= 0 (CAGR undefined for negative/zero endpoints).
+    [v2.1] Uses explicit value_key parameter instead of OR chain.
 
     Args:
-        periods: List of {"date": str, "<key>": float} sorted oldest-first.
+        periods: List of {"date": str, value_key: float} sorted oldest-first.
         target_date: YYYY-MM-DD.
-        lookback_days: 1095 for 3Y, 1825 for 5Y.
+        lookback_days: 90 for 3M, 365 for 1Y, 1825 for 5Y.
+        value_key: The dict key that holds the numeric value in each period.
     """
     from datetime import date as _date, timedelta as _timedelta
 
@@ -59,7 +47,6 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
     except (ValueError, TypeError):
         return None
 
-    # Find V_end: most recent period <= target_date with non-None value
     v_end = None
     end_date = None
     for p in reversed(periods):
@@ -68,9 +55,7 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
         except (ValueError, KeyError, TypeError):
             continue
         if p_date <= target:
-            # Get the value from whichever key holds the data
-            # [v1.25 fix] Added ttm_rev (revenue_periods) + ttm_gp (gross_profit_periods)
-            val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit") or p.get("ttm_rev") or p.get("ttm_gp")
+            val = p.get(value_key)
             if val is not None and val > 0:
                 v_end = float(val)
                 end_date = p_date
@@ -79,7 +64,6 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
     if v_end is None or v_end <= 0:
         return None
 
-    # Find V_start: closest period to (target - lookback_days)
     target_start = target - _timedelta(days=lookback_days)
     v_start = None
     start_date = None
@@ -91,11 +75,10 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
             continue
         if p_date > target:
             break
-        val = p.get("value") or p.get("revenue") or p.get("ttm") or p.get("gross_profit") or p.get("ttm_rev") or p.get("ttm_gp")
+        val = p.get(value_key)
         if val is not None and val > 0:
             diff = abs((p_date - target_start).days)
             if best_diff is None or diff < best_diff:
-                # Only accept if within 1.5x lookback window
                 if diff <= lookback_days * 1.5:
                     best_diff = diff
                     v_start = float(val)
@@ -104,7 +87,6 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
     if v_start is None or v_start <= 0:
         return None
 
-    # Compute actual years between start and end
     if end_date is None or start_date is None:
         return None
     actual_days = (end_date - start_date).days
@@ -112,10 +94,9 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
         return None
 
     years = actual_days / 365.0
-    if years < 0.5:  # Need at least 6 months of data
+    if years < 0.1:  # [v2.1 v3] Was 0.5 — blocked 3M CAGR (0.25 years). Now 0.1 (36 days min).
         return None
 
-    # CAGR = (V_end / V_start)^(1/years) - 1
     ratio = v_end / v_start
     if ratio <= 0:
         return None
@@ -126,121 +107,62 @@ def _cagr_at(periods: list[dict], target_date: str, lookback_days: int) -> float
 
 # ── Revenue CAGR ──────────────────────────────────────────────────────────────
 
-def revenue_cagr_3y_at(company: str, date: str) -> float | None:
-    """Revenue CAGR over 3 years."""
+def revenue_cagr_3m_at(company: str, date: str) -> float | None:
+    """Revenue CAGR over 3 months (annualized)."""
     periods = revenue_periods(company)
-    return _cagr_at(periods, date, 1095)
+    return _cagr_at(periods, date, 90, value_key="ttm_rev")
 
+def revenue_cagr_1y_at(company: str, date: str) -> float | None:
+    """Revenue CAGR over 1 year."""
+    periods = revenue_periods(company)
+    return _cagr_at(periods, date, 365, value_key="ttm_rev")
 
 def revenue_cagr_5y_at(company: str, date: str) -> float | None:
     """Revenue CAGR over 5 years."""
     periods = revenue_periods(company)
-    return _cagr_at(periods, date, 1825)
-
-
-def revenue_cagr_3y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Revenue 3Y CAGR time series."""
-    periods = revenue_periods(company)
-    result = []
-    from datetime import date as _date, timedelta as _timedelta
-    try:
-        d_from = _date.fromisoformat(date_from)
-        d_to = _date.fromisoformat(date_to)
-    except ValueError:
-        return []
-    current = d_from
-    while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1095)
-        result.append({"date": current.isoformat(), "revenue_cagr_3y": val})
-        current += _timedelta(days=90)  # Quarterly sampling
-    return result
-
-
-def revenue_cagr_5y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Revenue 5Y CAGR time series."""
-    periods = revenue_periods(company)
-    result = []
-    from datetime import date as _date, timedelta as _timedelta
-    try:
-        d_from = _date.fromisoformat(date_from)
-        d_to = _date.fromisoformat(date_to)
-    except ValueError:
-        return []
-    current = d_from
-    while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1825)
-        result.append({"date": current.isoformat(), "revenue_cagr_5y": val})
-        current += _timedelta(days=90)
-    return result
+    return _cagr_at(periods, date, 1825, value_key="ttm_rev")
 
 
 # ── Earnings CAGR ─────────────────────────────────────────────────────────────
 
-def earnings_cagr_3y_at(company: str, date: str) -> float | None:
-    """Earnings (net income) CAGR over 3 years."""
+def earnings_cagr_3m_at(company: str, date: str) -> float | None:
+    """Earnings CAGR over 3 months (annualized)."""
     periods = ttm_earnings_periods(company)
-    return _cagr_at(periods, date, 1095)
+    return _cagr_at(periods, date, 90, value_key="ttm")
 
+def earnings_cagr_1y_at(company: str, date: str) -> float | None:
+    """Earnings CAGR over 1 year."""
+    periods = ttm_earnings_periods(company)
+    return _cagr_at(periods, date, 365, value_key="ttm")
 
 def earnings_cagr_5y_at(company: str, date: str) -> float | None:
-    """Earnings (net income) CAGR over 5 years."""
+    """Earnings CAGR over 5 years."""
     periods = ttm_earnings_periods(company)
-    return _cagr_at(periods, date, 1825)
-
-
-def earnings_cagr_3y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Earnings 3Y CAGR time series."""
-    periods = ttm_earnings_periods(company)
-    result = []
-    from datetime import date as _date, timedelta as _timedelta
-    try:
-        d_from = _date.fromisoformat(date_from)
-        d_to = _date.fromisoformat(date_to)
-    except ValueError:
-        return []
-    current = d_from
-    while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1095)
-        result.append({"date": current.isoformat(), "earnings_cagr_3y": val})
-        current += _timedelta(days=90)
-    return result
-
-
-def earnings_cagr_5y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Earnings 5Y CAGR time series."""
-    periods = ttm_earnings_periods(company)
-    result = []
-    from datetime import date as _date, timedelta as _timedelta
-    try:
-        d_from = _date.fromisoformat(date_from)
-        d_to = _date.fromisoformat(date_to)
-    except ValueError:
-        return []
-    current = d_from
-    while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1825)
-        result.append({"date": current.isoformat(), "earnings_cagr_5y": val})
-        current += _timedelta(days=90)
-    return result
+    return _cagr_at(periods, date, 1825, value_key="ttm")
 
 
 # ── Gross Profit CAGR ─────────────────────────────────────────────────────────
 
-def gross_profit_cagr_3y_at(company: str, date: str) -> float | None:
-    """Gross profit CAGR over 3 years."""
+def gross_profit_cagr_3m_at(company: str, date: str) -> float | None:
+    """Gross profit CAGR over 3 months (annualized)."""
     periods = gross_profit_periods(company)
-    return _cagr_at(periods, date, 1095)
+    return _cagr_at(periods, date, 90, value_key="ttm_gp")
 
+def gross_profit_cagr_1y_at(company: str, date: str) -> float | None:
+    """Gross profit CAGR over 1 year."""
+    periods = gross_profit_periods(company)
+    return _cagr_at(periods, date, 365, value_key="ttm_gp")
 
 def gross_profit_cagr_5y_at(company: str, date: str) -> float | None:
     """Gross profit CAGR over 5 years."""
     periods = gross_profit_periods(company)
-    return _cagr_at(periods, date, 1825)
+    return _cagr_at(periods, date, 1825, value_key="ttm_gp")
 
 
-def gross_profit_cagr_3y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Gross profit 3Y CAGR time series."""
-    periods = gross_profit_periods(company)
+# ── History functions (stub — CAGR history not commonly used) ─────────────────
+
+def _cagr_history(periods, date_from, date_to, lookback, value_key, result_key):
+    """Generic CAGR history time series."""
     result = []
     from datetime import date as _date, timedelta as _timedelta
     try:
@@ -250,112 +172,60 @@ def gross_profit_cagr_3y_history(company: str, date_from: str, date_to: str) -> 
         return []
     current = d_from
     while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1095)
-        result.append({"date": current.isoformat(), "gross_profit_cagr_3y": val})
+        val = _cagr_at(periods, current.isoformat(), lookback, value_key=value_key)
+        result.append({"date": current.isoformat(), result_key: val})
         current += _timedelta(days=90)
     return result
 
 
-def gross_profit_cagr_5y_history(company: str, date_from: str, date_to: str) -> list[dict]:
-    """Gross profit 5Y CAGR time series."""
-    periods = gross_profit_periods(company)
-    result = []
-    from datetime import date as _date, timedelta as _timedelta
-    try:
-        d_from = _date.fromisoformat(date_from)
-        d_to = _date.fromisoformat(date_to)
-    except ValueError:
-        return []
-    current = d_from
-    while current <= d_to:
-        val = _cagr_at(periods, current.isoformat(), 1825)
-        result.append({"date": current.isoformat(), "gross_profit_cagr_5y": val})
-        current += _timedelta(days=90)
-    return result
+def revenue_cagr_3m_history(c, df, dt): return _cagr_history(revenue_periods(c), df, dt, 90, "ttm_rev", "revenue_cagr_3m")
+def revenue_cagr_1y_history(c, df, dt): return _cagr_history(revenue_periods(c), df, dt, 365, "ttm_rev", "revenue_cagr_1y")
+def revenue_cagr_5y_history(c, df, dt): return _cagr_history(revenue_periods(c), df, dt, 1825, "ttm_rev", "revenue_cagr_5y")
+def earnings_cagr_3m_history(c, df, dt): return _cagr_history(ttm_earnings_periods(c), df, dt, 90, "ttm", "earnings_cagr_3m")
+def earnings_cagr_1y_history(c, df, dt): return _cagr_history(ttm_earnings_periods(c), df, dt, 365, "ttm", "earnings_cagr_1y")
+def earnings_cagr_5y_history(c, df, dt): return _cagr_history(ttm_earnings_periods(c), df, dt, 1825, "ttm", "earnings_cagr_5y")
+def gross_profit_cagr_3m_history(c, df, dt): return _cagr_history(gross_profit_periods(c), df, dt, 90, "ttm_gp", "gross_profit_cagr_3m")
+def gross_profit_cagr_1y_history(c, df, dt): return _cagr_history(gross_profit_periods(c), df, dt, 365, "ttm_gp", "gross_profit_cagr_1y")
+def gross_profit_cagr_5y_history(c, df, dt): return _cagr_history(gross_profit_periods(c), df, dt, 1825, "ttm_gp", "gross_profit_cagr_5y")
 
 
-# ── Register 6 CAGR metrics ───────────────────────────────────────────────────
+# ── Register 9 CAGR metrics (3M/1A/5A × 3 metrics) ───────────────────────────
 
-register_metric(MetricSpec(
-    name="revenue_cagr_3y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Receita 3A",
-    ratio_key="revenue_cagr_3y",
-    ratio_fn=revenue_cagr_3y_at,
-    history_fn=revenue_cagr_3y_history,
-    engines=["revenue"],
-    category="growth",
-    aliases=["cagr_receita_3a", "cagr_revenue_3y"],
-    allow_negative=True,
-    tooltip="CAGR Receita 3A = (Receita_atual / Receita_3A_atrás)^(1/3) - 1. Crescimento anualizado composto.",
-))
+_CAGR_REGS = [
+    # Revenue
+    ("revenue_cagr_3m", "CAGR Receita 3M", revenue_cagr_3m_at, revenue_cagr_3m_history, ["revenue"], ["cagr_receita_3m"],
+     "CAGR Receita 3M = (Receita_atual / Receita_3M_atrás)^(365/90) - 1. Crescimento anualizado de 3 meses."),
+    ("revenue_cagr_1y", "CAGR Receita 1A", revenue_cagr_1y_at, revenue_cagr_1y_history, ["revenue"], ["cagr_receita_1a"],
+     "CAGR Receita 1A = (Receita_atual / Receita_1A_atrás) - 1. Crescimento anualizado de 1 ano."),
+    ("revenue_cagr_5y", "CAGR Receita 5A", revenue_cagr_5y_at, revenue_cagr_5y_history, ["revenue"], ["cagr_receita_5a"],
+     "CAGR Receita 5A = (Receita_atual / Receita_5A_atrás)^(1/5) - 1. Crescimento anualizado de 5 anos."),
+    # Earnings
+    ("earnings_cagr_3m", "CAGR Lucro 3M", earnings_cagr_3m_at, earnings_cagr_3m_history, ["earnings"], ["cagr_lucro_3m"],
+     "CAGR Lucro 3M = (Lucro_atual / Lucro_3M_atrás)^(365/90) - 1. Crescimento anualizado de 3 meses."),
+    ("earnings_cagr_1y", "CAGR Lucro 1A", earnings_cagr_1y_at, earnings_cagr_1y_history, ["earnings"], ["cagr_lucro_1a"],
+     "CAGR Lucro 1A = (Lucro_atual / Lucro_1A_atrás) - 1. Crescimento anualizado de 1 ano."),
+    ("earnings_cagr_5y", "CAGR Lucro 5A", earnings_cagr_5y_at, earnings_cagr_5y_history, ["earnings"], ["cagr_lucro_5a"],
+     "CAGR Lucro 5A = (Lucro_atual / Lucro_5A_atrás)^(1/5) - 1. Crescimento anualizado de 5 anos."),
+    # Gross Profit
+    ("gross_profit_cagr_3m", "CAGR Resultado Bruto 3M", gross_profit_cagr_3m_at, gross_profit_cagr_3m_history, ["gross_profit"], ["cagr_resultado_bruto_3m"],
+     "CAGR Resultado Bruto 3M = (Lucro_Bruto_atual / há_3M)^(365/90) - 1. Crescimento anualizado de 3 meses."),
+    ("gross_profit_cagr_1y", "CAGR Resultado Bruto 1A", gross_profit_cagr_1y_at, gross_profit_cagr_1y_history, ["gross_profit"], ["cagr_resultado_bruto_1a"],
+     "CAGR Resultado Bruto 1A = (Lucro_Bruto_atual / há_1A) - 1. Crescimento anualizado de 1 ano."),
+    ("gross_profit_cagr_5y", "CAGR Resultado Bruto 5A", gross_profit_cagr_5y_at, gross_profit_cagr_5y_history, ["gross_profit"], ["cagr_resultado_bruto_5a"],
+     "CAGR Resultado Bruto 5A = (Lucro_Bruto_atual / há_5A)^(1/5) - 1. Crescimento anualizado de 5 anos."),
+]
 
-register_metric(MetricSpec(
-    name="revenue_cagr_5y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Receita 5A",
-    ratio_key="revenue_cagr_5y",
-    ratio_fn=revenue_cagr_5y_at,
-    history_fn=revenue_cagr_5y_history,
-    engines=["revenue"],
-    category="growth",
-    aliases=["cagr_receita_5a", "cagr_revenue_5y"],
-    allow_negative=True,
-    tooltip="CAGR Receita 5A = (Receita_atual / Receita_5A_atrás)^(1/5) - 1. Crescimento anualizado composto.",
-))
-
-register_metric(MetricSpec(
-    name="earnings_cagr_3y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Lucro 3A",
-    ratio_key="earnings_cagr_3y",
-    ratio_fn=earnings_cagr_3y_at,
-    history_fn=earnings_cagr_3y_history,
-    engines=["earnings"],
-    category="growth",
-    aliases=["cagr_lucro_3a", "cagr_earnings_3y"],
-    allow_negative=True,
-    tooltip="CAGR Lucro 3A = (Lucro_atual / Lucro_3A_atrás)^(1/3) - 1. Crescimento anualizado composto.",
-))
-
-register_metric(MetricSpec(
-    name="earnings_cagr_5y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Lucro 5A",
-    ratio_key="earnings_cagr_5y",
-    ratio_fn=earnings_cagr_5y_at,
-    history_fn=earnings_cagr_5y_history,
-    engines=["earnings"],
-    category="growth",
-    aliases=["cagr_lucro_5a", "cagr_earnings_5y"],
-    allow_negative=True,
-    tooltip="CAGR Lucro 5A = (Lucro_atual / Lucro_5A_atrás)^(1/5) - 1. Crescimento anualizado composto.",
-))
-
-register_metric(MetricSpec(
-    name="gross_profit_cagr_3y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Resultado Bruto 3A",
-    ratio_key="gross_profit_cagr_3y",
-    ratio_fn=gross_profit_cagr_3y_at,
-    history_fn=gross_profit_cagr_3y_history,
-    engines=["gross_profit"],
-    category="growth",
-    aliases=["cagr_resultado_bruto_3a", "cagr_gross_profit_3y"],
-    allow_negative=True,
-    tooltip="CAGR Resultado Bruto 3A = (Lucro_Bruto_atual / há_3A)^(1/3) - 1. Crescimento anualizado composto.",
-))
-
-register_metric(MetricSpec(
-    name="gross_profit_cagr_5y",
-    per_share_label=None, per_share_key=None, per_share_fn=None,
-    ratio_label="CAGR Resultado Bruto 5A",
-    ratio_key="gross_profit_cagr_5y",
-    ratio_fn=gross_profit_cagr_5y_at,
-    history_fn=gross_profit_cagr_5y_history,
-    engines=["gross_profit"],
-    category="growth",
-    aliases=["cagr_resultado_bruto_5a", "cagr_gross_profit_5y"],
-    allow_negative=True,
-    tooltip="CAGR Resultado Bruto 5A = (Lucro_Bruto_atual / há_5A)^(1/5) - 1. Crescimento anualizado composto.",
-))
+for name, label, fn, hist_fn, engines, aliases, tooltip in _CAGR_REGS:
+    register_metric(MetricSpec(
+        name=name,
+        per_share_label=None, per_share_key=None, per_share_fn=None,
+        ratio_label=label,
+        ratio_key=name,
+        ratio_fn=fn,
+        history_fn=hist_fn,
+        engines=engines,
+        category="growth",
+        aliases=aliases,
+        allow_negative=True,
+        tooltip=tooltip,
+    ))

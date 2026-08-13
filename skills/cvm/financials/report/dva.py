@@ -32,8 +32,23 @@ def build_dva_sections(
     dva_result: dict,
     company: str | None = None,
     dva_result_q: dict | None = None,
+    ttm_periods: list[dict] | None = None,
 ) -> list[dict]:
     """Build the DVA tab: generation + distribution table + doughnut chart.
+
+    [v2.1] TTM (Anualizado) toggle support — same pattern as DRE/DFC:
+      - Accepts optional ``ttm_periods`` (normalized TTM period dicts).
+      - When provided, a 3rd "TTM" toggle panel is added to the period_toggle
+        section containing a small TTM metrics table + a TTM trend chart
+        (VA Bruta/VA Líquida/Total a Distribuir built via
+        ``build_dva_trend_chart``). Note: the TTM trend chart reads from
+        ``accounts`` (codes 7.04/7.06/7.08) which the TTM periods do NOT
+        have — so the TTM chart will be None for DVA in v2.1. The TTM
+        metrics table still renders (showing TTM Receita/EBITDA/Lucro
+        from the metrics dict). A future enhancement could derive VA Bruta
+        etc. from the metrics dict.
+      - TTM is a flow statement (rolling 4-quarter sum), so deseasonalized
+        movement is more meaningful than quarterly noise.
 
     [v1.24] Quarterly support:
       - Accepts optional ``dva_result_q`` (quarterly DVA statement result).
@@ -52,6 +67,7 @@ def build_dva_sections(
 
     dva_periods = (dva_result or {}).get("periods") or []
     dva_periods_q = (dva_result_q or {}).get("periods") or []
+    ttm_p = ttm_periods or []
     if not dva_periods:
         sections.append({
             "type": "text",
@@ -72,11 +88,25 @@ def build_dva_sections(
     dva_annual_trend = build_dva_trend_chart(dva_periods, company)
     dva_quarterly_trend = build_dva_trend_chart(dva_periods_q, company) if dva_periods_q else None
 
+    # [v2.1] Build TTM trend chart (VA Bruta/VA Líquida/Total a Distribuir).
+    # NOTE: build_dva_trend_chart reads from ``accounts`` (codes 7.04/7.06/
+    # 7.08). TTM periods don't have ``accounts`` — they have ``metrics``.
+    # So this returns None for DVA TTM in v2.1. We still pass it (None is
+    # safe — _build_period_toggle_sections filters it out). The TTM metrics
+    # table still renders (showing TTM Receita/EBITDA/Lucro). A future
+    # enhancement could derive VA Bruta etc. from metrics.
+    dva_ttm_trend = None  # placeholder — DVA TTM trend chart not supported in v2.1
+
     # [v1.24] Multi-period table + charts INSIDE period_toggle.
+    # [v2.1] Pass ``ttm_periods`` + ``ttm_chart`` so a 3rd TTM panel is
+    # added (the TTM metrics table always renders when ttm_periods is
+    # non-empty; the TTM chart is None for DVA in v2.1).
     sections.extend(_build_period_toggle_sections(
         "DVA", dva_periods, dva_periods_q, "DVA",
         annual_chart=dva_annual_trend,
         quarterly_chart=dva_quarterly_trend,
+        ttm_periods=ttm_p,
+        ttm_chart=dva_ttm_trend,
     ))
 
     # If neither annual nor quarterly table could be built, fall back to a

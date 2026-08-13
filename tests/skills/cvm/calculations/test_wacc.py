@@ -114,9 +114,21 @@ class TestWaccAt:
         assert result == pytest.approx(expected, rel=1e-6)
 
     def test_none_coe_and_none_selic_returns_none(self, monkeypatch):
-        """[v4] COE = None AND Selic = None → can't compute → None."""
+        """[v2.0] COE = None AND Selic = None → WACC uses DEFAULT_RF_PCT fallback."""
         _mock_wacc_inputs(monkeypatch, coe=None, selic=None)
-        assert wacc_metric.wacc_at("PETR4", "2024-06-30") is None
+        # [v2.0] WACC no longer returns None — it computes a fallback COE
+        # from DEFAULT_RF_PCT (14.0%) when both COE and Selic are None.
+        result = wacc_metric.wacc_at("PETR4", "2024-06-30")
+        assert result is not None
+        # Fallback COE = 14% + 1.0 * 5.5% = 19.5%
+        # WACC = COE * E/(D+E) + Kd * (1-tax) * D/(D+E)
+        e = 38.0 * 13e9
+        d = 250e9
+        v = d + e
+        coe_fallback = (14.0 / 100.0) + 1.0 * 0.055
+        kd = abs(-8e9) / d
+        expected = coe_fallback * (e / v) + kd * (1 - 0.25) * (d / v)
+        assert result == pytest.approx(expected, rel=1e-6)
 
     def test_none_price_returns_none(self, monkeypatch):
         """Missing market price → can't compute market cap → None."""

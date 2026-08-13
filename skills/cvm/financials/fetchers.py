@@ -846,11 +846,11 @@ def _fetch_all_statements_quarterly(
             leaf = itr_data.get(year, {}).get(meses, {}).get(code)
             if leaf:
                 return leaf.get("valor")
-            # Carry-forward: try ITR meses=12 of same year
-            leaf = itr_data.get(year, {}).get(12, {}).get(code)
-            if leaf:
-                return leaf.get("valor")
-            # Carry-forward: try DFP meses=12 of previous year
+            # [v2.1] Carry-forward: try DFP meses=12 of PREVIOUS year first
+            # (chronologically valid — the most recent KNOWN balance sheet
+            # for Q1-Q3 of year Y is Dec-31 of year Y-1).
+            # DO NOT try ITR meses=12 of same year — that's look-ahead bias
+            # (Dec-31-Y data used for Mar-31-Y = 9 months future).
             leaf = dfp_data.get(year - 1, {}).get(12, {}).get(code)
             if leaf:
                 return leaf.get("valor")
@@ -870,10 +870,8 @@ def _fetch_all_statements_quarterly(
         meses = {1: 3, 2: 6, 3: 9}[q_num]
         meta = itr_data.get(year, {}).get(meses, {}).get(code)
         if not meta:
-            # Carry-forward metadata from ITR meses=12 or DFP
-            meta = itr_data.get(year, {}).get(12, {}).get(code)
-            if not meta:
-                meta = dfp_data.get(year - 1, {}).get(12, {}).get(code)
+            # [v2.1] Same carry-forward order as _snap — no look-ahead
+            meta = dfp_data.get(year - 1, {}).get(12, {}).get(code)
             if not meta:
                 meta = itr_data.get(year - 1, {}).get(12, {}).get(code)
         return meta or {}

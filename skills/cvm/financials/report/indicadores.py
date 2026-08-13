@@ -98,27 +98,27 @@ def _group_metrics_by_prefix(items: list[dict], category_label: str = "") -> lis
             gname = category_label if category_label else "Outros"
         groups.setdefault(gname, []).append(item)
 
-    # [new commit] Sort items WITHIN each growth group by horizon:
-    # 3M first (key=0), then 1A (key=1), then 5A (key=3). User feedback:
-    # "3M / 1A / 5A — currently sorted alphabetically (1A, 3M, 5A), want 3M
-    # first". The registry's list_metrics_by_category() returns metric names
-    # sorted alphabetically, so 1A ends up first by default — this re-sort
-    # restores the intended chronological order.
-    # [v1.25] Added "3A": 2 so CAGR 3Y sits between 1A and 5A.
+    # [v2.1 v3] Sort items WITHIN each growth group.
+    # User wants grouped by type: all Crescimento first (3M/1A/5A), then all CAGR (3M/1A/5A).
+    # NOT alternating (Crescimento 3M, CAGR 3M, Crescimento 1A, ...).
     _GROWTH_HORIZON_ORDER = {
-        "3M": 0, "1A": 1, "3A": 2, "5A": 3, "1Y": 1, "5Y": 3,
+        "3M": 0, "1A": 1, "5A": 2, "1Y": 1, "5Y": 2,
     }
     growth_groups = {"Receita", "Lucro Líquido", "Resultado Bruto",
                      "Outros Crescimento"}
     for gname in growth_groups:
         if gname in groups:
-            def _horizon_key(item: dict) -> int:
+            def _horizon_key(item: dict) -> tuple:
                 lbl = item.get("label", "")
-                # Match trailing horizon token (e.g. "Crescimento Receita 3M").
+                # Primary key: Crescimento (0) before CAGR (1)
+                is_cagr = 1 if lbl.startswith("CAGR") else 0
+                # Secondary key: horizon (3M=0, 1A=1, 5A=2)
+                horizon = 99
                 for tok, key in _GROWTH_HORIZON_ORDER.items():
                     if lbl.endswith(" " + tok) or lbl.endswith(tok):
-                        return key
-                return 99
+                        horizon = key
+                        break
+                return (is_cagr, horizon)
             groups[gname].sort(key=_horizon_key)
 
     # Return in a sensible order

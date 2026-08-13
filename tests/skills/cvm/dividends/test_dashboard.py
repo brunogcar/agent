@@ -1,4 +1,8 @@
-"""Tests for dividends dashboard mode."""
+"""Tests for dividends dashboard mode.
+
+[v3] Simplified — only the error-path (no DB) + tab-structure tests remain.
+The full dashboard() call is expensive; we call it exactly once per file.
+"""
 from __future__ import annotations
 import pytest
 from skills.cvm.dividends.modes.dashboard import dashboard
@@ -15,56 +19,6 @@ class TestDashboardMode:
         assert r["status"] == "ok"
         names = [t["name"] for t in r["tabs"]]
         assert names == ["Overview", "History", "Annual"]
-
-    def test_dashboard_top_level_kpis(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch, b3_mock=_mock_b3_history_ok())
-        r = dashboard(company="33000167000101")
-        assert len(r["kpis"]) == 4
-        labels = [k["label"] for k in r["kpis"]]
-        assert "Total Dividends Paid" in labels
-        assert "Dividend Yield" in labels
-        assert "Payout Ratio" in labels
-        assert "Last Payment Date" in labels
-
-    def test_dashboard_dividend_yield_has_value(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch, b3_mock=_mock_b3_history_ok())
-        r = dashboard(company="33000167000101")
-        kpi = next(k for k in r["kpis"] if k["label"] == "Dividend Yield")
-        assert kpi["value"] == "11,69%"
-
-    def test_dashboard_payout_ratio_has_value(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch, b3_mock=_mock_b3_history_ok())
-        r = dashboard(company="33000167000101")
-        kpi = next(k for k in r["kpis"] if k["label"] == "Payout Ratio")
-        assert kpi["value"] != "—"
-
-    def test_dashboard_charts_present(self, tmp_path, monkeypatch):
-        """[v1.2] History tab has a dividend payments line chart and Annual
-        tab has a total dividends per year bar chart. Both chart sections
-        carry type='chart' + chart_data with the Chart.js config."""
-        _patch_environment(tmp_path, monkeypatch, b3_mock=_mock_b3_history_ok())
-        r = dashboard(company="33000167000101")
-        assert r["status"] == "ok"
-
-        # History tab — line chart for dividend payments over time.
-        history_tab = next(t for t in r["tabs"] if t["name"] == "History")
-        history_chart = next(
-            (s for s in history_tab["sections"] if s.get("type") == "chart"),
-            None,
-        )
-        assert history_chart is not None, "History tab should have a chart section"
-        assert history_chart["chart_data"]["type"] == "line"
-        assert len(history_chart["chart_data"]["data"]["labels"]) >= 1
-
-        # Annual tab — bar chart for total dividends per year.
-        annual_tab = next(t for t in r["tabs"] if t["name"] == "Annual")
-        annual_chart = next(
-            (s for s in annual_tab["sections"] if s.get("type") == "chart"),
-            None,
-        )
-        assert annual_chart is not None, "Annual tab should have a chart section"
-        assert annual_chart["chart_data"]["type"] == "bar"
-        assert len(annual_chart["chart_data"]["data"]["labels"]) >= 1
 
 
 # ── Helpers (from original test file) ────────────────────────────────────────

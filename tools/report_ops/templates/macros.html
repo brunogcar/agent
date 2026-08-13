@@ -72,13 +72,27 @@
 {% endif %}
 {% endmacro %}
 
-{% macro period_toggle(annual_sections, quarterly_sections, prefix) %}
-{# [v1.25 v4] Period-toggle container: 2 buttons + 2 panels.
+{% macro period_toggle(annual_sections, quarterly_sections, prefix, ttm_sections=None) %}
+{# [v1.25 v4 / v2.1] Period-toggle container: 2 OR 3 buttons + matching panels.
+   - 2-button mode (backward compat): Trimestral + Anual. Used by BPA/BPP and
+     by tabs where TTM data isn't applicable (snapshots) or unavailable.
+   - 3-button mode (v2.1): Trimestral + TTM + Anual. Activated when
+     ``ttm_sections`` is a non-empty list. Used by flow-statement tabs
+     (DRE/DFC/DVA) so users can compare quarterly noise vs deseasonalized
+     TTM (rolling 4-quarter sum) vs annual.
+
    Each panel renders child sections via _section_inner with unique canvas IDs
-   so charts inside the toggle get rendered + can be resized on toggle. #}
+   so charts inside the toggle get rendered + can be resized on toggle.
+   Canvas-ID contract (must match dashboard.html script block):
+     Annual panel:   {prefix}-a-chart-{idx}
+     Quarterly panel: {prefix}-q-chart-{idx}
+     TTM panel:      {prefix}-t-chart-{idx}   (v2.1) #}
 <div class="period-toggle-container" style="margin-bottom: 16px;">
   <div class="period-toggle-bar" style="display: inline-flex; gap: 6px; margin-bottom: 12px; padding: 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;">
     <button class="period-toggle-btn active" data-period="quarterly" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Trimestral</button>
+    {% if ttm_sections %}
+    <button class="period-toggle-btn" data-period="ttm" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: transparent; color: var(--text-sec); border-radius: 6px; cursor: pointer;">TTM</button>
+    {% endif %}
     <button class="period-toggle-btn" data-period="annual" onclick="togglePeriod(this, '{{ prefix }}')" style="padding: 6px 16px; font-size: 12px; font-weight: 600; border: none; background: transparent; color: var(--text-sec); border-radius: 6px; cursor: pointer;">Anual</button>
   </div>
   <div class="period-toggle-panel active" id="{{ prefix }}-quarterly" data-period="quarterly">
@@ -89,6 +103,16 @@
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados trimestrais indisponíveis.</div>
     {% endif %}
   </div>
+  {% if ttm_sections %}
+  <div class="period-toggle-panel" id="{{ prefix }}-ttm" data-period="ttm" style="display: none;">
+    {% for sec in ttm_sections %}
+    <div class="section">{{ _section_inner(sec, prefix ~ '-t-chart-' ~ loop.index) }}</div>
+    {% endfor %}
+    {% if not ttm_sections %}
+    <div class="text-block" style="color: var(--text-sec); font-style: italic;">Dados TTM indisponíveis.</div>
+    {% endif %}
+  </div>
+  {% endif %}
   <div class="period-toggle-panel" id="{{ prefix }}-annual" data-period="annual" style="display: none;">
     {% for sec in annual_sections %}
     <div class="section">{{ _section_inner(sec, prefix ~ '-a-chart-' ~ loop.index) }}</div>
@@ -143,9 +167,11 @@
     {% set sub_loop = loop %}
     {% for sec in t.sections %}
     <div class="section">
-      {# [v1.24] period_toggle: 2 buttons + 2 panels (annual + quarterly). #}
+      {# [v1.24] period_toggle: 2 buttons + 2 panels (annual + quarterly).
+         [v2.1] Optional 3rd TTM panel — activated when sec.ttm_sections
+         is non-empty. The macro handles the None case (backward compat). #}
       {% if sec.type == 'period_toggle' %}
-      {{ period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), prefix + '-' + sub_loop.index|string + '-pt-' + loop.index|string) }}
+      {{ period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), prefix + '-' + sub_loop.index|string + '-pt-' + loop.index|string, ttm_sections=sec.ttm_sections) }}
       {% endif %}
       {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
       {% if sec.description %}

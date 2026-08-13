@@ -32,8 +32,22 @@ def build_dre_sections(
     company: str | None = None,
     dre_result_q: dict | None = None,
     quarterly_periods: list[dict] | None = None,
+    ttm_periods: list[dict] | None = None,
 ) -> list[dict]:
     """Build the DRE tab: multi-period comparison table + 5Y margin trend chart.
+
+    [v2.1] TTM (Anualizado) toggle support:
+      - Accepts optional ``ttm_periods`` (normalized TTM period dicts —
+        each has ``period`` (= the quarter label, e.g. "2T2026") + ``metrics``
+        + ``ratios``; produced by ``dashboard.py`` from ``ttm_result``).
+      - When provided, a 3rd "TTM" toggle panel is added to the period_toggle
+        section containing a small TTM metrics table + a TTM trend chart
+        (Receita/EBITDA/Lucro built via ``build_statement_trend_chart`` —
+        the TTM periods work because their ``period`` key uses the same
+        "2T2026" shape as quarterly labels, so ``_period_sort_key`` + the
+        trend chart builder handle them transparently).
+      - TTM is a flow statement — rolling 4-quarter sum — so the trend chart
+        shows deseasonalized movement. Not applicable to BPA/BPP (snapshots).
 
     [v1.25 v4] ALL time-series charts are now INSIDE the period_toggle:
       - Trajetória de Receita e Lucro (trend)
@@ -64,10 +78,17 @@ def build_dre_sections(
     dre_periods = (dre_result or {}).get("periods") or []
     dre_periods_q = (dre_result_q or {}).get("periods") or []
     q_periods = quarterly_periods or []
+    ttm_p = ttm_periods or []
 
     # [v1.25 v3] Build annual + quarterly trend charts, pass into period_toggle.
     dre_annual_trend = build_statement_trend_chart(dre_periods, company, "DRE")
     dre_quarterly_trend = build_statement_trend_chart(dre_periods_q, company, "DRE") if dre_periods_q else None
+
+    # [v2.1] Build TTM trend chart (Receita/EBITDA/Lucro TTM). Uses the same
+    # ``build_statement_trend_chart`` builder because TTM periods (normalized
+    # with ``period`` = "2T2026") have the same shape as quarterly periods
+    # for chart purposes.
+    dre_ttm_trend = build_statement_trend_chart(ttm_p, company, "DRE (TTM)") if ttm_p else None
 
     # [v1.25 v4] Build annual + quarterly margins charts.
     dre_annual_margins = _build_dre_margins_chart(annual_periods)
@@ -90,10 +111,14 @@ def build_dre_sections(
 
     # [v1.24] Multi-period table (annual + quarterly via period_toggle) +
     # ALL time-series charts INSIDE toggle.
+    # [v2.1] Pass ``ttm_periods`` + ``ttm_chart`` so a 3rd TTM panel is
+    # added when TTM data is available.
     sections.extend(_build_period_toggle_sections(
         "DRE", dre_periods, dre_periods_q, "DRE",
         annual_chart=annual_charts,
         quarterly_chart=quarterly_charts,
+        ttm_periods=ttm_p,
+        ttm_chart=dre_ttm_trend,
     ))
 
     # Fallback: latest_annual_period metrics table (DRE codes).

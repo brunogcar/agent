@@ -218,6 +218,30 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         if quarterly_payload.get("status") == "ok" and quarterly_payload.get("periods"):
             quarterly_periods = quarterly_payload["periods"]
 
+        # [v2.1] Normalize TTM periods for use by flow-statement tabs (DRE/DFC/DVA).
+        # Raw TTM periods (from ttm.py mode) have:
+        #   - ``period_range`` (e.g. "Q3 2025 – Q2 2026")
+        #   - ``ttm_date``    (e.g. "2026-06-30")
+        #   - ``quarter``     (e.g. "2T2026") — used by build_ttm_table for labels
+        #   - ``metrics``     (dict: receita_liquida, ebitda, lucro_liquido, fco, fci, fcf, ...)
+        #   - ``ratios``      (dict: marg_*, roe, ...)
+        # Trend-chart builders (build_statement_trend_chart / build_dfc_trend_chart /
+        # build_dva_trend_chart) read ``p.get("period")`` for sorting + labels, so we
+        # add a ``period`` key (= the quarter label) — both keys coexist, satisfying
+        # ``build_ttm_table`` (uses ``quarter``) + the trend-chart builders (use
+        # ``period``). ``_period_sort_key`` handles "2T2026" via its data_fim_exerc
+        # fallback OR via the period label string sort.
+        ttm_periods_normalized: list[dict] = []
+        if isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
+            for p in (ttm_result.get("periods") or []):
+                quarter_label = p.get("quarter")
+                if not quarter_label:
+                    continue
+                ttm_periods_normalized.append({
+                    **p,
+                    "period": quarter_label,
+                })
+
         stats = cache.stats
         _fetch_elapsed = (_dt.now() - _t0).total_seconds()
         print(f"[financials] All data fetched in {_fetch_elapsed:.1f}s (cache: {stats['hits']} hits, {stats['misses']} misses)", flush=True)
@@ -424,10 +448,13 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         # quarterly periods when available.
         # [v1.25 v4] Pass `quarterly_periods` so the margins + absolute-values
         # charts have quarterly versions inside the toggle.
+        # [v2.1] Pass `ttm_periods` so a 3rd TTM toggle panel is added (TTM
+        # trend chart + TTM metrics table). Only flow statements get TTM.
         dre_sections = build_dre_sections(
             dre_result, annual_periods, latest_annual_period,
             company=company, dre_result_q=dre_result_q,
-            quarterly_periods=quarterly_periods)
+            quarterly_periods=quarterly_periods,
+            ttm_periods=ttm_periods_normalized)
     else:
         dre_sections = [build_error_section("DRE", dre_result.get("error", "unknown"))]
 
@@ -444,10 +471,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         # [v1.24] Pass `dfc_result_q` for quarterly period_toggle + trend chart.
         # [v1.25 v4] Pass `quarterly_periods` so the stacked-bar + FCO-vs-LL
         # charts have quarterly versions inside the toggle.
+        # [v2.1] Pass `ttm_periods` so a 3rd TTM toggle panel is added.
         dfc_sections = build_dfc_sections(
             dfc_result, annual_periods, latest_annual_period,
             company=company, dfc_result_q=dfc_result_q,
-            quarterly_periods=quarterly_periods)
+            quarterly_periods=quarterly_periods,
+            ttm_periods=ttm_periods_normalized)
     else:
         dfc_sections = [build_error_section("DFC", dfc_result.get("error", "unknown"))]
     # [new commit] F12 — DFC quality analysis (appended after existing DFC
@@ -474,8 +503,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     if dva_result.get("status") == "ok":
         # [v1.23 F4] Pass `company` so the DVA trend chart gets a price overlay.
         # [v1.24] Pass `dva_result_q` for quarterly period_toggle + trend chart.
+        # [v2.1] Pass `ttm_periods` so a 3rd TTM toggle panel is added (TTM
+        # metrics table; DVA TTM trend chart is None in v2.1 because TTM
+        # periods don't have ``accounts``).
         dva_sections = build_dva_sections(
-            dva_result, company=company, dva_result_q=dva_result_q)
+            dva_result, company=company, dva_result_q=dva_result_q,
+            ttm_periods=ttm_periods_normalized)
     else:
         dva_sections = [build_error_section("DVA", dva_result.get("error", "unknown"))]
     # [new commit] F13 — Dividend sustainability (appended to DVA tab — DVA

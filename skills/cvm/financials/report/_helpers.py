@@ -56,47 +56,34 @@ def _pct_of(value: Any) -> float | None:
 
 
 def _period_sort_key(p: dict) -> tuple:
-    """[v1.25 v3] Chronological sort key for period dicts.
+    """[v2.1] Chronological sort key for period dicts.
 
-    Parses ``data_fim_exerc`` date (YYYY-MM-DD) to extract year + quarter.
-    Quarterly: (year, quarter) — 4T2025 < 1T2026. Annual: (year, 0).
-    Falls back to parsing period label ("2T2026" → (2026, 2)) or string sort.
+    Uses (year, meses) from the period dict directly — CVM's `meses` field
+    is always relative to the fiscal year (3=Q1, 6=Q2, 9=Q3, 12=Q4/annual),
+    so it works for non-calendar filers too (unlike parsing calendar months).
+
+    Falls back to data_fim_exerc string comparison (chronologically correct
+    for all fiscal year types).
     """
-    # Try year/quarter fields first
+    # [v2.1] Prefer (year, meses) — meses is fiscal-year-relative, not calendar
     year = p.get("year")
-    quarter = p.get("quarter")
+    meses = p.get("meses")
+    if year is not None and meses is not None:
+        return (int(year), int(meses))
     if year is not None:
-        return (int(year), int(quarter) if quarter is not None else 0)
+        quarter = p.get("quarter")
+        if quarter is not None:
+            # Convert quarter to meses: Q1=3, Q2=6, Q3=9, Q4=12
+            return (int(year), int(quarter) * 3 if int(quarter) > 0 else 0)
+        return (int(year), 0)
 
-    # [v1.25 v3] Parse data_fim_exerc date — this is the reliable field
+    # Fallback: data_fim_exerc string sort (YYYY-MM-DD sorts chronologically)
     date_str = p.get("data_fim_exerc") or ""
-    if date_str and len(date_str) >= 7:
-        try:
-            y = int(date_str[:4])
-            m = int(date_str[5:7])
-            q = {3: 1, 6: 2, 9: 3, 12: 4}.get(m, 0)
-            return (y, q)
-        except (ValueError, IndexError):
-            pass
+    if date_str:
+        return (0, 0, date_str)
 
-    # Parse period label ("2T2026" → (2026, 2), "2025" → (2025, 0))
-    period_label = str(p.get("period") or "")
-    if period_label:
-        # Quarterly: "2T2026"
-        if "T" in period_label:
-            parts = period_label.split("T")
-            if len(parts) == 2:
-                try:
-                    return (int(parts[1]), int(parts[0]))
-                except ValueError:
-                    pass
-        # Annual: "2025"
-        try:
-            return (int(period_label), 0)
-        except ValueError:
-            pass
-
-    return (0, 0, period_label)
+    # Last resort: period label
+    return (0, 0, str(p.get("period") or ""))
 
 
 def _format_period_label(p: dict) -> str:
@@ -178,9 +165,9 @@ _RATIO_PCT_KEYS = {
     "revenue_growth_3m", "revenue_growth_1y", "revenue_growth_5y",
     "net_income_growth_3m", "net_income_growth_1y", "net_income_growth_5y",
     "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y",
-    "revenue_cagr_3y", "revenue_cagr_5y",
-    "earnings_cagr_3y", "earnings_cagr_5y",
-    "gross_profit_cagr_3y", "gross_profit_cagr_5y",
+    "revenue_cagr_3m", "revenue_cagr_1y", "revenue_cagr_5y",
+    "earnings_cagr_3m", "earnings_cagr_1y", "earnings_cagr_5y",
+    "gross_profit_cagr_3m", "gross_profit_cagr_1y", "gross_profit_cagr_5y",
     # [v1.25] Valuation fractions (displayed as %).
     "dcf_margin_of_safety", "earnings_yield", "irr", "wacc",
 }

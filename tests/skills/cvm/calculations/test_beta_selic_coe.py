@@ -7,21 +7,21 @@ from unittest.mock import patch
 
 @patch("skills.cvm.calculations.engines.selic._connect")
 def test_selic_at_returns_annualized(mock_connect):
-    """Selic daily rate should be annualized (x252)."""
+    """Selic series 432 (Meta Copom) returns annual rate directly."""
     import sqlite3
     mock_conn = sqlite3.connect(":memory:")
     mock_conn.row_factory = sqlite3.Row
     mock_conn.execute("CREATE TABLE series_observations (series_code INT, ref_date TEXT, value REAL)")
-    mock_conn.execute("INSERT INTO series_observations VALUES (11, '2024-06-30', 0.04)")
+    # [v2.0] Series 432, not 11. Value is already annual % (e.g. 14.25)
+    mock_conn.execute("INSERT INTO series_observations VALUES (432, '2024-06-30', 14.25)")
     mock_conn.commit()
     mock_connect.return_value = mock_conn
 
     from skills.cvm.calculations.engines.selic import selic_at
     result = selic_at("PETR4", "2024-07-01")
     assert result is not None
-    # [new commit] Compound annualization: ((1 + 0.04/100)^252 - 1) * 100
-    expected = ((1.0 + 0.04 / 100.0) ** 252 - 1.0) * 100.0
-    assert abs(result - expected) < 0.01  # ~= 10.88%
+    # Series 432 is already annual — no compounding needed
+    assert abs(result - 14.25) < 0.01
 
 
 @patch("skills.cvm.calculations.engines.selic._connect")
@@ -98,12 +98,16 @@ def test_coe_at_capm_formula(mock_stock_ret, mock_ibov_ret):
 @patch("skills.cvm.calculations.metrics.coe.beta_stats_at")
 @patch("skills.cvm.calculations.metrics.coe.selic_at")
 def test_coe_at_none_when_selic_missing(mock_selic, mock_beta):
-    """COE should return None when Selic is unavailable."""
+    """COE returns fallback when Selic is unavailable (v2.0 DEFAULT_RF_PCT)."""
     mock_selic.return_value = None
     mock_beta.return_value = {"beta": 1.2}
 
-    from skills.cvm.calculations.metrics.coe import coe_at
-    assert coe_at("PETR4", "2024-06-30") is None
+    from skills.cvm.calculations.metrics.coe import coe_at, DEFAULT_RF_PCT
+    result = coe_at("PETR4", "2024-06-30")
+    # [v2.0] When selic=None, COE uses DEFAULT_RF_PCT (14.0%) + beta * ERP
+    assert result is not None
+    expected = (DEFAULT_RF_PCT / 100.0) + 1.2 * 0.055
+    assert abs(result - expected) < 0.001
 
 
 @patch("skills.cvm.calculations.metrics.coe.beta_stats_at")

@@ -424,8 +424,8 @@ class TestSyncGuard:
         """Stale source → sync called with force=True."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
         monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
-        # Mock HEAD check to return True (new data available)
-        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: True)
+        # [v2.0] Mock _cvm_has_new_data_cached (the TTL-cached version used by ensure_fresh)
+        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: True)
         sync_called = []
         monkeypatch.setattr("skills._base._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
@@ -463,7 +463,8 @@ class TestSyncGuard:
         """Stale source but HEAD says no new data → no sync, goes to 'fresh'."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
         monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
-        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: False)
+        # [v2.0] Mock _cvm_has_new_data_cached
+        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: False)
         sync_called = []
         monkeypatch.setattr("skills._base._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
@@ -477,7 +478,8 @@ class TestSyncGuard:
         """Sync failure → recorded in errors, doesn't raise."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
         monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
-        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: True)
+        # [v2.0] Mock _cvm_has_new_data_cached
+        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: True)
         monkeypatch.setattr("skills._base._trigger_sync",
                             lambda s, company=None, trace_id="": {"status": "error", "source": s, "error": "network"})
         from skills._base import ensure_fresh

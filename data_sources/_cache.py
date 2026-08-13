@@ -312,7 +312,7 @@ def _get_cotahist_fingerprint(ticker: str) -> str | None:
         return None
 
 
-def _get_sgs_fingerprint(series_code: int = 11) -> str | None:
+def _get_sgs_fingerprint(series_code: int = 432) -> str | None:  # [v2.1] Was 11
     """Get the data fingerprint for a BCB SGS series.
 
     Returns MAX(ref_date) — the latest observation date. Changes daily.
@@ -390,7 +390,7 @@ _ENGINE_SOURCE_MAP: dict[str, str] = {
 
 # [P1 #7] BCB SGS engine → series code mapping
 _SGS_ENGINE_TO_SERIES: dict[str, int] = {
-    "selic": 11,
+    "selic": 432,  # [v2.1] Was 11 — series 11 stopped syncing after switch to 432
 }
 
 

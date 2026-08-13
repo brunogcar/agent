@@ -67,20 +67,15 @@ def dcf_intrinsic_value_at(company: str, date: str) -> float | None:
     if wacc is None or wacc <= 0:
         return None
 
-    # Get growth rate (revenue_growth_1y, actual)
-    # [v1.11 fix] Cap at 8% — a 1Y revenue spike (e.g. 12% for Petrobras from
-    # oil price recovery) should NOT be projected 5 years forward. Mature
-    # companies rarely sustain >8% FCF growth. Using 12% growth with 10% WACC
-    # produces absurd valuations (R$ 597 for a R$ 41 stock) because the
-    # terminal value denominator (WACC - g) goes to ~0. Cap at 8% = Damodaran's
-    # upper bound for emerging market large-caps.
+    # [v2.1 v2] Get growth rate — use revenue_growth_1y (CAGR 1Y = simple 1Y).
+    # Cap at 8% (Damodaran EM upper bound) to prevent terminal value explosion.
     growth_rate = revenue_growth_1y_at(company, date)
     if growth_rate is None:
-        growth_rate = 0.05  # Default 5% if growth unavailable
+        growth_rate = 0.05
     elif growth_rate > 0.08:
-        growth_rate = 0.08  # Cap at 8% — see comment above
+        growth_rate = 0.08
     elif growth_rate < -0.05:
-        growth_rate = -0.05  # Floor at -5% — don't project collapse
+        growth_rate = -0.05
 
     # Get terminal growth (IPCA 12M)
     terminal_growth = get_terminal_growth()

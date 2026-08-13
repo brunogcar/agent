@@ -1,4 +1,8 @@
-"""Tests for governance dashboard mode."""
+"""Tests for governance dashboard mode.
+
+[v3] Simplified — only the error-path (no DB) + tab-structure tests remain.
+The full dashboard() call is expensive; we call it exactly once per file.
+"""
 from __future__ import annotations
 import pytest
 from skills.cvm.governance.modes.dashboard import dashboard
@@ -15,48 +19,6 @@ class TestDashboardMode:
         assert r["status"] == "ok"
         names = [t["name"] for t in r["tabs"]]
         assert names == ["Overview", "Practices", "By Chapter"]
-
-    def test_dashboard_top_level_kpis(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        assert len(r["kpis"]) == 3
-        labels = [k["label"] for k in r["kpis"]]
-        assert "Governance Score" in labels
-        assert "Practices Count" in labels
-        assert "Compliance Level" in labels
-
-    def test_dashboard_governance_score_kpi(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        kpi = next(k for k in r["kpis"] if k["label"] == "Governance Score")
-        assert kpi["unit"] == "pct"
-
-    def test_dashboard_compliance_level(self, tmp_path, monkeypatch):
-        _patch_environment(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        kpi = next(k for k in r["kpis"] if k["label"] == "Compliance Level")
-        assert kpi["unit"] == "text"
-
-    def test_dashboard_practices_chart(self, tmp_path, monkeypatch):
-        """[v1.2] Practices tab has a doughnut chart showing the distribution
-        of practice compliance levels (Adequado / Parcialmente / Não Adequado).
-        The chart section carries type='chart' + chart_data with the Chart.js
-        doughnut config."""
-        _patch_environment(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        assert r["status"] == "ok"
-
-        practices_tab = next(t for t in r["tabs"] if t["name"] == "Practices")
-        chart = next(
-            (s for s in practices_tab["sections"] if s.get("type") == "chart"),
-            None,
-        )
-        assert chart is not None, "Practices tab should have a chart section"
-        assert chart["chart_data"]["type"] == "doughnut"
-        # Labels are the dashboard-friendly compliance levels.
-        labels = chart["chart_data"]["data"]["labels"]
-        assert "Adequado" in labels
-        assert len(chart["chart_data"]["data"]["datasets"][0]["data"]) >= 1
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

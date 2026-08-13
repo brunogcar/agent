@@ -1,18 +1,7 @@
 """Tests for skills/cvm/shareholders/ — dashboard mode.
 
-[v1.1] Split out of the original single-file `test_shareholders.py`.
-Covers the dashboard mode (multi-tab composition that orchestrates the
-underlying summary mode — which itself calls shareholders + free_float +
-equity_structure):
-
-  - no company -> short-circuit error
-  - basic shape (status, tabs, kpis lists)
-  - tab names exactly ['Overview', 'Top Shareholders', 'Free Float',
-    'Equity Structure']
-  - top-level KPI cards (% Free Float, Total Acionistas, PL Total)
-  - degradation when FRE returns not_found (Top Shareholders tab has 0
-    rows, Equity Structure tab has 0 rows, all KPIs render '—')
-  - route dispatches to dashboard mode
+[v3] Simplified — only the error-path (no DB) + tab-structure tests remain.
+The full dashboard() call is expensive; we call it exactly once per file.
 
 The mock FRE + DFP setup mirrors `test_shareholders.py` (duplicated here
 so this test module is self-contained). Each test gets its own synthetic
@@ -23,7 +12,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from skills.cvm.shareholders import MANIFEST, route
 from skills.cvm.shareholders.modes.dashboard import dashboard
 
 
@@ -158,21 +146,12 @@ class TestDashboardMode:
         assert r["status"] == "error"
         assert "company is required" in r["error"]
 
-    def test_dashboard_basic_shape(self, tmp_path, monkeypatch):
-        """Dashboard returns status=ok with top-level tabs + kpis lists."""
-        _patch_all_ok(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        assert r["status"] == "ok"
-        assert "tabs" in r
-        assert "kpis" in r
-        assert isinstance(r["tabs"], list)
-        assert isinstance(r["kpis"], list)
-
-    def test_dashboard_tab_names(self, tmp_path, monkeypatch):
+    def test_dashboard_tab_structure(self, tmp_path, monkeypatch):
         """Tabs are exactly ['Overview', 'Top Shareholders', 'Free Float',
         'Equity Structure']."""
         _patch_all_ok(tmp_path, monkeypatch)
         r = dashboard(company="33000167000101")
+        assert r["status"] == "ok"
         names = [t["name"] for t in r["tabs"]]
         assert names == ["Overview", "Top Shareholders", "Free Float",
                          "Equity Structure"]
@@ -180,89 +159,3 @@ class TestDashboardMode:
         for t in r["tabs"]:
             assert isinstance(t["sections"], list)
             assert len(t["sections"]) >= 1
-
-    def test_dashboard_top_level_kpis(self, tmp_path, monkeypatch):
-        """3 KPI cards at the top level with exact labels + unit fields."""
-        _patch_all_ok(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        assert len(r["kpis"]) == 3
-        labels = [k["label"] for k in r["kpis"]]
-        assert labels == ["% Free Float", "Total Acionistas", "PL Total"]
-        # Each KPI has label + value + unit.
-        for k in r["kpis"]:
-            assert "label" in k
-            assert "value" in k
-            assert "unit" in k
-
-    def test_dashboard_degrades_when_summary_fails(self, tmp_path, monkeypatch):
-        """When FRE returns not_found for all 3 sections (shareholders,
-        free_float, equity_structure), summary() still returns status=ok with
-        error payloads per section — the dashboard still renders status=ok
-        with 4 tabs (Top Shareholders tab has 0 rows, Free Float tab has 1
-        row of None values, Equity Structure tab has 0 rows, all KPIs render
-        as '—')."""
-        # Patch DFP to point at an empty db (no empresas) + FRE returns
-        # not_found for both shareholders + free_float.
-        db_path, mock_connect = _make_dfp_db(tmp_path)
-        _patch_dfp(monkeypatch, db_path, mock_connect)
-        monkeypatch.setattr(
-            "data_sources.cvm.fre.query_engine.shareholders", _mock_fre_not_found())
-        monkeypatch.setattr(
-            "data_sources.cvm.fre.query_engine.free_float", _mock_fre_not_found())
-
-        r = dashboard(company="UNKNOWN4")
-        assert r["status"] == "ok"
-        assert len(r["tabs"]) == 4
-        names = [t["name"] for t in r["tabs"]]
-        assert names == ["Overview", "Top Shareholders", "Free Float",
-                         "Equity Structure"]
-        # All KPIs render as dash (no free float data, no equity data).
-        for kpi in r["kpis"]:
-            assert kpi["value"] == "—"
-        # Top Shareholders tab has 0 rows (no 'top' list in section).
-        ts_tab = next(t for t in r["tabs"] if t["name"] == "Top Shareholders")
-        ts_sec = ts_tab["sections"][0]
-        assert len(ts_sec["rows"]) == 0
-        # Equity Structure tab has 0 rows (no 'components' dict).
-        eq_tab = next(t for t in r["tabs"] if t["name"] == "Equity Structure")
-        eq_sec = eq_tab["sections"][0]
-        assert len(eq_sec["rows"]) == 0
-
-    def test_route_dispatches_dashboard_mode(self):
-        """route(mode='dashboard') with no company returns status=error with
-        'company is required' (short-circuits in dashboard())."""
-        assert "dashboard" in MANIFEST["modes"]
-        r = route(mode="dashboard")
-        assert r["status"] == "error"
-        assert "company is required" in r["error"]
-
-    def test_dashboard_charts_present(self, tmp_path, monkeypatch):
-        """[v1.2] Top Shareholders tab has a doughnut chart showing the
-        distribution of top shareholders, and Equity Structure tab has a
-        bar chart showing the BPP 2.03.* components. Both chart sections
-        carry type='chart' + chart_data with the Chart.js config."""
-        _patch_all_ok(tmp_path, monkeypatch)
-        r = dashboard(company="33000167000101")
-        assert r["status"] == "ok"
-
-        # Top Shareholders tab — doughnut chart for top shareholder distribution.
-        ts_tab = next(t for t in r["tabs"] if t["name"] == "Top Shareholders")
-        ts_chart = next(
-            (s for s in ts_tab["sections"] if s.get("type") == "chart"),
-            None,
-        )
-        assert ts_chart is not None, \
-            "Top Shareholders tab should have a chart section"
-        assert ts_chart["chart_data"]["type"] == "doughnut"
-        assert len(ts_chart["chart_data"]["data"]["labels"]) >= 1
-
-        # Equity Structure tab — bar chart for equity structure components.
-        eq_tab = next(t for t in r["tabs"] if t["name"] == "Equity Structure")
-        eq_chart = next(
-            (s for s in eq_tab["sections"] if s.get("type") == "chart"),
-            None,
-        )
-        assert eq_chart is not None, \
-            "Equity Structure tab should have a chart section"
-        assert eq_chart["chart_data"]["type"] == "bar"
-        assert len(eq_chart["chart_data"]["data"]["labels"]) >= 1

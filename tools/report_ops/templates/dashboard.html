@@ -130,8 +130,10 @@
     {% endif %}
     {% if sec.type == 'period_toggle' %}
     {# [v1.24] Top-level period_toggle (used by DRE/DFC/DVA tabs which are
-       flat section lists, not subtabs). Same macro as used inside subtabs. #}
-    {{ m.period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), 'tab-' + outer_loop.index|string + '-pt-' + loop.index|string) }}
+       flat section lists, not subtabs). Same macro as used inside subtabs.
+       [v2.1] Pass ``ttm_sections`` for the optional 3rd TTM panel. The
+       macro handles the None case (renders 2 buttons instead of 3). #}
+    {{ m.period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), 'tab-' + outer_loop.index|string + '-pt-' + loop.index|string, ttm_sections=sec.ttm_sections) }}
     {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
@@ -325,6 +327,12 @@
         <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
         {% endif %}
       {% endfor %}
+      {# [v2.1] TTM panel charts (3rd toggle option for flow statements). #}
+      {% for pt_sec in (sec.ttm_sections or []) %}
+        {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+        <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-t-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+        {% endif %}
+      {% endfor %}
     {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
     {% if sec.type == 'subtabs' and sec.tabs %}
@@ -346,6 +354,12 @@
             {% for pt_sec in sub_sec.quarterly_sections %}
               {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
               <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+              {% endif %}
+            {% endfor %}
+            {# [v2.1] Subtab TTM panel charts. #}
+            {% for pt_sec in (sub_sec.ttm_sections or []) %}
+              {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
+              <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-t-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
               {% endif %}
             {% endfor %}
           {% endif %}
