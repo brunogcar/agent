@@ -53,6 +53,31 @@
 > - **Why it matters:** Without a `type` field, the adapter falls through to the "unknown section" branch and emits a text-block "Section shape not recognized" error.
 > - **Fix:** Every section produced by `report.py` builders carries a `type` field (`table` / `chart` / `ratio_grid` / `subtabs` / `text` / `collapsible` / `two_column`). The adapter passes typed sections through verbatim. The `name`-dispatched legacy branches are preserved for backward compatibility with old test data. Documented in NEVER DO #13.
 
+#### v1.25 — Cache `import json` (happened TWICE)
+> - **What happened:** The `_cache.py` module defines `_StrictJSONEncoder(json.JSONEncoder)` but the top-of-file `import json` was missing. This silently disabled the entire engine cache — every cached call fell through to the underlying function with no caching benefit, and the failure was silent (no exception, just no perf gain).
+> - **Why it matters:** This bug has now happened TWICE in the project history — first in v1.10 (fixed), then AGAIN in v1.25. Each recurrence was a silent performance regression affecting every calculations engine call.
+> - **Fix:** Add the missing `import json` at the top of `_cache.py`. Lesson: **ALWAYS verify imports after merging changes** — particularly when a merge involves moving/changing a module that uses a stdlib name like `json`, `datetime`, `re`. A `NameError` at module-import time would be loud, but a class inheritance reference (`json.JSONEncoder`) inside a class body that's never reached at import time is silent until someone tries to cache something. Lint with `ruff --select F401,F821` to catch unused/undefined references.
+
+#### v1.25 — ITR BPA/BPP `meses=12` carry-forward
+> - **What happened:** The quarterly statement fetcher assumed ITR BPA/BPP (balance sheet snapshots) would be stored with `meses=3/6/9` for Q1/Q2/Q3, like DRE/DFC/DVA flows. In reality, ITR stores BPA/BPP with `meses=12` (annual snapshot at the quarter-end date) — only DRE/DFC/DVA have quarterly `meses`.
+> - **Why it matters:** Querying ITR with `meses IN (3,6,9)` returned NO BPA/BPP rows for Q1-Q3, so the quarterly Balanço tab appeared empty until Q4 (the DFP annual snapshot).
+> - **Fix:** Query ITR with `meses IN (3,6,9,12)` for ALL grupos, and for BPA/BPP carry forward the `meses=12` snapshot value to Q1/Q2/Q3 (a balance sheet is a point-in-time snapshot — the annual value IS the Q3 value if the ITR filing date is Q3 end). DRE/DFC/DVA still derive standalone from cumulative `meses=3/6/9/12`.
+
+#### v1.25 — CAGR key mismatch (`_cagr_at`)
+> - **What happened:** `_cagr_at()` looked for keys `value`, `revenue`, `ttm`, `gross_profit` in the per-period dict, but `revenue_periods()` returns `ttm_rev` and `gross_profit_periods()` returns `ttm_gp`. CAGR for "Receita" and "Resultado Bruto" silently returned `None`.
+> - **Why it matters:** The dashboard showed "—" instead of growth percentages for two of the three primary growth metrics — looked broken to users.
+> - **Fix:** Always check the actual return key name of the `*_periods()` function before referencing it in `_cagr_at()`. The naming convention is `ttm_<short_metric_name>` (e.g., `ttm_rev`, `ttm_gp`, `ttm_earnings`, `ttm_ebit`). When adding a new growth metric, grep `def <metric>_periods` first to confirm the key.
+
+#### v1.25 — Chart toggle inside `period_toggle`
+> - **What happened:** Charts inside `display:none` containers (the hidden panel of a `period_toggle`) don't render — Chart.js initializes with 0×0 dimensions and stays blank even when the panel becomes visible.
+> - **Why it matters:** The v1.25 task moved ALL time-series charts inside the `period_toggle` (DRE margins+abs+trend, DFC stacked+FCOvsLL+trend, Balanço 6 stacked-bar charts). Without the fix, only the visible-at-load panel's charts rendered — toggling to "Trimestral" or "Anual" showed empty chart containers.
+> - **Fix:** (1) Template `_section_inner` must render chart canvases (with UNIQUE IDs — e.g., `{prefix}-pt-{i}-{period}-{j}`) for `sec.type == 'chart'` sections inside `period_toggle.annual_sections` + `period_toggle.quarterly_sections`. (2) The `_renderChart` JS must be called for every chart canvas in both panels (not just the visible one). (3) The `togglePeriod` JS must call `chart.resize()` on the now-visible panel after the visibility swap — this forces Chart.js to re-measure the canvas now that it has dimensions.
+
+#### v2.0 — Report split pattern
+> - **What happened:** `report.py` grew to 3,981 lines / 47 functions — past the point where a single-file module is navigable. Searching for a specific builder required scrolling through dozens of unrelated helpers.
+> - **Why it matters:** Large monolithic files (a) slow down editor search/navigation, (b) make merge conflicts more likely (everyone touches the same file), (c) obscure the per-concern boundaries — a new contributor has no signal that "Overview builders" vs "DRE builders" are logically separate.
+> - **Fix:** When a module exceeds ~1000 lines, split into a package. One file per concern. `__init__.py` re-exports all public symbols for backward compat (so existing `from foo.bar import X` imports continue to work — zero downstream changes). The financials v2.0 split created 13 files in `report/`: `__init__.py` (re-exports) + `_helpers.py` (shared primitives + constants) + 11 per-tab builders (`overview.py`, `indicadores.py`, `crescimento.py`, `statements.py`, `balanco.py`, `dre.py`, `dfc.py`, `dva.py`, `analysis.py`, `periods.py`, `error.py`). Same pattern as `valuation` v2.0 + `skills/cvm/calculations/engines/<stmt>/` subfolders.
+
 ---
 
-*Last updated: 2026-08-01 (v1.16.1 — collective-review bugfix sprint). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v2.0 — report/ package split + v1.25 cache/ITR/CAGR/chart-toggle lessons + v2.0 split-pattern lesson). See [CHANGELOG.md](CHANGELOG.md) for version history.*

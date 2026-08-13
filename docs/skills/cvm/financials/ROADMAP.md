@@ -6,29 +6,13 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| Done | F8 — Fix Crescimento quarter sort (v1.19) | Sort by (year, quarter) not lexicographic "1T2025" string. Confirmed by Claude 2 + Qwen. |
-| Done | F9 — Fix "Receita (TTM)" KPI (v1.19) | Shows annual data, not TTM. Wire to ttm_result or relabel "Receita (Anual)". Confirmed by Claude 2. |
-| Done | F10 — Delegate Crescimento to calculations registry (v1.19) | Remove _qoq_growth + _build_metric_periods; use ratios_payload growth values. Eliminates F8/F9 duplication. |
-| Done | F11 — DVA generation-side decomposition chart (v1.20) | Waterfall/stacked-bar: 7.01 Receitas → 7.03 VAB → 7.05 VAL → 7.07 Total → 7.08 Distribuição split. Codes in KEY_CODES_BY_GRUPO["DVA"]. |
-| Done | F12 — DFC quality analysis (v1.20) | FCF_true = FCO − Capex (new Capex engine); Cash Conversion = FCO/Lucro Líquido; FCO vs NI 5Y divergence (earnings quality red flag). |
-| Done | F13 — Dividend sustainability (v1.20) | Payout ratio, Dividend Coverage = LL/(JCP+Div), 5Y dividend trend, Div Yield vs Net Debt/EBITDA scatter. |
-| Done | F14 — Accounting red flags (v1.20) | BPA 1 ≠ 1.01+1.02, DRE 3.03 ≠ 3.01−3.02, BPP 2 ≠ 2.01+2.02+2.03, DVA 7.08 ≠ Σ(7.08.0x), ROE with negative PL, FCO declining 3Y. |
-| P2 | F1 — Chart serialization test | Regression test for JSON-serializable chart_data |
 | P2 | F2 — Comparison tab | Company vs sector medians (needs reusable sector-median computation) |
-| P2 | F3 — Price history overlay | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
-| P2 | F4 — Period selector | TTM toggle plumbing (annual/TTM/quarterly dropdown) |
 | P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
 | P2 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
-| P2 | F7 — Company header | FCA/CAD info (name, CNPJ, ISIN, sector) + COTAHIST price chart with time-range selector (all/5Y/1Y/1M) |
-| Done | F7 — Engine cache (v1.9) | `@engine_cached` decorator — ~60% fewer DB queries |
-| Done | Force sync guard (v1.14) | `ensure_fresh()` + HEAD check + current-year force sync |
-| Done | Review-fix sprint (v1.13) | Subtab charts, PL zero-value trap, growth gap tolerance, Indicadores subtabs, DVA % |
-| Done | Dashboard reorg (v1.12) | 5→7 tabs, 5 standalone statement modes, charts, subtabs, ratio_grid |
-| Done | TTM + YoY Quarterly (v1.15) | 2 new period-view modes: rolling TTM series + same-quarter YoY comparison. Dashboard 7→9 tabs |
-| Done | Dashboard v3 bugfix sprint (v1.16) | 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts (6→10 total). Dashboard 9→11 tabs |
-| Done | Collective-review bugfix sprint (v1.16.1) | DVA same-depth sibling drop, Indicadores value parsing, build_company_header called twice, valuation growth keys, DVA cross-taxonomy dedup, Magic Number docstring, shared report module extraction |
+| Done | F3 — Price history overlay (v1.23) | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
+| Done | F4 — Period selector (v1.24) | Trimestral/Anual toggle (pre-render + JS toggle) |
 
-> **Note:** Recently completed items are in [CHANGELOG.md](CHANGELOG.md).
+> **Note:** Recently completed items (F1–F14, force sync guard, review-fix sprint, dashboard reorg, TTM+YoY, dashboard v3 sprint, collective-review sprint) are in [CHANGELOG.md](CHANGELOG.md).
 
 ## 📋 Next: Valuation Skill Overhaul
 
@@ -50,23 +34,6 @@ See the valuation skill's own [ROADMAP.md](../valuation/ROADMAP.md) for details.
 
 ## 📋 Backlog
 
-### F1 — Chart serialization test
-
-**Priority:** P2
-**Source:** Minimax review (v1.13 finding)
-
-Add a regression test that verifies every `chart_data` dict produced by
-`report.py` builders is JSON-serializable (survives `| tojson` in Jinja).
-The v1.5 template-overhaul sprint hit a crash where `"callback":
-"{}%".format` (a method, not a string) silently broke chart rendering.
-A standing test prevents this class of bug.
-
-**Test shape:** call each `build_*_sections()` function with mock data,
-collect every `section["chart_data"]`, and assert `json.dumps()` succeeds
-on each. Also assert no `chart_data` value is a function/method/lambda
-(use `isinstance(v, (str, int, float, bool, type(None), list, dict))`
-recursively).
-
 ### F2 — Comparison tab (company vs sector medians)
 
 **Priority:** P2
@@ -86,43 +53,32 @@ sector-median computation:
 returns a different payload shape. Need a thin adapter or a shared
 `sector_medians()` helper in `calculations/`.
 
-### F3 — Price history overlay (COTAHIST integration)
+### F3 — Price history overlay (COTAHIST integration) — ✅ Done (v1.23)
 
-**Priority:** P2
+**Priority:** ~~P2~~ Done in v1.23.
 **Source:** Claude 2 review
 
 Overlay the company's daily closing price on the DRE/DFC/DVA trend
 charts (dual Y-axis: BRL statement values on left, BRL share price on
-right). Requires the COTAHIST historical price feed:
+right). Implemented via `_fetch_year_end_prices()` + `_attach_price_overlay()`
+in `report/overview.py` — dual-axis Chart.js config (`scales.y` for
+statements + `scales.y1` for price, `position: 'right'`). Used on the
+Overview trend chart (v1.23) and the DRE/DFC/DVA per-statement trend
+charts (v1.23).
 
-  - The `price` engine already exists (`calculations/engines/price.py`)
-    and reads from a cotahist-derived DB.
-  - Need a `price_series(ticker, date_from, date_to)` call in the chart
-    builder, normalized to the statement period dates.
-  - Dual-axis Chart.js config: `scales.y` (statements) + `scales.y1`
-    (price, `position: 'right'`).
+### F4 — Period selector (Trimestral/Anual toggle) — ✅ Done (v1.24)
 
-**Blocker:** COTAHIST sync must be confirmed working in the target env
-(the price engine returns `[]` in test envs without a cotahist DB).
-
-### F4 — Period selector (TTM toggle plumbing)
-
-**Priority:** P2
+**Priority:** ~~P2~~ Done in v1.24.
 **Source:** Qwen review
 
-Add a period-selector dropdown to the dashboard (Annual / TTM /
-Quarterly) that re-fetches statement data with the chosen period mode.
-Currently the dashboard hardcodes `period="annual"` for all 5 statement
-modes. The toggle needs:
-
-  1. A `period` param on `dashboard()` (default `"annual"`).
-  2. Plumbing through to `_call_bpa/bpp/dre/dfc/dva`.
-  3. Frontend: a `<select>` in the sidebar that triggers a re-fetch (or
-     pre-renders all 3 variants and toggles visibility via JS).
-
-**Design note:** pre-rendering 3 variants triples the payload size.
-Better to make `dashboard()` accept `period` and let the caller
-(report tool) re-render on change.
+Period selector (Trimestral/Anual) implemented as a pre-render + JS
+toggle in v1.24. The dashboard pre-renders BOTH annual + quarterly
+statement tables, wraps them in `_build_period_toggle_sections()`
+(`report/statements.py`), and the frontend `togglePeriod` JS swaps
+visibility (calling `chart.resize()` on the now-visible panel so charts
+render correctly inside `display:none` containers — see INSTRUCTIONS.md
+v1.25 lesson). Period labels use `"2T2026"` format; up to 20 quarterly
+periods fetched via `_fetch_all_statements_quarterly()`.
 
 ### F5 — Cross-skill dashboard
 
@@ -160,4 +116,4 @@ broken dashboards. Should run nightly (cron) in production.
 
 ---
 
-*Last updated: 2026-08-06. Feature suggestions F8-F14 sourced from external LLM review (Claude 2, Qwen, Mistral) of commits e8f8962 + e7763c2. See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v2.0 — report/ package split + v1.17-v1.25 features; F3 + F4 marked Done; F1, F7–F14 moved to CHANGELOG). See [CHANGELOG.md](CHANGELOG.md) for version history.*

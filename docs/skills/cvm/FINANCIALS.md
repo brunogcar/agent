@@ -11,10 +11,16 @@ The `financials` skill combines DFP (annual) + ITR (quarterly cumulative) + DVA 
 - **Default: quarterly** — designed to analyze new financials as companies release them. Default 8 quarters.
 - **5 modes** — quarterly (default), annual, complete, summary, dashboard.
 - **[v1.12] 10 modes** — quarterly (default), annual, complete, summary, dashboard (7-tab), bpa, bpp, dre, dfc, dva. The 5 new standalone statement modes (bpa/bpp/dre/dfc/dva) are thin wrappers over `complete(grupo=...)` that reshape the per-period accounts into a dict-keyed shape with `section` labels, used by the v1.12 dashboard's Balanço/DRE/DFC/DVA tabs and the generic `financials_statement` adapter.
-- **Modular file structure (v1.6)** — split into `_registry.py` + `modes/` (10 files: quarterly, annual, complete, summary, dashboard, bpa, bpp, dre, dfc, dva + `_statement_sections.py` shared helper) + `fetchers.py` + `helpers.py` + `report.py` + `metrics.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `tools/git_ops/actions/`). Public API unchanged. See [ARCHITECTURE.md](financials/ARCHITECTURE.md) for the file map.
+- **Modular file structure (v1.6 + v2.0)** — split into `_registry.py` + `modes/` (10 files: quarterly, annual, complete, summary, dashboard, bpa, bpp, dre, dfc, dva + `_statement_sections.py` shared helper) + `fetchers.py` + `helpers.py` + `metrics.py` + `report/` PACKAGE (13 files since v2.0 — was monolithic `report.py`: 3,981 lines, 47 functions; `report/__init__.py` re-exports all 34 public builders + 18 private helpers for backward compat). `__init__.py` auto-discovers modes via importlib (same pattern as `tools/git_ops/actions/`). Public API unchanged. See [ARCHITECTURE.md](financials/ARCHITECTURE.md) for the file map.
 - **Read-only** — no sync. Calls DFP/ITR query engines directly.
 - **[v1.12] Dashboard reorg** — `dashboard` mode reorganized from 5 tabs to 7 tabs (Overview / Indicadores / Crescimento / Balanço / DRE / DFC / DVA) with sub-tabs (BPA + BPP under Balanço) and charts (growth bar, margin trend line, FCO/FCI/FCF stacked bar, DVA doughnut). Calls the 5 standalone statement modes for raw account data instead of duplicating SQL queries.
 - **[v1.3] Calculations integration** — `summary` mode now delegates point-in-time ratios (ROIC, Graham, EV/EBITDA, P/FCF, P/EBIT, P/FCO) to `skills.cvm.calculations.metrics.*`. Statement rendering (quarterly/annual/complete) keeps its own per-period `compute_ratios()` because it operates on raw statement dicts, not point-in-time engine snapshots.
+- **[v1.21] WACC + DuPont + Altman Z** — 3 new Overview sections (value-creation assessment, DuPont decomposition, Altman Z-Score zone classification). Wired via `list_metrics_by_category()` auto-discovery.
+- **[v1.17] Statement single-fetch** — `_fetch_all_statements_annual()` in `fetchers.py` fetches all 5 statements (BPA/BPP/DRE/DFC/DVA) in ONE SQL query against DFP, partitioned in Python by `grupo`. ~80% SQL round-trip reduction per dashboard call.
+- **[v1.22] Radar + Heatmap + Balanço stacked charts** — 6-axis radar chart (Rentabilidade/Crescimento/Liquidez/Alavancagem/Margem/Eficiência), 10-metric color-coded heatmap table, and 6 stacked-bar Balanço charts (absolute + percentage for Completo/BPA/BPP). Also fixed Selic 1400% bug (BCB SGS `parse_brl`).
+- **[v1.23] Price overlay + multi-period tables + trend charts** — COTAHIST year-end price overlay (dual Y-axis) on Overview trend + DRE/DFC/DVA trend charts. Multi-column annual statement tables (4 years side-by-side). Tooltips on Overview/WACC/Altman Z tables.
+- **[v1.24] Quarterly statement tables + period selector** — `_fetch_all_statements_quarterly()` (ITR+DFP for ALL KEY_CODES; BPA/BPP snapshot carry-forward, DRE/DFC/DVA standalone). `period_toggle` section type wraps annual + quarterly tables. Frontend `togglePeriod` JS swaps visibility. Period labels `"2T2026"`. Up to 20 quarterly periods.
+- **[v1.25] ALL charts inside period_toggle** — DRE margins+abs+trend, DFC stacked+FCOvsLL+trend, Balanço 6 stacked-bar charts ALL inside `period_toggle` (both annual + quarterly versions pre-rendered). Point-in-time charts (DVA doughnut, generation, DFC quality, DVA sustainability) stay OUTSIDE. CAGR Receita/Resultado Bruto fix. Cache `import json` fix (happened TWICE — same bug as v1.10). TTM 20 periods (was 8).
 
 ---
 
@@ -72,11 +78,11 @@ See [CVM Skills — Report Integration](../CVM.md#-report-integration-v12) and
 | File | Purpose |
 |------|---------|
 | [ARCHITECTURE.md](financials/ARCHITECTURE.md) | Standalone quarter derivation, EBITDA formula, mode → source mapping |
-| [API.md](financials/API.md) | 11 modes: quarterly, annual, complete, summary, dashboard (11-tab), bpa, bpp, dre, dfc, dva, ttm, yoy_quarterly |
-| [CHANGELOG.md](financials/CHANGELOG.md) | Version history (v1.16.1 — collective-review bugfix sprint) |
-| [ROADMAP.md](financials/ROADMAP.md) | Backlog + priorities (F1-F7: chart serialization, comparison tab, price overlay, period selector, cross-skill dashboard, verification script, company header) |
-| [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break |
+| [API.md](financials/API.md) | 11 modes: quarterly, annual, complete, summary, dashboard (11-tab with period toggle + price overlay + radar/heatmap), bpa, bpp, dre, dfc, dva, ttm, yoy_quarterly |
+| [CHANGELOG.md](financials/CHANGELOG.md) | Version history (v2.0 — report/ package split; v1.17-v1.25 features) |
+| [ROADMAP.md](financials/ROADMAP.md) | Backlog + priorities (F2 comparison tab, F5 cross-skill dashboard, F6 verification script; F3 + F4 DONE) |
+| [INSTRUCTIONS.md](financials/INSTRUCTIONS.md) | AI editing rules — what NOT to break (v2.0 split-pattern lesson + v1.25 cache/ITR/CAGR/chart-toggle lessons) |
 
 ---
 
-*Last updated: 2026-08-01 (v1.16.1 — collective-review bugfix sprint: 3T2025 skip fix, sidebar groups, DVA pie taxonomy, Crescimento 3M/1Y/5Y, chart titles+descriptions, indicator tooltips, Crescimento subtab split, YoY by year, 4 new charts; see CHANGELOG.md).*
+*Last updated: 2026-08-13 (v2.0 — report/ package split + v1.17 single-fetch + v1.22 radar/heatmap + v1.23 price overlay + v1.24 quarterly tables + period toggle + v1.25 ALL charts toggle + cache fix; see CHANGELOG.md).*
