@@ -8,6 +8,8 @@
 
 5-tab price analytics dashboard: candlestick + MA + volume + returns + volatility.
 
+[v1.2] Now 6 tabs — added "Indicadores" tab (RSI + MACD + Stochastic + OBV + signals).
+
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | ticker | str | — | B3 ticker (PETR4, VALE3, etc.). Required |
@@ -45,6 +47,14 @@
        {"type": "table", "title": "Cruzamentos de Médias", "columns": [...], "rows": [...]}
     ]},
     {"name": "Volume",        "group": "Preço",       "sections": [{"type": "chart", ...}, {"type": "table", ...}]},
+    {"name": "Indicadores",  "group": "Preço",       "sections": [
+       {"type": "chart", "title": "Preço — PETR4", ...},
+       {"type": "chart", "title": "RSI (14) — PETR4", "collapsible": true, ...},
+       {"type": "chart", "title": "MACD (12/26/9) — PETR4", "collapsible": true, ...},
+       {"type": "chart", "title": "Stochastic (14/3/3) — PETR4", "collapsible": true, ...},
+       {"type": "chart", "title": "On-Balance Volume (OBV) — PETR4", "collapsible": true, ...},
+       {"type": "table", "title": "Sinais Atuais", "columns": ["Indicador", "Valor Atual", "Sinal"], ...}
+    ]},
     {"name": "Retornos",      "group": "Performance", "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]},
     {"name": "Volatilidade",  "group": "Performance", "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]}
   ],
@@ -62,14 +72,25 @@
 - **Mínima** — latest day low
 - **Volume** — latest day financial volume (compact, R$ suffix)
 
-**Tabs (5):**
+**Tabs (6):**
 | Tab | Group | Sections |
 |-----|-------|----------|
 | Cotação | Preço | text header + candlestick chart + volume bar chart |
 | Médias Móveis | Preço | SMA line chart + crossovers table |
-| Volume | Preço | volume bar chart (colored by up/down day) + volume MA20 line + statistics table |
+| Volume | Preço | volume bar chart (colored by up/down day) + price overlay + statistics table |
+| Indicadores | Preço | price reference chart + RSI + MACD + Stochastic + OBV (collapsible) + signals table |
 | Retornos | Performance | cumulative return chart + drawdown chart + performance summary table |
 | Volatilidade | Performance | rolling volatility chart (20D/60D/252D) + Bollinger Bands chart + current vol table |
+
+**Indicadores tab (v1.2 — 6 sections):**
+- **Preço (reference)** — single-axis close-price line chart at the top. Not collapsible (always visible). The user looks at this once, then scrolls through the indicators.
+- **RSI (14)** — Wilder's smoothing RSI, 0-100, with dashed 30/70 overbought/oversold reference lines. Single axis. Collapsible.
+- **MACD (12/26/9)** — histogram bars (green/red by sign) + MACD line + signal line. Single axis. Collapsible.
+- **Stochastic (14/3/3)** — %K + %D lines, 0-100, with dashed 20/80 reference lines. Single axis. Collapsible.
+- **OBV** — On-Balance Volume cumulative signed volume (filled purple line). Single axis. Collapsible.
+- **Signals table** — 4-row table classifying the latest reading of each indicator (Overbought/Neutral/Oversold, Bull/Bear trend).
+
+**Collapsible charts:** the 4 indicator charts have `collapsible: True` — the chart title becomes a clickable header (expand/collapse). A `toggleChartCollapsible` JS function resizes the chart on expand so it renders with correct dimensions (charts rendered while collapsed had 0-height canvases). The price reference chart is NOT collapsible (always visible at the top).
 
 ### mode="quote"
 
@@ -127,4 +148,4 @@ skill(domain="b3", sub_domain="price", mode="quote",     params='{"ticker":"VALE
 
 ---
 
-*Last updated: 2026-08-06 (v1.0). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v1.2 — Indicadores tab). See [CHANGELOG.md](CHANGELOG.md) for version history.*

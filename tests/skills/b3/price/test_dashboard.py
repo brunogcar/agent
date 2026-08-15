@@ -2,7 +2,7 @@
 
 Simplified pattern (2 tests):
   1. test_dashboard_no_ticker — error path (empty ticker → status=error)
-  2. test_dashboard_tab_structure — returns 5 tabs with correct names + groups
+  2. test_dashboard_tab_structure — returns 6 tabs with correct names + groups
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class TestDashboardMode:
         assert "ticker is required" in result["error"]
 
     def test_dashboard_tab_structure(self, price_env):
-        """Dashboard returns 5 tabs with correct names + groups.
+        """Dashboard returns 6 tabs with correct names + groups.
 
         Uses the price_env fixture from conftest.py (synthetic cotahist.db
         with 10 PETR4 trading days). The dashboard fetches ~10 years of data
@@ -30,19 +30,21 @@ class TestDashboardMode:
         assert result["status"] == "ok"
         assert result["ticker"] == "PETR4"
         assert "tabs" in result
-        assert len(result["tabs"]) == 5
+        assert len(result["tabs"]) == 6
 
         names = [t["name"] for t in result["tabs"]]
         assert names == [
             "Cotação",
             "Médias Móveis",
             "Volume",
+            "Indicadores",
             "Retornos",
             "Volatilidade",
         ]
 
         groups = [t["group"] for t in result["tabs"]]
         assert groups == [
+            "Preço",
             "Preço",
             "Preço",
             "Preço",

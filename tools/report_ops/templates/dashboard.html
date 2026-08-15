@@ -75,6 +75,35 @@
       </div>
     </div>
     {% endif %}
+    {% if sec.collapsible %}
+    {# [v1.2-v2] Collapsible chart — title becomes the header (click to
+       expand/collapse), body contains description + range selector + chart. #}
+    <div class="collapsible">
+      <div class="collapsible-header" onclick="toggleChartCollapsible(this)">
+        <span>{{ sec.title | default('Chart') }}</span>
+        <span class="chevron">&#9660;</span>
+      </div>
+      <div class="collapsible-body">
+        {% if sec.description %}
+        <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
+        {% endif %}
+        {% if sec.price_range_selector %}
+        <div class="price-range-selector" style="display: flex; gap: 6px; margin-bottom: 12px;">
+          <button class="price-range-btn active" data-range="all" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', 'all')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--brand-dim); color: var(--brand); border-radius: 6px; cursor: pointer;">Tudo</button>
+          <button class="price-range-btn" data-range="10y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '10y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">10A</button>
+          <button class="price-range-btn" data-range="5y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '5y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">5A</button>
+          <button class="price-range-btn" data-range="1y" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1y')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1A</button>
+          <button class="price-range-btn" data-range="6m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '6m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">6M</button>
+          <button class="price-range-btn" data-range="3m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '3m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">3M</button>
+          <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
+        </div>
+        {% endif %}
+        {% if sec.type == 'chart' and sec.chart_data %}
+        {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
     {% if sec.title %}<div class="section-title">{{ sec.title }}</div>{% endif %}
     {% if sec.description %}
     <div class="text-block" style="font-size: 13px; margin-bottom: 12px;">{{ sec.description }}</div>
@@ -108,8 +137,6 @@
     {% if sec.type == 'chart' and sec.chart_data %}
     {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
     {% endif %}
-    {% if sec.type == 'candlestick' and sec.chart_data %}
-    {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'mermaid' %}
     {{ m.mermaid_diagram(sec.mermaid_src | default(sec.data | default(''))) }}
@@ -423,6 +450,31 @@
         p.classList.remove('active');
       }
     });
+  }
+
+  // [v1.2-v2] Collapsible chart toggle — same as toggleCollapsible (toggles
+  // the .open class so CSS handles the max-height transition) but ALSO resizes
+  // any charts inside the collapsible body after expand. Charts rendered while
+  // collapsed had 0-height canvases (max-height: 0) — chart.resize() re-reads
+  // the container dimensions + re-renders so the chart displays correctly.
+  // Uses the _chartRegistry (populated by _renderChart) to find Chart.js
+  // instances by canvas ID — same pattern as togglePeriod above.
+  function toggleChartCollapsible(header) {
+    var col = header.parentElement;
+    col.classList.toggle('open');
+    if (col.classList.contains('open')) {
+      // Wait for the CSS max-height transition to start (60ms) so the
+      // collapsible-body has non-zero height before resizing charts.
+      setTimeout(function() {
+        var canvases = col.querySelectorAll('canvas');
+        canvases.forEach(function(c) {
+          var entry = _chartRegistry.find(function(e) { return e.canvas && e.canvas.id === c.id; });
+          if (entry && entry.chart) {
+            entry.chart.resize();
+          }
+        });
+      }, 60);
+    }
   }
 </script>
 

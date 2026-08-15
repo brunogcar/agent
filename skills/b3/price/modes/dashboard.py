@@ -1,18 +1,20 @@
-"""Mode: dashboard -- 5-tab B3 price analytics dashboard.
+"""Mode: dashboard -- 6-tab B3 price analytics dashboard.
 
 Tabs:
   Cotação         (group: Preço)        — candlestick + volume + 6 KPIs
   Médias Móveis   (group: Preço)        — SMA chart + crossovers table
-  Volume          (group: Preço)        — volume bars + 20D volume MA + stats
+  Volume          (group: Preço)        — volume bars + price overlay + stats
+  Indicadores     (group: Preço)        — RSI + MACD + Stochastic + OBV + signals  [v1.2]
   Retornos        (group: Performance)  — cumulative return + drawdown + KPIs
   Volatilidade    (group: Performance)  — rolling vol + Bollinger Bands
 
 Workflow:
   1. Fetch 10 years of daily OHLCV from cotahist.db via engines.ohlcv_series
   2. Compute MAs, returns, drawdowns, volatility, Bollinger Bands via engines
-  3. Find MA crossovers (MA20×MA50, MA50×MA200)
-  4. Get 52-week range + latest quote
-  5. Pass computed series to report builders (no computation in builders)
+  3. [v1.2] Compute RSI, MACD, Stochastic, OBV via engines (momentum oscillators)
+  4. Find MA crossovers (MA20×MA50, MA50×MA200)
+  5. Get 52-week range + latest quote
+  6. Pass computed series to report builders (no computation in builders)
 """
 from __future__ import annotations
 
@@ -24,11 +26,13 @@ from skills.b3.price.engines import (
     ohlcv_series, latest_quote, compute_sma, compute_returns,
     compute_cumulative_returns, compute_drawdowns, compute_volatility,
     compute_bollinger_bands, find_ma_crossovers, compute_52w_range,
+    compute_rsi, compute_macd, compute_stochastic, compute_obv,
 )
 from skills.b3.price.report import (
     build_cotacao_sections, build_quote_kpis,
     build_medias_sections, build_volume_sections,
     build_retornos_sections, build_volatilidade_sections,
+    build_indicadores_sections,
 )
 
 
@@ -43,8 +47,9 @@ def _ten_years_ago_iso() -> str:
 @register_mode(
     "dashboard",
     description=(
-        "B3 price analytics dashboard. 5 tabs: Cotação (candlestick + volume + KPIs), "
-        "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + MA), "
+        "B3 price analytics dashboard. 6 tabs: Cotação (candlestick + volume + KPIs), "
+        "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + price overlay), "
+        "Indicadores (RSI + MACD + Stochastic + OBV + signals), "
         "Retornos (cumulative + drawdown), Volatilidade (rolling vol + Bollinger)."
     ),
     params={"ticker": "str. Required. B3 ticker (e.g. PETR4)."},
@@ -55,7 +60,7 @@ def _ten_years_ago_iso() -> str:
     ],
 )
 def dashboard(ticker: str = "") -> dict:
-    """Build the 5-tab B3 price dashboard for a single ticker."""
+    """Build the 6-tab B3 price dashboard for a single ticker."""
     _t0 = _dt.now()
     print(f"[b3.price] Starting dashboard for {ticker!r}...", flush=True)
 
@@ -97,6 +102,13 @@ def dashboard(ticker: str = "") -> dict:
     vol_60d = compute_volatility(returns, 60)
     vol_252d = compute_volatility(returns, 252)
     bb_upper, bb_middle, bb_lower = compute_bollinger_bands(closes, period=20, num_std=2.0)
+    # [v1.2] Momentum oscillators — RSI, MACD, Stochastic, OBV.
+    rsi = compute_rsi(closes, period=14)
+    macd_line, signal_line, histogram = compute_macd(closes, fast=12, slow=26, signal=9)
+    highs = [p.get("high") for p in ohlcv]
+    lows = [p.get("low") for p in ohlcv]
+    k_line, d_line = compute_stochastic(highs, lows, closes, k_period=14, d_period=3)
+    obv = compute_obv(closes, volumes)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Indicators computed ({_s_elapsed:.1f}s)", flush=True)
 
@@ -145,6 +157,12 @@ def dashboard(ticker: str = "") -> dict:
         tk, dates, closes, ma20, ma50, ma100, ma200, crossovers,
     )
     volume_sections = build_volume_sections(tk, dates, volumes, closes, opens)
+    # [v1.2] Indicadores tab — RSI + MACD + Stochastic + OBV + signals table.
+    indicadores_sections = build_indicadores_sections(
+        tk, dates, closes, highs, lows, volumes,
+        rsi, macd_line, signal_line, histogram,
+        k_line, d_line, obv,
+    )
     retornos_sections = build_retornos_sections(
         tk, dates, closes, cum_returns, drawdowns,
     )
@@ -159,6 +177,7 @@ def dashboard(ticker: str = "") -> dict:
         {"name": "Cotação",       "group": "Preço",       "sections": cotacao_sections},
         {"name": "Médias Móveis", "group": "Preço",       "sections": medias_sections},
         {"name": "Volume",        "group": "Preço",       "sections": volume_sections},
+        {"name": "Indicadores",  "group": "Preço",       "sections": indicadores_sections},
         {"name": "Retornos",      "group": "Performance", "sections": retornos_sections},
         {"name": "Volatilidade",  "group": "Performance", "sections": volatilidade_sections},
     ]

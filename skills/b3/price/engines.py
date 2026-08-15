@@ -1,11 +1,12 @@
 """skills/b3/price/engines.py -- OHLCV + technical analysis engines.
 
 Queries cotahist.db for daily OHLCV data and computes technical indicators:
-  - Moving averages (SMA20/50/100/200)
+  - Moving averages (SMA20/50/100/200, EMA for MACD)
   - Volume + volume MA
   - Returns (daily, cumulative, drawdown)
   - Volatility (rolling 20D/60D/252D)
   - Bollinger Bands (20, 2σ)
+  - Momentum oscillators (RSI, MACD, Stochastic, OBV)  [v1.2]
 
 Usage:
     from skills.b3.price.engines import ohlcv_series, compute_sma, compute_returns
@@ -259,3 +260,242 @@ def compute_52w_range(ticker: str, today: str) -> dict:
         }
     except Exception:
         return {"high_52w": None, "low_52w": None}
+
+
+# ── Momentum oscillators (v1.2) ──────────────────────────────────────────────
+
+
+def compute_ema(closes: list[float | None], period: int) -> list[float | None]:
+    """[v1.2] Compute Exponential Moving Average.
+
+    Standard convention: seed with the SMA of the first ``period`` valid
+    closes, then apply the EMA recursion from there. The multiplier is
+    ``2 / (period + 1)``.
+
+    Returns a list of the same length. First ``period - 1`` entries are
+    None (warmup). Used as the building block for MACD.
+    """
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    if n < period:
+        return result
+    # Seed: SMA of the first `period` closes (must all be non-None).
+    seed_window = closes[:period]
+    if any(c is None for c in seed_window):
+        # Fall back: find the first window of `period` consecutive non-None values.
+        return _ema_with_gaps(closes, period)
+    ema_prev: float | None = sum(seed_window) / period  # type: ignore[arg-type]
+    result[period - 1] = ema_prev
+    mult = 2.0 / (period + 1)
+    for i in range(period, n):
+        c = closes[i]
+        if c is None or ema_prev is None:
+            result[i] = result[i - 1]  # carry forward (don't break the line)
+            continue
+        ema_prev = c * mult + ema_prev * (1.0 - mult)
+        result[i] = ema_prev
+    return result
+
+
+def _ema_with_gaps(closes: list[float | None], period: int) -> list[float | None]:
+    """EMA when the input has None gaps — finds the first window of `period`
+    consecutive non-None values to seed, then recurses."""
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    seed_start = None
+    for i in range(n - period + 1):
+        window = closes[i : i + period]
+        if all(c is not None for c in window):
+            seed_start = i
+            break
+    if seed_start is None:
+        return result
+    ema_prev: float = sum(closes[seed_start : seed_start + period]) / period  # type: ignore[arg-type]
+    result[seed_start + period - 1] = ema_prev
+    mult = 2.0 / (period + 1)
+    for i in range(seed_start + period, n):
+        c = closes[i]
+        if c is None:
+            result[i] = result[i - 1]
+            continue
+        ema_prev = c * mult + ema_prev * (1.0 - mult)
+        result[i] = ema_prev
+    return result
+
+
+def compute_rsi(closes: list[float | None], period: int = 14) -> list[float | None]:
+    """[v1.2] Compute Relative Strength Index (Wilder's smoothing).
+
+    Standard 14-day RSI. Uses Wilder's smoothing (not a plain SMA) for the
+    average gain/loss recursion: ``avg[t] = (avg[t-1] * (period-1) + val[t]) / period``.
+
+    Returns a list of the same length. First ``period`` entries are None
+    (warmup — needs `period` daily changes to seed). Values are 0-100.
+    RSI = 100 when avg_loss = 0 (all gains); RSI = 0 when avg_gain = 0.
+    """
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    if n < period + 1:
+        return result
+
+    # Daily changes (None where either side is None → 0.0 gain/loss).
+    gains = [0.0] * n
+    losses = [0.0] * n
+    for i in range(1, n):
+        prev, cur = closes[i - 1], closes[i]
+        if prev is None or cur is None:
+            continue
+        change = cur - prev
+        gains[i] = max(0.0, change)
+        losses[i] = max(0.0, -change)
+
+    # Seed: SMA of first `period` gains/losses (indices 1..period).
+    seed_gains = gains[1 : period + 1]
+    seed_losses = losses[1 : period + 1]
+    avg_gain = sum(seed_gains) / period
+    avg_loss = sum(seed_losses) / period
+    result[period] = _rsi_from_avg(avg_gain, avg_loss)
+
+    for i in range(period + 1, n):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        result[i] = _rsi_from_avg(avg_gain, avg_loss)
+    return result
+
+
+def _rsi_from_avg(avg_gain: float, avg_loss: float) -> float:
+    """RSI = 100 - 100/(1+RS) where RS = avg_gain/avg_loss."""
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def compute_macd(
+    closes: list[float | None],
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """[v1.2] Compute MACD (Moving Average Convergence Divergence).
+
+    Returns a 3-tuple of lists (same length as ``closes``):
+      - ``macd_line``   = EMA(fast) - EMA(slow). None for first ``slow-1`` entries.
+      - ``signal_line`` = EMA(macd_line, signal). None until ``slow - 1 + signal - 1``.
+      - ``histogram``   = macd_line - signal_line. None where either is None.
+
+    Standard parameters: fast=12, slow=26, signal=9.
+    """
+    ema_fast = compute_ema(closes, fast)
+    ema_slow = compute_ema(closes, slow)
+
+    n = len(closes)
+    macd_line: list[float | None] = [None] * n
+    for i in range(n):
+        f, s = ema_fast[i], ema_slow[i]
+        if f is not None and s is not None:
+            macd_line[i] = f - s
+
+    # Signal line = EMA of the macd_line (over the valid region only).
+    signal_line: list[float | None] = [None] * n
+    first_valid = None
+    for i in range(n):
+        if macd_line[i] is not None:
+            first_valid = i
+            break
+    if first_valid is not None:
+        valid_macd = [macd_line[i] for i in range(first_valid, n)]  # type: ignore[list-item]
+        valid_signal = compute_ema(valid_macd, signal)
+        for i, v in enumerate(valid_signal):
+            signal_line[first_valid + i] = v
+
+    # Histogram = macd - signal (None where either is None).
+    histogram: list[float | None] = [None] * n
+    for i in range(n):
+        m, s = macd_line[i], signal_line[i]
+        if m is not None and s is not None:
+            histogram[i] = m - s
+
+    return macd_line, signal_line, histogram
+
+
+def compute_stochastic(
+    highs: list[float | None],
+    lows: list[float | None],
+    closes: list[float | None],
+    k_period: int = 14,
+    d_period: int = 3,
+) -> tuple[list[float | None], list[float | None]]:
+    """[v1.2] Compute Stochastic Oscillator (14/3/3).
+
+    Returns a 2-tuple of lists (same length as input):
+      - ``k_line`` = %K = (close - lowest_low) / (highest_high - lowest_low) * 100.
+        None for first ``k_period - 1`` entries.
+      - ``d_line`` = %D = SMA of %K over ``d_period``. None for first
+        ``k_period - 1 + d_period - 1`` entries.
+
+    When highest_high == lowest_low (flat period), %K is set to 50 (neutral)
+    to avoid division by zero.
+    """
+    n = len(closes)
+    k_line: list[float | None] = [None] * n
+    if n < k_period:
+        return k_line, [None] * n
+
+    for i in range(k_period - 1, n):
+        window_h = [h for h in highs[i - k_period + 1 : i + 1] if h is not None]
+        window_l = [l for l in lows[i - k_period + 1 : i + 1] if l is not None]
+        if len(window_h) < k_period or len(window_l) < k_period:
+            continue
+        hh = max(window_h)
+        ll = min(window_l)
+        c = closes[i]
+        if c is None:
+            continue
+        if hh == ll:
+            k_line[i] = 50.0  # neutral (no range)
+        else:
+            k_line[i] = (c - ll) / (hh - ll) * 100.0
+
+    # %D = SMA of %K over d_period.
+    d_line: list[float | None] = [None] * n
+    for i in range(k_period - 1 + d_period - 1, n):
+        window = [k_line[i - d_period + 1 + j] for j in range(d_period)]
+        if any(v is None for v in window):
+            continue
+        d_line[i] = sum(window) / d_period  # type: ignore[arg-type]
+
+    return k_line, d_line
+
+
+def compute_obv(
+    closes: list[float | None],
+    volumes: list[float | None],
+) -> list[float | None]:
+    """[v1.2] Compute On-Balance Volume (cumulative signed volume).
+
+    OBV[t] = OBV[t-1] + volume[t]  if close[t] > close[t-1]
+    OBV[t] = OBV[t-1] - volume[t]  if close[t] < close[t-1]
+    OBV[t] = OBV[t-1]              if close[t] == close[t-1] (or either is None)
+
+    Returns a list of the same length. OBV[0] = 0.0 (no prior day to compare).
+    None values are carried forward (OBV stays flat when close or volume is None).
+    """
+    n = len(closes)
+    result: list[float | None] = [0.0] * n
+    if n == 0:
+        return result
+    obv = 0.0
+    result[0] = obv
+    for i in range(1, n):
+        prev, cur = closes[i - 1], closes[i]
+        vol = volumes[i] if i < len(volumes) else None
+        if prev is None or cur is None or vol is None:
+            result[i] = obv  # flat
+            continue
+        if cur > prev:
+            obv += vol
+        elif cur < prev:
+            obv -= vol
+        result[i] = obv
+    return result
