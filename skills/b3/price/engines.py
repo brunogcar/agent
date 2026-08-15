@@ -772,3 +772,280 @@ def compute_fibonacci_trade_setup(
         "compra": compra,
         "venda": venda,
     }
+
+
+# ── Cotação tab enhancements (v1.4) ─────────────────────────────────────────
+
+
+def compute_price_snapshot(
+    ohlcv: list[dict],
+    range_52w: dict | None,
+) -> dict:
+    """[v1.4] Compute a price snapshot table row (mirrors the user's spreadsheet row 5).
+
+    Returns prior close, open, current, daily variation (abs + %), intraday
+    min/max, 52-week range + position within it.
+
+    Args:
+        ohlcv: list of {date, open, high, low, close, volume} (newest-last).
+        range_52w: compute_52w_range result {high_52w, low_52w} or None.
+
+    Returns:
+        Dict with all snapshot fields (None when data insufficient).
+    """
+    if not ohlcv or len(ohlcv) < 2:
+        return {
+            "prior_close": None, "open": None, "current": None,
+            "daily_diff": None, "daily_pct": None,
+            "intraday_low": None, "intraday_high": None,
+            "intraday_range": None, "intraday_range_pct": None,
+            "high_52w": None, "low_52w": None,
+            "from_52w_low": None, "from_52w_low_pct": None,
+            "to_52w_high": None, "to_52w_high_pct": None,
+        }
+    latest = ohlcv[-1]
+    prior_close = ohlcv[-2].get("close")
+    current = latest.get("close")
+    open_ = latest.get("open")
+    low = latest.get("low")
+    high = latest.get("high")
+    daily_diff = (current - prior_close) if (current is not None and prior_close is not None) else None
+    daily_pct = (daily_diff / prior_close) if (daily_diff is not None and prior_close) else None
+    intraday_range = (high - low) if (high is not None and low is not None) else None
+    intraday_range_pct = (intraday_range / low) if (intraday_range is not None and low) else None
+    high_52w = (range_52w or {}).get("high_52w")
+    low_52w = (range_52w or {}).get("low_52w")
+    from_52w_low = (current - low_52w) if (current is not None and low_52w is not None) else None
+    from_52w_low_pct = (from_52w_low / low_52w) if (from_52w_low is not None and low_52w) else None
+    to_52w_high = (high_52w - current) if (high_52w is not None and current is not None) else None
+    to_52w_high_pct = (to_52w_high / current) if (to_52w_high is not None and current) else None
+    return {
+        "prior_close": prior_close, "open": open_, "current": current,
+        "daily_diff": daily_diff, "daily_pct": daily_pct,
+        "intraday_low": low, "intraday_high": high,
+        "intraday_range": intraday_range, "intraday_range_pct": intraday_range_pct,
+        "high_52w": high_52w, "low_52w": low_52w,
+        "from_52w_low": from_52w_low, "from_52w_low_pct": from_52w_low_pct,
+        "to_52w_high": to_52w_high, "to_52w_high_pct": to_52w_high_pct,
+    }
+
+
+# Multi-period lookback windows (calendar days).
+_PERIOD_LOOKBACKS = [
+    {"label": "Dia",        "days": 1},
+    {"label": "Semana",     "days": 7},
+    {"label": "Mês",        "days": 30},
+    {"label": "Trimestre",  "days": 90},
+    {"label": "Ano",        "days": 365},
+    {"label": "2 anos",     "days": 730},
+    {"label": "5 anos",     "days": 1825},
+    {"label": "10 anos",    "days": 3650},
+    {"label": "15 anos",    "days": 5475},
+    {"label": "20 anos",    "days": 7300},
+]
+
+
+def compute_period_returns(dates: list[str], closes: list[float | None]) -> list[dict]:
+    """[v1.4] Compute multi-period returns (Dia / Semana / Mês / ... / 20 anos).
+
+    For each lookback window, finds the most recent close N calendar days
+    before the latest close + computes the % return + the reference price.
+
+    Args:
+        dates:  list of YYYY-MM-DD strings (newest-last).
+        closes: daily close prices aligned with dates.
+
+    Returns:
+        List of ``{label, days, return_pct, reference_price}`` dicts.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+
+    if not dates or not closes:
+        return []
+
+    latest_date = dates[-1]
+    try:
+        latest_d = _date.fromisoformat(latest_date)
+    except (ValueError, TypeError):
+        return []
+
+    latest_close = closes[-1]
+    if latest_close is None:
+        return []
+
+    results: list[dict] = []
+    for p in _PERIOD_LOOKBACKS:
+        cutoff = (latest_d - _timedelta(days=p["days"])).isoformat()
+        # Find the most recent close on or before the cutoff date.
+        ref_close = None
+        for i in range(len(dates) - 1, -1, -1):
+            if dates[i] <= cutoff:
+                if closes[i] is not None:
+                    ref_close = closes[i]
+                    break
+        if ref_close is not None and ref_close != 0:
+            ret = (latest_close - ref_close) / ref_close
+        else:
+            ret = None
+        results.append({
+            "label": p["label"],
+            "days": p["days"],
+            "return_pct": ret,
+            "reference_price": ref_close,
+        })
+    return results
+
+
+def compute_annual_returns(dates: list[str], closes: list[float | None]) -> list[dict]:
+    """[v1.4] Compute per-year Início + Fim prices + % return.
+
+    Groups the daily closes by calendar year. For each year:
+      - Início = first non-None close of the year
+      - Fim = last non-None close of the year
+      - % = (Fim - Início) / Início
+
+    Returns the list oldest-first. The current (incomplete) year is included
+    with Fim = latest close (not end-of-year).
+
+    Args:
+        dates:  list of YYYY-MM-DD strings.
+        closes: daily close prices.
+
+    Returns:
+        List of ``{year, inicio, fim, return_pct}`` dicts.
+    """
+    if not dates:
+        return []
+
+    by_year: dict[int, list[float]] = {}
+    for d, c in zip(dates, closes):
+        try:
+            y = int(d[:4])
+        except (ValueError, IndexError):
+            continue
+        if c is None:
+            continue
+        by_year.setdefault(y, []).append(c)
+
+    results: list[dict] = []
+    for y in sorted(by_year.keys()):
+        prices = by_year[y]
+        inicio = prices[0]
+        fim = prices[-1]
+        ret = (fim - inicio) / inicio if inicio else None
+        results.append({
+            "year": y,
+            "inicio": inicio,
+            "fim": fim,
+            "return_pct": ret,
+        })
+    return results
+
+
+def compute_price_histogram(closes: list[float | None], n_bins: int = 30) -> dict:
+    """[v1.4] Compute a price histogram (distribution of daily closes).
+
+    Bins all valid closes into ``n_bins`` equal-width bins between min + max.
+    Returns bin labels + counts + a heatmap color per bar (blue→yellow→red
+    based on count relative to max).
+
+    Also identifies the Point of Control (highest bin) + the Value Area
+    (the contiguous bins around the POC containing ~70% of the data).
+
+    Args:
+        closes: daily close prices.
+        n_bins: number of bins (default 30).
+
+    Returns:
+        ``{bins: [{label, low, high, count, color}], max_count, poc_label,
+        value_area_low, value_area_high, total_days}`` or empty dict if
+        insufficient data.
+    """
+    valid = [c for c in closes if c is not None and c > 0]
+    if len(valid) < 2:
+        return {"bins": [], "max_count": 0, "poc_label": None,
+                "value_area_low": None, "value_area_high": None,
+                "total_days": len(valid)}
+
+    lo = min(valid)
+    hi = max(valid)
+    if hi == lo:
+        # All same price — single bin.
+        return {"bins": [{"label": f"{lo:.2f}", "low": lo, "high": hi,
+                          "count": len(valid), "color": "#ef4444"}],
+                "max_count": len(valid), "poc_label": f"{lo:.2f}",
+                "value_area_low": lo, "value_area_high": hi,
+                "total_days": len(valid)}
+
+    bin_width = (hi - lo) / n_bins
+    counts = [0] * n_bins
+    for c in valid:
+        idx = int((c - lo) / bin_width)
+        if idx >= n_bins:
+            idx = n_bins - 1
+        counts[idx] += 1
+
+    max_count = max(counts)
+    total = len(valid)
+
+    # Heatmap color: blue (low) → yellow (mid) → red (high).
+    def _heatmap_color(count: int) -> str:
+        if max_count == 0:
+            return "#3b82f6"
+        ratio = count / max_count
+        if ratio < 0.5:
+            # blue → yellow interpolation
+            t = ratio / 0.5
+            r = int(59 + (250 - 59) * t)
+            g = int(130 + (204 - 130) * t)
+            b = int(246 + (21 - 246) * t)
+        else:
+            # yellow → red interpolation
+            t = (ratio - 0.5) / 0.5
+            r = int(250 + (239 - 250) * t)
+            g = int(204 + (68 - 204) * t)
+            b = int(21 + (68 - 21) * t)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    bins: list[dict] = []
+    for i in range(n_bins):
+        bin_lo = lo + i * bin_width
+        bin_hi = bin_lo + bin_width
+        bins.append({
+            "label": f"{bin_lo:.2f}",
+            "low": bin_lo,
+            "high": bin_hi,
+            "count": counts[i],
+            "color": _heatmap_color(counts[i]),
+        })
+
+    # Point of Control (highest bin).
+    poc_idx = counts.index(max_count)
+    poc_label = bins[poc_idx]["label"]
+
+    # Value Area: expand from POC until ~70% of total is covered.
+    target = int(total * 0.7)
+    va_low_idx = poc_idx
+    va_high_idx = poc_idx
+    covered = counts[poc_idx]
+    while covered < target and (va_low_idx > 0 or va_high_idx < n_bins - 1):
+        # Expand to whichever side has more count.
+        left_count = counts[va_low_idx - 1] if va_low_idx > 0 else -1
+        right_count = counts[va_high_idx + 1] if va_high_idx < n_bins - 1 else -1
+        if right_count >= left_count and va_high_idx < n_bins - 1:
+            va_high_idx += 1
+            covered += counts[va_high_idx]
+        elif va_low_idx > 0:
+            va_low_idx -= 1
+            covered += counts[va_low_idx]
+        else:
+            break
+
+    return {
+        "bins": bins,
+        "max_count": max_count,
+        "poc_label": poc_label,
+        "value_area_low": bins[va_low_idx]["low"],
+        "value_area_high": bins[va_high_idx]["high"],
+        "total_days": total,
+    }

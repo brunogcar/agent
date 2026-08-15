@@ -164,4 +164,4 @@ filtered alongside the main price series.
 
 ---
 
-*Last updated: 2026-08-13 (v1.3 — Fibonacci tab + dividend-adjusted returns + 4 new engines + 1 new builder). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-15 (v1.4 — Cotação tab redesign + 4 new engines + negative_red + datalabels plugin). See [CHANGELOG.md](CHANGELOG.md) for version history.*

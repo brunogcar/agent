@@ -30,6 +30,8 @@ from skills.b3.price.engines import (
     compute_bollinger_bands, find_ma_crossovers, compute_52w_range,
     compute_rsi, compute_macd, compute_stochastic, compute_obv,
     compute_adjusted_close, find_swing_extremes,
+    compute_price_snapshot, compute_period_returns,
+    compute_annual_returns, compute_price_histogram,
 )
 from skills.b3.price.report import (
     build_cotacao_sections, build_quote_kpis,
@@ -154,11 +156,24 @@ def dashboard(ticker: str = "") -> dict:
         flush=True,
     )
 
+    # [v1.4] Cotação tab enhancements: price snapshot, period returns,
+    # annual returns, price histogram. Computed here (after range_52w).
+    price_snapshot = compute_price_snapshot(ohlcv, range_52w)
+    period_returns = compute_period_returns(dates, closes)
+    annual_returns = compute_annual_returns(dates, closes)
+    price_histogram = compute_price_histogram(closes, n_bins=30)
+
     # ── Section 5/5: Build KPIs + 5 tab sections via builders ──────────────
     _s_t0 = _dt.now()
     kpis = build_quote_kpis(quote, prev_close, range_52w)
 
-    cotacao_sections = build_cotacao_sections(tk, ohlcv, ma20, ma50, ma100, ma200)
+    cotacao_sections = build_cotacao_sections(
+        tk, ohlcv, ma20, ma50, ma100, ma200,
+        snapshot=price_snapshot,
+        period_returns=period_returns,
+        annual_returns=annual_returns,
+        histogram=price_histogram,
+    )
     # Prepend a small header text section with the date range.
     cotacao_sections.insert(0, {
         "type": "text",

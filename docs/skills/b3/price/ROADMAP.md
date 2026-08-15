@@ -138,4 +138,4 @@ confidence threshold + user-tunable sensitivity.
 
 ---
 
-*Last updated: 2026-08-13 (v1.3). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-15 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*

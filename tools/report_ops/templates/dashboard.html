@@ -102,7 +102,7 @@
         {% endif %}
         {% if sec.type == 'table' and sec.columns and sec.rows %}
         {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-        {{ m.data_table(sec.columns, sec.rows) }}
+        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
         {% if sec.wide %}</div>{% endif %}
         {% elif sec.type == 'table' %}
         <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -127,7 +127,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ m.data_table(sec.columns, sec.rows) }}
+    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -419,6 +419,36 @@
     var chart = new Chart(canvas.getContext('2d'), config);
     _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
   }
+
+  // [v1.4] Inline datalabels plugin — renders the value above each data point
+  // for charts that have options.plugins._datalabels = true. No external CDN
+  // dependency (replaces chartjs-plugin-datalabels). Used by the Início vs
+  // Fim annual chart in the Cotação tab.
+  Chart.register({
+    id: 'priceDatalabels',
+    afterDatasetsDraw: function(chart) {
+      var opts = chart.options.plugins && chart.options.plugins._datalabels;
+      if (!opts) return;
+      var ctx = chart.ctx;
+      ctx.save();
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      chart.data.datasets.forEach(function(ds, di) {
+        var meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
+        var color = ds.borderColor || ds.backgroundColor || '#666';
+        ctx.fillStyle = color;
+        meta.data.forEach(function(point, i) {
+          var val = ds.data[i];
+          if (val === null || val === undefined) return;
+          // Format: pt-BR (comma decimal), 2 places.
+          var label = val.toFixed(2).replace('.', ',');
+          ctx.fillText(label, point.x, point.y - 8);
+        });
+      });
+      ctx.restore();
+    }
+  });
 
   // [v1.24] Period toggle: switch between annual + quarterly tables.
   // btn: the clicked <button> element.
