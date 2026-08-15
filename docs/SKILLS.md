@@ -282,11 +282,11 @@ it force-syncs them BEFORE running the skill.
 - `CVM_SKIP_SYNC=1` env var (for tests)
 - `route(..., skip_sync=True)` per-call kwarg
 
-**BCB macro skill note:** `required_sources=["sgs"]` is wired, but
-`skills/_base._trigger_sync.sync_map` does not yet know "sgs" (only CVM/B3
-sources). The sync guard records an error in `result["_sync"]["errors"]` and
-proceeds with available data. Users must run `sync_all` manually until the
-sync_map is extended (tracked in BCB macro ROADMAP P2).
+**BCB macro skill note:** `required_sources=["sgs"]` is wired, and
+`skills/_base._trigger_sync.sync_map` now includes the `sgs` entry (v1.2
+docs — the wiring shipped in an earlier commit but was undocumented). The
+sync guard triggers `sync_all(force=True)` when SGS is stale (>24h or
+missing).
 
 ---
 
@@ -358,7 +358,7 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 | [screener](skills/cvm/SCREENER.md) | cvm | 3 | ✅ | ❌ | SCREENER.md |
 | [comparison](skills/cvm/COMPARISON.md) | cvm | 5 | ✅ | ❌ | COMPARISON.md |
 | [investsite](skills/INVESTSITE.md) | investsite | 3 | ✅ | N/A (web) | INVESTSITE.md |
-| [macro](skills/bcb/MACRO.md) | bcb | 5 | ✅ | P2 (sgs not in sync_map) | MACRO.md |
+| [macro](skills/bcb/MACRO.md) | bcb | 5 | ✅ | ✅ (v1.2 docs) | MACRO.md |
 
 **Notes:**
 

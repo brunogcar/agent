@@ -4,18 +4,11 @@
 
 ## P2 (Next)
 
-1. **Wire "sgs" into `skills/_base._trigger_sync.sync_map`** — currently the sync guard for `required_sources=["sgs"]` records an error in `result["_sync"]["errors"]` and proceeds (because `sync_map` only knows CVM/B3 sources). Add an entry:
-   ```python
-   "sgs": ("data_sources.bcb.sgs.sync_engine", "sync_all",
-           lambda: {"force": True, "trace_id": trace_id}),
-   ```
-   This makes the sync guard actually trigger `sync_all` when SGS is stale (>24h or missing).
+1. **Real-returns mode** — Fisher equation: real rate = (1 + nominal) / (1 + inflation) - 1. Uses Selic (11) + IPCA (433), both already in the catalog. New mode `real_returns` in `modes/real_returns.py`.
 
-2. **Real-returns mode** — Fisher equation: real rate = (1 + nominal) / (1 + inflation) - 1. Uses Selic (11) + IPCA (433), both already in the catalog. New mode `real_returns` in `modes/real_returns.py`.
+2. **Yield curve mode** — Plot the term structure of interest rates using DI futures (requires adding DI series to the catalog). New mode `yield_curve`.
 
-3. **Yield curve mode** — Plot the term structure of interest rates using DI futures (requires adding DI series to the catalog). New mode `yield_curve`.
-
-4. **Inflation expectations mode** — BCB publishes market expectations (Focus survey) via a separate API endpoint. Could add a new sub-domain `data_sources/bcb/focus/` with expected IPCA / Selic / GDP growth.
+3. **Inflation expectations mode** — BCB publishes market expectations (Focus survey) via a separate API endpoint. Could add a new sub-domain `data_sources/bcb/focus/` with expected IPCA / Selic / GDP growth.
 
 ---
 
@@ -29,8 +22,9 @@
 
 ---
 
-## Done (v1.0)
+## Done
 
+- ✅ **sgs sync_map wiring (v1.2 docs)** — the `sgs` entry in `skills/_base._trigger_sync.sync_map` was added in an earlier commit: `("data_sources.bcb.sgs.sync_engine", "sync_all", lambda: {"force": True})`. The `historical` skill's `required_sources=["sgs"]` now actually triggers `sync_all(force=True)` when SGS is stale (>24h or missing) instead of recording an error + proceeding. v1.2 documents the wiring + fixes a stale comment drift.
 - ✅ 12 series in catalog (TR 226 restored from v1).
 - ✅ v1 sync_state schema (series_code / last_date / synced_at / row_count) with DROP TABLE migration.
 - ✅ Tab field `name` (was `label`).
@@ -44,4 +38,4 @@
 
 ---
 
-*Last updated: 2026-07-24 (v1.0).*
+*Last updated: 2026-08-13 (v1.2 — sgs sync_map wiring documented).*

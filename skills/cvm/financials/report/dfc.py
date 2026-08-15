@@ -33,17 +33,12 @@ def build_dfc_sections(
     company: str | None = None,
     dfc_result_q: dict | None = None,
     quarterly_periods: list[dict] | None = None,
-    ttm_periods: list[dict] | None = None,
 ) -> list[dict]:
     """Build the DFC tab: multi-period comparison table + 5Y FCO/FCI/FCF chart.
 
-    [v2.1] TTM (Anualizado) toggle support — same pattern as DRE:
-      - Accepts optional ``ttm_periods`` (normalized TTM period dicts).
-      - When provided, a 3rd "TTM" toggle panel is added to the period_toggle
-        section containing a small TTM metrics table + a TTM trend chart
-        (FCO/FCI/FCF built via ``build_dfc_trend_chart``).
-      - TTM is a flow statement (rolling 4-quarter sum), so the deseasonalized
-        FCO/FCI/FCF movement is more meaningful than quarterly noise.
+    [v2.2] TTM toggle reverted — TTM data lives only in the standalone
+    "Anualizado" tab now. The ``ttm_periods`` param was removed; the
+    period_toggle emits only annual + quarterly panels (2-button mode).
 
     [v1.25 v4] ALL time-series charts are now INSIDE the period_toggle:
       - Trajetória de FCO/FCI/FCF (trend)
@@ -76,14 +71,10 @@ def build_dfc_sections(
     dfc_periods = (dfc_result or {}).get("periods") or []
     dfc_periods_q = (dfc_result_q or {}).get("periods") or []
     q_periods = quarterly_periods or []
-    ttm_p = ttm_periods or []
 
     # [v1.25 v3] Build annual + quarterly trend charts, pass into period_toggle.
     dfc_annual_trend = build_dfc_trend_chart(dfc_periods, company)
     dfc_quarterly_trend = build_dfc_trend_chart(dfc_periods_q, company) if dfc_periods_q else None
-
-    # [v2.1] Build TTM trend chart (FCO/FCI/FCF TTM).
-    dfc_ttm_trend = build_dfc_trend_chart(ttm_p, company) if ttm_p else None
 
     # [v1.25 v4] Build annual + quarterly stacked-bar charts (FCO/FCI/FCF).
     dfc_annual_stacked = _build_dfc_stacked_chart(annual_periods)
@@ -106,13 +97,11 @@ def build_dfc_sections(
                         if c is not None]
 
     # [v1.24] Multi-period table + ALL time-series charts INSIDE period_toggle.
-    # [v2.1] Pass ``ttm_periods`` + ``ttm_chart`` so a 3rd TTM panel is added.
+    # [v2.2] TTM toggle reverted — no ttm_periods/ttm_chart kwargs.
     sections.extend(_build_period_toggle_sections(
         "DFC", dfc_periods, dfc_periods_q, "DFC",
         annual_chart=annual_charts,
         quarterly_chart=quarterly_charts,
-        ttm_periods=ttm_p,
-        ttm_chart=dfc_ttm_trend,
     ))
 
     if not sections and latest_annual_period:
@@ -340,7 +329,6 @@ def build_dfc_trend_chart(
 
 def build_dfc_quality_section(
     latest_annual_period: dict | None,
-    annual_periods: list[dict],
     company: str,
     today: str,
 ) -> list[dict]:
@@ -358,14 +346,13 @@ def build_dfc_quality_section(
     ``build_dfc_sections`` so it lives inside the period_toggle (annual +
     quarterly versions switch with the toggle). This function now returns
     ONLY the quality TABLE (point-in-time TTM values) — not a time-series.
-    ``annual_periods`` is kept in the signature for backward compatibility
-    with existing callers (e.g. dashboard.py) but is no longer used to
-    build a chart here.
+
+    [v2.2] The ``annual_periods`` param (unused since v1.25 v4) was removed —
+    it was kept only for backward compat with the dashboard caller. The
+    only caller now passes just (latest_annual_period, company, today).
 
     Args:
         latest_annual_period: latest annual period dict (or None).
-        annual_periods: list of all annual period dicts (UNUSED since
-            v1.25 v4 — kept for backward compat).
         company: ticker/CNPJ — needed for capex_at + ttm_earnings_at calls.
         today: YYYY-MM-DD for the TTM engine anchoring.
     """
@@ -441,8 +428,6 @@ def build_dfc_quality_section(
     # [v1.25 v4] The 5Y "FCO vs Lucro Líquido" line chart was MOVED to
     # ``build_dfc_sections`` so it lives inside the period_toggle (annual +
     # quarterly versions). The quality TABLE above (TTM values) STAYS here
-    # — it's point-in-time, not a time-series. ``annual_periods`` is kept
-    # in the signature for backward compatibility with existing callers
-    # (e.g. dashboard.py) but is no longer used to build a chart here.
+    # — it's point-in-time, not a time-series.
 
     return sections

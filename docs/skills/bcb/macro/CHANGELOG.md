@@ -2,6 +2,14 @@
 
 # 📋 Macro Changelog
 
+## v1.2 — 2026-08-13
+
+**Docs sync — sgs sync_map wiring documented.**
+
+### Required Summary
+
+- **sgs sync_map entry documented** — the `sgs` entry in `skills/_base._trigger_sync.sync_map` was added in an earlier commit (the `historical` skill's `required_sources=["sgs"]` now actually triggers `sync_all(force=True)` when SGS is stale), but the fix shipped without a CHANGELOG entry. v1.2 documents the wiring + updates the ROADMAP (moves "Wire sgs into sync_map" from P2 to Done). Also fixed a stale comment in `_base.py` that said `sync_all(force=False)` (the actual lambda passes `force=True`).
+
 ## v1.1 — 2026-08-06
 
 **Finetune: range selector + default window + CDI mock fix.**
@@ -53,4 +61,4 @@ dashboard, rates, inflation, fx.
 
 ---
 
-*Last updated: 2026-08-06 (v1.1).*
+*Last updated: 2026-08-13 (v1.2).*

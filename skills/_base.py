@@ -967,8 +967,8 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # [new commit] BCB SGS sync — REQUIRED_SOURCES in historical includes "sgs"
         # but sync_map had no entry, so every dashboard run failed the sgs sync
         # silently with "unknown source 'sgs'". This meant Selic/CDI/IPCA data
-        # could go stale indefinitely. sync_all(force=False) re-fetches only
-        # stale series (uses internal TTL).
+        # could go stale indefinitely. sync_all(force=True) re-fetches all series
+        # (force=True so the guard's staleness check doesn't no-op the refresh).
         "sgs":          ("data_sources.bcb.sgs.sync_engine", "sync_all",
                          lambda: {"force": True}),
     }

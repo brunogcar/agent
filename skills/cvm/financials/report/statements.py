@@ -2,7 +2,7 @@
 
 Hosts the multi-period comparison table builder used by all 4 statement
 tabs (Balanço / DRE / DFC / DVA) plus the period_toggle wrapper that
-switches between annual + quarterly (and optionally TTM) views.
+switches between annual + quarterly views.
 
 Public builders:
   - ``build_multi_period_table(title, periods, statement_type)`` — side-by-side
@@ -14,18 +14,19 @@ Private helpers (imported by ``report/balanco.py``, ``report/dre.py``,
     (legacy, kept for fallback).
   - ``_merge_bpa_bpp_periods(bpa_periods, bpp_periods)`` — merge BPA + BPP
     periods for the Balanço "Completo" sub-tab.
-  - ``_build_period_toggle_sections(...)`` — wraps annual + quarterly (+ TTM)
+  - ``_build_period_toggle_sections(...)`` — wraps annual + quarterly
     tables (and optional charts) in a ``type: "period_toggle"`` section.
-    [v2.1] TTM (trailing twelve months) is an optional 3rd panel for flow
-    statements (DRE/DFC/DVA). When ``ttm_periods`` + ``ttm_chart`` are
-    provided, the section emits ``ttm_sections`` alongside
-    ``annual_sections`` + ``quarterly_sections``. The TTM panel shows a
-    small metrics table (built via ``build_ttm_table``) + the TTM chart(s).
+
+[v2.2] The TTM 3rd-panel toggle added in v2.1 was reverted — TTM data now
+lives ONLY in the standalone "Anualizado" tab (built by ``dashboard.py``
+via ``build_ttm_table`` + ``build_ttm_chart`` from ``report/periods.py``).
+The flow-statement tabs (DRE/DFC/DVA) keep the 2-button annual/quarterly
+toggle. ``build_ttm_table`` + ``build_ttm_chart`` remain in ``periods.py``
+for the standalone tab.
 """
 from __future__ import annotations
 
 from skills.cvm.financials.report._helpers import _fmt, _format_period_label, _period_sort_key
-from skills.cvm.financials.report.periods import build_ttm_table
 
 
 def _statement_table_section(title: str, accounts_dict: dict) -> dict:
@@ -77,8 +78,7 @@ def build_multi_period_table(
         periods: list of period dicts (each has ``period`` label + ``accounts``
             dict of ``{codigo: {label, section, valor_brl}}``). Periods are
             assumed to be newest-first (the standard statement-mode order).
-        statement_type: "BPA" / "BPP" / "DRE" / "DFC" / "DVA" — used for the
-            note caption.
+        statement_type: BPA / BPP / DRE / DFC / DVA — used for the note caption.
 
     Returns:
         A ``type: "table"`` section, or None when no periods / no accounts.
@@ -189,22 +189,19 @@ def _build_period_toggle_sections(
     statement_type: str,
     annual_chart: dict | list[dict] | None = None,
     quarterly_chart: dict | list[dict] | None = None,
-    ttm_periods: list[dict] | None = None,
-    ttm_chart: dict | list[dict] | None = None,
 ) -> list[dict]:
-    """[v1.25 v3 / v2.1] Build a section list with optional period toggle.
+    """[v1.25 v3] Build a section list with optional period toggle.
 
     - When ``quarterly_periods`` is non-empty: returns a single
       ``type: "period_toggle"`` section wrapping two ``build_multi_period_table``
       calls (annual + quarterly) PLUS optional charts. Quarterly visible by default.
     - When ``quarterly_periods`` is empty/None: returns just the annual
       multi-period table + annual chart (no toggle).
-    - [v2.1] When ``ttm_periods`` (or ``ttm_chart``) is provided: the section
-      ALSO emits a ``ttm_sections`` key — a 3rd panel showing a small TTM
-      metrics table (built via ``build_ttm_table``) + the TTM chart(s). Used
-      by flow-statement tabs (DRE/DFC/DVA) so the user can switch between
-      annual / TTM / quarterly views. Skipped for snapshot tabs (BPA/BPP)
-      because TTM for snapshots = latest snapshot (no value-add).
+
+    [v2.2] TTM 3rd-panel support removed — TTM data lives only in the
+    standalone "Anualizado" tab now. The ``period_toggle`` section emits
+    ONLY ``annual_sections`` + ``quarterly_sections`` (no ``ttm_sections``
+    key). The macro + dashboard.html script block reverted to 2-button mode.
 
     Args:
         label: statement label used in table titles.
@@ -213,15 +210,10 @@ def _build_period_toggle_sections(
         statement_type: BPA / BPP / DRE / DFC / DVA.
         annual_chart: optional chart section(s) for the annual panel.
         quarterly_chart: optional chart section(s) for the quarterly panel.
-        ttm_periods: [v2.1] optional list of TTM period dicts (from
-            ``ttm_result["periods"]``). When non-empty, a TTM metrics table
-            is added to a 3rd toggle panel.
-        ttm_chart: [v2.1] optional chart section(s) for the TTM panel.
 
     Returns:
         List of 0-1 sections. The ``period_toggle`` section's shape:
-        ``{type, annual_sections, quarterly_sections, ttm_sections?}`` —
-        ``ttm_sections`` is present only when TTM data was provided.
+        ``{type, annual_sections, quarterly_sections}``.
     """
     annual_table = build_multi_period_table(
         f"{label} — Comparativo Anual", annual_periods, statement_type)
@@ -234,33 +226,19 @@ def _build_period_toggle_sections(
 
     annual_charts = _as_list(annual_chart)
     quarterly_charts = _as_list(quarterly_chart)
-    ttm_charts = _as_list(ttm_chart)
 
-    # [v2.1] Build a small TTM metrics table from the raw TTM periods.
-    # TTM periods don't have ``accounts`` (they have ``metrics``), so the
-    # multi-period table builder can't be reused. ``build_ttm_table`` from
-    # ``report/periods.py`` handles the metrics shape directly. Returns None
-    # when ``ttm_periods`` is empty.
-    ttm_table = build_ttm_table(ttm_periods) if ttm_periods else None
-
-    has_ttm = bool(ttm_table) or bool(ttm_charts)
-
-    if quarterly_periods or has_ttm:
+    if quarterly_periods:
         quarterly_table = build_multi_period_table(
             f"{label} — Comparativo Trimestral", quarterly_periods, statement_type
-        ) if quarterly_periods else None
-        if annual_table or quarterly_table or has_ttm:
+        )
+        if annual_table or quarterly_table:
             annual_secs = ([annual_table] if annual_table else []) + annual_charts
             quarterly_secs = ([quarterly_table] if quarterly_table else []) + quarterly_charts
-            ttm_secs = ([ttm_table] if ttm_table else []) + ttm_charts
-            section: dict = {
+            return [{
                 "type": "period_toggle",
                 "annual_sections": annual_secs,
                 "quarterly_sections": quarterly_secs,
-            }
-            if ttm_secs:
-                section["ttm_sections"] = ttm_secs
-            return [section]
+            }]
         return []
 
     if annual_table:

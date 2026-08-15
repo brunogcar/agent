@@ -15,27 +15,9 @@
 | P3 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
 | Done | F3 — Price history overlay (v1.23) | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
 | Done | F4 — Period selector (v1.24) | Trimestral/Anual toggle (pre-render + JS toggle) |
-| Done | TTM toggle (v2.1) | 3rd "TTM" panel on DRE/DFC/DVA period_toggle (rolling 4-quarter sum, deseasonalized) |
+| Reverted | TTM toggle (v2.1 → v2.2) | 3rd "TTM" panel on DRE/DFC/DVA period_toggle was reverted in v2.2 — TTM data stays in the standalone "Anualizado" tab only (cleaner UX, avoids duplicate TTM views) |
 
 > **Note:** Recently completed items (F1–F14, force sync guard, review-fix sprint, dashboard reorg, TTM+YoY, dashboard v3 sprint, collective-review sprint) are in [CHANGELOG.md](CHANGELOG.md).
-
-## 📋 Next: Valuation Skill Overhaul
-
-The financials dashboard v3 pattern (company header + price chart + sidebar
-groups + tooltips + chart titles + freshness footer) is now the template
-for all CVM skill dashboards. **Next commit** will apply the same pattern
-to the `valuation` skill:
-
-1. **Company header** — reuse `build_company_header()` from `skills/cvm/_shared_report/`
-2. **Historical price chart** — reuse `build_price_chart()` from `skills/cvm/_shared_report/`
-3. **Sidebar groups** — Resumo / Múltiplos / Fundamentos / Crescimento
-4. **Chart titles + descriptions** — on all existing charts
-5. **Tooltips** — reuse `get_tooltip()` from `skills/cvm/_shared_report/`
-6. **Freshness footer** — compact, replaces bulky tables
-7. **engine_cache_scope** — wrap dashboard in cache scope
-8. **New mode: historical_valuation** — P/L, EV/EBITDA over time (mirrors financials TTM pattern)
-
-See the valuation skill's own [ROADMAP.md](../valuation/ROADMAP.md) for details.
 
 ## 📋 Backlog
 
@@ -85,46 +67,30 @@ render correctly inside `display:none` containers — see INSTRUCTIONS.md
 v1.25 lesson). Period labels use `"2T2026"` format; up to 20 quarterly
 periods fetched via `_fetch_all_statements_quarterly()`.
 
-### TTM toggle — ✅ Done (v2.1)
+### TTM toggle — ⏮ Reverted (v2.1 → v2.2)
 
-**Priority:** ~~P2~~ Done in v2.1.
-**Source:** Reviewer suggestion (v2.1 sprint)
+**Priority:** ~~P2~~ Reverted in v2.2.
+**Source:** Reviewer suggestion (v2.1 sprint) → user feedback (v2.2)
 
-Added a 3rd "TTM" (trailing twelve months) panel to the period_toggle
+v2.1 added a 3rd "TTM" (trailing twelve months) panel to the period_toggle
 on flow-statement tabs (DRE/DFC/DVA). TTM at quarter Q = rolling 4-
 quarter sum (e.g. TTM at 2T2026 = Q3 2025 + Q4 2025 + Q1 2026 + Q2 2026).
 Deseasonalizes quarterly noise so the user can see real trends.
 
-Implementation:
-  - `_build_period_toggle_sections()` in `report/statements.py` accepts
-    optional `ttm_periods` + `ttm_chart` params. When TTM data is
-    provided, the `period_toggle` section emits a `ttm_sections` key
-    alongside `annual_sections` + `quarterly_sections`.
-  - The TTM panel shows a small metrics table (built via
-    `build_ttm_table` from `report/periods.py` — Período, Receita,
-    EBITDA, Lucro Líq., Marg. EBITDA, Marg. Líq.) + the TTM trend chart
-    (Receita/EBITDA/Lucro for DRE; FCO/FCI/FCF for DFC; chart is None
-    for DVA in v2.1 because TTM periods don't have `accounts`).
-  - `report/dre.py`, `report/dfc.py`, `report/dva.py` accept a new
-    `ttm_periods` param and pass it through to
-    `_build_period_toggle_sections()`.
-  - `dashboard.py` normalizes raw TTM periods (adds `period` key =
-    `quarter` value) so trend-chart builders that read `p.get("period")`
-    work transparently with TTM periods.
-  - `macros.html` `period_toggle` macro renders 3 buttons + 3 panels
-    when `ttm_sections` is non-empty; 2 buttons + 2 panels otherwise
-    (backward compat with v1.24 BPA/BPP tabs).
-  - `dashboard.html` script block renders TTM panel charts with
-    `{prefix}-t-chart-{idx}` canvas IDs (mirrors the existing
-    `-a-chart-{idx}` / `-q-chart-{idx}` pattern).
-  - `togglePeriod()` JS is unchanged — it already iterates panels by
-    `data-period` attribute, so adding a 3rd `data-period="ttm"` panel
-    works without code changes.
-
-Skipped for v2.1: BPA/BPP (snapshot statements — TTM = latest snapshot,
-no value-add). DVA TTM trend chart (would need to derive VA Bruta etc.
-from the metrics dict — DVA trend chart reads from `accounts` codes
-7.04/7.06/7.08 which TTM periods don't have).
+v2.2 reverted this — the 3-panel toggle duplicated the TTM data already
+available in the standalone "Anualizado" tab, and the user preferred to
+keep TTM in one place. The revert:
+  - Removed ``ttm_periods`` + ``ttm_chart`` params from
+    ``_build_period_toggle_sections()`` in ``report/statements.py``.
+  - Removed ``ttm_periods`` param from ``build_dre_sections`` /
+    ``build_dfc_sections`` / ``build_dva_sections``.
+  - Removed the TTM normalization block + the 3 ``ttm_periods=`` kwargs
+    from ``dashboard.py``.
+  - Reverted the ``period_toggle`` macro in ``macros.html`` to 2-button
+    mode (Trimestral + Anual).
+  - Removed the TTM panel chart-render loops from ``dashboard.html``.
+  - Kept ``build_ttm_table`` + ``build_ttm_chart`` in ``report/periods.py``
+    for the standalone "Anualizado" tab (unchanged).
 
 ### F15 — WACC drivers decomposition
 
@@ -228,4 +194,4 @@ already has sector-aware logic that could be reused.
 
 ---
 
-*Last updated: 2026-08-13 (v2.1 — TTM toggle + WACC drivers / QoE / Capital allocation / Sector-specific ratios backlog; F3 + F4 + TTM toggle DONE). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v2.2 — TTM toggle reverted; standalone "Anualizado" tab kept. F3 + F4 DONE). See [CHANGELOG.md](CHANGELOG.md) for version history.*

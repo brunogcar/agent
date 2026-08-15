@@ -137,9 +137,8 @@
     {% if sec.type == 'period_toggle' %}
     {# [v1.24] Top-level period_toggle (used by DRE/DFC/DVA tabs which are
        flat section lists, not subtabs). Same macro as used inside subtabs.
-       [v2.1] Pass ``ttm_sections`` for the optional 3rd TTM panel. The
-       macro handles the None case (renders 2 buttons instead of 3). #}
-    {{ m.period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), 'tab-' + outer_loop.index|string + '-pt-' + loop.index|string, ttm_sections=sec.ttm_sections) }}
+       [v2.2] TTM 3rd panel reverted — no ttm_sections kwarg. #}
+    {{ m.period_toggle(sec.annual_sections | default([]), sec.quarterly_sections | default([]), 'tab-' + outer_loop.index|string + '-pt-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
@@ -158,7 +157,12 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.0/dist/chartjs-chart-financial.min.js"></script>
+{# [v2.2] chartjs-chart-financial CDN removed — the b3/price candlestick
+   chart is rendered by the vanilla _renderOHLCChart helper (flagged via
+   chart_data._ohlc), not the chartjs-chart-financial plugin. The plugin
+   was originally added in b3/price v1.0 but later replaced because it
+   forced a `time` x-scale that required a date adapter (rendered blank
+   without it). The CDN tag was dead weight loaded on every dashboard. #}
 {# ── Chart-rendering infrastructure ────────────────────────────────────────
    [v1.13 review-fix] Two issues addressed here:
 
@@ -432,13 +436,6 @@
     <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}, ohlc: {{ sec.price_full_ohlc | default([]) | tojson }}};</script>
     {% endif %}
     {% endif %}
-    {# Top-level candlestick chart (b3 price skill) #}
-    {% if sec.type == 'candlestick' and sec.chart_data %}
-    <script>_renderChart('tab-{{ outer_loop.index }}-chart-{{ loop.index }}', {{ sec.chart_data | tojson }});</script>
-    {% if sec.price_range_selector %}
-    <script>_priceChartFullData['tab-{{ outer_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sec.price_full_labels | default([]) | tojson }}, datasets: {{ sec.price_full_datasets | default([]) | tojson }}, data: {{ sec.price_full_data | default([]) | tojson }}, ohlc: {{ sec.price_full_ohlc | default([]) | tojson }}};</script>
-    {% endif %}
-    {% endif %}
     {# Top-level period_toggle charts #}
     {% if sec.type == 'period_toggle' %}
       {% set pt_idx = loop.index %}
@@ -452,12 +449,6 @@
         <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
         {% endif %}
       {% endfor %}
-      {# [v2.1] TTM panel charts (3rd toggle option for flow statements). #}
-      {% for pt_sec in (sec.ttm_sections or []) %}
-        {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
-        <script>_renderChart('tab-{{ outer_loop.index }}-pt-{{ pt_idx }}-t-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
-        {% endif %}
-      {% endfor %}
     {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
     {% if sec.type == 'subtabs' and sec.tabs %}
@@ -466,9 +457,6 @@
         {% set sub_loop = loop %}
         {% for sub_sec in subtab.sections %}
           {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
-          <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
-          {% endif %}
-          {% if sub_sec.type == 'candlestick' and sub_sec.chart_data %}
           <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
           {% endif %}
           {# Subtab period_toggle charts #}
@@ -482,12 +470,6 @@
             {% for pt_sec in sub_sec.quarterly_sections %}
               {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
               <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
-              {% endif %}
-            {% endfor %}
-            {# [v2.1] Subtab TTM panel charts. #}
-            {% for pt_sec in (sub_sec.ttm_sections or []) %}
-              {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
-              <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-t-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
               {% endif %}
             {% endfor %}
           {% endif %}
