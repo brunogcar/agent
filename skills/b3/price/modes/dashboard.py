@@ -187,7 +187,11 @@ def dashboard(ticker: str = "") -> dict:
     medias_sections = build_medias_sections(
         tk, dates, closes, ma20, ma50, ma100, ma200, crossovers,
     )
-    volume_sections = build_volume_sections(tk, dates, volumes, closes, opens)
+    volume_sections = build_volume_sections(
+        tk, dates, volumes, closes, opens,
+        trade_counts=[p.get("trade_count") for p in ohlcv],
+        contracts=[p.get("contracts") for p in ohlcv],
+    )
     # [v1.2] Indicadores tab — RSI + MACD + Stochastic + OBV + signals table.
     indicadores_sections = build_indicadores_sections(
         tk, dates, closes, highs, lows, volumes,

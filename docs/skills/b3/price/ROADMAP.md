@@ -11,6 +11,8 @@
 | P3 | P4 — Options chain | Put/call ratio + IV smile for tickers with listed options |
 | P3 | P5 — Multi-ticker compare | Side-by-side price + return comparison (mirror b3/index compare) |
 | P3 | P6 — Pattern recognition | Auto-detect head-and-shoulders, double tops, triangles |
+| P3 | P8 — Bid-ask spread analysis | Use cotahist best_bid + best_ask columns — liquidity + transaction cost analysis |
+| P4 | P9 — Options skill (new) | Separate skill using cotahist options data (strike / maturity / strike_pts) — COTAHIST already has options trades, filtered out by BDI during sync. Would need a separate query path + strike/maturity analysis |
 
 > **Note:** Recently completed items (Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
@@ -138,4 +140,4 @@ confidence threshold + user-tunable sensitivity.
 
 ---
 
-*Last updated: 2026-08-15 (v1.4). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-15 (v1.5). See [CHANGELOG.md](CHANGELOG.md) for version history.*

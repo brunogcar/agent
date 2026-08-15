@@ -43,13 +43,13 @@ def _connect() -> sqlite3.Connection:
 def ohlcv_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
     """Get daily OHLCV data for a ticker.
 
-    Returns: [{"date", "open", "high", "low", "close", "volume", "trade_count"}]
+    Returns: [{"date", "open", "high", "low", "close", "volume", "trade_count", "contracts"}]
     sorted oldest-first.
     """
     try:
         conn = _connect()
         rows = conn.execute(
-            """SELECT refdate, open, high, low, close, volume, trade_count
+            """SELECT refdate, open, high, low, close, volume, trade_count, contracts
                FROM cotahist
                WHERE symbol = ? AND refdate >= ? AND refdate <= ?
                AND market_type = 10 AND close IS NOT NULL AND close > 0
@@ -66,6 +66,7 @@ def ohlcv_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
                 "close": float(r["close"]),
                 "volume": float(r["volume"]) if r["volume"] else 0.0,
                 "trade_count": int(r["trade_count"]) if r["trade_count"] else 0,
+                "contracts": int(r["contracts"]) if r["contracts"] else 0,
             }
             for r in rows
         ]

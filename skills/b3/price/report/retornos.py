@@ -184,6 +184,68 @@ def build_retornos_sections(
             }
             sections.append(adj_section)
 
+            # [v1.5] Dividend return chart = adjusted - raw (dividend contribution).
+            div_return_pct: list[float | None] = []
+            for a, r in zip(adj_cum_pct, cum_returns_pct):
+                if a is not None and r is not None:
+                    div_return_pct.append(a - r)
+                else:
+                    div_return_pct.append(None)
+            div_total_return = None
+            valid_div = [v for v in div_return_pct if v is not None]
+            if valid_div:
+                div_total_return = valid_div[-1] / 100.0  # back to fraction for fmt_pct
+            div_section: dict[str, Any] = {
+                "type": "chart",
+                "title": f"Retorno de Dividendos — {ticker}",
+                "description": (
+                    "Diferença entre o retorno ajustado e o retorno bruto = "
+                    "contribuição dos dividendos. Mostra quanto do retorno total "
+                    "veio de dividendos reinvestidos vs valorização do preço. "
+                    "Linha crescente = dividendos acumulando ao longo do tempo."
+                ),
+                "chart_data": {
+                    "type": "line",
+                    "data": {
+                        "labels": dates,
+                        "datasets": [
+                            {
+                                "type": "line",
+                                "label": f"{ticker} — Retorno de Dividendos (%)",
+                                "data": div_return_pct,
+                                "borderColor": "#22c55e",
+                                "backgroundColor": "rgba(34,197,94,0.15)",
+                                "borderWidth": 1.5,
+                                "pointRadius": 0,
+                                "pointHoverRadius": 3,
+                                "tension": 0.1,
+                                "fill": "origin",
+                            },
+                        ],
+                    },
+                    "options": {
+                        "responsive": True,
+                        "maintainAspectRatio": False,
+                        "interaction": {"mode": "index", "intersect": False},
+                        "scales": {
+                            "x": {"ticks": {"maxTicksLimit": 12}},
+                            "y": {
+                                "position": "left",
+                                "title": {"display": True, "text": "Retorno de dividendos (%)"},
+                            },
+                        },
+                        "plugins": {"legend": {"display": True, "position": "top"}},
+                    },
+                },
+                "price_range_selector": True,
+                "price_full_labels": dates,
+                "price_full_datasets": [
+                    {"data": div_return_pct, "label": "Retorno Div. (%)"},
+                ],
+                "price_full_data": div_return_pct,
+            }
+            sections.append(div_section)
+
     # ── Drawdown chart (always ≤ 0; red fill, single left axis %) ──────────
     dd_section: dict[str, Any] = {
         "type": "chart",
@@ -246,6 +308,8 @@ def build_retornos_sections(
     ]
     if adj_total_return is not None:
         kpi_rows.append(["Retorno Cumulativo Ajustado", fmt_pct(adj_total_return)])
+    if div_total_return is not None:
+        kpi_rows.append(["Retorno de Dividendos",        fmt_pct(div_total_return)])
     kpi_rows.extend([
         ["Drawdown Máximo",                  fmt_pct(max_dd or 0)],
         ["Dias no Período",                  str(len(dates))],

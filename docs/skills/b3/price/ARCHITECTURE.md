@@ -164,4 +164,4 @@ filtered alongside the main price series.
 
 ---
 
-*Last updated: 2026-08-15 (v1.4 — Cotação tab redesign + 4 new engines + negative_red + datalabels plugin). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-15 (v1.5 — dividend return chart + trade_count/contracts charts + ohlcv_series contracts column). See [CHANGELOG.md](CHANGELOG.md) for version history.*

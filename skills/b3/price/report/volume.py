@@ -1,6 +1,12 @@
 """skills/b3/price/report/volume.py -- Volume tab builder.
 
-Volume bars (colored by up/down day) + 20-day volume MA line + average volume KPI.
+Volume bars (colored by up/down day) + price overlay + trade count chart +
+contracts chart + average volume KPI.
+
+[v1.5] Added trade_count + contracts charts — both use the dual-axis
+pattern (bars left, price right) matching the existing volume chart.
+Trade count shows number of individual trades (negócios) per day;
+contracts shows total shares/contracts traded (quantity, not R$).
 """
 from __future__ import annotations
 
@@ -11,6 +17,20 @@ from tools.report_ops.formats import fmt_compact, fmt_int, _is_missing
 
 _COLOR_UP = "#22c55e"
 _COLOR_DOWN = "#ef4444"
+_PRICE_COLOR = "#0d9488"  # teal
+
+
+def _up_down_colors(closes: list[float | None], opens: list[float | None]) -> list[str]:
+    """Build a per-day color list: green if close >= open, red otherwise."""
+    colors: list[str] = []
+    for i in range(len(closes)):
+        c = closes[i] if i < len(closes) else None
+        o = opens[i] if i < len(opens) else None
+        if c is not None and o is not None:
+            colors.append(_COLOR_UP if c >= o else _COLOR_DOWN)
+        else:
+            colors.append(_COLOR_UP)
+    return colors
 
 
 def build_volume_sections(
@@ -20,20 +40,26 @@ def build_volume_sections(
     closes: list[float | None],
     opens: list[float | None],
     vol_ma20: list[float | None] | None = None,
+    trade_counts: list[int | None] | None = None,
+    contracts: list[int | None] | None = None,
 ) -> list[dict]:
-    """Build the Volume tab: volume bars + 20D MA line + average KPI.
+    """Build the Volume tab: volume bars + trade count + contracts + KPI.
+
+    [v1.5] Added trade_count + contracts charts.
 
     Args:
-        ticker:   PETR4
-        dates:    list of YYYY-MM-DD strings
-        volumes:  daily financial volume (R$) aligned with dates
-        closes:   daily close prices (for up/down color classification)
-        opens:    daily open prices (for up/down color classification)
-        vol_ma20: 20-day SMA of volume (None for warmup). If None, computed here
-                  from volumes (using the engines' compute_sma).
+        ticker:       PETR4
+        dates:        list of YYYY-MM-DD strings
+        volumes:      daily financial volume (R$) aligned with dates
+        closes:       daily close prices (for up/down color + dual-axis overlay)
+        opens:        daily open prices (for up/down color classification)
+        vol_ma20:     20-day SMA of volume (UNUSED — kept for compat)
+        trade_counts: [v1.5] daily number of trades (negócios)
+        contracts:    [v1.5] daily total shares/contracts traded (quantity)
 
     Returns:
-        Two sections: volume bars chart (with MA20 line overlay) + volume stats KPI.
+        Four sections: volume bars chart + trade count chart + contracts
+        chart + volume stats KPI table.
     """
     if not dates:
         return [{
@@ -42,34 +68,14 @@ def build_volume_sections(
             "text": "Sem dados de volume disponíveis.",
         }]
 
-    # Color per day: green if close >= open (up day), red otherwise.
-    # Falls back to green when open/close missing.
-    colors: list[str] = []
-    for i in range(len(dates)):
-        c = closes[i] if i < len(closes) else None
-        o = opens[i] if i < len(opens) else None
-        if c is not None and o is not None:
-            colors.append(_COLOR_UP if c >= o else _COLOR_DOWN)
-        else:
-            colors.append(_COLOR_UP)
+    colors = _up_down_colors(closes, opens)
 
-    # [v2] The MM20 volume overlay was removed per user request. A close-PRICE
-    # line on the right-hand axis (dual axis) is added instead so volume can be
-    # read alongside price action — same pattern as the Volume Diário chart in
-    # the Cotação tab.
-    _PRICE_COLOR = "#0d9488"  # teal
-
-    datasets: list[dict] = [
-        {
-            "type": "bar",
-            "label": "Volume (R$)",
-            "data": volumes,
-            "backgroundColor": colors,
-            "borderColor": colors,
-            "borderWidth": 0,
-            "order": 2,
-        },
-        {
+    def _dual_axis_bar_chart(
+        title: str, description: str, data: list, y_label: str,
+        data_label: str, chart_type: str = "bar",
+    ) -> dict:
+        """Build a dual-axis bar chart (data left, price right)."""
+        price_line = {
             "type": "line",
             "label": f"{ticker} — Preço",
             "data": closes,
@@ -79,68 +85,120 @@ def build_volume_sections(
             "pointHoverRadius": 3,
             "tension": 0,
             "fill": False,
-            "yAxisID": "y1",  # right-hand price axis (dual axis)
+            "yAxisID": "y1",
             "order": 1,
-        },
-    ]
+        }
+        bar_ds = {
+            "type": "bar",
+            "label": data_label,
+            "data": data,
+            "backgroundColor": colors,
+            "borderColor": colors,
+            "borderWidth": 0,
+            "order": 2,
+        }
+        return {
+            "type": "chart",
+            "title": title,
+            "description": description,
+            "chart_data": {
+                "type": "bar",
+                "data": {"labels": dates, "datasets": [bar_ds, price_line]},
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "interaction": {"mode": "index", "intersect": False},
+                    "scales": {
+                        "x": {"ticks": {"maxTicksLimit": 12}},
+                        "y": {"position": "left", "title": {"display": True, "text": y_label}},
+                        "y1": {
+                            "position": "right",
+                            "title": {"display": True, "text": "Preço (R$)"},
+                            "grid": {"drawOnChartArea": False},
+                        },
+                    },
+                    "plugins": {"legend": {"display": True, "position": "top"}},
+                },
+            },
+            "price_range_selector": True,
+            "price_full_labels": dates,
+            "price_full_datasets": [
+                {"data": data, "label": data_label},
+                {"data": closes, "label": f"{ticker} — Preço"},
+            ],
+            "price_full_data": data,
+        }
 
-    chart_section: dict[str, Any] = {
-        "type": "chart",
-        "title": f"Volume — {ticker}",
-        "description": (
+    # ── 1. Volume financial (R$) chart ─────────────────────────────────────
+    chart_section = _dual_axis_bar_chart(
+        f"Volume — {ticker}",
+        (
             "Volume financeiro diário (R$, eixo esquerdo). Verde: fechamento ≥ "
             "abertura (alta). Vermelho: fechamento < abertura (baixa). Linha teal: "
             "preço de fechamento (eixo direito)."
         ),
-        "chart_data": {
-            "type": "bar",
-            "data": {"labels": dates, "datasets": datasets},
-            "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
-                "interaction": {"mode": "index", "intersect": False},
-                "scales": {
-                    "x": {"ticks": {"maxTicksLimit": 12}},
-                    "y": {
-                        "position": "left",
-                        "title": {"display": True, "text": "Volume (R$)"},
-                    },
-                    "y1": {
-                        "position": "right",
-                        "title": {"display": True, "text": "Preço (R$)"},
-                        "grid": {"drawOnChartArea": False},
-                    },
-                },
-                "plugins": {"legend": {"display": True, "position": "top"}},
-            },
-        },
-        # price_full_datasets mirrors chart_data.data.datasets order:
-        # [volume, price].
-        "price_range_selector": True,
-        "price_full_labels": dates,
-        "price_full_datasets": [
-            {"data": volumes, "label": "Volume (R$)"},
-            {"data": closes, "label": f"{ticker} — Preço"},
-        ],
-        "price_full_data": volumes,
-    }
+        volumes, "Volume (R$)", "Volume (R$)",
+    )
+    sections: list[dict] = [chart_section]
 
-    # Average volume KPI (last 20D, last 60D, last 252D).
+    # ── 2. Trade count chart (v1.5) ────────────────────────────────────────
+    if trade_counts:
+        tc_section = _dual_axis_bar_chart(
+            f"Número de Negócios — {ticker}",
+            (
+                "Quantidade de negócios (trades) por dia (eixo esquerdo). "
+                "Diferente do volume financeiro — mostra participação do mercado "
+                "(número de investidores transacionando). Linha teal: preço (eixo direito)."
+            ),
+            trade_counts, "Negócios", "Negócios",
+        )
+        sections.append(tc_section)
+
+    # ── 3. Contracts chart (v1.5) ──────────────────────────────────────────
+    if contracts:
+        ct_section = _dual_axis_bar_chart(
+            f"Quantidade de Ações — {ticker}",
+            (
+                "Total de ações/contratos negociados por dia (quantidade, eixo "
+                "esquerdo). Normaliza a comparação entre tickers de preços "
+                "diferentes — 1M ações a R$10 = R$10M vs 1M ações a R$100 = "
+                "R$100M (mesma quantidade, volume diferente). Linha teal: preço."
+            ),
+            contracts, "Ações/Contratos", "Ações/Contratos",
+        )
+        sections.append(ct_section)
+
+    # ── 4. Average volume KPI ──────────────────────────────────────────────
     valid_vols = [v for v in volumes if not _is_missing(v) and v > 0]
     avg_20d = (sum(valid_vols[-20:]) / len(valid_vols[-20:])) if len(valid_vols) >= 1 else None
     avg_60d = (sum(valid_vols[-60:]) / len(valid_vols[-60:])) if len(valid_vols) >= 1 else None
     avg_252d = (sum(valid_vols[-252:]) / len(valid_vols[-252:])) if len(valid_vols) >= 1 else None
 
+    kpi_rows = [
+        ["20 dias úteis (1M)", fmt_compact(avg_20d)],
+        ["60 dias úteis (3M)", fmt_compact(avg_60d)],
+        ["252 dias úteis (1A)", fmt_compact(avg_252d)],
+        ["Dias com volume registrado", fmt_int(len(valid_vols))],
+    ]
+
+    # [v1.5] Add trade count + contracts averages if available.
+    if trade_counts:
+        valid_tc = [t for t in trade_counts if t is not None and t > 0]
+        if valid_tc:
+            avg_tc_20d = sum(valid_tc[-20:]) / len(valid_tc[-20:])
+            kpi_rows.append(["Média negócios (20D)", fmt_int(avg_tc_20d)])
+    if contracts:
+        valid_ct = [c for c in contracts if c is not None and c > 0]
+        if valid_ct:
+            avg_ct_20d = sum(valid_ct[-20:]) / len(valid_ct[-20:])
+            kpi_rows.append(["Média ações (20D)", fmt_int(avg_ct_20d)])
+
     kpi_section: dict[str, Any] = {
         "type": "table",
         "title": "Estatísticas de Volume",
         "columns": ["Janela", "Volume Médio (R$)"],
-        "rows": [
-            ["20 dias úteis (1M)", fmt_compact(avg_20d)],
-            ["60 dias úteis (3M)", fmt_compact(avg_60d)],
-            ["252 dias úteis (1A)", fmt_compact(avg_252d)],
-            ["Dias com volume registrado", fmt_int(len(valid_vols))],
-        ],
+        "rows": kpi_rows,
     }
 
-    return [chart_section, kpi_section]
+    sections.append(kpi_section)
+    return sections

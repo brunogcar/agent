@@ -177,4 +177,4 @@ skill(domain="b3", sub_domain="price", mode="quote",     params='{"ticker":"VALE
 
 ---
 
-*Last updated: 2026-08-15 (v1.4 — Cotação tab redesign). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-15 (v1.5 — dividend return chart + trade_count/contracts charts). See [CHANGELOG.md](CHANGELOG.md) for version history.*
