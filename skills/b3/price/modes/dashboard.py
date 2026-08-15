@@ -1,20 +1,22 @@
-"""Mode: dashboard -- 6-tab B3 price analytics dashboard.
+"""Mode: dashboard -- 7-tab B3 price analytics dashboard.
 
 Tabs:
-  Cotação         (group: Preço)        — candlestick + volume + 6 KPIs
-  Médias Móveis   (group: Preço)        — SMA chart + crossovers table
-  Volume          (group: Preço)        — volume bars + price overlay + stats
-  Indicadores     (group: Preço)        — RSI + MACD + Stochastic + OBV + signals  [v1.2]
-  Retornos        (group: Performance)  — cumulative return + drawdown + KPIs
-  Volatilidade    (group: Performance)  — rolling vol + Bollinger Bands
+  Cotação         (group: Preço)             — candlestick + volume + 6 KPIs
+  Médias Móveis   (group: Preço)             — SMA chart + crossovers table
+  Volume          (group: Preço)             — volume bars + price overlay + stats
+  Indicadores     (group: Preço)             — RSI + MACD + Stochastic + OBV + signals
+  Retornos        (group: Performance)       — cumulative return (raw + adjusted) + drawdown
+  Volatilidade    (group: Performance)       — rolling vol + Bollinger Bands
+  Fibonacci       (group: Análise Técnica)   — Fib levels + trade setup (COMPRA/VENDA)  [v1.3]
 
 Workflow:
   1. Fetch 10 years of daily OHLCV from cotahist.db via engines.ohlcv_series
   2. Compute MAs, returns, drawdowns, volatility, Bollinger Bands via engines
-  3. [v1.2] Compute RSI, MACD, Stochastic, OBV via engines (momentum oscillators)
-  4. Find MA crossovers (MA20×MA50, MA50×MA200)
-  5. Get 52-week range + latest quote
-  6. Pass computed series to report builders (no computation in builders)
+  3. Compute RSI, MACD, Stochastic, OBV via engines (momentum oscillators)
+  4. [v1.3] Compute dividend-adjusted close + swing extremes + Fibonacci trade setup
+  5. Find MA crossovers (MA20×MA50, MA50×MA200)
+  6. Get 52-week range + latest quote
+  7. Pass computed series to report builders (no computation in builders)
 """
 from __future__ import annotations
 
@@ -27,12 +29,13 @@ from skills.b3.price.engines import (
     compute_cumulative_returns, compute_drawdowns, compute_volatility,
     compute_bollinger_bands, find_ma_crossovers, compute_52w_range,
     compute_rsi, compute_macd, compute_stochastic, compute_obv,
+    compute_adjusted_close, find_swing_extremes,
 )
 from skills.b3.price.report import (
     build_cotacao_sections, build_quote_kpis,
     build_medias_sections, build_volume_sections,
     build_retornos_sections, build_volatilidade_sections,
-    build_indicadores_sections,
+    build_indicadores_sections, build_fibonacci_sections,
 )
 
 
@@ -47,10 +50,12 @@ def _ten_years_ago_iso() -> str:
 @register_mode(
     "dashboard",
     description=(
-        "B3 price analytics dashboard. 6 tabs: Cotação (candlestick + volume + KPIs), "
+        "B3 price analytics dashboard. 7 tabs: Cotação (candlestick + volume + KPIs), "
         "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + price overlay), "
         "Indicadores (RSI + MACD + Stochastic + OBV + signals), "
-        "Retornos (cumulative + drawdown), Volatilidade (rolling vol + Bollinger)."
+        "Retornos (cumulative + adjusted + drawdown), "
+        "Volatilidade (rolling vol + Bollinger), "
+        "Fibonacci (levels + COMPRA/VENDA trade setup)."
     ),
     params={"ticker": "str. Required. B3 ticker (e.g. PETR4)."},
     include_in_all=False,
@@ -60,7 +65,7 @@ def _ten_years_ago_iso() -> str:
     ],
 )
 def dashboard(ticker: str = "") -> dict:
-    """Build the 6-tab B3 price dashboard for a single ticker."""
+    """Build the 7-tab B3 price dashboard for a single ticker."""
     _t0 = _dt.now()
     print(f"[b3.price] Starting dashboard for {ticker!r}...", flush=True)
 
@@ -109,6 +114,17 @@ def dashboard(ticker: str = "") -> dict:
     lows = [p.get("low") for p in ohlcv]
     k_line, d_line = compute_stochastic(highs, lows, closes, k_period=14, d_period=3)
     obv = compute_obv(closes, volumes)
+    # [v1.3] Dividend-adjusted close (backward adjustment) + Fibonacci swing extremes.
+    adjusted_closes, div_adjustments = compute_adjusted_close(tk, dates, closes)
+    adj_cum_returns = compute_cumulative_returns(adjusted_closes)
+    swings = [
+        find_swing_extremes(dates, highs, lows, lookback_days=lb["days"])
+        for lb in [
+            {"label": "Swing_4",  "days": 30},
+            {"label": "Swing_12", "days": 90},
+            {"label": "Swing_52", "days": 365},
+        ]
+    ]
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Indicators computed ({_s_elapsed:.1f}s)", flush=True)
 
@@ -165,21 +181,29 @@ def dashboard(ticker: str = "") -> dict:
     )
     retornos_sections = build_retornos_sections(
         tk, dates, closes, cum_returns, drawdowns,
+        adj_cum_returns=adj_cum_returns,
     )
     volatilidade_sections = build_volatilidade_sections(
         tk, dates, closes, vol_20d, vol_60d, vol_252d,
         bb_upper, bb_middle, bb_lower,
     )
+    # [v1.3] Fibonacci tab — price chart with Fib levels + trade setup.
+    current_price = closes[-1] if closes else None
+    fibonacci_sections = build_fibonacci_sections(
+        tk, dates, closes, highs, lows, current_price,
+        swings, div_adjustments,
+    )
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Sections built ({_s_elapsed:.1f}s)", flush=True)
 
     tabs = [
-        {"name": "Cotação",       "group": "Preço",       "sections": cotacao_sections},
-        {"name": "Médias Móveis", "group": "Preço",       "sections": medias_sections},
-        {"name": "Volume",        "group": "Preço",       "sections": volume_sections},
-        {"name": "Indicadores",  "group": "Preço",       "sections": indicadores_sections},
-        {"name": "Retornos",      "group": "Performance", "sections": retornos_sections},
-        {"name": "Volatilidade",  "group": "Performance", "sections": volatilidade_sections},
+        {"name": "Cotação",       "group": "Preço",             "sections": cotacao_sections},
+        {"name": "Médias Móveis", "group": "Preço",             "sections": medias_sections},
+        {"name": "Volume",        "group": "Preço",             "sections": volume_sections},
+        {"name": "Indicadores",  "group": "Preço",             "sections": indicadores_sections},
+        {"name": "Retornos",      "group": "Performance",       "sections": retornos_sections},
+        {"name": "Volatilidade",  "group": "Performance",       "sections": volatilidade_sections},
+        {"name": "Fibonacci",     "group": "Análise Técnica",  "sections": fibonacci_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()

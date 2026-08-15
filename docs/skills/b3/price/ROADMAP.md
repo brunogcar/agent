@@ -6,14 +6,13 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | P2 — Dividend-adjusted returns | True total return (price + dividends + splits) |
 | P2 | P3 — Intraday data | Real-time + intraday OHLCV via brapi or B3 market data |
 | P2 | P7 — ADX / CCI / Williams %R | Additional trend-strength + cyclical indicators for the Indicadores tab |
 | P3 | P4 — Options chain | Put/call ratio + IV smile for tickers with listed options |
 | P3 | P5 — Multi-ticker compare | Side-by-side price + return comparison (mirror b3/index compare) |
 | P3 | P6 — Pattern recognition | Auto-detect head-and-shoulders, double tops, triangles |
 
-> **Note:** Recently completed items (P1 RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
+> **Note:** Recently completed items (Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
 ---
 
@@ -139,4 +138,4 @@ confidence threshold + user-tunable sensitivity.
 
 ---
 
-*Last updated: 2026-08-13 (v1.2). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v1.3). See [CHANGELOG.md](CHANGELOG.md) for version history.*

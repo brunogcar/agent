@@ -76,11 +76,13 @@
     </div>
     {% endif %}
     {% if sec.collapsible %}
-    {# [v1.2-v2] Collapsible chart — title becomes the header (click to
-       expand/collapse), body contains description + range selector + chart. #}
-    <div class="collapsible">
+    {# [v1.2-v2] Collapsible section — title becomes the header (click to
+       expand/collapse), body contains description + table/chart + note.
+       Works for BOTH charts and tables (v1.3-v3).
+       [v1.3-v3] sec.collapsible_open=True starts the section expanded. #}
+    <div class="collapsible {{ 'open' if sec.collapsible_open else '' }}">
       <div class="collapsible-header" onclick="toggleChartCollapsible(this)">
-        <span>{{ sec.title | default('Chart') }}</span>
+        <span>{{ sec.title | default('Section') }}</span>
         <span class="chevron">&#9660;</span>
       </div>
       <div class="collapsible-body">
@@ -98,8 +100,18 @@
           <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, 'tab-{{ outer_loop.index }}-chart-{{ loop.index }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
         </div>
         {% endif %}
+        {% if sec.type == 'table' and sec.columns and sec.rows %}
+        {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
+        {{ m.data_table(sec.columns, sec.rows) }}
+        {% if sec.wide %}</div>{% endif %}
+        {% elif sec.type == 'table' %}
+        <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+        {% endif %}
         {% if sec.type == 'chart' and sec.chart_data %}
         {{ m.chart_canvas('tab-' + outer_loop.index|string + '-chart-' + loop.index|string) }}
+        {% endif %}
+        {% if sec.note %}
+        <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
         {% endif %}
       </div>
     </div>

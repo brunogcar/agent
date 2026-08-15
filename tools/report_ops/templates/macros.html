@@ -22,15 +22,16 @@
 {% endmacro %}
 
 {% macro _section_inner(sec, canvas_id='') %}
-{# [v1.2-v2] Collapsible chart wrapper — when sec.collapsible is True, the
-   chart title becomes the collapsible header (click to expand/collapse) and
-   the chart canvas + description + range selector live in the body. Uses
-   toggleChartCollapsible (defined in dashboard.html) which also resizes
-   the chart on expand so it renders with correct dimensions. #}
+{# [v1.2-v2] Collapsible section wrapper — when sec.collapsible is True, the
+   title becomes the collapsible header (click to expand/collapse) and the
+   description + table/chart + note live in the body. Works for BOTH charts
+   and tables (v1.3-v3). Uses toggleChartCollapsible (defined in dashboard.html)
+   which also resizes charts on expand so they render with correct dimensions.
+   [v1.3-v3] sec.collapsible_open=True starts the section expanded. #}
 {% if sec.collapsible %}
-<div class="collapsible">
+<div class="collapsible {{ 'open' if sec.collapsible_open else '' }}">
   <div class="collapsible-header" onclick="toggleChartCollapsible(this)">
-    <span>{{ sec.title | default('Chart') }}</span>
+    <span>{{ sec.title | default('Section') }}</span>
     <span class="chevron">&#9660;</span>
   </div>
   <div class="collapsible-body">
@@ -48,8 +49,18 @@
       <button class="price-range-btn" data-range="1m" onclick="filterPriceChart(this, '{{ canvas_id }}', '1m')" style="padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-sec); border-radius: 6px; cursor: pointer;">1M</button>
     </div>
     {% endif %}
+    {% if sec.type == 'table' and sec.columns and sec.rows %}
+    {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
+    {{ data_table(sec.columns, sec.rows) }}
+    {% if sec.wide %}</div>{% endif %}
+    {% elif sec.type == 'table' %}
+    <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
+    {% endif %}
     {% if sec.type == 'chart' and sec.chart_data %}
     <div class="chart-box"><canvas id="{{ canvas_id }}"></canvas></div>
+    {% endif %}
+    {% if sec.note %}
+    <div style="font-size: 12px; color: var(--text-sec); margin-top: 8px; font-style: italic;">{{ sec.note }}</div>
     {% endif %}
   </div>
 </div>

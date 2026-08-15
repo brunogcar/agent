@@ -6,9 +6,9 @@
 
 ### mode="dashboard" (default)
 
-5-tab price analytics dashboard: candlestick + MA + volume + returns + volatility.
+6-tab price analytics dashboard: candlestick + MA + volume + indicators + returns + volatility.
 
-[v1.2] Now 6 tabs — added "Indicadores" tab (RSI + MACD + Stochastic + OBV + signals).
+[v1.3] Now 7 tabs — added "Fibonacci" tab (Análise Técnica group) + dividend-adjusted returns in the Retornos tab.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -55,8 +55,20 @@
        {"type": "chart", "title": "On-Balance Volume (OBV) — PETR4", "collapsible": true, ...},
        {"type": "table", "title": "Sinais Atuais", "columns": ["Indicador", "Valor Atual", "Sinal"], ...}
     ]},
-    {"name": "Retornos",      "group": "Performance", "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]},
-    {"name": "Volatilidade",  "group": "Performance", "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]}
+    {"name": "Retornos",      "group": "Performance",       "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]},
+    {"name": "Volatilidade",  "group": "Performance",       "sections": [{"type": "chart", ...}, {"type": "chart", ...}, {"type": "table", ...}]},
+    {"name": "Fibonacci",     "group": "Análise Técnica",  "sections": [
+       {"type": "table", "title": "Níveis de Fibonacci — Swing_4 (4 semanas / 1 mês)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Níveis de Fibonacci — Swing_12 (12 semanas / 3 meses)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Níveis de Fibonacci — Swing_52 (52 semanas / 1 ano)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — COMPRA — Swing_4 (4 semanas / 1 mês)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — COMPRA — Swing_12 (12 semanas / 3 meses)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — COMPRA — Swing_52 (52 semanas / 1 ano)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — VENDA — Swing_4 (4 semanas / 1 mês)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — VENDA — Swing_12 (12 semanas / 3 meses)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Trade Setup — VENDA — Swing_52 (52 semanas / 1 ano)", "collapsible": true, "collapsible_open": true, ...},
+       {"type": "table", "title": "Ajuste de Proventos", ...}
+    ]}
   ],
   "period": {"from": "2014-08-06", "to": "2024-08-06", "days": 2480},
   "crossovers": {"ma20_x_ma50": 12, "ma50_x_ma200": 3},
@@ -72,15 +84,32 @@
 - **Mínima** — latest day low
 - **Volume** — latest day financial volume (compact, R$ suffix)
 
-**Tabs (6):**
+**Tabs (7):**
 | Tab | Group | Sections |
 |-----|-------|----------|
 | Cotação | Preço | text header + candlestick chart + volume bar chart |
 | Médias Móveis | Preço | SMA line chart + crossovers table |
 | Volume | Preço | volume bar chart (colored by up/down day) + price overlay + statistics table |
 | Indicadores | Preço | price reference chart + RSI + MACD + Stochastic + OBV (collapsible) + signals table |
-| Retornos | Performance | cumulative return chart + drawdown chart + performance summary table |
+| Retornos | Performance | cumulative return chart + (adjusted return chart) + drawdown chart + KPI table |
 | Volatilidade | Performance | rolling volatility chart (20D/60D/252D) + Bollinger Bands chart + current vol table |
+| Fibonacci | Análise Técnica | 9 collapsible tables (grouped by swing: Níveis collapsed + COMPRA + VENDA per swing) + dividend adjustments table |
+
+**Fibonacci tab (v1.3 — 10 sections, grouped by swing):**
+
+Sections are organized BY SWING (not by category): for each swing (Swing_4 → Swing_12 → Swing_52), 3 collapsible tables:
+- **Níveis de Fibonacci — Swing_X** (collapsed by default) — all 11 Fibonacci levels (0.236 through 4.236) + their prices. The timeframe desc (e.g. "4 semanas / 1 mês") appears once in the description, not in the title.
+- **Trade Setup — COMPRA — Swing_X** (expanded by default) — Entrada 1 (0.382), Entrada 2 (0.618), Alvo 1 (0.382 extension), Alvo 2 (0.618 extension), STOP. Shows % distance from current price.
+- **Trade Setup — VENDA — Swing_X** (expanded by default) — mirrored from COMPRA (uses swing low).
+
+Then 1 non-collapsible table:
+- **Ajuste de Proventos** — cash dividends applied during the period, filtered by the ticker's ISIN.
+
+**Collapsible tables:** the 9 Fibonacci tables have `collapsible: True`. Níveis tables have `collapsible_open: False` (collapsed by default — reference info). COMPRA + VENDA tables have `collapsible_open: True` (expanded by default — actionable info). Click any table header to toggle.
+
+**Note on chart:** the Fibonacci chart was removed in v1.3 — the chart needs daily-data infrastructure that's not ready yet. Will be added in a future commit when daily data saving is implemented.
+
+**Retornos tab (v1.3 addition):** the Retornos tab now includes a **dividend-adjusted cumulative return chart** (purple line) alongside the raw return chart. The adjusted return uses backward-adjusted close prices (historical prices minus dividends paid after that date), giving the true total return including reinvested dividends. The KPI table adds a "Retorno Cumulativo Ajustado" row.
 
 **Indicadores tab (v1.2 — 6 sections):**
 - **Preço (reference)** — single-axis close-price line chart at the top. Not collapsible (always visible). The user looks at this once, then scrolls through the indicators.
@@ -148,4 +177,4 @@ skill(domain="b3", sub_domain="price", mode="quote",     params='{"ticker":"VALE
 
 ---
 
-*Last updated: 2026-08-13 (v1.2 — Indicadores tab). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-13 (v1.3 — Fibonacci tab + dividend-adjusted returns). See [CHANGELOG.md](CHANGELOG.md) for version history.*

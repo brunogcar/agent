@@ -7,6 +7,8 @@ Queries cotahist.db for daily OHLCV data and computes technical indicators:
   - Volatility (rolling 20D/60D/252D)
   - Bollinger Bands (20, 2σ)
   - Momentum oscillators (RSI, MACD, Stochastic, OBV)  [v1.2]
+  - Dividend-adjusted close (backward adjustment)      [v1.3]
+  - Fibonacci levels + trade setup                     [v1.3]
 
 Usage:
     from skills.b3.price.engines import ohlcv_series, compute_sma, compute_returns
@@ -499,3 +501,274 @@ def compute_obv(
             obv -= vol
         result[i] = obv
     return result
+
+
+# ── Dividend-adjusted close + Fibonacci (v1.3) ──────────────────────────────
+
+
+def compute_adjusted_close(
+    ticker: str,
+    dates: list[str],
+    closes: list[float | None],
+) -> tuple[list[float | None], list[dict]]:
+    """[v1.3] Compute backward dividend-adjusted close prices.
+
+    Standard backward adjustment: for each dividend paid AFTER date t,
+    subtract the dividend amount from close[t]. This makes historical
+    prices comparable to today's (unadjusted) close. The most recent
+    close is NEVER adjusted (it's the reference point).
+
+    Uses ``data_sources.b3.dividends.query_engine.dividends(ticker)`` to
+    fetch cash dividends. If the dividends DB is not synced or the query
+    fails, gracefully degrades — returns the raw closes + an empty
+    adjustments list.
+
+    Args:
+        ticker: B3 ticker (PETR4).
+        dates:  list of YYYY-MM-DD strings (aligned with closes).
+        closes: daily close prices (raw, unadjusted).
+
+    Returns:
+        ``(adjusted_closes, adjustments)`` where:
+          - ``adjusted_closes`` = same length as closes, backward-adjusted.
+          - ``adjustments`` = list of ``{ex_date, rate, payment_date}``
+            dicts for each dividend applied (empty if none/failed).
+    """
+    n = len(closes)
+    adjusted = list(closes)  # copy (don't mutate input)
+    adjustments: list[dict] = []
+
+    if not ticker or n == 0:
+        return adjusted, adjustments
+
+    # [v1.3-v2] Get the ticker's ISIN from cotahist so we can filter
+    # dividends by ISIN (not just ticker). The b3_dividends API returns
+    # ALL dividends for the issuing company (e.g., both PETR3 + PETR4 when
+    # syncing PETR4), so filtering by ticker alone returns mixed dividends.
+    # Filtering by ISIN ensures only the correct share class's dividends
+    # are applied (PETR4 ISIN = BRPETRACNPR6, PETR3 ISIN = BRPETRACNPR3).
+    isin: str | None = None
+    try:
+        conn = _connect()
+        row = conn.execute(
+            "SELECT DISTINCT isin FROM cotahist "
+            "WHERE symbol = ? AND isin IS NOT NULL AND isin != '' LIMIT 1",
+            (ticker.strip().upper(),),
+        ).fetchone()
+        conn.close()
+        if row:
+            isin = row["isin"] if isinstance(row, sqlite3.Row) else row[0]
+    except Exception:
+        pass  # cotahist DB not available — skip ISIN filtering (fall back to ticker-only)
+
+    # Fetch cash dividends from b3_dividends source.
+    try:
+        from data_sources.b3.dividends.query_engine import dividends as _div_fn
+        result = _div_fn(ticker=ticker, limit=200)
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            return adjusted, adjustments
+        divs = result.get("dividends") or []
+    except Exception:
+        return adjusted, adjustments
+
+    # [v1.3-v2] Filter dividends by ISIN (if we found one). This excludes
+    # dividends for the wrong share class (e.g., PETR3 dividends when
+    # computing adjusted close for PETR4).
+    if isin:
+        divs = [d for d in divs if d.get("isin_code") == isin]
+
+    # Build a date → index map for fast lookup.
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+
+    for div in divs:
+        ex_date = div.get("last_date_prior")  # ex-dividend date
+        rate = div.get("rate")
+        if not ex_date or rate is None or rate <= 0:
+            continue
+        payment_date = div.get("payment_date") or ""
+        # Find the index of the ex-div date in our series.
+        # If the ex-div date is IN the series, adjust all closes BEFORE it.
+        # If it's NOT in the series but is after the last date, adjust all.
+        # If it's before the first date, skip (can't adjust).
+        if ex_date in date_to_idx:
+            ex_idx = date_to_idx[ex_date]
+        else:
+            # Ex-div date not in our series — check if it's after the last date.
+            if ex_date > dates[-1]:
+                ex_idx = n  # adjust all
+            else:
+                continue  # before our range — skip
+
+        # Adjust all closes before the ex-div date (backward adjustment).
+        for i in range(ex_idx):
+            if adjusted[i] is not None:
+                adjusted[i] = adjusted[i] - rate
+
+        adjustments.append({
+            "ex_date": ex_date,
+            "rate": rate,
+            "payment_date": payment_date,
+            "isin_code": div.get("isin_code") or "",
+        })
+
+    return adjusted, adjustments
+
+
+def find_swing_extremes(
+    dates: list[str],
+    highs: list[float | None],
+    lows: list[float | None],
+    lookback_days: int = 90,
+) -> dict:
+    """[v1.3] Find the most recent swing high + low in a lookback window.
+
+    Args:
+        dates:  list of YYYY-MM-DD strings.
+        highs:  daily high prices.
+        lows:   daily low prices.
+        lookback_days: number of calendar days to look back from the latest date.
+
+    Returns:
+        ``{high_date, high_price, low_date, low_price, range, lookback_days}``
+        where range = high_price - low_price. Returns empty values if
+        insufficient data in the lookback window.
+    """
+    n = len(dates)
+    if n == 0:
+        return {"high_date": None, "high_price": None,
+                "low_date": None, "low_price": None,
+                "range": None, "lookback_days": lookback_days}
+
+    from datetime import date as _date, timedelta as _timedelta
+
+    latest = dates[-1]
+    try:
+        latest_d = _date.fromisoformat(latest)
+    except (ValueError, TypeError):
+        return {"high_date": None, "high_price": None,
+                "low_date": None, "low_price": None,
+                "range": None, "lookback_days": lookback_days}
+
+    cutoff = (latest_d - _timedelta(days=lookback_days)).isoformat()
+
+    # Filter to the lookback window.
+    high_price = None
+    high_date = None
+    low_price = None
+    low_date = None
+    for i in range(n):
+        if dates[i] < cutoff:
+            continue
+        h = highs[i] if i < len(highs) else None
+        l = lows[i] if i < len(lows) else None
+        if h is not None and (high_price is None or h > high_price):
+            high_price = h
+            high_date = dates[i]
+        if l is not None and (low_price is None or l < low_price):
+            low_price = l
+            low_date = dates[i]
+
+    range_val = None
+    if high_price is not None and low_price is not None:
+        range_val = high_price - low_price
+
+    return {
+        "high_date": high_date,
+        "high_price": high_price,
+        "low_date": low_date,
+        "low_price": low_price,
+        "range": range_val,
+        "lookback_days": lookback_days,
+    }
+
+
+# Standard Fibonacci levels used in the trade setup.
+FIB_LEVELS = [0.236, 0.309, 0.382, 0.500, 0.618, 0.786, 1.000,
+               1.618, 2.618, 3.618, 4.236]
+
+# Key levels for entries + targets (user defaults).
+ENTRY_1_LEVEL = 0.382
+ENTRY_2_LEVEL = 0.618
+STOP_BUFFER = 0.10  # 10% of range beyond Entrada 2
+
+
+def compute_fibonacci_levels(
+    swing_high: float,
+    swing_low: float,
+    levels: list[float] | None = None,
+) -> dict[float, float]:
+    """[v1.3] Compute Fibonacci retracement prices for a swing.
+
+    For each level L, the retracement price = swing_high - (range × L).
+    Level 0.0 = swing_high (no retracement), level 1.0 = swing_low (full retracement).
+    Levels > 1.0 are extensions below the swing low.
+
+    Args:
+        swing_high: swing high price.
+        swing_low:  swing low price.
+        levels:     list of Fibonacci ratios (defaults to FIB_LEVELS).
+
+    Returns:
+        ``{level: price}`` dict.
+    """
+    if levels is None:
+        levels = FIB_LEVELS
+    range_val = swing_high - swing_low
+    return {L: swing_high - (range_val * L) for L in levels}
+
+
+def compute_fibonacci_trade_setup(
+    swing_high: float,
+    swing_low: float,
+) -> dict:
+    """[v1.3] Compute the Fibonacci trade setup (COMPRA + VENDA).
+
+    Formulas (verified against the user's spreadsheet):
+      COMPRA (buy on pullback from swing high):
+        Entrada 1 = High - range × 0.382
+        Entrada 2 = High - range × 0.618
+        Alvo 1    = High + range × 0.382  (extension above)
+        Alvo 2    = High + range × 0.618  (extension above)
+        STOP      = Entrada 2 - range × 0.10
+
+      VENDA (sell on rally from swing low):
+        Entrada 1 = Low + range × 0.382
+        Entrada 2 = Low + range × 0.618
+        Alvo 1    = Low - range × 0.382  (extension below)
+        Alvo 2    = Low - range × 0.618  (extension below)
+        STOP      = Entrada 2 + range × 0.10
+
+    Args:
+        swing_high: swing high price.
+        swing_low:  swing low price.
+
+    Returns:
+        Dict with ``range``, ``compra`` (Entrada1/2, Alvo1/2, Stop),
+        ``venda`` (same), and ``fib_levels`` (all levels + prices).
+    """
+    range_val = swing_high - swing_low
+
+    fib_levels = compute_fibonacci_levels(swing_high, swing_low)
+
+    compra = {
+        "entrada_1": swing_high - range_val * ENTRY_1_LEVEL,
+        "entrada_2": swing_high - range_val * ENTRY_2_LEVEL,
+        "alvo_1":    swing_high + range_val * ENTRY_1_LEVEL,
+        "alvo_2":    swing_high + range_val * ENTRY_2_LEVEL,
+        "stop":      swing_high - range_val * ENTRY_2_LEVEL - range_val * STOP_BUFFER,
+    }
+
+    venda = {
+        "entrada_1": swing_low + range_val * ENTRY_1_LEVEL,
+        "entrada_2": swing_low + range_val * ENTRY_2_LEVEL,
+        "alvo_1":    swing_low - range_val * ENTRY_1_LEVEL,
+        "alvo_2":    swing_low - range_val * ENTRY_2_LEVEL,
+        "stop":      swing_low + range_val * ENTRY_2_LEVEL + range_val * STOP_BUFFER,
+    }
+
+    return {
+        "range": range_val,
+        "fib_levels": fib_levels,
+        "compra": compra,
+        "venda": venda,
+    }

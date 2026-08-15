@@ -5,15 +5,15 @@ from skills.b3.price._registry import MODES  # noqa: F401
 
 auto_discover_modes(__name__)
 
-REQUIRED_SOURCES = ["cotahist"]
+REQUIRED_SOURCES = ["cotahist", "b3_dividends"]
 
 MANIFEST = {
     "sub_domain":  "price",
     "description": (
         "B3 price analytics. dashboard: candlestick + MA + volume + returns + "
-        "volatility. quote: latest OHLCV snapshot. history: raw OHLCV series."
+        "volatility + indicators + Fibonacci. quote: latest OHLCV snapshot."
     ),
-    "source":  "data_sources.b3.cotahist",
+    "source":  "data_sources.b3.cotahist + data_sources.b3.dividends",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
     "required_sources": REQUIRED_SOURCES,
