@@ -24,6 +24,12 @@ from data_sources.b3.cotahist.catalog import (
     COTAHIST_LAYOUT, NUMERIC_COLS, INTEGER_COLS, BDI_FILTER,
     connect, ensure_schema,
 )
+# [v1.2] Derivatives support — options, term, forward stored in a separate table.
+from data_sources.b3.cotahist_derivatives.catalog import (
+    DERIVATIVES_BDI_FILTER, parse_option_ticker,
+    DERIVATIVES_SCHEMA_SQL as _DERIVATIVES_SCHEMA_SQL,
+)
+from data_sources.b3.cotahist_derivatives.catalog import ensure_schema as _ensure_deriv_schema
 
 BATCH_SIZE = 50000  # commit every 50K rows (~1MB per batch)
 
@@ -93,6 +99,11 @@ def sync(
 
 
 def sync_full_history(force: bool = False) -> dict:
+    """Download and store COTAHIST data for ALL years (2010 to current).
+
+    [v3] Also available as ``sync_all()`` for consistency with other data sources
+    (BCB SGS, B3 dividends, B3 index all use ``sync_all``).
+    """
     """Sync all years from FIRST_YEAR (2010) to current year.
 
     Args:
@@ -180,6 +191,10 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
 
     Only processes record type '01' (daily quote records). Skips '00' (header) and '99' (trailer).
     [v1.0.1] Also filters by BDI code (equities, FIIs, ETFs, fractional only).
+    [v1.2] Derivatives (options/term/forward) are written to a separate
+           `cotahist_derivatives` table in the same DB. Rows with BDI codes in
+           DERIVATIVES_BDI_FILTER are parsed + the ticker is decoded (underlying,
+           option_type, strike) + written to the derivatives table.
     Uses batch inserts (BATCH_SIZE) for performance.
     """
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
@@ -194,18 +209,32 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
 
     _progress(f"[cotahist] Parsing {txt_name} (streaming)...")
 
-    # Delete old data for this year
+    # Delete old data for this year (equities table)
     conn.execute(f"DELETE FROM cotahist WHERE refdate LIKE '{year}%'")
+    # [v1.2] Also delete old derivatives data for this year.
+    try:
+        _ensure_deriv_schema(conn)
+        conn.execute(f"DELETE FROM cotahist_derivatives WHERE refdate LIKE '{year}%'")
+    except Exception:
+        pass  # derivatives table might not exist yet on first run
     conn.commit()
 
-    # Build column list (exclude id + _ingested_at which we set manually)
+    # Build column list for equities (exclude id + _ingested_at)
     cols = [c[0] for c in COTAHIST_LAYOUT]  # all layout columns
     col_str = ", ".join(cols) + ", _ingested_at"
     placeholders = ", ".join(["?"] * (len(cols) + 1))
     insert_sql = f"INSERT INTO cotahist ({col_str}) VALUES ({placeholders})"
 
+    # [v1.2] Build column list for derivatives (same layout cols + derived cols)
+    deriv_cols = cols + ["underlying", "option_type", "expiration_month", "strike_parsed"]
+    deriv_col_str = ", ".join(deriv_cols) + ", _ingested_at"
+    deriv_placeholders = ", ".join(["?"] * (len(deriv_cols) + 1))
+    deriv_insert_sql = f"INSERT INTO cotahist_derivatives ({deriv_col_str}) VALUES ({deriv_placeholders})"
+
     rows_added = 0
+    deriv_rows_added = 0
     batch: list[tuple] = []
+    deriv_batch: list[tuple] = []
 
     # Stream the file line by line
     with zf.open(txt_name) as f:
@@ -218,37 +247,72 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
             if line[:2] != "01":
                 continue
 
-            # [v1.0.1] Filter by BDI code — only keep equities, FIIs, ETFs, fractional.
-            # This drops ~85% of rows (options, bonds, warrants) and reduces DB from ~5.7GB to ~1-2GB.
+            # [v1.0.1] Filter by BDI code.
             bdi_str = line[10:12].strip()  # positions 11-12 (0-based: 10-11)
             try:
                 bdi = int(bdi_str) if bdi_str else 0
             except ValueError:
                 bdi = 0
-            if bdi not in BDI_FILTER:
-                continue
 
-            row = _parse_line(line)
-            if row is None:
-                continue
+            if bdi in BDI_FILTER:
+                # Equities path (existing).
+                row = _parse_line(line)
+                if row is None:
+                    continue
+                values = tuple(row.get(c, None) for c in cols) + (ingested_at,)
+                batch.append(values)
+                if len(batch) >= BATCH_SIZE:
+                    conn.executemany(insert_sql, batch)
+                    conn.commit()
+                    rows_added += len(batch)
+                    batch = []
+                    if rows_added % 500000 == 0:
+                        _progress(f"[cotahist] {rows_added:,} rows stored...")
 
-            # Convert to tuple in column order
-            values = tuple(row.get(c, None) for c in cols) + (ingested_at,)
-            batch.append(values)
+            elif bdi in DERIVATIVES_BDI_FILTER:
+                # [v1.2] Derivatives path — parse + decode ticker + write to derivatives table.
+                row = _parse_line(line)
+                if row is None:
+                    continue
+                # Parse the option ticker to extract underlying, type, strike.
+                symbol = row.get("symbol", "")
+                parsed = parse_option_ticker(symbol)
+                if parsed:
+                    row["underlying"] = parsed["underlying"]
+                    row["option_type"] = parsed["option_type"]
+                    row["expiration_month"] = parsed["expiration_month"]
+                    row["strike_parsed"] = parsed["strike_parsed"]
+                else:
+                    # Not an option ticker (e.g. term/forward) — store with NULLs.
+                    row["underlying"] = None
+                    row["option_type"] = None
+                    row["expiration_month"] = None
+                    row["strike_parsed"] = None
 
-            if len(batch) >= BATCH_SIZE:
-                conn.executemany(insert_sql, batch)
-                conn.commit()
-                rows_added += len(batch)
-                batch = []
-                if rows_added % 500000 == 0:
-                    _progress(f"[cotahist] {rows_added:,} rows stored...")
+                deriv_values = tuple(row.get(c, None) for c in deriv_cols) + (ingested_at,)
+                deriv_batch.append(deriv_values)
+                if len(deriv_batch) >= BATCH_SIZE:
+                    conn.executemany(deriv_insert_sql, deriv_batch)
+                    conn.commit()
+                    deriv_rows_added += len(deriv_batch)
+                    deriv_batch = []
+                    if deriv_rows_added % 500000 == 0:
+                        _progress(f"[cotahist_deriv] {deriv_rows_added:,} derivatives rows stored...")
 
-    # Insert remaining
+    # Insert remaining equities
     if batch:
         conn.executemany(insert_sql, batch)
         conn.commit()
         rows_added += len(batch)
+
+    # [v1.2] Insert remaining derivatives
+    if deriv_batch:
+        conn.executemany(deriv_insert_sql, deriv_batch)
+        conn.commit()
+        deriv_rows_added += len(deriv_batch)
+
+    if deriv_rows_added > 0:
+        _progress(f"[cotahist_deriv] {deriv_rows_added:,} derivatives rows stored for {year}")
 
     return rows_added
 
@@ -290,3 +354,7 @@ def _parse_line(line: str) -> dict | None:
             row[name] = val  # keep as string if parse fails
 
     return row
+
+
+# [v3] Alias for consistency with other data sources (BCB SGS, B3 dividends, etc.)
+sync_all = sync_full_history

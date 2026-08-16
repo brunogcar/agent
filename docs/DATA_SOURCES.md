@@ -9,7 +9,7 @@ Data sources are external data connectors that sync from APIs (CVM, B3, BCB) int
 | Domain | What | Landing Page |
 |--------|------|--------------|
 | **CVM** | Brazilian SEC data: DFP (annual), ITR (quarterly), FRE (governance), IPE (events), CAD (register), Bridge (ticker→CNPJ) | [CVM.md](data_sources/CVM.md) |
-| **B3** | Brazilian stock exchange: API (instruments, trades, derivatives), Dividends (corporate actions), BRAPI (quotes/OHLCV), COTAHIST (historical), INDEX (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued) | [B3.md](data_sources/B3.md) |
+| **B3** | Brazilian stock exchange: API (instruments, trades, derivatives), Dividends (corporate actions), BRAPI (quotes/OHLCV), COTAHIST (historical equities), COTAHIST_DERIVATIVES (options + term — shared cotahist.db), INDEX (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued) | [B3.md](data_sources/B3.md) |
 | **BCB** | Brazilian Central Bank: SGS (12 curated macro series - Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo). Public API, no auth. | [BCB.md](data_sources/BCB.md) |
 
 ## 🏗️ Architecture
@@ -39,7 +39,9 @@ data_sources/
 │   ├── __init__.py                # Domain hub
 │   ├── api/                       # Market data (instruments, trades, derivatives)
 │   ├── brapi/                     # brapi.dev API (quotes, OHLCV, tickers)
-│   ├── cotahist/                  # B3 official historical trade data (COTAHIST)
+│   ├── cotahist/                  # B3 official historical trade data — equities (cotahist table)
+│   ├── cotahist_derivatives/      # B3 options + term (cotahist_derivatives table — SAME cotahist.db,
+│   │                              # populated during the standard COTAHIST sync pass). No sync_engine.
 │   ├── dividends/                 # Corporate actions (cash/stock dividends, subscriptions)
 │   └── index/                     # B3 indices (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued)
 │
@@ -155,4 +157,4 @@ If the sub-domain doesn't fit under `cvm/`, `b3/`, or `bcb/`:
 
 ---
 
-*Last updated: 2026-08-05.*
+*Last updated: 2026-08-18 (added cotahist_derivatives sub-domain to B3 tree).*

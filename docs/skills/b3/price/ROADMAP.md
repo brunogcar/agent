@@ -12,7 +12,8 @@
 | P3 | P5 — Multi-ticker compare | Side-by-side price + return comparison (mirror b3/index compare) |
 | P3 | P6 — Pattern recognition | Auto-detect head-and-shoulders, double tops, triangles |
 | P3 | P8 — Bid-ask spread analysis | Use cotahist best_bid + best_ask columns — liquidity + transaction cost analysis |
-| P4 | P9 — Options skill (new) | Separate skill using cotahist options data (strike / maturity / strike_pts) — COTAHIST already has options trades, filtered out by BDI during sync. Would need a separate query path + strike/maturity analysis |
+| P3 | P10 — Opções tab (cross-skill) | Embed the new [b3/options](../OPTIONS.md) skill's Cadeia de Opções tab as a new tab in the price dashboard |
+| ✅ | ~~P9 — Options skill (new)~~ | **Shipped 2026-08-18** as the separate [b3/options](../OPTIONS.md) skill (v1.0). Reads from `data_sources/b3/cotahist_derivatives` (the `cotahist_derivatives` table, populated during the standard COTAHIST sync). See [../options/CHANGELOG.md](../options/CHANGELOG.md). |
 
 > **Note:** Recently completed items (Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
@@ -98,8 +99,16 @@ For tickers with listed options (PETR4, VALE3, ITUB4, etc.), surface:
 2. Re-enable BDI codes for options in a separate query path.
 3. Surface as a new "Opções" tab in the dashboard.
 
-**Blocker:** Options data is in the same COTAHIST ZIP but currently filtered
-out during sync. Need a separate query path (not a re-sync).
+**Status update (2026-08-18):** the heavy lifting (options chain data +
+put/call ratio + volume-by-strike analytics) has shipped as the separate
+[b3/options](../OPTIONS.md) skill, reading from the new
+`cotahist_derivatives` table. The remaining scope for the price skill is
+the **cross-skill integration** — embedding the options Cadeia de Opções
+tab as a new "Opções" tab here. Tracked as P10 below.
+
+**Blocker:** None — the options skill + `cotahist_derivatives` table are
+live. Just needs the price dashboard wiring + a graceful-skip when the
+underlying has no listed options.
 
 ### P5 — Multi-ticker compare
 
@@ -138,6 +147,30 @@ Automatic detection of classical chart patterns:
 **Blocker:** Pattern detection is fuzzy — high false-positive rate. Need a
 confidence threshold + user-tunable sensitivity.
 
+### P10 — Opções tab (cross-skill integration with b3/options)
+
+**Priority:** P3
+**Source:** Cross-skill integration
+
+With the [b3/options](../OPTIONS.md) skill now live (v1.0, 2026-08-18), the
+price dashboard could embed a new "Opções" tab that calls the options
+skill's `dashboard` mode and renders the Cadeia de Opções table inline.
+Currently a user has to call the options skill separately.
+
+**Implementation:**
+1. In `skills/b3/price/modes/dashboard.py`, add a tab that calls
+   `skills.b3.options.modes.dashboard.dashboard(underlying=ticker)`.
+2. Extract just the Cadeia de Opções tab sections (skip the P/C ratio +
+   Volume por Strike tabs to keep the price dashboard compact).
+3. Wrap in try/except — if the underlying has no listed options, skip the
+   tab silently (don't break the price dashboard).
+
+**Blocker:** None technical. Need to confirm the price dashboard doesn't
+grow past 8 tabs (currently 7 after Fibonacci). The options skill's
+`REQUIRED_SOURCES=["cotahist"]` is already a subset of the price skill's
+`REQUIRED_SOURCES=["cotahist", "b3_dividends"]`, so no new sync guard
+wiring is needed.
+
 ---
 
-*Last updated: 2026-08-15 (v1.5). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-18 (v1.5 + P9 shipped as b3/options skill + P10 cross-skill integration added). See [CHANGELOG.md](CHANGELOG.md) for version history.*

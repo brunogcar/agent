@@ -297,6 +297,13 @@ missing).
 **Location**: `skills/b3/`
 **Purpose**: Ingest, sync, and query Brazilian stock market data from Brasil, Bolsa, Balcão (Brazilian Stock Exchange).
 
+**Sub-domains:**
+- **index**: 3-tab dashboard (composition + history + ticker) + compare + ticker modes. Reads from `data_sources/b3/index` + `data_sources/b3/api` + CVM bridge.
+- **price**: 7-tab dashboard (Cotação / Médias / Volume / Indicadores / Retornos / Volatilidade / Fibonacci) + quote mode. Reads from `data_sources/b3/cotahist` + `data_sources/b3/dividends`.
+- **options**: 3-tab dashboard (Cadeia de Opções / Put/Call Ratio / Volume por Strike). Reads from `data_sources/b3/cotahist_derivatives` (shared `cotahist.db`). `REQUIRED_SOURCES=["cotahist"]` (derivatives ride on the cotahist sync — no separate sync).
+
+See [B3 Skills](skills/B3.md) for the B3 landing page.
+
 ### CVM (Comissão de Valores Mobiliários)
 
 **Location**: `skills/cvm/`
@@ -359,6 +366,9 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 | [comparison](skills/cvm/COMPARISON.md) | cvm | 5 | ✅ | ❌ | COMPARISON.md |
 | [investsite](skills/INVESTSITE.md) | investsite | 3 | ✅ | N/A (web) | INVESTSITE.md |
 | [macro](skills/bcb/MACRO.md) | bcb | 5 | ✅ | ✅ (v1.2 docs) | MACRO.md |
+| [index](skills/b3/INDEX.md) | b3 | 3 | ✅ | ✅ | INDEX.md |
+| [price](skills/b3/PRICE.md) | b3 | 7 | ✅ | ✅ | PRICE.md |
+| [options](skills/b3/OPTIONS.md) | b3 | 3 | ✅ | ✅ | OPTIONS.md |
 
 **Notes:**
 
@@ -487,4 +497,4 @@ On 401 Unauthorized: `[brapi] DISABLED for this session: 401 Unauthorized on {ti
 
 ---
 
-*Last updated: 2026-08-08 (v1.22 — dashboard output standard + timing pattern + cache rules).*
+*Last updated: 2026-08-18 (v1.23 — added B3 skills: index, price, options to the skills table).*
