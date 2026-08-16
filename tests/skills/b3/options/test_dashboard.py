@@ -16,18 +16,19 @@ class TestDashboardMode:
         assert "underlying" in result["error"].lower()
 
     def test_dashboard_tab_structure(self, options_env):
-        """Dashboard returns 3 tabs with correct names + groups."""
+        """Dashboard returns 4 tabs with correct names + groups."""
         from skills.b3.options.modes.dashboard import dashboard
         result = dashboard(underlying="PETR")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 3
+        assert len(result["tabs"]) == 4
 
         names = [t["name"] for t in result["tabs"]]
         assert names == [
             "Cadeia de Opções",
             "Put/Call Ratio",
             "Volume por Strike",
+            "Exercicios",
         ]
 
         groups = [t["group"] for t in result["tabs"]]
@@ -35,6 +36,7 @@ class TestDashboardMode:
             "Opções",
             "Análise",
             "Análise",
+            "Opções",
         ]
 
         # Each tab has a non-empty sections list.

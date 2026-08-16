@@ -30,19 +30,60 @@ from pathlib import Path
 
 # ── BDI codes for derivatives ────────────────────────────────────────────────
 
-DERIVATIVES_BDI_FILTER = {78, 82, 83, 84, 26}
+# [v1.1] Expanded to ALL derivative BDI codes — options, exercise, term, forward.
+# This is the FINAL structural change. After the initial full re-sync, only
+# incremental updates (sync(year=current, force=True)) are needed.
+DERIVATIVES_BDI_FILTER = {
+    # Options (stock + index)
+    78, 82,           # Stock calls / puts
+    83, 84,            # Index calls / puts
+    # Exercise of options (stock + index)
+    38, 42,            # Exercise of stock calls / puts
+    22, 32,            # Exercise of index calls / puts
+    # Term (a termo)
+    26, 74,            # Term contracts
+    # Forward
+    46, 48,            # Forward with continuous movement / gain retention
+}
 
 # Market type codes for derivatives.
 DERIVATIVES_MARKET_TYPES = {13, 17, 20, 60, 70}
 
 # BDI code → human-readable type.
 BDI_LABELS = {
+    # Options
     78: "CALL",
     82: "PUT",
     83: "CALL (index)",
     84: "PUT (index)",
+    # Exercise of options
+    38: "EXERCISE CALL",
+    42: "EXERCISE PUT",
+    22: "EXERCISE CALL (index)",
+    32: "EXERCISE PUT (index)",
+    # Term
     26: "TERM",
+    74: "TERM",
+    # Forward
+    46: "FORWARD",
+    48: "FORWARD",
 }
+
+# [v1.1] BDI code → derivative type category.
+# Used to populate the `derivative_type` column during sync.
+BDI_TO_DERIVATIVE_TYPE = {
+    # Options
+    78: "OPTION", 82: "OPTION", 83: "OPTION", 84: "OPTION",
+    # Exercise of options
+    38: "EXERCISE", 42: "EXERCISE", 22: "EXERCISE", 32: "EXERCISE",
+    # Term
+    26: "TERM", 74: "TERM",
+    # Forward
+    46: "FORWARD", 48: "FORWARD",
+}
+
+# BDI codes for stock options exercise (used by the options skill v1.1).
+STOCK_EXERCISE_BDI = {38, 42}
 
 
 # ── Option ticker parser ────────────────────────────────────────────────────
@@ -176,6 +217,7 @@ CREATE TABLE IF NOT EXISTS cotahist_derivatives (
     option_type     TEXT,
     expiration_month INTEGER,
     strike_parsed   REAL,
+    derivative_type TEXT,
     _ingested_at    TEXT
 );
 
@@ -184,6 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_deriv_refdate ON cotahist_derivatives(refdate);
 CREATE INDEX IF NOT EXISTS idx_deriv_underlying ON cotahist_derivatives(underlying);
 CREATE INDEX IF NOT EXISTS idx_deriv_maturity ON cotahist_derivatives(maturity);
 CREATE INDEX IF NOT EXISTS idx_deriv_underlying_maturity ON cotahist_derivatives(underlying, maturity);
+CREATE INDEX IF NOT EXISTS idx_deriv_type ON cotahist_derivatives(derivative_type);
 
 CREATE TABLE IF NOT EXISTS cotahist_derivatives_sync_state (
     year        INTEGER PRIMARY KEY,
@@ -241,5 +284,9 @@ def ensure_schema(conn) -> None:
         conn.execute("ALTER TABLE cotahist_derivatives ADD COLUMN expiration_month INTEGER")
     if "strike_parsed" not in cols:
         conn.execute("ALTER TABLE cotahist_derivatives ADD COLUMN strike_parsed REAL")
+    if "derivative_type" not in cols:
+        conn.execute("ALTER TABLE cotahist_derivatives ADD COLUMN derivative_type TEXT")
+    # [v1.1] Create the derivative_type index if it doesn't exist.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_deriv_type ON cotahist_derivatives(derivative_type)")
 
     conn.commit()

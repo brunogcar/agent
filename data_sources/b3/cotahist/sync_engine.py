@@ -26,7 +26,7 @@ from data_sources.b3.cotahist.catalog import (
 )
 # [v1.2] Derivatives support — options, term, forward stored in a separate table.
 from data_sources.b3.cotahist_derivatives.catalog import (
-    DERIVATIVES_BDI_FILTER, parse_option_ticker,
+    DERIVATIVES_BDI_FILTER, parse_option_ticker, BDI_TO_DERIVATIVE_TYPE,
     DERIVATIVES_SCHEMA_SQL as _DERIVATIVES_SCHEMA_SQL,
 )
 from data_sources.b3.cotahist_derivatives.catalog import ensure_schema as _ensure_deriv_schema
@@ -226,7 +226,7 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
     insert_sql = f"INSERT INTO cotahist ({col_str}) VALUES ({placeholders})"
 
     # [v1.2] Build column list for derivatives (same layout cols + derived cols)
-    deriv_cols = cols + ["underlying", "option_type", "expiration_month", "strike_parsed"]
+    deriv_cols = cols + ["underlying", "option_type", "expiration_month", "strike_parsed", "derivative_type"]
     deriv_col_str = ", ".join(deriv_cols) + ", _ingested_at"
     deriv_placeholders = ", ".join(["?"] * (len(deriv_cols) + 1))
     deriv_insert_sql = f"INSERT INTO cotahist_derivatives ({deriv_col_str}) VALUES ({deriv_placeholders})"
@@ -283,11 +283,13 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
                     row["expiration_month"] = parsed["expiration_month"]
                     row["strike_parsed"] = parsed["strike_parsed"]
                 else:
-                    # Not an option ticker (e.g. term/forward) — store with NULLs.
+                    # Not an option ticker (e.g. term/forward/exercise) — store with NULLs.
                     row["underlying"] = None
                     row["option_type"] = None
                     row["expiration_month"] = None
                     row["strike_parsed"] = None
+                # [v1.1] Populate derivative_type from BDI code.
+                row["derivative_type"] = BDI_TO_DERIVATIVE_TYPE.get(bdi)
 
                 deriv_values = tuple(row.get(c, None) for c in deriv_cols) + (ingested_at,)
                 deriv_batch.append(deriv_values)

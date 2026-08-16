@@ -1,7 +1,7 @@
 """data_sources/b3/cotahist_derivatives/query_engine.py -- Query derivatives data."""
 from __future__ import annotations
 
-from data_sources.b3.cotahist_derivatives.catalog import connect, BDI_LABELS
+from data_sources.b3.cotahist_derivatives.catalog import connect, BDI_LABELS, STOCK_EXERCISE_BDI
 
 
 def options_chain(underlying: str = "", maturity: str = "", limit: int = 200) -> dict:
@@ -287,6 +287,76 @@ def volume_by_strike(underlying: str = "", maturity: str = "") -> dict:
             "refdate": latest_date,
             "count": len(strikes),
             "strikes": strikes,
+        }
+    finally:
+        conn.close()
+
+
+def exercise_summary(underlying: str = "", days: int = 90) -> dict:
+    """Get daily exercise summary for stock options (BDI 38/42).
+
+    Shows total call + put exercise volume per day for an underlying.
+    Exercise = when option holders actually exercise their right to
+    buy (calls) or sell (puts) the underlying stock at the strike price.
+
+    Args:
+        underlying: 4-letter code (e.g. "PETR") or full ticker ("PETR4").
+        days:       Number of most-recent trading days. Default 90.
+
+    Returns:
+        {"status": "ok", "underlying": ..., "count": N,
+         "observations": [{ref_date, call_exercise_vol, put_exercise_vol, total}, ...]}
+    """
+    if not underlying:
+        return {"status": "error", "error": "underlying is required"}
+
+    u = underlying.strip().upper()
+    while u and u[-1].isdigit():
+        u = u[:-1]
+
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        bdi_list = ",".join(str(b) for b in STOCK_EXERCISE_BDI)
+        rows = conn.execute(
+            f"""SELECT refdate,
+                       SUM(CASE WHEN bdi_code = 38 THEN volume ELSE 0 END) as call_ex_vol,
+                       SUM(CASE WHEN bdi_code = 42 THEN volume ELSE 0 END) as put_ex_vol,
+                       SUM(CASE WHEN bdi_code = 38 THEN contracts ELSE 0 END) as call_ex_count,
+                       SUM(CASE WHEN bdi_code = 42 THEN contracts ELSE 0 END) as put_ex_count
+                FROM cotahist_derivatives
+                WHERE underlying = ? AND bdi_code IN ({bdi_list})
+                GROUP BY refdate
+                ORDER BY refdate DESC
+                LIMIT ?""",
+            (u, days),
+        ).fetchall()
+
+        if not rows:
+            return {"status": "not_found", "underlying": u,
+                    "error": f"no exercise data for {u}"}
+
+        observations = []
+        for r in reversed(rows):
+            call_vol = r["call_ex_vol"] or 0
+            put_vol = r["put_ex_vol"] or 0
+            observations.append({
+                "ref_date": r["refdate"],
+                "call_exercise_volume": call_vol,
+                "put_exercise_volume": put_vol,
+                "total": call_vol + put_vol,
+                "call_exercise_contracts": r["call_ex_count"] or 0,
+                "put_exercise_contracts": r["put_ex_count"] or 0,
+            })
+
+        return {
+            "status": "ok",
+            "underlying": u,
+            "count": len(observations),
+            "observations": observations,
         }
     finally:
         conn.close()

@@ -30,7 +30,7 @@ from skills.b3.options.report import (
 from skills.b3.options.helpers import format_value, format_brl, format_int
 
 from data_sources.b3.cotahist_derivatives.query_engine import (
-    options_chain, put_call_ratio, volume_by_strike,
+    options_chain, put_call_ratio, volume_by_strike, exercise_summary,
 )
 
 
@@ -485,14 +485,121 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
     return sections
 
 
+# ── Tab 4: Exercicios ────────────────────────────────────────────────────────
+def _build_exercise_tab(underlying: str, days: int = 90) -> list[dict]:
+    """Build the Exercicios tab sections.
+
+    [v1.1] Shows exercise of stock options (BDI 38=call exercise, 42=put exercise).
+    When option holders exercise their right, they buy (calls) or sell (puts)
+    the underlying stock at the strike price. High exercise = options being
+    assigned.
+
+    Sections emitted:
+      1. Bar chart: daily call exercise volume (green) + put exercise volume (red).
+      2. Table: latest 15 observations (most recent first).
+    """
+    sections: list[dict] = []
+
+    res = _safe_query(exercise_summary, underlying=underlying, days=days)
+    status = res.get("status")
+    if status != "ok":
+        sections.append(build_error_section(
+            "Exercicios de Opcoes",
+            res.get("error", f"status={status}"),
+        ))
+        return sections
+
+    observations = res.get("observations", [])
+    if not observations:
+        sections.append(build_error_section(
+            "Exercicios de Opcoes",
+            f"nenhum exercicio encontrado para {underlying}",
+        ))
+        return sections
+
+    labels = [o["ref_date"] for o in observations]
+    call_vols = [o.get("call_exercise_volume", 0) or 0 for o in observations]
+    put_vols = [o.get("put_exercise_volume", 0) or 0 for o in observations]
+
+    chart_data = {
+        "type": "bar",
+        "data": {
+            "labels": labels,
+            "datasets": [
+                {
+                    "type": "bar",
+                    "label": "Exercicio Calls",
+                    "data": call_vols,
+                    "backgroundColor": _COLOR_CALL,
+                    "borderColor": _COLOR_CALL,
+                    "borderWidth": 0,
+                },
+                {
+                    "type": "bar",
+                    "label": "Exercicio Puts",
+                    "data": put_vols,
+                    "backgroundColor": _COLOR_PUT,
+                    "borderColor": _COLOR_PUT,
+                    "borderWidth": 0,
+                },
+            ],
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "interaction": {"mode": "index", "intersect": False},
+            "scales": {
+                "x": {"ticks": {"maxTicksLimit": 12}},
+                "y": {
+                    "beginAtZero": True,
+                    "title": {"display": True, "text": "Volume (R$)"},
+                },
+            },
+            "plugins": {
+                "title": {"display": True, "text": f"Exercicio de Opcoes — {underlying}"},
+                "legend": {"display": True, "position": "top"},
+            },
+        },
+    }
+
+    sections.append({
+        "type": "chart",
+        "title": f"Exercicio de Opcoes — {underlying}",
+        "description": (
+            f"Volume de exercicio de calls (verde) + puts (vermelho) nos "
+            f"ultimos {days} pregões. Exercicio = quando o titular exerce o "
+            "direito de comprar (call) ou vender (put) o ativo pelo strike."
+        ),
+        "chart_data": chart_data,
+    })
+
+    # Table with the latest 15 observations.
+    table_rows: list[list] = []
+    for obs in reversed(observations[-15:]):
+        table_rows.append([
+            obs.get("ref_date", ""),
+            format_int(obs.get("call_exercise_volume")),
+            format_int(obs.get("put_exercise_volume")),
+            format_int(obs.get("total")),
+        ])
+    sections.append(build_table_section(
+        f"Ultimos Exercicios — {underlying}",
+        table_rows,
+        ["Data", "Ex. Calls (R$)", "Ex. Puts (R$)", "Total"],
+        description="Ultimos 15 dias de exercicio (mais recente primeiro).",
+    ))
+    return sections
+
+
 # ── Dashboard entrypoint ────────────────────────────────────────────────────
 @register_mode(
     "dashboard",
     description=(
-        "B3 options (derivatives) analytics dashboard. 3 tabs: "
-        "Cadeia de Opções (options chain table + ticker legend), "
+        "B3 options (derivatives) analytics dashboard. 4 tabs: "
+        "Cadeia de Opcoes (options chain table + ticker legend), "
         "Put/Call Ratio (sentiment trend chart + table), "
-        "Volume por Strike (calls vs puts bar chart). "
+        "Volume por Strike (calls vs puts bar chart), "
+        "Exercicios (exercise of calls/puts). "
         "Source: cotahist.db (cotahist_derivatives table)."
     ),
     params={
@@ -511,7 +618,9 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
     ],
 )
 def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
-    """Build the 3-tab B3 options dashboard for a single underlying.
+    """Build the 4-tab B3 options dashboard for a single underlying.
+
+    [v1.1] Added Exercicios tab (exercise of calls/puts — BDI 38/42).
 
     Args:
         underlying: 4-letter code (PETR) or full ticker (PETR4). The trailing
@@ -531,7 +640,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
     if not u:
         return {"status": "error", "error": "underlying is required"}
 
-    # ── Tab 1/3: Cadeia de Opções ─────────────────────────────────────────
+    # ── Tab 1/4: Cadeia de Opções ──────────────────────────────────────────
     _s_t0 = _dt.now()
     chain_sections = _build_chain_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -541,7 +650,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 2/3: Put/Call Ratio ───────────────────────────────────────────
+    # ── Tab 2/4: Put/Call Ratio ──────────────────────────────────────────
     _s_t0 = _dt.now()
     pc_sections = _build_put_call_ratio_tab(u, days=days)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -551,7 +660,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 3/3: Volume por Strike ────────────────────────────────────────
+    # ── Tab 3/4: Volume por Strike ───────────────────────────────────
     _s_t0 = _dt.now()
     vbs_sections = _build_volume_by_strike_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -561,10 +670,21 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
+    # ── Tab 4/4: Exercicios ───────────────────────────────────────────
+    _s_t0 = _dt.now()
+    exercise_sections = _build_exercise_tab(u, days=days)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    print(
+        f"  [step] Exercicios: {len(exercise_sections)} sections "
+        f"({_s_elapsed:.1f}s)",
+        flush=True,
+    )
+
     tabs = [
-        {"name": "Cadeia de Opções", "group": "Opções",  "sections": chain_sections},
-        {"name": "Put/Call Ratio",    "group": "Análise", "sections": pc_sections},
-        {"name": "Volume por Strike", "group": "Análise", "sections": vbs_sections},
+        {"name": "Cadeia de Opções", "group": "Opções",     "sections": chain_sections},
+        {"name": "Put/Call Ratio",    "group": "Análise",    "sections": pc_sections},
+        {"name": "Volume por Strike", "group": "Análise",    "sections": vbs_sections},
+        {"name": "Exercicios",        "group": "Opções",     "sections": exercise_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()
