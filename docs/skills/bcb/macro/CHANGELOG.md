@@ -2,6 +2,19 @@
 
 # 📋 Macro Changelog
 
+## v1.3 — 2026-08-15
+
+**Bug fixes: Resumo table units + inflation row count + Salário label + catalog descriptions.**
+
+### Required Summary
+
+- **USD/BRL mensal chart fixed** — series 24369 was NOT USD/BRL (returns values like 7.6 when the exchange rate was ~4.15). Removed 24369 from the catalog + now computes monthly averages directly from the daily series (1) by grouping daily observations by YYYY-MM and averaging. The monthly chart + table now show correct exchange rate values.
+- **USD/BRL charts inverted to show USD/BRL (1/rate)** — charts now show USD/BRL (1/ptax = ~0.19, "dollars per real") instead of BRL/USD (5.x, "reais per dollar"). KPI cards stay as BRL/USD (Brazilian convention). Both daily + monthly charts now have the range selector buttons (Tudo/10A/5A/1A/6M/3M/1M) — added `price_full_datasets` to `build_chart_section` (was missing — buttons rendered but didn't work). Monthly chart now fetches 2 years (730 days) of daily data + shows 24 months via range selector.
+- **Resumo table units fixed** — `query_engine.last_value()` now returns `unit` + `name` from `SERIES_CATALOG`. The Resumo table was showing raw Python floats (e.g. `0.05166` instead of `0.051660%`) + empty "Unidade" column because `last_value()` didn't return a `unit` field. Now `format_value(lv["value"], lv["unit"])` formats correctly.
+- **Inflation mode row count fixed** — `inflation.py` was passing `days=months*31` to `query_series()`, but `days` is actually a row-count LIMIT (not calendar days). For months=24, this returned up to 744 monthly rows (decades of data). Fixed to pass `days=months` directly — returns the most recent N monthly observations as intended.
+- **Salário mínimo label fixed** — changed from "(anual)" to "(mensal)" in the Atividade tab. Series 1619 is monthly in the catalog; the label was misleading.
+- **Catalog descriptions fixed** — removed misleading "(anualizada)" from series 11 (Selic) + 12 (CDI) descriptions. The stored value is the daily rate (`% a.d.`, ~0.05%); the description claimed "anualizada" which was confusing.
+
 ## v1.2 — 2026-08-13
 
 **Docs sync — sgs sync_map wiring documented.**

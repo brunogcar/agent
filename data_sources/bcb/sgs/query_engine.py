@@ -80,8 +80,12 @@ def series(code: int = 0, days: int = 30,
 def last_value(code: int = 0) -> dict:
     """Get the most recent observation for a series.
 
+    [v1.3] Now returns ``unit`` + ``name`` from SERIES_CATALOG so callers
+    can format the value without a separate catalog lookup.
+
     Returns:
-        {"status": "ok", "code": <int>, "ref_date": ..., "value": ...}
+        {"status": "ok", "code": <int>, "name": ..., "unit": ...,
+         "ref_date": ..., "value": ...}
     """
     if not code:
         return {"status": "error", "error": "code is required"}
@@ -100,10 +104,12 @@ def last_value(code: int = 0) -> dict:
         if not row:
             return {"status": "not_found", "code": code,
                     "error": f"No observations for series {code}"}
+        meta = SERIES_CATALOG.get(code, ("?", "", "", "", ""))
         return {
             "status": "ok",
             "code": code,
-            "name": SERIES_CATALOG.get(code, ("?",))[0],
+            "name": meta[0],
+            "unit": meta[2],
             "ref_date": row["ref_date"],
             "value": row["value"],
         }

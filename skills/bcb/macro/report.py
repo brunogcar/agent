@@ -110,9 +110,15 @@ def build_chart_section(title: str, observations: list[dict],
                 },
             },
         },
-        # [v3] Time range selector - same as price chart (Tudo/5A/1A/1M)
+        # [v3] Time range selector - same as price chart (Tudo/10A/5A/1A/6M/3M/1M)
+        # [v1.3-v2] Added price_full_datasets (required by the template's
+        # filterPriceChart JS — without it the range buttons render but
+        # clicking them does nothing).
         "price_range_selector": True,
         "price_full_labels": labels,
+        "price_full_datasets": [
+            {"data": data, "label": title},
+        ],
         "price_full_data": data,
     }
 

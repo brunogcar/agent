@@ -42,10 +42,11 @@ def inflation(months: int = 12) -> dict:
     kpis = []
 
     for code, label in [(IPCA_MENSAL, "IPCA mensal"), (IGPM_MENSAL, "IGP-M mensal")]:
-        # Use days = months * 31 so the most-recent-N query returns enough
-        # monthly observations (monthly series have ~1 row per month, but
-        # the query engine filters by `days` which is a row-count cap).
-        res = query_series(code=code, days=months * 31)
+        # [v1.3] The `days` parameter in query_engine.series() is actually a
+        # row-count LIMIT (not calendar days). For a monthly series, passing
+        # months*31 returned up to months*31 rows (decades of data). Now we
+        # pass `months` directly — returns the most recent N monthly observations.
+        res = query_series(code=code, days=months)
         if res.get("status") != "ok":
             sections.append(build_error_section(label, res.get("error", "")))
             kpis.append(build_kpi_card(label, None, "%"))

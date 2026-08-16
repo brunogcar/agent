@@ -29,9 +29,9 @@ API_BASE = "https://api.bcb.gov.br/dados/serie"
 SERIES_CATALOG: dict[int, tuple[str, str, str, str, str]] = {
     # Juros (Interest rates)
     11:    ("Selic diaria",                 "daily",    "% a.d.",  "Juros",
-            "Taxa de juros - Selic diaria (base 252, anualizada)"),
+            "Taxa de juros - Selic diaria (base 252). Valor diario, nao anualizado."),
     12:    ("CDI diaria",                   "daily",    "% a.d.",  "Juros",
-            "Taxa de juros - CDI diaria (base 252, anualizada)"),
+            "Taxa de juros - CDI diaria (base 252). Valor diario, nao anualizado."),
     226:   ("TR (Taxa Referencial)",        "daily",    "%",       "Juros",
             "TR - Taxa Referencial. Base para poupanca e contratos."),
     432:   ("Meta Selic Copom",             "daily",    "% a.a.",  "Juros",
@@ -47,9 +47,7 @@ SERIES_CATALOG: dict[int, tuple[str, str, str, str, str]] = {
             "Indice Geral de Precos do Mercado (IGP-M) - variacao mensal"),
     # Cambio (Exchange rates)
     1:     ("USD/BRL ptax venda",           "daily",    "R$",      "Cambio",
-            "Dolar americano venda - taxa ptax"),
-    24369: ("USD/BRL ptax mensal",          "monthly",  "R$",      "Cambio",
-            "Dolar americano - taxa media mensal ptax"),
+            "Dolar americano venda - taxa ptax. Serie diaria usada tambem para calcular medias mensais."),
     # Atividade (Economic activity)
     4380:  ("PIB nominal trimestral",       "quarterly","R$ mil",  "Atividade",
             "Produto Interno Bruto nominal - trimestral"),

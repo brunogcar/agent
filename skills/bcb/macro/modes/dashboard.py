@@ -126,7 +126,7 @@ def _build_atividade_sections() -> list[dict]:
 
     for code, label, unit, days in [
         (PIB_NOMINAL, "PIB nominal trimestral", "R$ mil", 730),
-        (SALARIO_MIN, "Salario minimo (anual)", "R$", 730),
+        (SALARIO_MIN, "Salario minimo (mensal)", "R$", 730),
     ]:
         res = query_series(code=code, days=days)
         if res.get("status") == "ok":
@@ -190,8 +190,9 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     for code, label in [(11, "Selic"), (12, "CDI"), (432, "Meta Selic"), (433, "IPCA"), (189, "IGP-M"), (1, "USD/BRL"), (226, "TR"), (1619, "Salario minimo")]:
         lv = last_value(code=code)
         if lv.get("status") == "ok" and lv.get("value") is not None:
-            val_str = format_value(lv["value"], lv.get("unit", ""))
-            overview_rows.append([label, val_str, lv.get("ref_date", "-"), lv.get("unit", "")])
+            unit = lv.get("unit", "")
+            val_str = format_value(lv["value"], unit)
+            overview_rows.append([label, val_str, lv.get("ref_date", "-"), unit])
         else:
             overview_rows.append([label, "-", "-", ""])
     resumo_sections = [{

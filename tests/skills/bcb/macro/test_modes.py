@@ -22,8 +22,11 @@ def _mock_series(code, days=30, start="", end=""):
 
 
 def _mock_last_value(code):
-    return {"status": "ok", "code": code, "ref_date": "2024-01-03",
-            "value": 0.001235}
+    # [v1.3] Mock now returns unit + name (matching the updated query_engine).
+    from data_sources.bcb.sgs.catalog import SERIES_CATALOG
+    meta = SERIES_CATALOG.get(code, ("?", "", "", "", ""))
+    return {"status": "ok", "code": code, "name": meta[0], "unit": meta[2],
+            "ref_date": "2024-01-03", "value": 0.001235}
 
 
 def _patch_query(monkeypatch):
