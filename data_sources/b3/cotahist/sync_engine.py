@@ -24,12 +24,12 @@ from data_sources.b3.cotahist.catalog import (
     COTAHIST_LAYOUT, NUMERIC_COLS, INTEGER_COLS, BDI_FILTER,
     connect, ensure_schema,
 )
-# [v1.2] Derivatives support — options, term, forward stored in a separate table.
-from data_sources.b3.cotahist_derivatives.catalog import (
+# [v1.2] Derivatives support — options, term, forward stored in the same DB.
+# [v1.3] Merged — derivatives constants + parser now live in cotahist/catalog.py
+from data_sources.b3.cotahist.catalog import (
     DERIVATIVES_BDI_FILTER, parse_option_ticker, BDI_TO_DERIVATIVE_TYPE,
-    DERIVATIVES_SCHEMA_SQL as _DERIVATIVES_SCHEMA_SQL,
+    ensure_derivatives_schema as _ensure_deriv_schema,
 )
-from data_sources.b3.cotahist_derivatives.catalog import ensure_schema as _ensure_deriv_schema
 
 BATCH_SIZE = 50000  # commit every 50K rows (~1MB per batch)
 
@@ -283,8 +283,15 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
                     row["expiration_month"] = parsed["expiration_month"]
                     row["strike_parsed"] = parsed["strike_parsed"]
                 else:
-                    # Not an option ticker (e.g. term/forward/exercise) — store with NULLs.
-                    row["underlying"] = None
+                    # Not an option ticker (term/forward/exercise).
+                    # [v2] Derive underlying by stripping trailing digits from symbol
+                    # (PETR4 -> PETR, VALE3 -> VALE). This allows exercise/term
+                    # queries to filter by underlying (same as options).
+                    sym = row.get("symbol", "")
+                    u_base = sym.strip().upper()
+                    while u_base and u_base[-1].isdigit():
+                        u_base = u_base[:-1]
+                    row["underlying"] = u_base if u_base else None
                     row["option_type"] = None
                     row["expiration_month"] = None
                     row["strike_parsed"] = None

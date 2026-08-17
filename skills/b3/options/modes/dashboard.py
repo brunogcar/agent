@@ -29,7 +29,7 @@ from skills.b3.options.report import (
 )
 from skills.b3.options.helpers import format_value, format_brl, format_int
 
-from data_sources.b3.cotahist_derivatives.query_engine import (
+from data_sources.b3.cotahist.derivatives_query import (
     options_chain, put_call_ratio, volume_by_strike, exercise_summary,
 )
 

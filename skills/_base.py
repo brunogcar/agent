@@ -335,8 +335,8 @@ def _auto_generate_html(skill_name: str, mode: str, kwargs: dict, result: dict) 
         from tools.report_ops import html as _report_html
 
         # Get company/ticker for the filename prefix.
-        # Try kwargs first (company / ticker / tickers list), then result dict.
-        company = (kwargs.get("company") or kwargs.get("ticker") or "").strip()
+        # Try kwargs first (company / ticker / underlying / tickers list), then result dict.
+        company = (kwargs.get("company") or kwargs.get("ticker") or kwargs.get("underlying") or "").strip()
         if not company:
             tickers = kwargs.get("tickers")
             if isinstance(tickers, list) and tickers:

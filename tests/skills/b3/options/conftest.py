@@ -21,7 +21,7 @@ os.environ.setdefault("CVM_SKIP_HTML", "1")
 
 def _make_derivatives_db(tmp_path: Path) -> Path:
     """Create a synthetic cotahist.db with cotahist_derivatives table."""
-    from data_sources.b3.cotahist_derivatives.catalog import DERIVATIVES_SCHEMA_SQL
+    from data_sources.b3.cotahist.catalog import DERIVATIVES_SCHEMA_SQL
 
     db_path = tmp_path / "cotahist.db"
     conn = sqlite3.connect(str(db_path))
@@ -72,9 +72,9 @@ def options_env(tmp_path: Path, monkeypatch):
     """Set up synthetic cotahist.db with derivatives data."""
     db_path = _make_derivatives_db(tmp_path)
 
-    # Patch the db_path + connect in the derivatives catalog.
+    # Patch the db_path + connect in the cotahist catalog.
     monkeypatch.setattr(
-        "data_sources.b3.cotahist_derivatives.catalog.db_path", lambda: db_path)
+        "data_sources.b3.cotahist.catalog.db_path", lambda: db_path)
 
     def mock_connect(read_only=True):
         c = sqlite3.connect(f"file:{db_path}?mode=ro" if read_only else str(db_path),
@@ -83,5 +83,5 @@ def options_env(tmp_path: Path, monkeypatch):
         return c
 
     monkeypatch.setattr(
-        "data_sources.b3.cotahist_derivatives.catalog.connect", mock_connect)
+        "data_sources.b3.cotahist.catalog.connect", mock_connect)
     return db_path

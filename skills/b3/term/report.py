@@ -1,11 +1,7 @@
-"""skills/b3/options/report.py - Section builders for the options dashboard.
+"""skills/b3/term/report.py - Section builders for the term dashboard.
 
 Each builder returns a dict shaped for the report tool's build_dashboard()
 + the dashboard.html template:
-
-  KPI card (top-level only):
-    {"label": ..., "value": <formatted string>, "raw": <float>,
-     "unit": ..., "subtitle": ...}
 
   Chart section:
     {"type": "chart", "title": ..., "description": ...,
@@ -23,37 +19,19 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
   Error section (graceful degradation):
     {"type": "text", "title": ..., "body": "Erro ao consultar: ..."}
 
-Same pattern as skills/bcb/macro/report.py. The default chart line color
-is green (#22c55e) since the options skill's primary accent is the call
-color (calls = green, puts = red).
+Same pattern as skills/b3/options/report.py. The default chart line color
+is blue (#3b82f6) — the term skill's primary accent (term price = blue,
+spot price = teal, volume bars = orange).
 """
 
 from __future__ import annotations
 
 
-# Default accent colors for the options skill (calls = green, puts = red).
-_COLOR_CALL = "#22c55e"
-_COLOR_PUT  = "#ef4444"
-
-
-def build_kpi_card(label: str, value, unit: str = "",
-                   subtitle: str = "") -> dict:
-    """Build a KPI card dict for the top-level kpis list.
-
-    The dashboard template renders k.label + k.value (the other fields
-    are kept for debugging / future use but are ignored by the template).
-
-    Returns:
-        {"label": ..., "value": <formatted string>, "raw": <float>,
-         "unit": ..., "subtitle": ...}
-    """
-    return {
-        "label":    label,
-        "value":    value,
-        "raw":      value,
-        "unit":     unit,
-        "subtitle": subtitle,
-    }
+# Default accent colors for the term skill.
+# term price = blue, spot price = teal, volume bars = orange.
+_COLOR_TERM   = "#3b82f6"
+_COLOR_SPOT   = "#0d9488"
+_COLOR_VOLUME = "#f59e0b"
 
 
 def build_chart_section(title: str, observations: list[dict],
@@ -67,13 +45,14 @@ def build_chart_section(title: str, observations: list[dict],
     Args:
         title:        Chart title (also used as the section title + dataset label).
         observations: List of {"ref_date", "value"} dicts.
-        unit:         Unit hint ("% a.d.", "R$", "ratio", etc.) — informational.
+        unit:         Unit hint ("R$", "R$ mil", etc.) — informational.
         description:  Optional description shown above the chart.
 
-    The default line color is green (#22c55e). Callers that need a
-    different palette (e.g. the P/C ratio chart with a dashed grey
-    reference line at 1.0) can post-process the returned dict's
-    chart_data.data.datasets list directly.
+    The default line color is blue (#3b82f6) — the term skill's primary
+    accent. Callers that need a different palette (e.g. the spread chart
+    with term + spot + spread lines, or the volume bar chart) can
+    post-process the returned dict's chart_data.data.datasets list directly,
+    or build the section inline.
     """
     rows = sorted(
         [o for o in observations if o.get("ref_date")],
@@ -94,8 +73,8 @@ def build_chart_section(title: str, observations: list[dict],
                 "datasets": [{
                     "label": title,
                     "data": data,
-                    "borderColor": _COLOR_CALL,
-                    "backgroundColor": _COLOR_CALL,
+                    "borderColor": _COLOR_TERM,
+                    "backgroundColor": _COLOR_TERM,
                     "fill": False,
                     "tension": 0.3,
                     "pointRadius": 1.5,
@@ -159,8 +138,8 @@ def build_error_section(title: str, error: str) -> dict:
     """Build an error section (used when a sub-query fails gracefully).
 
     The dashboard stays status=ok with error sections so the rest of the
-    tabs still render — mirrors the CVM financials + bcb/macro graceful
-    degradation contract.
+    tabs still render — mirrors the CVM financials + bcb/macro + b3/options
+    graceful degradation contract.
     """
     return {"type": "text", "title": title,
             "text": f"Erro ao consultar: {error}"}
