@@ -1,13 +1,16 @@
-"""skills/b3/price/report/indicadores.py -- Indicadores tab builder (v1.2).
+"""skills/b3/price/report/indicadores.py -- Indicadores tab builder (v1.6).
 
 Builds a reference price chart + 4 collapsible momentum oscillator charts
-+ a signals summary table:
++ (v1.6) 3 trend/cyclical charts + a signals summary table:
   0. Preço (reference)  — single-axis close-price line chart (just for reference)
   1. RSI (14)           — line 0-100 with 30/70 reference lines
   2. MACD (12/26/9)     — histogram bars + MACD/signal lines
   3. Stochastic        — %K + %D lines 0-100 with 20/80 reference lines
   4. OBV               — cumulative signed volume line
-  5. Signals table     — 1-row summary of latest reading per indicator
+  5. ADX (14)          — [v1.6] trend strength 0-100 with 25 reference line
+  6. CCI (20)          — [v1.6] cyclical oscillator with +/-100 reference lines
+  7. Williams %R (14)  — [v1.6] momentum 0 to -100 with -20/-80 reference lines
+  8. Signals table     — 1-row summary of latest reading per indicator
 
 [v1.2-v2] The dual-axis price overlay was removed from the 4 indicator
 charts (was cluttering the read). A single price line chart at the TOP of
@@ -68,6 +71,9 @@ def build_indicadores_sections(
     k_line: list[float | None],
     d_line: list[float | None],
     obv: list[float | None],
+    adx: list[float | None] | None = None,
+    cci: list[float | None] | None = None,
+    williams_r: list[float | None] | None = None,
 ) -> list[dict]:
     """Build the Indicadores tab: price reference + 4 collapsible indicator charts + signals table.
 
@@ -85,10 +91,15 @@ def build_indicadores_sections(
         k_line:       Stochastic %K (0-100)
         d_line:       Stochastic %D (SMA3 of %K)
         obv:          On-Balance Volume cumulative series
+        adx:          [v1.6] ADX(14) trend-strength series (0-100, None warmup)
+        cci:          [v1.6] CCI(20) cyclical oscillator series
+        williams_r:   [v1.6] Williams %R(14) momentum series (0 to -100)
 
     Returns:
-        Six sections: price reference chart + RSI chart + MACD chart +
-        Stochastic chart + OBV chart + signals summary table.
+        Up to nine sections: price reference chart + RSI chart + MACD chart +
+        Stochastic chart + OBV chart + (v1.6) ADX + CCI + Williams %R charts
+        + signals summary table. The v1.6 charts are added only when the
+        corresponding series is provided (non-None).
 
     [v1.2-v2] The 4 indicator charts are single-axis (no dual-axis price
     overlay — was cluttering the read). A separate price reference chart
@@ -411,7 +422,187 @@ def build_indicadores_sections(
         "price_full_data": obv,
     }
 
-    # ── 5. Signals summary table ────────────────────────────────────────────
+    # ── 5. ADX chart (v1.6) — trend strength 0-100 + 25 reference line ────
+    adx_sections: list[dict] = []
+    if adx is not None:
+        adx_25 = _constant_line(25.0, "Tendencia forte (25)", _COLOR_ORANGE, n)
+        adx_75 = _constant_line(75.0, "Tendencia muito forte (75)", _COLOR_RED, n)
+        adx_chart: dict[str, Any] = {
+            "type": "chart",
+            "title": f"ADX (14) — {ticker}",
+            "description": (
+                "Average Directional Index (14 periodos). Mede a FORCA da "
+                "tendencia (0-100), nao a direcao. ADX > 25 = tendencia forte "
+                "(alta ou baixa); ADX < 20 = sem tendencia definida (lateral). "
+                "Usa Wilder smoothing (mesma recursao do RSI). Complementa o "
+                "MACD (que mostra direcao + momentum)."
+            ),
+            "collapsible": True,
+            "chart_data": {
+                "type": "line",
+                "data": {
+                    "labels": dates,
+                    "datasets": [
+                        {
+                            "type": "line",
+                            "label": "ADX (14)",
+                            "data": adx,
+                            "borderColor": _COLOR_TEAL,
+                            "borderWidth": 1.5,
+                            "pointRadius": 0,
+                            "pointHoverRadius": 3,
+                            "tension": 0.2,
+                            "fill": False,
+                        },
+                        adx_25,
+                        adx_75,
+                    ],
+                },
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "interaction": {"mode": "index", "intersect": False},
+                    "scales": {
+                        "x": {"ticks": {"maxTicksLimit": 12}},
+                        "y": {
+                            "min": 0,
+                            "max": 100,
+                            "title": {"display": True, "text": "ADX (0-100)"},
+                        },
+                    },
+                    "plugins": {"legend": {"display": True, "position": "top"}},
+                },
+            },
+            "price_range_selector": True,
+            "price_full_labels": dates,
+            "price_full_datasets": [
+                {"data": adx, "label": "ADX (14)"},
+                {"data": [25.0] * n, "label": "Tendencia forte (25)"},
+                {"data": [75.0] * n, "label": "Tendencia muito forte (75)"},
+            ],
+            "price_full_data": adx,
+        }
+        adx_sections.append(adx_chart)
+
+    # ── 6. CCI chart (v1.6) — cyclical oscillator with +/-100 reference ───
+    if cci is not None:
+        cci_p100 = _constant_line(100.0, "Sobrecompra (+100)", _COLOR_RED, n)
+        cci_n100 = _constant_line(-100.0, "Sobrevenda (-100)", _COLOR_GREEN, n)
+        cci_chart: dict[str, Any] = {
+            "type": "chart",
+            "title": f"CCI (20) — {ticker}",
+            "description": (
+                "Commodity Channel Index (20 periodos). Mede o desvio do "
+                "preco tipico (H+L+C)/3 da sua media, normalizado pelo desvio "
+                "medio. CCI > +100 = sobrecompra; CCI < -100 = sobrevenda. "
+                "Captura ciclos diferentes do RSI/Stochastic."
+            ),
+            "collapsible": True,
+            "chart_data": {
+                "type": "line",
+                "data": {
+                    "labels": dates,
+                    "datasets": [
+                        {
+                            "type": "line",
+                            "label": "CCI (20)",
+                            "data": cci,
+                            "borderColor": _COLOR_PURPLE,
+                            "borderWidth": 1.5,
+                            "pointRadius": 0,
+                            "pointHoverRadius": 3,
+                            "tension": 0.2,
+                            "fill": False,
+                        },
+                        cci_p100,
+                        cci_n100,
+                    ],
+                },
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "interaction": {"mode": "index", "intersect": False},
+                    "scales": {
+                        "x": {"ticks": {"maxTicksLimit": 12}},
+                        "y": {
+                            "title": {"display": True, "text": "CCI"},
+                        },
+                    },
+                    "plugins": {"legend": {"display": True, "position": "top"}},
+                },
+            },
+            "price_range_selector": True,
+            "price_full_labels": dates,
+            "price_full_datasets": [
+                {"data": cci, "label": "CCI (20)"},
+                {"data": [100.0] * n, "label": "Sobrecompra (+100)"},
+                {"data": [-100.0] * n, "label": "Sobrevenda (-100)"},
+            ],
+            "price_full_data": cci,
+        }
+        adx_sections.append(cci_chart)
+
+    # ── 7. Williams %R chart (v1.6) — momentum 0 to -100 ──────────────────
+    if williams_r is not None:
+        wr_n20 = _constant_line(-20.0, "Sobrecompra (-20)", _COLOR_RED, n)
+        wr_n80 = _constant_line(-80.0, "Sobrevenda (-80)", _COLOR_GREEN, n)
+        wr_chart: dict[str, Any] = {
+            "type": "chart",
+            "title": f"Williams %R (14) — {ticker}",
+            "description": (
+                "Williams %R (14 periodos). Oscilador de momentum 0 a -100. "
+                "%R > -20 (prox. de 0) = sobrecompra; %R < -80 (prox. de -100) "
+                "= sobrevenda. Matematicamente equivalente ao %K invertido "
+                "(Stochastic) mas com escala e convencao diferentes."
+            ),
+            "collapsible": True,
+            "chart_data": {
+                "type": "line",
+                "data": {
+                    "labels": dates,
+                    "datasets": [
+                        {
+                            "type": "line",
+                            "label": "Williams %R (14)",
+                            "data": williams_r,
+                            "borderColor": _COLOR_BLUE,
+                            "borderWidth": 1.5,
+                            "pointRadius": 0,
+                            "pointHoverRadius": 3,
+                            "tension": 0.2,
+                            "fill": False,
+                        },
+                        wr_n20,
+                        wr_n80,
+                    ],
+                },
+                "options": {
+                    "responsive": True,
+                    "maintainAspectRatio": False,
+                    "interaction": {"mode": "index", "intersect": False},
+                    "scales": {
+                        "x": {"ticks": {"maxTicksLimit": 12}},
+                        "y": {
+                            "min": -100,
+                            "max": 0,
+                            "title": {"display": True, "text": "Williams %R (0 a -100)"},
+                        },
+                    },
+                    "plugins": {"legend": {"display": True, "position": "top"}},
+                },
+            },
+            "price_range_selector": True,
+            "price_full_labels": dates,
+            "price_full_datasets": [
+                {"data": williams_r, "label": "Williams %R (14)"},
+                {"data": [-20.0] * n, "label": "Sobrecompra (-20)"},
+                {"data": [-80.0] * n, "label": "Sobrevenda (-80)"},
+            ],
+            "price_full_data": williams_r,
+        }
+        adx_sections.append(wr_chart)
+
+    # ── 8. Signals summary table ────────────────────────────────────────────
     rsi_val = _last(rsi)
     hist_val = _last(histogram)
     k_val = _last(k_line)
@@ -457,10 +648,54 @@ def build_indicadores_sections(
             return "Baixa (distribuindo)"
         return "Neutro"
 
+    def _adx_signal(v: float | None) -> str:
+        if v is None:
+            return "—"
+        if v >= 25:
+            return "Tendencia forte (≥25)"
+        if v < 20:
+            return "Sem tendencia (<20)"
+        return "Tendencia moderada"
+
+    def _cci_signal(v: float | None) -> str:
+        if v is None:
+            return "—"
+        if v > 100:
+            return "Sobrecompra (>+100)"
+        if v < -100:
+            return "Sobrevenda (<-100)"
+        return "Neutro"
+
+    def _wr_signal(v: float | None) -> str:
+        if v is None:
+            return "—"
+        if v > -20:
+            return "Sobrecompra (>-20)"
+        if v < -80:
+            return "Sobrevenda (<-80)"
+        return "Neutro"
+
     def _fmt(v: float | None, digits: int = 2) -> str:
         if v is None:
             return "—"
         return f"{v:.{digits}f}"
+
+    adx_val = _last(adx) if adx is not None else None
+    cci_val = _last(cci) if cci is not None else None
+    wr_val  = _last(williams_r) if williams_r is not None else None
+
+    signals_rows = [
+        ["RSI (14)",           _fmt(rsi_val),      _rsi_signal(rsi_val)],
+        ["MACD (histograma)",  _fmt(hist_val),     _macd_signal(hist_val)],
+        ["Stochastic %K (14)", _fmt(k_val),        _stoch_signal(k_val)],
+        ["OBV (20D trend)",    _fmt(obv_trend, 0), _obv_signal(obv_trend)],
+    ]
+    if adx is not None:
+        signals_rows.append(["ADX (14)",        _fmt(adx_val), _adx_signal(adx_val)])
+    if cci is not None:
+        signals_rows.append(["CCI (20)",        _fmt(cci_val), _cci_signal(cci_val)])
+    if williams_r is not None:
+        signals_rows.append(["Williams %R (14)", _fmt(wr_val),  _wr_signal(wr_val)])
 
     signals_table: dict[str, Any] = {
         "type": "table",
@@ -472,12 +707,10 @@ def build_indicadores_sections(
             "sobrecomprado + MACD de alta) sugerem aguardar confirmação."
         ),
         "columns": ["Indicador", "Valor Atual", "Sinal"],
-        "rows": [
-            ["RSI (14)",          _fmt(rsi_val),    _rsi_signal(rsi_val)],
-            ["MACD (histograma)", _fmt(hist_val),   _macd_signal(hist_val)],
-            ["Stochastic %K (14)", _fmt(k_val),     _stoch_signal(k_val)],
-            ["OBV (20D trend)",    _fmt(obv_trend, 0), _obv_signal(obv_trend)],
-        ],
+        "rows": signals_rows,
+        # Right-align the "Valor Atual" column (index 1); left-align the
+        # "Indicador" name (0) and the "Sinal" classifier (2).
+        "column_align": ["left", "right", "left"],
         "note": (
             "Sinais são leituras pontuais — NÃO são recomendações de "
             "compra/venda. Sempre confirme com a ação do preço + contexto "
@@ -485,4 +718,4 @@ def build_indicadores_sections(
         ),
     }
 
-    return [price_chart, rsi_chart, macd_chart, stoch_chart, obv_chart, signals_table]
+    return [price_chart, rsi_chart, macd_chart, stoch_chart, obv_chart] + adx_sections + [signals_table]

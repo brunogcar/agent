@@ -971,6 +971,12 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # (force=True so the guard's staleness check doesn't no-op the refresh).
         "sgs":          ("data_sources.bcb.sgs.sync_engine", "sync_all",
                          lambda: {"force": True}),
+        # [v1.4] BCB Focus sync — REQUIRED_SOURCES in macro includes "focus"
+        # (added in macro v1.4 alongside the Expectativas Focus tab). Mirrors
+        # the sgs entry: sync_all(force=True) re-fetches all 4 indicators
+        # (IPCA, Selic, PIB, Cambio) from the Olinda OData API.
+        "focus":        ("data_sources.bcb.focus.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:

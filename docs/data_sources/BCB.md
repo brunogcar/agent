@@ -1,12 +1,13 @@
 # 🏦 BCB Data Sources
 
-BCB = Banco Central do Brasil (Brazilian Central Bank). Public, free, no-auth macro-economic time series via the SGS API (Sistema Gerenciador de Series Temporais).
+BCB = Banco Central do Brasil (Brazilian Central Bank). Public, free, no-auth macro-economic time series via the SGS API + market expectations via the Focus survey (Olinda OData API).
 
 ## Sub-Domains
 
 | Sub-Domain | What | Landing Page |
 |------------|------|--------------|
 | **SGS** | 12 curated macro series: Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo. 4 categories (Juros / Inflacao / Cambio / Atividade). | [SGS.md](bcb/SGS.md) |
+| **FOCUS** | 4 curated indicators (IPCA, Selic, PIB, Cambio) x frequency (monthly/annual). Boletim Focus survey via Olinda OData. | [FOCUS.md](bcb/FOCUS.md) |
 
 ---
 
@@ -21,6 +22,12 @@ data_source(domain="bcb", sub_domain="sgs", mode="last", params='{"code":11}')
 
 # Query last 90 days of CDI
 data_source(domain="bcb", sub_domain="sgs", mode="series", params='{"code":12,"days":90}')
+
+# Sync all 4 Focus indicators concurrently
+data_source(domain="bcb", sub_domain="focus", mode="sync_all")
+
+# Get the latest Selic annual expectation
+data_source(domain="bcb", sub_domain="focus", mode="last", params='{"indicador":"Selic","frequency":"annual"}')
 ```
 
 ---
@@ -30,10 +37,12 @@ data_source(domain="bcb", sub_domain="sgs", mode="series", params='{"code":12,"d
 | Storage | Path |
 |---------|------|
 | SGS DB | `memory_db/bcb/sgs.db` |
+| Focus DB | `memory_db/bcb/focus.db` |
 
 | Source | URL |
 |--------|-----|
 | SGS API | `https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados` |
+| Focus API | `https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/` |
 
 No env vars required — data sources use the existing `cfg.memory_root` from `core/config`.
 
@@ -50,6 +59,9 @@ python3 -c "from data_sources.bcb.sgs.sync_engine import sync_series; print(sync
 
 # Sync a date range
 python3 -c "from data_sources.bcb.sgs.sync_engine import sync_series_range; print(sync_series_range(code=11, start='2024-01-01', end='2024-12-31'))"
+
+# Sync all 4 Focus indicators (~5s, concurrent)
+python3 -c "from data_sources.bcb.focus.sync_engine import sync_all; print(sync_all())"
 ```
 
 ---
@@ -60,12 +72,19 @@ python3 -c "from data_sources.bcb.sgs.sync_engine import sync_series_range; prin
 data_sources/
 └── bcb/                           # BCB domain
     ├── __init__.py                # Domain hub (auto-discovers sub-domains)
-    └── sgs/                       # SGS sub-domain
-        ├── __init__.py            # MANIFEST + route (8 modes)
-        ├── catalog.py             # SERIES_CATALOG (12 series) + schema
-        ├── fetcher.py             # HTTP fetcher (thread-safe, Semaphore(5))
-        ├── sync_engine.py         # sync_series / sync_all / sync_series_range
-        ├── query_engine.py        # series / last_value / range / search / summary
+    ├── sgs/                       # SGS sub-domain (12 macro series)
+    │   ├── __init__.py            # MANIFEST + route (8 modes)
+    │   ├── catalog.py             # SERIES_CATALOG (12 series) + schema
+    │   ├── fetcher.py             # HTTP fetcher (thread-safe, Semaphore(5))
+    │   ├── sync_engine.py         # sync_series / sync_all / sync_series_range
+    │   ├── query_engine.py        # series / last_value / range / search / summary
+    │   └── status_reporter.py     # DB stats
+    └── focus/                     # FOCUS sub-domain (4 indicators x frequency)
+        ├── __init__.py            # MANIFEST + route (7 modes)
+        ├── catalog.py             # INDICATOR_CATALOG (4 indicators) + schema
+        ├── fetcher.py             # OData HTTP fetcher (thread-safe, Semaphore(5))
+        ├── sync_engine.py         # sync_expectations / sync_all / sync_indicator
+        ├── query_engine.py        # expectations / last_value / summary
         └── status_reporter.py     # DB stats
 ```
 
@@ -83,4 +102,4 @@ data_sources/
 
 ---
 
-*Last updated: 2026-07-24 (v3.0).*
+*Last updated: 2026-08-22 (v3.1 -- added FOCUS sub-domain).*

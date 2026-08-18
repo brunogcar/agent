@@ -1,11 +1,13 @@
 """Mode: dashboard -- multi-tab BCB macro dashboard (thin composition mode).
 
-Composes the rates / inflation / fx modes into a single 5-tab payload:
+Composes the rates / inflation / fx / real_returns modes into a single
+6-tab payload:
   - Resumo      (text overview)
   - Juros       (rates mode sections)
   - Inflacao    (inflation mode sections)
   - Cambio      (fx mode sections)
   - Atividade   (PIB + Salario minimo - thin, just last values + table)
+  - Retorno Real (real_returns mode - Fisher equation)         [v1.4]
 
 When a sub-mode fails, the dashboard still returns status=ok with the failed
 tab containing an error section - this mirrors the CVM financials dashboard
@@ -37,6 +39,8 @@ from skills.bcb.macro.report import (
 from skills.bcb.macro.modes.rates import rates as rates_mode
 from skills.bcb.macro.modes.inflation import inflation as inflation_mode
 from skills.bcb.macro.modes.fx import fx as fx_mode
+from skills.bcb.macro.modes.real_returns import real_returns as real_returns_mode
+from skills.bcb.macro.modes.expectations import expectations as expectations_mode
 
 from data_sources.bcb.sgs.query_engine import last_value, series as query_series
 
@@ -148,8 +152,9 @@ def _build_atividade_sections() -> list[dict]:
 @register_mode(
     "dashboard",
     description=(
-        "BCB macro dashboard - 5 tabs: Resumo (KPIs), Juros, Inflacao, Cambio, "
-        "Atividade. Composes rates + inflation + fx modes. KPIs at top level."
+        "BCB macro dashboard - 6 tabs: Resumo (KPIs), Juros, Inflacao, Cambio, "
+        "Atividade, Retorno Real (Fisher equation). Composes rates + inflation "
+        "+ fx + real_returns modes. KPIs at top level."
     ),
     params={
         "days":   "int. Daily-series window. Default: 365.",
@@ -164,25 +169,28 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     """Build the multi-tab BCB macro dashboard.
 
     [v3] Default days=365 (was 30) and months=24 (was 12) for meaningful trends.
+    [v1.4] Added 6th tab "Retorno Real" (Fisher equation) composing the
+           real_returns mode sections.
     """
     _t0 = _dt.now()
     print(f"[bcb.macro] Starting dashboard...", flush=True)
-    print(f"[bcb.macro] Fetching rates / inflation / fx...", flush=True)
+    print(f"[bcb.macro] Fetching rates / inflation / fx / real_returns...", flush=True)
     rates_res     = _safe_call(rates_mode,     days=days)
     inflation_res = _safe_call(inflation_mode, months=months)
     fx_res        = _safe_call(fx_mode,        days=days)
+    real_res      = _safe_call(real_returns_mode, days=days, months=months)
     _fetch_elapsed = (_dt.now() - _t0).total_seconds()
     print(f"[bcb.macro] Data fetched ({_fetch_elapsed:.1f}s).", flush=True)
 
     # Top-level KPIs (rendered in the universal header above tabs).
     kpis = _build_resumo_kpis()
 
-    # [v5] One-line section timers (ratios pattern): 5 sections.
-    _SEC_TOTAL = 5
+    # [v5] One-line section timers (ratios pattern): 6 sections.
+    _SEC_TOTAL = 7
     _sec_count = 0
     _sec_t0 = _dt.now()
 
-    # ── Section 1/5: Resumo ────────────────────────────────────────
+    # ── Section 1/6: Resumo ────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     # [v3] Build Resumo as a TABLE (not text) so the template renders it
@@ -205,7 +213,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Resumo ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 2/5: Juros ─────────────────────────────────────────
+    # ── Section 2/6: Juros ─────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     juros_sections = rates_res.get("sections", []) or [
@@ -215,7 +223,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Juros ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 3/5: Inflacao ──────────────────────────────────────
+    # ── Section 3/6: Inflacao ──────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     inflacao_sections = inflation_res.get("sections", []) or [
@@ -225,7 +233,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Inflacao ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 4/5: Cambio ────────────────────────────────────────
+    # ── Section 4/6: Cambio ────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     cambio_sections = fx_res.get("sections", []) or [
@@ -235,7 +243,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Cambio ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 5/5: Atividade ─────────────────────────────────────
+    # ── Section 5/6: Atividade ─────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     atividade_sections = _build_atividade_sections()
@@ -243,19 +251,43 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Atividade ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
+    # ── Section 6/7: Retorno Real ─────────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    real_returns_sections = real_res.get("sections", []) or [
+        build_error_section("Retorno Real", real_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Retorno Real ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
+    # ── Section 7/7: Expectativas Focus ─────────────────────────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    exp_res = _safe_call(expectations_mode)
+    expectations_sections = exp_res.get("sections", []) or [
+        build_error_section("Expectativas Focus", exp_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Expectativas Focus ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
     tabs = [
-        {"name": "Resumo",    "group": "Resumo",      "sections": resumo_sections},
-        {"name": "Juros",     "group": "Indicadores", "sections": juros_sections},
-        {"name": "Inflacao",  "group": "Indicadores", "sections": inflacao_sections},
-        {"name": "Cambio",    "group": "Indicadores", "sections": cambio_sections},
-        {"name": "Atividade", "group": "Indicadores", "sections": atividade_sections},
+        {"name": "Resumo",             "group": "Resumo",      "sections": resumo_sections},
+        {"name": "Juros",              "group": "Indicadores", "sections": juros_sections},
+        {"name": "Inflacao",           "group": "Indicadores", "sections": inflacao_sections},
+        {"name": "Cambio",             "group": "Indicadores", "sections": cambio_sections},
+        {"name": "Atividade",          "group": "Indicadores", "sections": atividade_sections},
+        {"name": "Retorno Real",       "group": "Analise",     "sections": real_returns_sections},
+        {"name": "Expectativas Focus", "group": "Analise",     "sections": expectations_sections},
     ]
 
     # Surface sub-mode errors as a note (but keep status=ok so the dashboard
     # still renders - mirrors CVM financials graceful-degradation contract).
     errors = []
     for name, res in [("rates", rates_res), ("inflation", inflation_res),
-                       ("fx", fx_res)]:
+                       ("fx", fx_res), ("real_returns", real_res),
+                       ("expectations", exp_res)]:
         if res.get("status") not in ("ok", None):
             errors.append(f"{name}: {res.get('error', '')}")
 

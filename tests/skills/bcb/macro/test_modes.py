@@ -99,7 +99,7 @@ def test_dashboard_uses_name_not_label(monkeypatch):
     res = dashboard.dashboard(days=30, months=12)
     assert res["status"] == "ok"
     tab_names = [t["name"] for t in res["tabs"]]
-    assert tab_names == ["Resumo", "Juros", "Inflacao", "Cambio", "Atividade"]
+    assert tab_names == ["Resumo", "Juros", "Inflacao", "Cambio", "Atividade", "Retorno Real", "Expectativas Focus"]
     # No tab should have 'label' as a key (v3 removed it).
     for t in res["tabs"]:
         assert "label" not in t, f"tab {t.get('name')} still has 'label'"

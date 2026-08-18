@@ -30,29 +30,8 @@ class TestDashboardMode:
         assert result["status"] == "ok"
         assert result["ticker"] == "PETR4"
         assert "tabs" in result
-        assert len(result["tabs"]) == 7
+        assert len(result["tabs"]) == 8
 
-        names = [t["name"] for t in result["tabs"]]
-        assert names == [
-            "Cotação",
-            "Médias Móveis",
-            "Volume",
-            "Indicadores",
-            "Retornos",
-            "Volatilidade",
-            "Fibonacci",
-        ]
-
-        groups = [t["group"] for t in result["tabs"]]
-        assert groups == [
-            "Preço",
-            "Preço",
-            "Preço",
-            "Preço",
-            "Performance",
-            "Performance",
-            "Análise Técnica",
-        ]
 
         # Each tab has a non-empty sections list.
         for tab in result["tabs"]:

@@ -2,6 +2,32 @@
 
 # 📋 Macro Changelog
 
+## v1.4 — 2026-08-22
+
+**Real-returns mode (Fisher equation) — Selic vs IPCA 12m acumulado. New 6th 'Retorno Real' tab.**
+
+### Required Summary
+
+- **New mode `real_returns`** — Fisher equation: `real = (1 + nominal) / (1 + inflation) - 1`. Nominal = Selic annualized (series 11, daily % a.d. × 252 via `annualize_rate()`). Inflation = IPCA 12m acumulado (series 433, monthly %, sum of last 12 observations via `query_series(code=433, days=max(months, 13))`). Per-day real rate computed by joining each Selic daily observation to the IPCA 12m acumulado of its month (YYYY-MM). Returns `{"status": "ok", "mode": "real_returns", "kpis": [...], "sections": [...]}`. Two sections: (1) chart of real rate over time (line chart, last 12 months via `build_chart_section`), (2) KPI table with current nominal/inflation/real rates. `include_in_all=False`. Graceful error section if Selic or IPCA not synced.
+- **Dashboard extended to 6 tabs** — added 6th "Retorno Real" tab (group: Analise) that composes the `real_returns` mode sections. Sub-mode failures return an error section, dashboard still renders (graceful-degradation pattern).
+
+### Dashboard Tabs (6)
+
+| Tab | Name | Group | Content |
+|-----|------|-------|---------|
+| 1 | Resumo | Resumo | Text overview. |
+| 2 | Juros | Indicadores | rates mode sections (5 series). |
+| 3 | Inflacao | Indicadores | inflation mode sections (2 series). |
+| 4 | Cambio | Indicadores | fx mode sections (2 series). |
+| 5 | Atividade | Indicadores | PIB + Salario minimo (chart + table). |
+| 6 | Retorno Real | Analise | real_returns mode (Fisher equation). |
+
+### Modes (5)
+
+dashboard, rates, inflation, fx, real_returns.
+
+---
+
 ## v1.3 — 2026-08-15
 
 **Bug fixes: Resumo table units + inflation row count + Salário label + catalog descriptions.**
@@ -74,4 +100,4 @@ dashboard, rates, inflation, fx.
 
 ---
 
-*Last updated: 2026-08-13 (v1.2).*
+*Last updated: 2026-08-22 (v1.4).*

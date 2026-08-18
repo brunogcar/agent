@@ -7,44 +7,19 @@
 | Priority | Item | Description |
 |----------|------|-------------|
 | P2 | P3 — Intraday data | Real-time + intraday OHLCV via brapi or B3 market data |
-| P2 | P7 — ADX / CCI / Williams %R | Additional trend-strength + cyclical indicators for the Indicadores tab |
 | P3 | P4 — Options chain | Put/call ratio + IV smile for tickers with listed options |
 | P3 | P5 — Multi-ticker compare | Side-by-side price + return comparison (mirror b3/index compare) |
 | P3 | P6 — Pattern recognition | Auto-detect head-and-shoulders, double tops, triangles |
-| P3 | P8 — Bid-ask spread analysis | Use cotahist best_bid + best_ask columns — liquidity + transaction cost analysis |
 | P3 | P10 — Opções tab (cross-skill) | Embed the new [b3/options](../OPTIONS.md) skill's Cadeia de Opções tab as a new tab in the price dashboard |
+| ✅ | ~~P7 — ADX / CCI / Williams %R~~ | **Shipped 2026-08-22 (v1.6)** — 3 trend/cyclical indicators added to `engines.py` (`compute_adx`, `compute_cci`, `compute_williams_r`) + 3 collapsible chart sections in the Indicadores tab + 3 rows in the signals table + 3 signal classifiers. |
+| ✅ | ~~P8 — Bid-ask spread analysis~~ | **Shipped 2026-08-22 (v1.6)** — new 8th "Bid-Ask Spread" tab (group: Liquidez) with 4 sections: spread absoluto + spread percentual + bid/ask/close + liquidez KPI table. `ohlcv_series` SELECT extended with `best_bid, best_ask`. New `compute_bid_ask_spread` + `compute_spread_pct` engine functions + new `report/spread.py` builder. |
 | ✅ | ~~P9 — Options skill (new)~~ | **Shipped 2026-08-18** as the separate [b3/options](../OPTIONS.md) skill (v1.0). Reads from `data_sources/b3/cotahist_derivatives` (the `cotahist_derivatives` table, populated during the standard COTAHIST sync). See [../options/CHANGELOG.md](../options/CHANGELOG.md). |
 
-> **Note:** Recently completed items (Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
+> **Note:** Recently completed items (ADX/CCI/Williams %R + Bid-Ask Spread tab in v1.6, Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
 ---
 
 ## 📋 Backlog
-
-### P7 — ADX / CCI / Williams %R
-
-**Priority:** P2
-**Source:** Future indicator expansion
-
-Three additional technical indicators that could extend the Indicadores tab
-(or form a second "Trend" group if the tab grows too large):
-
-- **ADX (Average Directional Index, 14)** — trend STRENGTH (not direction).
-  ADX > 25 = strong trend (bull or bear); ADX < 20 = weak/no trend. Complements
-  MACD (which shows direction + momentum). Needs +DM / -DM (directional
-  movement) computation → 3 new engine functions.
-- **CCI (Commodity Channel Index, 20)** — cyclical oscillator. Measures
-  deviation from MA normalized by mean deviation. CCI > +100 = overbought;
-  CCI < −100 = oversold. Uses typical price = (H+L+C)/3. Different math
-  from RSI/Stochastic → catches different signals.
-- **Williams %R (14)** — momentum oscillator, 0 to −100. %R > −20 =
-  overbought; %R < −80 = oversold. Mathematically equivalent to inverted
-  %K (Stochastic) but with a different scale + convention. Some traders
-  prefer it over Stochastic.
-
-**Blocker:** None. Pure-Python computation. Would add 3 charts + extend the
-signals table. Consider splitting the Indicadores tab into 2 groups
-("Momentum" + "Trend") if it exceeds 7 charts.
 
 ### P2 — Dividend-adjusted returns
 
@@ -173,4 +148,4 @@ wiring is needed.
 
 ---
 
-*Last updated: 2026-08-18 (v1.5 + P9 shipped as b3/options skill + P10 cross-skill integration added). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-08-22 (v1.6 — P7 + P8 shipped). See [CHANGELOG.md](CHANGELOG.md) for version history.*

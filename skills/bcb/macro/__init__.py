@@ -1,7 +1,8 @@
 """skills/bcb/macro/__init__.py -- Macro skill manifest + router.
 
-BCB macro-economic dashboard. 4 modes: dashboard (5-tab), rates, inflation,
-fx. Calls data_sources.bcb.sgs query engines directly (read-only - no own DB).
+BCB macro-economic dashboard. 6 modes: dashboard (7-tab), rates, inflation,
+fx, real_returns, expectations. Calls data_sources.bcb.sgs +
+data_sources.bcb.focus query engines directly (read-only - no own DB).
 
 [v3] Skill structure mirrors the CVM financials pattern:
   - _registry.py        : MODES + register_mode via skills._base.make_registry()
@@ -41,19 +42,24 @@ auto_discover_modes(__name__)
 # [v3] Data sources this skill needs. The route() wrapper checks freshness
 # before each dispatch and triggers force-sync if stale. Tests use
 # CVM_SKIP_SYNC=1 to bypass.
-REQUIRED_SOURCES = ["sgs"]
+# [v1.4] focus added -- BCB Focus (Olinda OData) expectations survey.
+# skills/_base._trigger_sync.sync_map now has a "focus" entry that calls
+# sync_all(force=True) when focus is stale.
+REQUIRED_SOURCES = ["sgs", "focus"]
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {
     "sub_domain":  "macro",
     "description": (
         "BCB macro-economic dashboard. "
-        "dashboard: 5-tab (Resumo/Juros/Inflacao/Cambio/Atividade). "
-        "rates: Selic + CDI + TR + Meta Copom + Selic acumulada. "
-        "inflation: IPCA + IGP-M (with rolling 12-month acumulado). "
-        "fx: USD/BRL ptax diaria + mensal."
+        "dashboard: 7-tab (Resumo/Juros/Inflacao/Cambio/Atividade/Retorno "
+        "Real/Expectativas Focus). rates: Selic + CDI + TR + Meta Copom + "
+        "Selic acumulada. inflation: IPCA + IGP-M (with rolling 12-month "
+        "acumulado). fx: USD/BRL ptax diaria + mensal. real_returns: Fisher "
+        "equation (Selic vs IPCA 12m). expectations: Focus survey (Olinda). "
+        "Data sources: sgs (BCB SGS API) + focus (BCB Focus Olinda OData)."
     ),
-    "source":  "data_sources/bcb/sgs/query_engine.py (read-only)",
+    "source":  "data_sources/bcb/sgs/ + data_sources/bcb/focus/ (read-only)",
     "storage": "read-only - no own database",
     "modes": build_manifest_modes(MODES),
     # Declared for manifest consumers + sync guard.

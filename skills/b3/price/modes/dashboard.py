@@ -1,13 +1,14 @@
-"""Mode: dashboard -- 7-tab B3 price analytics dashboard.
+"""Mode: dashboard -- 8-tab B3 price analytics dashboard.
 
 Tabs:
   Cotação         (group: Preço)             — candlestick + volume + 6 KPIs
   Médias Móveis   (group: Preço)             — SMA chart + crossovers table
   Volume          (group: Preço)             — volume bars + price overlay + stats
-  Indicadores     (group: Preço)             — RSI + MACD + Stochastic + OBV + signals
+  Indicadores     (group: Preço)             — RSI + MACD + Stochastic + OBV + ADX + CCI + Williams %R  [v1.6]
   Retornos        (group: Performance)       — cumulative return (raw + adjusted) + drawdown
   Volatilidade    (group: Performance)       — rolling vol + Bollinger Bands
   Fibonacci       (group: Análise Técnica)   — Fib levels + trade setup (COMPRA/VENDA)  [v1.3]
+  Bid-Ask Spread  (group: Liquidez)             — spread absoluto + spread % + bid/ask/close + liquidez KPI  [v1.6]
 
 Workflow:
   1. Fetch 10 years of daily OHLCV from cotahist.db via engines.ohlcv_series
@@ -29,6 +30,8 @@ from skills.b3.price.engines import (
     compute_cumulative_returns, compute_drawdowns, compute_volatility,
     compute_bollinger_bands, find_ma_crossovers, compute_52w_range,
     compute_rsi, compute_macd, compute_stochastic, compute_obv,
+    compute_adx, compute_cci, compute_williams_r,
+    compute_bid_ask_spread, compute_spread_pct,
     compute_adjusted_close, find_swing_extremes,
     compute_price_snapshot, compute_period_returns,
     compute_annual_returns, compute_price_histogram,
@@ -38,6 +41,7 @@ from skills.b3.price.report import (
     build_medias_sections, build_volume_sections,
     build_retornos_sections, build_volatilidade_sections,
     build_indicadores_sections, build_fibonacci_sections,
+    build_spread_sections,
 )
 
 
@@ -52,12 +56,13 @@ def _ten_years_ago_iso() -> str:
 @register_mode(
     "dashboard",
     description=(
-        "B3 price analytics dashboard. 7 tabs: Cotação (candlestick + volume + KPIs), "
+        "B3 price analytics dashboard. 8 tabs: Cotação (candlestick + volume + KPIs), "
         "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + price overlay), "
-        "Indicadores (RSI + MACD + Stochastic + OBV + signals), "
+        "Indicadores (RSI + MACD + Stochastic + OBV + ADX + CCI + Williams %R + signals), "
         "Retornos (cumulative + adjusted + drawdown), "
         "Volatilidade (rolling vol + Bollinger), "
-        "Fibonacci (levels + COMPRA/VENDA trade setup)."
+        "Fibonacci (levels + COMPRA/VENDA trade setup), "
+        "Bid-Ask Spread (spread absoluto + % + bid/ask/close + liquidez)."
     ),
     params={"ticker": "str. Required. B3 ticker (e.g. PETR4)."},
     include_in_all=False,
@@ -67,7 +72,7 @@ def _ten_years_ago_iso() -> str:
     ],
 )
 def dashboard(ticker: str = "") -> dict:
-    """Build the 7-tab B3 price dashboard for a single ticker."""
+    """Build the 8-tab B3 price dashboard for a single ticker."""
     _t0 = _dt.now()
     print(f"[b3.price] Starting dashboard for {ticker!r}...", flush=True)
 
@@ -116,6 +121,16 @@ def dashboard(ticker: str = "") -> dict:
     lows = [p.get("low") for p in ohlcv]
     k_line, d_line = compute_stochastic(highs, lows, closes, k_period=14, d_period=3)
     obv = compute_obv(closes, volumes)
+    # [v1.6] Trend + cyclical indicators -- ADX (trend strength),
+    # CCI (cyclical oscillator), Williams %R (momentum 0 to -100).
+    adx = compute_adx(highs, lows, closes, period=14)
+    cci = compute_cci(highs, lows, closes, period=20)
+    williams_r = compute_williams_r(highs, lows, closes, period=14)
+    # [v1.6] Bid-ask spread series (for the new Bid-Ask Spread tab).
+    best_bids = [p.get("best_bid") for p in ohlcv]
+    best_asks = [p.get("best_ask") for p in ohlcv]
+    spreads = compute_bid_ask_spread(best_bids, best_asks)
+    spread_pcts = compute_spread_pct(best_bids, best_asks, closes)
     # [v1.3] Dividend-adjusted close (backward adjustment) + Fibonacci swing extremes.
     adjusted_closes, div_adjustments = compute_adjusted_close(tk, dates, closes)
     adj_cum_returns = compute_cumulative_returns(adjusted_closes)
@@ -193,10 +208,12 @@ def dashboard(ticker: str = "") -> dict:
         contracts=[p.get("contracts") for p in ohlcv],
     )
     # [v1.2] Indicadores tab — RSI + MACD + Stochastic + OBV + signals table.
+    # [v1.6] + ADX + CCI + Williams %R charts + signals rows.
     indicadores_sections = build_indicadores_sections(
         tk, dates, closes, highs, lows, volumes,
         rsi, macd_line, signal_line, histogram,
         k_line, d_line, obv,
+        adx=adx, cci=cci, williams_r=williams_r,
     )
     retornos_sections = build_retornos_sections(
         tk, dates, closes, cum_returns, drawdowns,
@@ -212,6 +229,12 @@ def dashboard(ticker: str = "") -> dict:
         tk, dates, closes, highs, lows, current_price,
         swings, div_adjustments,
     )
+    # [v1.6] Bid-Ask Spread tab — spread charts + bid/ask/close + liquidez KPI.
+    spread_sections = build_spread_sections(
+        tk, dates, best_bids, best_asks, closes,
+        volumes=volumes,
+        trade_counts=[p.get("trade_count") for p in ohlcv],
+    )
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Sections built ({_s_elapsed:.1f}s)", flush=True)
 
@@ -223,6 +246,7 @@ def dashboard(ticker: str = "") -> dict:
         {"name": "Retornos",      "group": "Performance",       "sections": retornos_sections},
         {"name": "Volatilidade",  "group": "Performance",       "sections": volatilidade_sections},
         {"name": "Fibonacci",     "group": "Análise Técnica",  "sections": fibonacci_sections},
+        {"name": "Bid-Ask Spread", "group": "Liquidez",           "sections": spread_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()

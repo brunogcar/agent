@@ -49,7 +49,8 @@ def ohlcv_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
     try:
         conn = _connect()
         rows = conn.execute(
-            """SELECT refdate, open, high, low, close, volume, trade_count, contracts
+            """SELECT refdate, open, high, low, close, volume, trade_count, contracts,
+                      best_bid, best_ask
                FROM cotahist
                WHERE symbol = ? AND refdate >= ? AND refdate <= ?
                AND market_type = 10 AND close IS NOT NULL AND close > 0
@@ -67,6 +68,8 @@ def ohlcv_series(ticker: str, date_from: str, date_to: str) -> list[dict]:
                 "volume": float(r["volume"]) if r["volume"] else 0.0,
                 "trade_count": int(r["trade_count"]) if r["trade_count"] else 0,
                 "contracts": int(r["contracts"]) if r["contracts"] else 0,
+                "best_bid": float(r["best_bid"]) if r["best_bid"] else None,
+                "best_ask": float(r["best_ask"]) if r["best_ask"] else None,
             }
             for r in rows
         ]
@@ -501,6 +504,232 @@ def compute_obv(
         elif cur < prev:
             obv -= vol
         result[i] = obv
+    return result
+
+
+# ── Trend / cyclical indicators (v1.6) -- ADX, CCI, Williams %R ────────────
+
+
+def compute_adx(
+    highs: list[float | None],
+    lows: list[float | None],
+    closes: list[float | None],
+    period: int = 14,
+) -> list[float | None]:
+    """[v1.6] Compute Average Directional Index (Wilder smoothing).
+
+    ADX measures TREND STRENGTH (not direction): 0-100. ADX > 25 = strong
+    trend (bull or bear); ADX < 20 = weak/no trend. Complements MACD.
+
+    Steps:
+      1. True Range (TR) = max(high-low, |high-prev_close|, |low-prev_close|)
+      2. +DM = high[t]-high[t-1] if > 0 AND > (low[t-1]-low[t]) else 0
+         -DM = low[t-1]-low[t]  if > 0 AND > (high[t]-high[t-1]) else 0
+      3. Wilder smoothing of TR, +DM, -DM (same recursion as RSI):
+         avg[t] = (avg[t-1] * (period-1) + val[t]) / period
+      4. +DI = 100 * smoothed(+DM) / smoothed(TR)
+         -DI = 100 * smoothed(-DM) / smoothed(TR)
+      5. DX = |+DI - -DI| / (+DI + -DI) * 100
+      6. ADX = SMA(DX, period) -- the user task spec says SMA, not Wilder
+
+    Returns a list of the same length. First ``2*period`` entries are
+    None (warmup -- needs ``period`` TRs to seed + ``period`` DXs to
+    smooth). Values are 0-100.
+    """
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    if n < 2 * period + 1:
+        return result
+
+    # Step 1-2: TR + +DM + -DM arrays (length n; index 0 has no prev).
+    tr = [0.0] * n
+    plus_dm = [0.0] * n
+    minus_dm = [0.0] * n
+    for i in range(1, n):
+        h, l, c = highs[i], lows[i], closes[i]
+        ph, pl = highs[i-1], lows[i-1]
+        pc = closes[i-1]
+        if h is None or l is None or c is None or ph is None or pl is None or pc is None:
+            continue
+        # True Range.
+        tr[i] = max(h - l, abs(h - pc), abs(l - pc))
+        # Directional movement.
+        up = h - ph
+        down = pl - l
+        plus_dm[i] = up if (up > down and up > 0) else 0.0
+        minus_dm[i] = down if (down > up and down > 0) else 0.0
+
+    # Step 3: Wilder smoothing of TR, +DM, -DM (seed = sum of first `period`).
+    atr = [0.0] * n
+    s_plus_dm = [0.0] * n
+    s_minus_dm = [0.0] * n
+    # Seed at index `period` (uses indices 1..period).
+    atr[period] = sum(tr[1:period+1])
+    s_plus_dm[period] = sum(plus_dm[1:period+1])
+    s_minus_dm[period] = sum(minus_dm[1:period+1])
+    for i in range(period + 1, n):
+        atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+        s_plus_dm[i] = (s_plus_dm[i-1] * (period - 1) + plus_dm[i]) / period
+        s_minus_dm[i] = (s_minus_dm[i-1] * (period - 1) + minus_dm[i]) / period
+
+    # Step 4-5: +DI, -DI, DX (compute from index `period` onward).
+    dx = [None] * n
+    for i in range(period, n):
+        if atr[i] <= 0:
+            continue
+        plus_di = 100.0 * s_plus_dm[i] / atr[i]
+        minus_di = 100.0 * s_minus_dm[i] / atr[i]
+        denom = plus_di + minus_di
+        if denom <= 0:
+            dx[i] = 0.0
+        else:
+            dx[i] = abs(plus_di - minus_di) / denom * 100.0
+
+    # Step 6: ADX = SMA of DX over `period` (per user spec).
+    # First valid DX is at index `period`; ADX first valid at 2*period - 1.
+    for i in range(2 * period - 1, n):
+        window = dx[i - period + 1: i + 1]
+        if any(v is None for v in window):
+            continue
+        result[i] = sum(window) / period
+    return result
+
+
+def compute_cci(
+    highs: list[float | None],
+    lows: list[float | None],
+    closes: list[float | None],
+    period: int = 20,
+) -> list[float | None]:
+    """[v1.6] Compute Commodity Channel Index (cyclical oscillator).
+
+    CCI measures deviation of the typical price from its SMA, normalized by
+    the mean deviation. CCI > +100 = overbought; CCI < -100 = oversold.
+
+    Formulas:
+      typical_price (TP) = (H + L + C) / 3
+      SMA_TP        = SMA(TP, period)
+      mean_dev      = SMA(|TP - SMA_TP|, period)
+      CCI           = (TP - SMA_TP) / (0.015 * mean_dev)
+
+    The 0.015 constant is Lambert\'s original -- it makes ~70-80% of CCI
+    values fall in the [-100, +100] range. Returns a list of the same
+    length. First ``period - 1`` entries are None (warmup).
+    """
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    if n < period:
+        return result
+
+    # Typical price series.
+    tp = [None] * n
+    for i in range(n):
+        h, l, c = highs[i], lows[i], closes[i]
+        if h is None or l is None or c is None:
+            continue
+        tp[i] = (h + l + c) / 3.0
+
+    for i in range(period - 1, n):
+        window = tp[i - period + 1: i + 1]
+        if any(v is None for v in window):
+            continue
+        sma_tp = sum(window) / period
+        mean_dev = sum(abs(v - sma_tp) for v in window) / period
+        if mean_dev <= 0:
+            result[i] = 0.0
+        else:
+            result[i] = (tp[i] - sma_tp) / (0.015 * mean_dev)
+    return result
+
+
+def compute_williams_r(
+    highs: list[float | None],
+    lows: list[float | None],
+    closes: list[float | None],
+    period: int = 14,
+) -> list[float | None]:
+    """[v1.6] Compute Williams %R (momentum oscillator, 0 to -100).
+
+    %R = (highest_high - close) / (highest_high - lowest_low) * -100
+
+    Uses a rolling window of `period` days for highest_high + lowest_low.
+    %R > -20 = overbought; %R < -80 = oversold. Mathematically equivalent
+    to inverted %K (Stochastic) but with a different scale + convention.
+
+    Returns a list of the same length. First ``period - 1`` entries are
+    None (warmup). Values are 0 to -100 (always non-positive).
+    """
+    n = len(closes)
+    result: list[float | None] = [None] * n
+    if n < period:
+        return result
+
+    for i in range(period - 1, n):
+        window_h = [h for h in highs[i - period + 1: i + 1] if h is not None]
+        window_l = [l for l in lows[i - period + 1: i + 1] if l is not None]
+        c = closes[i]
+        if len(window_h) < period or len(window_l) < period or c is None:
+            continue
+        hh = max(window_h)
+        ll = min(window_l)
+        if hh == ll:
+            result[i] = -50.0  # neutral (no range)
+        else:
+            result[i] = (hh - c) / (hh - ll) * -100.0
+    return result
+
+
+# ── Bid-ask spread (v1.6) -- for the new Bid-Ask Spread tab ────────────────
+
+
+def compute_bid_ask_spread(
+    best_bids: list[float | None],
+    best_asks: list[float | None],
+) -> list[float | None]:
+    """[v1.6] Compute the absolute bid-ask spread (best_ask - best_bid).
+
+    Returns a list of the same length. Entries are None where either side
+    is missing (NULL in cotahist). Spread is always non-negative (the B3
+    feed guarantees ask >= bid for valid quotes).
+    """
+    n = max(len(best_bids), len(best_asks))
+    result: list[float | None] = [None] * n
+    for i in range(n):
+        b = best_bids[i] if i < len(best_bids) else None
+        a = best_asks[i] if i < len(best_asks) else None
+        if b is None or a is None:
+            continue
+        result[i] = a - b
+    return result
+
+
+def compute_spread_pct(
+    best_bids: list[float | None],
+    best_asks: list[float | None],
+    closes: list[float | None] | None = None,
+) -> list[float | None]:
+    """[v1.6] Compute relative bid-ask spread (% of close).
+
+    spread_pct = (best_ask - best_bid) / close * 100
+
+    Returns a list of the same length. None where either side or the close
+    is missing (or close <= 0). Values are non-negative percentages
+    (e.g. 0.05 = 5 bps).
+
+    [v1.6-v2] Signature now accepts an optional closes list so the
+    spread can be expressed as a fraction of the closing price (matches
+    the task spec). When closes is None or shorter than the bid/ask
+    arrays, the corresponding entries are None.
+    """
+    n = max(len(best_bids), len(best_asks))
+    result: list[float | None] = [None] * n
+    for i in range(n):
+        b = best_bids[i] if i < len(best_bids) else None
+        a = best_asks[i] if i < len(best_asks) else None
+        c = closes[i] if (closes is not None and i < len(closes)) else None
+        if b is None or a is None or c is None or c <= 0:
+            continue
+        result[i] = (a - b) / c * 100.0
     return result
 
 

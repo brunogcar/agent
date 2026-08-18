@@ -8,6 +8,7 @@ from skills.b3.price.report.retornos import build_retornos_sections
 from skills.b3.price.report.volatilidade import build_volatilidade_sections
 from skills.b3.price.report.indicadores import build_indicadores_sections
 from skills.b3.price.report.fibonacci import build_fibonacci_sections
+from skills.b3.price.report.spread import build_spread_sections
 
 __all__ = [
     "build_cotacao_sections",
@@ -18,4 +19,5 @@ __all__ = [
     "build_volatilidade_sections",
     "build_indicadores_sections",
     "build_fibonacci_sections",
+    "build_spread_sections",
 ]
