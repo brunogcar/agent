@@ -2,14 +2,18 @@
 
 B3 options (derivatives) analytics. The derivatives table
 (`cotahist_derivatives`) lives in the SAME cotahist.db used by the price
-skill, so REQUIRED_SOURCES = ["cotahist"] (the sync guard reuses the
-cotahist sync engine -- no separate sync for derivatives).
+skill. The IV tab also reads the Selic rate from `sgs.db` (BCB SGS series
+432 = "Meta Selic Copom") as the risk-free rate for Black-Scholes pricing.
+So REQUIRED_SOURCES = ["cotahist", "sgs"] (the sync guard triggers both
+sync engines if either is stale).
 
 Skill structure mirrors skills/b3/price + skills/bcb/macro:
   - _registry.py        : MODES + register_mode via skills._base.make_registry()
-  - helpers.py          : format_value, format_brl, format_int
+  - helpers.py          : format_value, format_brl, format_int, format_pct
+  - engines.py          : [v1.2] Black-Scholes pricing + implied_vol
   - report.py           : build_chart_section, build_table_section,
-                          build_kpi_card, build_text_section, build_error_section
+                          build_kpi_card, build_text_section,
+                          build_error_section, build_heatmap_section
   - modes/<mode>.py     : @register_mode-decorated implementations
   - __init__.py         : auto_discover + MANIFEST + route (this file)
 
@@ -30,19 +34,22 @@ from skills.b3.options._registry import MODES  # noqa: F401
 # Auto-discover all mode modules from modes/ subdirectory.
 auto_discover_modes(__name__)
 
-# Same DB as cotahist (the cotahist_derivatives table lives in cotahist.db).
-# The sync guard triggers cotahist sync if stale -- derivatives ride on the
-# same DB so no separate source is declared.
-REQUIRED_SOURCES = ["cotahist"]
+# [v1.2] The IV tab reads the Selic rate from sgs.db (BCB SGS series 432).
+# So the sync guard must trigger BOTH the cotahist sync (for derivatives +
+# spot prices) AND the sgs sync (for the Selic rate) if either is stale.
+REQUIRED_SOURCES = ["cotahist", "sgs"]
 
 MANIFEST = {
     "sub_domain":  "options",
     "description": (
         "B3 options (derivatives) analytics. "
-        "dashboard: 3-tab (Cadeia de Opções + Put/Call Ratio + Volume por Strike). "
-        "Source: cotahist.db (cotahist_derivatives table)."
+        "dashboard: 5-tab (Cadeia de Opções + Put/Call Ratio + Volume por "
+        "Strike + Exercicios + Volatilidade Implícita). The IV tab uses "
+        "Black-Scholes + the Selic rate from BCB SGS. "
+        "Sources: cotahist.db (cotahist_derivatives + equities tables) + "
+        "sgs.db (Selic rate, series 432)."
     ),
-    "source":  "data_sources.b3.cotahist_derivatives (shared cotahist.db)",
+    "source":  "data_sources.b3.cotahist (shared cotahist.db) + data_sources.bcb.sgs (sgs.db)",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
     "required_sources": REQUIRED_SOURCES,

@@ -6,61 +6,17 @@
 
 | Priority | Item | Description |
 |----------|------|-------------|
-| P2 | P1 — Implied Volatility (Black-Scholes) | Compute IV per option using Black-Scholes + Selic rate from BCB SGS |
-| P2 | P2 — IV Smile heatmap | Strike (y) vs maturity (x), colored by IV. Blocked on P1 |
+| ✅ Done | P1 — Implied Volatility (Black-Scholes) | [v1.2] Black-Scholes engine + Selic rate from BCB SGS series 432 + IV smile chart + IV table. |
+| ✅ Done | P2 — IV Smile heatmap | [v1.2] Strike × maturity heatmap colored by IV (green=calm → red=panic). [v1.2] Fixed to render with a single maturity. |
 | P3 | P3 — Open interest (DerivativesOpenPosition API) | API changed — needs investigation before wiring |
 | P3 | P4 — "Opções" tab in price dashboard | Cross-skill integration — price dashboard embeds an options tab |
 | P4 | P5 — Futures/forward skill (BDI 26) | DB is prepared (TERM rows already in cotahist_derivatives). Separate skill for later |
 
-> **Note:** v1.0 launch is in [CHANGELOG.md](CHANGELOG.md). The ROADMAP
-> only tracks backlog + deferred items.
+> **Note:** v1.0 launch + v1.2 IV tab + v1.2 v2 tweaks are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
 ---
 
 ## 📋 Backlog
-
-### P1 — Implied Volatility (Black-Scholes)
-
-**Priority:** P2
-**Source:** Derivatives traders
-
-Compute the implied volatility per option using the Black-Scholes model.
-Currently the Cadeia de Opções tab shows price + volume + bid/ask but NOT
-the implied vol — the most important options metric.
-
-**Implementation:**
-1. Add a Black-Scholes engine to a new `skills/b3/options/engines.py` (or
-   a shared `skills/b3/options/bs.py`):
-   - `bs_call(S, K, T, r, sigma)` / `bs_put(...)` — pricing.
-   - `implied_vol(price, S, K, T, r, option_type)` — invert BS via
-     Newton-Raphson (or bisection fallback when vega ≈ 0).
-2. Risk-free rate `r` = the Selic rate from `data_sources.bcb.sgs`
-   (annualized, converted to continuous compounding).
-3. Underlying spot `S` = latest close from `cotahist` (equities table).
-4. Time to maturity `T` = `(maturity_date - refdate).days / 365`.
-5. Add a 4th tab **"Volatilidade Implícita"** to the dashboard: IV table
-   + smile chart (IV vs strike).
-
-**Blocker:** Need the Selic rate synced (`REQUIRED_SOURCES` grows to
-`["cotahist", "sgs"]`). The Black-Scholes math itself is ~30 lines of
-pure Python (no external libs).
-
-### P2 — IV Smile heatmap
-
-**Priority:** P2
-**Source:** Volatility surface visualization
-
-A 2D heatmap: strike (y-axis) × maturity (x-axis), each cell colored by
-the implied volatility at that (strike, maturity) point. Reveals the
-"volatility smile" + term structure simultaneously.
-
-**Implementation:**
-1. Reuse the IV engine from P1.
-2. Query all maturities for the underlying (`available_maturities`).
-3. For each (maturity, strike) pair, compute IV from the latest close.
-4. Render as a Chart.js matrix/heatmap (custom plugin or `chartjs-chart-matrix`).
-
-**Blocker:** Blocked on P1 (IV engine).
 
 ### P3 — Open interest (DerivativesOpenPosition API)
 
@@ -97,7 +53,7 @@ options skill separately.
 1. In `skills/b3/price/modes/dashboard.py`, add a tab that calls
    `skills.b3.options.modes.dashboard.dashboard(underlying=ticker)`.
 2. Extract just the Cadeia de Opções tab sections (skip the P/C ratio +
-   Volume por Strike tabs to keep the price dashboard compact).
+   Volume por Strike + IV tabs to keep the price dashboard compact).
 3. Wrap in try/except — if the underlying has no listed options, skip the
    tab silently (don't break the price dashboard).
 
@@ -126,4 +82,37 @@ layer. Deferred as a separate skill (not bolted onto options).
 
 ---
 
-*Last updated: 2026-08-18 (v1.0). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+## ✅ Done
+
+### P1 — Implied Volatility (Black-Scholes) — DONE in v1.2
+
+[v1.2] Added `skills/b3/options/engines.py` (pure-Python Black-Scholes):
+- `bs_price(S, K, T, r, sigma, option_type)` — call/put pricing.
+- `bs_vega(S, K, T, r, sigma)` — dPrice/dSigma for Newton-Raphson.
+- `implied_vol(price, S, K, T, r, option_type)` — Newton-Raphson + bisection
+  fallback, clamp [0.01, 5.0], None for invalid inputs.
+
+Risk-free rate = Selic from BCB SGS series 432 ("Meta Selic Copom", % a.a.),
+converted to continuous compounding (`r_cont = ln(1 + r_simple)`).
+Spot price = latest PETR4 close from cotahist equities table.
+T = `(maturity - refdate).days / 365`.
+
+`REQUIRED_SOURCES` grew from `["cotahist"]` to `["cotahist", "sgs"]` so the
+sync guard triggers the BCB SGS sync if the Selic rate is stale.
+
+### P2 — IV Smile heatmap — DONE in v1.2 (+ single-maturity fix in v1.2)
+
+[v1.2] Added `_build_iv_tab()` which emits 3 sections:
+1. IV Smile line chart (IV vs strike, calls green + puts red).
+2. IV table (Papel | Tipo | Strike | Prêmio | IV).
+3. IV Term Structure heatmap — strike (rows) × maturity (cols), colored
+   by IV (green=calm <10% → yellow ~55% → red=panic >100%). Built via
+   `report.build_heatmap_section()` and rendered by the `heatmap` block in
+   `macros.html`.
+
+[v1.2] Fixed the heatmap to render even with a single maturity (was silently
+skipped — single-column heatmap is still useful to visualize the smile).
+
+---
+
+*Last updated: 2026-09-05 (v1.2). See [CHANGELOG.md](CHANGELOG.md) for version history.*

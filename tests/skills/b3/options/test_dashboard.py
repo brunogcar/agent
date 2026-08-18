@@ -2,7 +2,9 @@
 
 Simplified pattern (2 tests):
   1. test_dashboard_no_underlying — error path (empty underlying → status=error)
-  2. test_dashboard_tab_structure — returns 3 tabs with correct names + groups
+  2. test_dashboard_tab_structure — returns 5 tabs with correct names + groups
+
+[v1.2] Bumped from 4 tabs → 5 tabs (+ "Volatilidade Implícita" in the Análise group).
 """
 from __future__ import annotations
 
@@ -16,12 +18,12 @@ class TestDashboardMode:
         assert "underlying" in result["error"].lower()
 
     def test_dashboard_tab_structure(self, options_env):
-        """Dashboard returns 4 tabs with correct names + groups."""
+        """Dashboard returns 5 tabs with correct names + groups."""
         from skills.b3.options.modes.dashboard import dashboard
         result = dashboard(underlying="PETR")
         assert result["status"] == "ok"
         assert "tabs" in result
-        assert len(result["tabs"]) == 4
+        assert len(result["tabs"]) == 5
 
         names = [t["name"] for t in result["tabs"]]
         assert names == [
@@ -29,6 +31,7 @@ class TestDashboardMode:
             "Put/Call Ratio",
             "Volume por Strike",
             "Exercicios",
+            "Volatilidade Implícita",
         ]
 
         groups = [t["group"] for t in result["tabs"]]
@@ -37,6 +40,7 @@ class TestDashboardMode:
             "Análise",
             "Análise",
             "Opções",
+            "Análise",
         ]
 
         # Each tab has a non-empty sections list.

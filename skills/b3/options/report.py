@@ -15,7 +15,8 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
 
   Table section:
     {"type": "table", "title": ..., "description": ...,
-     "columns": [...], "rows": [[...], ...]}
+     "columns": [...], "rows": [[...], ...],
+     "column_align": ["left", "right", ...]}   # [v2] optional
 
   Text section:
     {"type": "text", "title": ..., "body": ...}
@@ -23,9 +24,19 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
   Error section (graceful degradation):
     {"type": "text", "title": ..., "body": "Erro ao consultar: ..."}
 
+  Heatmap section:                        # [v1.2] for IV Term Structure
+    {"type": "heatmap", "title": ..., "description": ...,
+     "columns": [...], "rows": [[cell, cell, ...], ...]}  # cell = {"text", "bg", "color"}
+
 Same pattern as skills/bcb/macro/report.py. The default chart line color
 is green (#22c55e) since the options skill's primary accent is the call
 color (calls = green, puts = red).
+
+[v2] build_table_section gained an optional `column_align` parameter.
+When provided (e.g. ["left", "right", "right", "right"]), the macros.html
+data_table macro applies text-align to each column. R$ / numeric columns
+are right-aligned; text columns stay left-aligned. tabular-nums is added
+for right-aligned columns so digits line up.
 """
 
 from __future__ import annotations
@@ -129,7 +140,8 @@ def build_chart_section(title: str, observations: list[dict],
 
 def build_table_section(title: str, rows: list[list],
                         columns: list[str] | None = None,
-                        description: str = "") -> dict:
+                        description: str = "",
+                        column_align: list[str] | None = None) -> dict:
     """Build a table section with already-built rows (list-of-lists).
 
     Rows are a LIST OF LISTS (NOT list of dicts) so the dashboard template's
@@ -140,14 +152,26 @@ def build_table_section(title: str, rows: list[list],
         rows:        List of row lists (each row = list of cell values).
         columns:     Column header labels.
         description: Optional description shown above the table.
+        column_align:[v2] Optional list of "left"/"right" per column. When
+                     provided, the macros.html data_table macro applies
+                     text-align to each column + tabular-nums on right-
+                     aligned columns. Length must match len(columns).
+
+    Returns:
+        Section dict. If column_align is provided it is included as
+        "column_align" in the dict (otherwise the key is absent so the
+        macro falls back to its default left alignment).
     """
-    return {
+    out: dict = {
         "type":        "table",
         "title":       title,
         "description": description,
         "columns":     columns or [],
         "rows":        rows,
     }
+    if column_align is not None:
+        out["column_align"] = column_align
+    return out
 
 
 def build_text_section(title: str, body: str) -> dict:
@@ -164,3 +188,39 @@ def build_error_section(title: str, error: str) -> dict:
     """
     return {"type": "text", "title": title,
             "text": f"Erro ao consultar: {error}"}
+
+
+def build_heatmap_section(title: str, columns: list[str],
+                          rows: list[list], description: str = "") -> dict:
+    """Build a heatmap section (renders as a colored grid table).
+
+    [v1.2] Added for the IV Term Structure visualization in the IV tab.
+
+    The first column is treated as the row label (left-aligned, plain text).
+    Subsequent columns are colored cells.
+
+    Each cell in `rows` (after the first) is a dict:
+        {"text": <str>, "bg": <hex color>, "color": <hex color>}
+
+    The macros.html heatmap block reads cell.bg for the background and
+    cell.color for the text color (falls back to var(--text)).
+
+    Args:
+        title:       Section title.
+        columns:     Column header labels (first one is the row-label column).
+        rows:        List of row lists. Each row = [label, cell, cell, ...]
+                     where each cell is the dict above (or a plain string
+                     for empty cells).
+        description: Optional description shown above the heatmap.
+
+    Returns:
+        {"type": "heatmap", "title": ..., "description": ...,
+         "columns": [...], "rows": [[...], ...]}
+    """
+    return {
+        "type":        "heatmap",
+        "title":       title,
+        "description": description,
+        "columns":     columns,
+        "rows":        rows,
+    }

@@ -1,20 +1,35 @@
-"""Mode: dashboard -- 3-tab B3 options analytics dashboard.
+"""Mode: dashboard -- 5-tab B3 options analytics dashboard.
 
 Tabs:
-  Cadeia de Opções   (group: Opções)   — options chain table + ticker legend
-  Put/Call Ratio    (group: Análise)  — daily P/C ratio chart + table
-  Volume por Strike  (group: Análise)  — bar chart of volume per strike
+  Cadeia de Opções        (group: Opções)   — options chain tables + ticker legend
+  Put/Call Ratio          (group: Análise)  — daily P/C ratio chart + table
+  Volume por Strike       (group: Análise)  — bar chart of volume per strike
+  Exercicios              (group: Opções)   — exercise of calls/puts chart + table
+  Volatilidade Implícita  (group: Análise)  — IV smile chart + IV table + IV term heatmap
 
 Workflow:
   1. Normalize the underlying code (PETR4 → PETR by stripping trailing digit)
   2. Query options_chain(underlying)  for the nearest maturity
   3. Query put_call_ratio(underlying, days=90)  for the sentiment trend
   4. Query volume_by_strike(underlying)  for the nearest maturity
-  5. Build tables + charts via the report builders in skills.b3.options.report
+  5. Query exercise_summary(underlying, days=90)  for the exercise trend
+  6. [v1.2] Compute implied vol per option (Black-Scholes + Selic risk-free rate)
+     + build IV smile chart + IV table + IV term structure heatmap.
 
 Graceful degradation: if the cotahist_derivatives table doesn't exist or has
 no data, the dashboard returns status=ok with error sections (so the other
 tabs still render). Mirrors the CVM financials + bcb/macro contract.
+
+[v1.2] Added 5th tab "Volatilidade Implícita" — Black-Scholes IV engine
+(`skills/b3/options/engines.py`) + Selic rate from BCB SGS (series 432 =
+"Meta Selic Copom", converted to continuous compounding). The IV tab is
+graceful — if the spot price or Selic rate can't be fetched, it shows an
+error section but doesn't break the dashboard.
+
+[v2] Legend reworked into a 2-column table (CALLS | PUTS) so users see both
+month-code systems side by side. Numeric/R$ columns in all tables now carry
+a `column_align` hint that the macros.html data_table macro applies for
+proper right-alignment + tabular-nums.
 
 Registered as "dashboard" in skills.b3.options._registry.MODES.
 """
@@ -24,33 +39,39 @@ from datetime import datetime as _dt
 
 from skills.b3.options._registry import register_mode
 from skills.b3.options.report import (
-    build_chart_section, build_table_section,
-    build_text_section, build_error_section,
+    build_chart_section, build_table_section, build_text_section,
+    build_error_section, build_heatmap_section,
 )
-from skills.b3.options.helpers import format_value, format_brl, format_int
+from skills.b3.options.helpers import format_value, format_brl, format_int, format_pct
 
+# [v1.2] Black-Scholes implied-vol engine + risk-free rate source.
+from skills.b3.options.engines import implied_vol as _implied_vol
+from data_sources.bcb.sgs.query_engine import last_value as _sgs_last_value
+from data_sources.b3.cotahist.query_engine import query as _spot_query
 from data_sources.b3.cotahist.derivatives_query import (
     options_chain, put_call_ratio, volume_by_strike, exercise_summary,
+    available_maturities,
 )
 
 
-# ── Accent colors ────────────────────────────────────────────────────────────
+# Accent colors
 _COLOR_CALL = "#22c55e"   # green — calls
 _COLOR_PUT  = "#ef4444"   # red   — puts
 _COLOR_REF  = "#9ca3af"   # gray  — reference line at 1.0
 
 
-# ── Option ticker legend (text section for the Cadeia de Opções tab) ───────
-_LEGEND_BODY = """\
+# BCB SGS series 432 = "Meta Selic Copom" (annualized % rate, simple compounding).
+_SELIC_SERIES_CODE = 432
+
+
+# [v2] Legend intro text — short explanation + examples. The 2-column
+# CALLS|PUTS table lives in a separate table section below.
+_LEGEND_INTRO = """\
 Formato do ticker: UNDERLYING + MÊS + STRIKE
 
-Códigos de mês para CALLS (compra):
-  A=Jan  B=Fev  C=Mar  D=Abr  E=Mai  F=Jun
-  G=Jul  H=Ago  I=Set  J=Out  K=Nov  L=Dez
-
-Códigos de mês para PUTS (venda):
-  M=Jan  N=Fev  O=Mar  P=Abr  Q=Mai  R=Jun
-  S=Jul  T=Ago  U=Set  V=Out  W=Nov  X=Dez
+Códigos de mês para CALLS (compra) e PUTS (venda) — veja a tabela abaixo \
+para o mapeamento completo lado-a-lado. Os códigos A-L são para CALLS e \
+M-X são para PUTS (cada letra corresponde a um mês do ano).
 
 Exemplos:
   PETRH36   →  PETR Call de Agosto, strike R$ 36,00
@@ -96,6 +117,129 @@ def _safe_query(fn, **kwargs) -> dict:
         }
 
 
+# ── [v1.2] IV helpers ───────────────────────────────────────────────────────
+
+def _fetch_spot_price(underlying: str) -> tuple[float | None, str | None]:
+    """Fetch the latest spot close for the underlying from the cotahist equities table.
+
+    Returns (spot_price, ref_date_str) — both None if the lookup fails.
+    The `underlying` is the 4-letter code (e.g. "PETR"); we try PETR4 + PETR3
+    suffixes since the equities table is keyed on the full ticker.
+    """
+    for suffix in ("4", "3"):
+        ticker = f"{underlying}{suffix}"
+        res = _safe_query(_spot_query, ticker=ticker, limit=1, market_type=10)
+        if res.get("status") == "ok" and res.get("rows"):
+            row = res["rows"][0]
+            close = row.get("close")
+            if close and close > 0:
+                return float(close), row.get("refdate")
+    return None, None
+
+
+def _fetch_selic_rate() -> float | None:
+    """Fetch the latest Selic rate from BCB SGS series 432 (Meta Selic Copom).
+
+    The series value is a percentage (e.g. 14.25 for 14.25% a.a.). We convert
+    the simple annual rate to continuous compounding: r_cont = ln(1 + r/100).
+
+    Returns None if the SGS DB is missing or the series has no observations.
+    """
+    res = _safe_query(_sgs_last_value, code=_SELIC_SERIES_CODE)
+    if res.get("status") != "ok":
+        return None
+    val = res.get("value")
+    if val is None:
+        return None
+    try:
+        r_simple = float(val) / 100.0  # 14.25 -> 0.1425
+    except (ValueError, TypeError):
+        return None
+    # Continuous-compounding conversion: r_cont = ln(1 + r_simple).
+    import math as _math
+    return _math.log(1.0 + r_simple)
+
+
+def _compute_iv_for_option(option: dict, spot: float, r_cont: float,
+                           refdate: str) -> float | None:
+    """Compute implied vol for a single option row.
+
+    Args:
+        option: Dict with at least strike_parsed, close, maturity, option_type.
+        spot:   Spot price of the underlying.
+        r_cont: Risk-free rate (continuous compounding).
+        refdate: Reference date (YYYY-MM-DD) for the T calculation.
+
+    Returns:
+        Implied vol (sigma) as a fraction (e.g. 0.35 for 35%), or None if
+        the inputs are invalid (no strike, no maturity, T<=0, etc.).
+    """
+    K = option.get("strike_parsed")
+    price = option.get("close")
+    maturity = option.get("maturity")
+    otype = (option.get("option_type") or "").upper()
+
+    if K is None or price is None or not maturity or otype not in ("CALL", "PUT"):
+        return None
+    try:
+        K = float(K)
+        price = float(price)
+    except (ValueError, TypeError):
+        return None
+
+    # T = (maturity - refdate).days / 365.
+    try:
+        d_mat = _dt.fromisoformat(maturity)
+        d_ref = _dt.fromisoformat(refdate) if refdate else _dt.now()
+    except ValueError:
+        return None
+    days = (d_mat - d_ref).days
+    if days <= 0:
+        return None  # Already expired or expiry day (intrinsic-only territory).
+    T = days / 365.0
+
+    return _implied_vol(price, spot, K, T, r_cont, otype)
+
+
+def _iv_color(iv: float | None) -> str:
+    """Background color for an IV heatmap cell.
+
+    Maps IV from 0.10 (10%, calm) -> 1.00 (100%, panic) to a green-yellow-red
+    gradient. Returns "" (empty string) for None (empty cell, no IV).
+    """
+    if iv is None:
+        return ""
+    # Clamp to [0.10, 1.00] for the gradient.
+    lo, hi = 0.10, 1.00
+    v = max(lo, min(hi, iv))
+    # Normalized 0..1 within the [lo, hi] window.
+    t = (v - lo) / (hi - lo)
+    # Interpolate green (0,200,83) -> yellow (250,204,21) -> red (239,68,68).
+    if t < 0.5:
+        # green -> yellow
+        u = t * 2.0
+        r = int(0   + (250 - 0)   * u)
+        g = int(200 + (204 - 200) * u)
+        b = int(83  + (21  - 83)  * u)
+    else:
+        # yellow -> red
+        u = (t - 0.5) * 2.0
+        r = int(250 + (239 - 250) * u)
+        g = int(204 + (68  - 204) * u)
+        b = int(21  + (68  - 21)  * u)
+    return f"rgb({r}, {g}, {b})"
+
+
+def _iv_text_color(iv: float | None) -> str:
+    """Text color (black/white) for an IV heatmap cell — high contrast against the bg."""
+    if iv is None:
+        return ""
+    # Yellow midpoint (~0.55) is bright — use dark text. Extremes are dark — use white.
+    if 0.40 < iv < 0.70:
+        return "#1f2937"  # dark slate
+    return "#ffffff"
+
+
 # ── Tab 1: Cadeia de Opções ─────────────────────────────────────────────────
 def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
     """Build the Cadeia de Opções tab sections.
@@ -103,18 +247,40 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
     [v3] Split into 2 collapsible tables: one for calls, one for puts.
     Both expanded by default. Legend text section stays non-collapsible.
 
+    [v2] Legend reworked: intro text section (format + examples) + a 2-column
+    table (CALLS | PUTS) showing the month codes side by side. Numeric
+    columns (Exercício/Último/Volume/Bid/Ask) now carry a `column_align` hint
+    for right-alignment + tabular-nums.
+
     Sections emitted (in order):
-      1. Legend text section (option ticker naming convention)
-      2. Calls table (collapsible, expanded) — Papel | Exercício | Vencimento |
+      1. Legend intro text section (format + examples)
+      2. Legend 2-column table (CALLS | PUTS month codes)
+      3. Calls table (collapsible, expanded) — Papel | Exercício | Vencimento |
          Último | Volume | Bid | Ask
-      3. Puts table (collapsible, expanded) — same columns
+      4. Puts table (collapsible, expanded) — same columns
     """
     sections: list[dict] = []
 
-    # Legend (always shown — explains the ticker convention)
+    # [v2] Legend intro text (format + examples).
     sections.append(build_text_section(
         "Convenção de Ticker de Opções",
-        _LEGEND_BODY,
+        _LEGEND_INTRO,
+    ))
+
+    # [v2] Legend 2-column table (CALLS | PUTS) — 3 rows: Jan-Abr, Mai-Ago, Set-Dez.
+    legend_rows = [
+        ["A=Jan  B=Fev  C=Mar  D=Abr", "M=Jan  N=Fev  O=Mar  P=Abr"],
+        ["E=Mai  F=Jun  G=Jul  H=Ago", "Q=Mai  R=Jun  S=Jul  T=Ago"],
+        ["I=Set  J=Out  K=Nov  L=Dez", "U=Set  V=Out  W=Nov  X=Dez"],
+    ]
+    sections.append(build_table_section(
+        "Códigos de Mês — CALLS vs PUTS",
+        legend_rows,
+        ["CALLS (compra)", "PUTS (venda)"],
+        description="Os códigos A-L correspondem a CALLS (opção de compra) e "
+                    "M-X a PUTS (opção de venda). Cada letra mapeia um mês "
+                    "do ano — idêntico para ambos os lados.",
+        column_align=["left", "left"],
     ))
 
     # Query the options chain (nearest maturity if not specified).
@@ -145,6 +311,9 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
         "Papel", "Exercício", "Vencimento",
         "Último", "Volume", "Bid", "Ask",
     ]
+    # [v2] Papel=left, Exercício=right (R$), Vencimento=left (date),
+    # Último=right (R$), Volume=right (number), Bid=right (R$), Ask=right (R$).
+    chain_align = ["left", "right", "left", "right", "right", "right", "right"]
 
     def _build_rows(opts: list[dict]) -> list[list]:
         rows = []
@@ -173,6 +342,7 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
             "rows": _build_rows(calls),
             "collapsible": True,
             "collapsible_open": True,
+            "column_align": chain_align,
         })
 
     # Puts table (collapsible, expanded).
@@ -188,6 +358,7 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
             "rows": _build_rows(puts),
             "collapsible": True,
             "collapsible_open": True,
+            "column_align": chain_align,
         })
 
     return sections
@@ -197,9 +368,8 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
 def _build_put_call_ratio_tab(underlying: str, days: int = 90) -> list[dict]:
     """Build the Put/Call Ratio tab sections.
 
-    [v2] Chart now shows BOTH call volume (green bars) + put volume (red bars)
-    on the left axis AND the P/C ratio (blue line) on the right axis. The user
-    wanted to see both call + put info, not just the ratio.
+    [v2] Dual-axis chart with call vol (green bars) + put vol (red bars)
+    on the left axis + P/C ratio (blue line) on the right axis.
 
     Sections emitted:
       1. Dual-axis chart: call vol (green bars, left) + put vol (red bars,
@@ -343,11 +513,13 @@ def _build_put_call_ratio_tab(underlying: str, days: int = 90) -> list[dict]:
             format_int(obs.get("put_volume")),
             format_value(obs.get("ratio"), "ratio"),
         ])
+    # [v2] Right-align numeric columns (Data=left, the rest=right).
     sections.append(build_table_section(
         f"Últimas Observações — {underlying}",
         table_rows,
         ["Data", "Volume Calls", "Volume Puts", "P/C Ratio"],
         description="Últimas 15 observações diárias (mais recente primeiro).",
+        column_align=["left", "right", "right", "right"],
     ))
     return sections
 
@@ -444,6 +616,8 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
     })
 
     # [v3] Split detail table into 2 collapsible tables: calls + puts.
+    # [v2] Right-align all columns (Strike / Vol / # are all numeric).
+    strike_align = ["right", "right", "right"]
     call_rows = []
     put_rows = []
     for s in strikes:
@@ -469,6 +643,7 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
             "rows": call_rows,
             "collapsible": True,
             "collapsible_open": True,
+            "column_align": strike_align,
         })
 
     if put_rows:
@@ -480,6 +655,7 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
             "rows": put_rows,
             "collapsible": True,
             "collapsible_open": True,
+            "column_align": strike_align,
         })
 
     return sections
@@ -582,12 +758,265 @@ def _build_exercise_tab(underlying: str, days: int = 90) -> list[dict]:
             format_int(obs.get("put_exercise_volume")),
             format_int(obs.get("total")),
         ])
+    # [v2] Right-align numeric columns (Data=left, the rest=right).
     sections.append(build_table_section(
         f"Ultimos Exercicios — {underlying}",
         table_rows,
         ["Data", "Ex. Calls (R$)", "Ex. Puts (R$)", "Total"],
         description="Ultimos 15 dias de exercicio (mais recente primeiro).",
+        column_align=["left", "right", "right", "right"],
     ))
+    return sections
+
+
+# ── Tab 5: Volatilidade Implícita ──────────────────────────────────────────
+def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
+    """Build the Volatilidade Implícita tab sections.
+
+    [v1.2] Black-Scholes implied volatility per option. Uses:
+      - spot price from cotahist equities table (PETR4 latest close)
+      - risk-free rate = Selic from BCB SGS series 432 (annualized, converted
+        to continuous compounding)
+      - T = (maturity - refdate).days / 365
+
+    Sections emitted (in order):
+      1. IV Smile chart — line chart of IV vs strike, separate datasets for
+         calls (green) + puts (red). Range selector enabled.
+      2. IV table — Papel | Tipo | Strike | Prêmio | IV, sorted by strike.
+         Collapsible, expanded.
+      3. IV Term Structure heatmap — strike (rows) × maturity (cols), each
+         cell colored by IV (green=calm, yellow=mid, red=panic).
+         [v2] Renders even with a single maturity (single-column heatmap is
+         still useful — shows the smile).
+
+    Graceful degradation: if the spot price or Selic rate can't be fetched,
+    the tab shows an error section but the rest of the dashboard is unaffected.
+    """
+    sections: list[dict] = []
+
+    # ── Fetch spot + Selic ─────────────────────────────────────────────────
+    spot, spot_refdate = _fetch_spot_price(underlying)
+    if spot is None:
+        sections.append(build_error_section(
+            "Volatilidade Implícita",
+            f"não foi possível obter o preço spot de {original_input or underlying} "
+            "no cotahist (tabela de equities). Verifique se o ativo está sincronizado.",
+        ))
+        return sections
+
+    r_cont = _fetch_selic_rate()
+    if r_cont is None:
+        sections.append(build_error_section(
+            "Volatilidade Implícita",
+            "não foi possível obter a taxa Selic (série 432 do SGS). "
+            "Rode o sync do bcb.macro para popular o sgs.db.",
+        ))
+        return sections
+
+    # ── Gather options across ALL maturities for the heatmap ──────────────
+    mat_res = _safe_query(available_maturities, underlying=underlying)
+    all_maturities: list[str] = []
+    if mat_res.get("status") == "ok":
+        all_maturities = [m["maturity"] for m in mat_res.get("maturities", [])
+                          if m.get("maturity")]
+
+    # ── Fetch the nearest-maturity chain (for the smile + IV table) ───────
+    chain_res = _safe_query(options_chain, underlying=underlying)
+    if chain_res.get("status") != "ok":
+        sections.append(build_error_section(
+            "Volatilidade Implícita",
+            chain_res.get("error", "cadeia de opções indisponível"),
+        ))
+        return sections
+
+    options = chain_res.get("options", [])
+    if not options:
+        sections.append(build_error_section(
+            "Volatilidade Implícita",
+            f"nenhuma opção encontrada para {underlying}",
+        ))
+        return sections
+
+    refdate = chain_res.get("refdate") or spot_refdate
+    maturity_str = chain_res.get("maturity", "-")
+
+    # ── Compute IV per option (nearest maturity) ──────────────────────────
+    enriched: list[dict] = []
+    for opt in options:
+        iv = _compute_iv_for_option(opt, spot, r_cont, refdate or "")
+        enriched.append({**opt, "_iv": iv})
+
+    calls = [o for o in enriched if o.get("option_type") == "CALL" and o.get("_iv") is not None]
+    puts  = [o for o in enriched if o.get("option_type") == "PUT"  and o.get("_iv") is not None]
+
+    # ── IV Smile chart (IV vs strike) ─────────────────────────────────────
+    calls_sorted = sorted(calls, key=lambda o: float(o.get("strike_parsed", 0)))
+    puts_sorted  = sorted(puts,  key=lambda o: float(o.get("strike_parsed", 0)))
+
+    smile_chart_data = {
+        "type": "line",
+        "data": {
+            "labels": [format_brl(o.get("strike_parsed")) for o in calls_sorted]
+                      or [format_brl(o.get("strike_parsed")) for o in puts_sorted],
+            "datasets": [
+                {
+                    "label": "IV Calls",
+                    "data": [round(o["_iv"] * 100, 2) for o in calls_sorted],
+                    "borderColor": _COLOR_CALL,
+                    "backgroundColor": _COLOR_CALL,
+                    "borderWidth": 1.5,
+                    "pointRadius": 3,
+                    "tension": 0.3,
+                    "fill": False,
+                },
+                {
+                    "label": "IV Puts",
+                    "data": [round(o["_iv"] * 100, 2) for o in puts_sorted],
+                    "borderColor": _COLOR_PUT,
+                    "backgroundColor": _COLOR_PUT,
+                    "borderWidth": 1.5,
+                    "pointRadius": 3,
+                    "tension": 0.3,
+                    "fill": False,
+                },
+            ],
+        },
+        "options": {
+            "responsive": True,
+            "maintainAspectRatio": False,
+            "interaction": {"mode": "index", "intersect": False},
+            "scales": {
+                "x": {"title": {"display": True, "text": "Strike"},
+                      "ticks": {"maxTicksLimit": 20}},
+                "y": {"title": {"display": True, "text": "Volatilidade Implícita (%)"},
+                      "ticks": {"callback": "((v) => v + '%')"}},
+            },
+            "plugins": {
+                "title": {"display": True,
+                          "text": f"IV Smile — {underlying} ({maturity_str})"},
+                "legend": {"display": True, "position": "top"},
+                "tooltip": {"callbacks": {"label": "((ctx) => ctx.dataset.label + ': ' + ctx.parsed.y + '%')"}},
+            },
+        },
+    }
+
+    smile_labels = ([format_brl(o.get("strike_parsed")) for o in calls_sorted]
+                    or [format_brl(o.get("strike_parsed")) for o in puts_sorted])
+    sections.append({
+        "type": "chart",
+        "title": f"IV Smile — {underlying} ({maturity_str})",
+        "description": (
+            f"Volatilidade Implícita por strike para o vencimento {maturity_str} "
+            f"(ref: {refdate}). Spot = {format_brl(spot)}; taxa Selic (cont.) = "
+            f"{r_cont*100:.4f}% a.a. Calls (verde) + Puts (vermelho). O 'smile' "
+            "típico mostra IV mais alta nos strikes extremos (OTM) e mais baixa "
+            "no ATM — desviô do smile indica skew de mercado."
+        ),
+        "chart_data": smile_chart_data,
+        "price_range_selector": True,
+        "price_full_labels": smile_labels,
+        "price_full_datasets": [
+            {"data": [round(o["_iv"] * 100, 2) for o in calls_sorted],
+             "label": "IV Calls"},
+            {"data": [round(o["_iv"] * 100, 2) for o in puts_sorted],
+             "label": "IV Puts"},
+        ],
+    })
+
+    # ── IV table ──────────────────────────────────────────────────────────
+    iv_rows: list[list] = []
+    for opt in sorted(enriched, key=lambda o: (o.get("option_type", ""), float(o.get("strike_parsed", 0)))):
+        iv = opt.get("_iv")
+        iv_rows.append([
+            opt.get("symbol", ""),
+            (opt.get("option_type") or "").title(),
+            format_brl(opt.get("strike_parsed")),
+            format_brl(opt.get("close")),
+            format_pct(iv) if iv is not None else "-",
+        ])
+    sections.append({
+        "type": "table",
+        "title": f"Volatilidade Implícita — {underlying} ({maturity_str})",
+        "description": (
+            f"IV calculada via Black-Scholes (Newton-Raphson + bisection fallback). "
+            f"Spot = {format_brl(spot)}, r (cont.) = {r_cont*100:.4f}% a.a. "
+            "Opções sem IV (T≤0, prêmio < intrínseco, ou falha de convergência) "
+            "mostram '-'."
+        ),
+        "columns": ["Papel", "Tipo", "Strike", "Prêmio", "IV"],
+        "rows": iv_rows,
+        "collapsible": True,
+        "collapsible_open": True,
+        # [v2] Right-align numeric columns (Strike/Prêmio/IV).
+        "column_align": ["left", "left", "right", "right", "right"],
+    })
+
+    # ── IV Term Structure heatmap (strike × maturity) ─────────────────────
+    # [v2] Render even with a single maturity (single-column heatmap is still
+    # useful — shows the smile for the nearest expiry).
+    if all_maturities:
+        # Build the (strike, maturity) -> IV map across all maturities.
+        # Re-fetch each maturity's chain so we have IVs at every expiry.
+        strike_set: set[float] = set()
+        iv_map: dict[tuple[float, str], float | None] = {}
+        for mat in all_maturities:
+            r = _safe_query(options_chain, underlying=underlying, maturity=mat)
+            if r.get("status") != "ok":
+                continue
+            mat_refdate = r.get("refdate") or refdate or ""
+            for opt in r.get("options", []):
+                K = opt.get("strike_parsed")
+                if K is None:
+                    continue
+                try:
+                    K = float(K)
+                except (ValueError, TypeError):
+                    continue
+                strike_set.add(K)
+                iv = _compute_iv_for_option(opt, spot, r_cont, mat_refdate)
+                iv_map[(K, mat)] = iv
+
+        if strike_set:
+            strikes_sorted = sorted(strike_set)
+            maturities_sorted = sorted(all_maturities)
+            # Format maturity headers as DD/MM/YY for compactness.
+            def _fmt_mat(m: str) -> str:
+                try:
+                    d = _dt.fromisoformat(m)
+                    return d.strftime("%d/%m/%y")
+                except ValueError:
+                    return m
+
+            heat_columns = ["Strike"] + [_fmt_mat(m) for m in maturities_sorted]
+            heat_rows: list[list] = []
+            for K in strikes_sorted:
+                row: list = [format_brl(K)]
+                for mat in maturities_sorted:
+                    iv = iv_map.get((K, mat))
+                    if iv is None:
+                        row.append({"text": "-", "bg": "", "color": ""})
+                    else:
+                        row.append({
+                            "text": format_pct(iv),
+                            "bg": _iv_color(iv),
+                            "color": _iv_text_color(iv),
+                        })
+                heat_rows.append(row)
+
+            sections.append(build_heatmap_section(
+                f"Estrutura a Termo de IV — {underlying}",
+                heat_columns,
+                heat_rows,
+                description=(
+                    f"Mapa de calor strike × vencimento. Cor de fundo = IV "
+                    f"(verde=calma <10%→ amarela ~55% → vermelha=pânico >100%). "
+                    f"{len(strikes_sorted)} strikes × {len(maturities_sorted)} "
+                    "vencimentos. Mostra a superfície de volatilidade — o 'smile' "
+                    "em cada vencimento + a 'term structure' (como IV varia com o "
+                    "prazo)."
+                ),
+            ))
+
     return sections
 
 
@@ -595,12 +1024,13 @@ def _build_exercise_tab(underlying: str, days: int = 90) -> list[dict]:
 @register_mode(
     "dashboard",
     description=(
-        "B3 options (derivatives) analytics dashboard. 4 tabs: "
-        "Cadeia de Opcoes (options chain table + ticker legend), "
+        "B3 options (derivatives) analytics dashboard. 5 tabs: "
+        "Cadeia de Opções (options chain tables + ticker legend), "
         "Put/Call Ratio (sentiment trend chart + table), "
         "Volume por Strike (calls vs puts bar chart), "
-        "Exercicios (exercise of calls/puts). "
-        "Source: cotahist.db (cotahist_derivatives table)."
+        "Exercicios (exercise of calls/puts), "
+        "Volatilidade Implícita (IV smile + IV table + IV term heatmap via Black-Scholes + Selic). "
+        "Source: cotahist.db (cotahist_derivatives table) + sgs.db (Selic rate)."
     ),
     params={
         "underlying": (
@@ -618,9 +1048,11 @@ def _build_exercise_tab(underlying: str, days: int = 90) -> list[dict]:
     ],
 )
 def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
-    """Build the 4-tab B3 options dashboard for a single underlying.
+    """Build the 5-tab B3 options dashboard for a single underlying.
 
     [v1.1] Added Exercicios tab (exercise of calls/puts — BDI 38/42).
+    [v1.2] Added Volatilidade Implícita tab (Black-Scholes IV + Selic rate).
+    [v2]    Legend reworked into 2-column CALLS|PUTS table + column_align on R$ cols.
 
     Args:
         underlying: 4-letter code (PETR) or full ticker (PETR4). The trailing
@@ -640,7 +1072,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
     if not u:
         return {"status": "error", "error": "underlying is required"}
 
-    # ── Tab 1/4: Cadeia de Opções ──────────────────────────────────────────
+    # ── Tab 1/5: Cadeia de Opções ──────────────────────────────────────────
     _s_t0 = _dt.now()
     chain_sections = _build_chain_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -650,7 +1082,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 2/4: Put/Call Ratio ──────────────────────────────────────────
+    # ── Tab 2/5: Put/Call Ratio ──────────────────────────────────────────
     _s_t0 = _dt.now()
     pc_sections = _build_put_call_ratio_tab(u, days=days)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -660,7 +1092,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 3/4: Volume por Strike ───────────────────────────────────
+    # ── Tab 3/5: Volume por Strike ───────────────────────────────────
     _s_t0 = _dt.now()
     vbs_sections = _build_volume_by_strike_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -670,7 +1102,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 4/4: Exercicios ───────────────────────────────────────────
+    # ── Tab 4/5: Exercicios ───────────────────────────────────────────
     _s_t0 = _dt.now()
     exercise_sections = _build_exercise_tab(u, days=days)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -680,11 +1112,22 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
+    # ── Tab 5/5: Volatilidade Implícita ───────────────────────────────
+    _s_t0 = _dt.now()
+    iv_sections = _build_iv_tab(u, original_input=underlying)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    print(
+        f"  [step] Volatilidade Implícita: {len(iv_sections)} sections "
+        f"({_s_elapsed:.1f}s)",
+        flush=True,
+    )
+
     tabs = [
-        {"name": "Cadeia de Opções", "group": "Opções",     "sections": chain_sections},
-        {"name": "Put/Call Ratio",    "group": "Análise",    "sections": pc_sections},
-        {"name": "Volume por Strike", "group": "Análise",    "sections": vbs_sections},
-        {"name": "Exercicios",        "group": "Opções",     "sections": exercise_sections},
+        {"name": "Cadeia de Opções",       "group": "Opções",  "sections": chain_sections},
+        {"name": "Put/Call Ratio",         "group": "Análise", "sections": pc_sections},
+        {"name": "Volume por Strike",      "group": "Análise", "sections": vbs_sections},
+        {"name": "Exercicios",             "group": "Opções",  "sections": exercise_sections},
+        {"name": "Volatilidade Implícita", "group": "Análise", "sections": iv_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()
