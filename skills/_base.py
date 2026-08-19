@@ -977,6 +977,11 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # (IPCA, Selic, PIB, Cambio) from the Olinda OData API.
         "focus":        ("data_sources.bcb.focus.sync_engine", "sync_all",
                          lambda: {"force": True}),
+        # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
+        # includes "ddm". Mirrors the sgs + focus entries: sync_all(force=True)
+        # re-fetches all 3 indices (IGP-M, IPCA, INPC) from the HTML scraper.
+        "ddm":          ("data_sources.ddm.inflation.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:

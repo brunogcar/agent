@@ -21,6 +21,26 @@
 </table>
 {% endmacro %}
 
+{% macro heatmap_table(headers, rows) %}
+<div class="heatmap-table" style="overflow-x: auto;">
+  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <thead><tr>
+      {% for col in headers %}<th style="padding: 8px 12px; text-align: {{ 'left' if loop.first else 'center' }}; border-bottom: 2px solid var(--border); color: var(--text-sec); font-weight: 600; font-size: 12px;">{{ col }}</th>{% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for row in rows %}<tr>
+        {% for cell in row %}
+        {% if loop.first %}<td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>
+        {% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;">{{ cell.text if cell.text is defined else cell }}</td>
+        {% endif %}
+        {% endfor %}
+      </tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+
 {% macro _section_inner(sec, canvas_id='') %}
 {# [v1.2-v2] Collapsible section wrapper — when sec.collapsible is True, the
    title becomes the collapsible header (click to expand/collapse) and the
@@ -51,7 +71,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
+    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None)) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -74,7 +94,7 @@
 {% endif %}
 {% if sec.type == 'table' and sec.columns and sec.rows %}
 {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
+{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None)) }}
 {% if sec.wide %}</div>{% endif %}
 {% elif sec.type == 'table' %}
 <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -211,8 +231,10 @@
       {% if sec.type == 'table' and sec.columns and sec.rows %}
       {# [v1.24] Wrap wide tables (>5 period columns) in overflow-x: auto. #}
       {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
+      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None)) }}
       {% if sec.wide %}</div>{% endif %}
+      {% elif sec.type == 'heatmap' and sec.columns and sec.rows %}
+      {{ heatmap_table(sec.columns, sec.rows) }}
       {% elif sec.type == 'table' %}
       <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
       {% endif %}
