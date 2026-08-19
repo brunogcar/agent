@@ -8,14 +8,14 @@
 </div>
 {% endmacro %}
 
-{% macro data_table(headers, rows, negative_red=False) %}
+{% macro data_table(headers, rows, negative_red=False, column_align=None) %}
 <table class="data-table" style="width: auto; min-width: 100%">
   <thead><tr>
-    {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+    {% for h in headers %}<th{% if column_align and loop.index0 < column_align|length %} style="text-align: {{ 'left' if column_align[loop.index0] == 'left' else 'right' }};"{% endif %}>{{ h }}</th>{% endfor %}
   </tr></thead>
   <tbody>
     {% for row in rows %}
-    <tr>{% for cell in row %}<td{% if negative_red and cell is string and cell.startswith('-') %} style="color: #ef4444; font-weight: 600;"{% endif %}{% if cell is mapping and cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}" style="cursor: help"{% endif %}>{% if cell is mapping %}{{ cell.text }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>{% endfor %}</tr>
+    <tr>{% for cell in row %}<td{% if column_align and loop.index0 < column_align|length %} style="text-align: {{ 'left' if column_align[loop.index0] == 'left' else 'right' }};{% if column_align[loop.index0] != 'left' %} font-variant-numeric: tabular-nums; white-space: nowrap;{% endif %}"{% elif negative_red and cell is string and cell.startswith('-') %} style="color: #ef4444; font-weight: 600;"{% endif %}{% if cell is mapping and cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}" style="cursor: help"{% endif %}>{% if cell is mapping %}{{ cell.text }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>{% endfor %}</tr>
     {% endfor %}
   </tbody>
 </table>

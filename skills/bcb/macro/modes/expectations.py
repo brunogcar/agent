@@ -141,7 +141,7 @@ def _build_indicator_chart(title: str, unit: str, color: str,
     }
 
 
-def _build_indicator_table(title: str, observations: list[dict]) -> dict:
+def _build_indicator_table(title: str, observations: list[dict], unit: str = "") -> dict:
     """Build a table of the latest expectations for one indicator.
 
     Right-aligns the numeric columns (Media, Mediana, Minimo, Maximo,
@@ -149,13 +149,15 @@ def _build_indicator_table(title: str, observations: list[dict]) -> dict:
     """
     rows = []
     for o in observations[:15]:  # cap at 15 rows
+        # Format with consistent decimals: 2 for %, 4 for R$
+        _fmt = (lambda v: f"{v:.2f}" if v is not None else "-") if unit != "R$" else (lambda v: f"{v:.4f}" if v is not None else "-")
         rows.append([
             o.get("data", ""),
             o.get("data_referencia", ""),
-            format_value(o.get("media"), ""),
-            format_value(o.get("mediana"), ""),
-            format_value(o.get("minimo"), ""),
-            format_value(o.get("maximo"), ""),
+            _fmt(o.get("media")),
+            _fmt(o.get("mediana")),
+            _fmt(o.get("minimo")),
+            _fmt(o.get("maximo")),
             str(o.get("numero_respondentes") or "-"),
         ])
     return {
@@ -225,7 +227,7 @@ def expectations(limit: int = 50) -> dict:
         ))
 
         sections.append(_build_indicator_chart(title, unit, color, observations))
-        sections.append(_build_indicator_table(title, observations))
+        sections.append(_build_indicator_table(title, observations, unit))
 
     return {
         "status":   "ok",

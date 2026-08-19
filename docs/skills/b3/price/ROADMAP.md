@@ -10,12 +10,12 @@
 | P3 | P4 — Options chain | Put/call ratio + IV smile for tickers with listed options |
 | P3 | P5 — Multi-ticker compare | Side-by-side price + return comparison (mirror b3/index compare) |
 | P3 | P6 — Pattern recognition | Auto-detect head-and-shoulders, double tops, triangles |
-| P3 | P10 — Opções tab (cross-skill) | Embed the new [b3/options](../OPTIONS.md) skill's Cadeia de Opções tab as a new tab in the price dashboard |
+| ✅ | ~~P10 — Opções tab (cross-skill)~~ | **Shipped 2026-09-05 (v1.7)** — 9th "Opções" tab embeds the Cadeia de Opções (calls + puts + legend) from the [b3/options](../OPTIONS.md) skill. Cross-skill integration: `_build_options_tab(ticker)` calls `skills.b3.options.modes.dashboard.dashboard(underlying=ticker)` and extracts just the Cadeia de Opções tab sections. Graceful skip if the options skill import fails or the underlying has no listed options. |
 | ✅ | ~~P7 — ADX / CCI / Williams %R~~ | **Shipped 2026-08-22 (v1.6)** — 3 trend/cyclical indicators added to `engines.py` (`compute_adx`, `compute_cci`, `compute_williams_r`) + 3 collapsible chart sections in the Indicadores tab + 3 rows in the signals table + 3 signal classifiers. |
 | ✅ | ~~P8 — Bid-ask spread analysis~~ | **Shipped 2026-08-22 (v1.6)** — new 8th "Bid-Ask Spread" tab (group: Liquidez) with 4 sections: spread absoluto + spread percentual + bid/ask/close + liquidez KPI table. `ohlcv_series` SELECT extended with `best_bid, best_ask`. New `compute_bid_ask_spread` + `compute_spread_pct` engine functions + new `report/spread.py` builder. |
 | ✅ | ~~P9 — Options skill (new)~~ | **Shipped 2026-08-18** as the separate [b3/options](../OPTIONS.md) skill (v1.0). Reads from `data_sources/b3/cotahist_derivatives` (the `cotahist_derivatives` table, populated during the standard COTAHIST sync). See [../options/CHANGELOG.md](../options/CHANGELOG.md). |
 
-> **Note:** Recently completed items (ADX/CCI/Williams %R + Bid-Ask Spread tab in v1.6, Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
+> **Note:** Recently completed items (Opções tab cross-skill in v1.7, ADX/CCI/Williams %R + Bid-Ask Spread tab in v1.6, Fibonacci + dividend-adjusted returns, RSI+MACD+Stochastic+OBV, v1.0 launch, v1.1 cleanup) are in [CHANGELOG.md](CHANGELOG.md). The ROADMAP only tracks backlog + deferred items.
 
 ---
 
@@ -122,30 +122,34 @@ Automatic detection of classical chart patterns:
 **Blocker:** Pattern detection is fuzzy — high false-positive rate. Need a
 confidence threshold + user-tunable sensitivity.
 
-### P10 — Opções tab (cross-skill integration with b3/options)
+### P10 — Opções tab (cross-skill integration with b3/options) — DONE in v1.7
 
 **Priority:** P3
 **Source:** Cross-skill integration
+
+**Shipped 2026-09-05 (v1.7).** Added a 9th "Opções" tab (group: Derivativos) to the price dashboard that calls the [b3/options](../OPTIONS.md) skill's `dashboard` mode and embeds just the Cadeia de Opções tab sections (calls table + puts table + legend). Skips the P/C ratio, Volume por Strike, Exercicios, and IV tabs to keep the price dashboard compact.
 
 With the [b3/options](../OPTIONS.md) skill now live (v1.0, 2026-08-18), the
 price dashboard could embed a new "Opções" tab that calls the options
 skill's `dashboard` mode and renders the Cadeia de Opções table inline.
 Currently a user has to call the options skill separately.
 
-**Implementation:**
-1. In `skills/b3/price/modes/dashboard.py`, add a tab that calls
-   `skills.b3.options.modes.dashboard.dashboard(underlying=ticker)`.
-2. Extract just the Cadeia de Opções tab sections (skip the P/C ratio +
-   Volume por Strike tabs to keep the price dashboard compact).
-3. Wrap in try/except — if the underlying has no listed options, skip the
-   tab silently (don't break the price dashboard).
+**Implementation (shipped):**
+1. Added `from skills.b3.options.modes.dashboard import dashboard as _options_dashboard`
+   wrapped in try/except (`_OPTIONS_AVAILABLE` flag) so a missing options
+   skill or circular-import issue doesn't break the price dashboard.
+2. New helper `_build_options_tab(ticker)` calls `_options_dashboard(underlying=ticker)`,
+   extracts the "Cadeia de Opções" tab sections, and returns them. Graceful
+   fallback to a "Sem opções disponíveis para este ticker" text section if
+   the call fails or returns no Cadeia tab.
+3. Added `{"name": "Opções", "group": "Derivativos", "sections": options_sections}`
+   as the 9th tab.
+4. Updated `@register_mode` description to mention 9 tabs.
 
-**Blocker:** None technical. Need to confirm the price dashboard doesn't
-grow past 8 tabs (currently 7 after Fibonacci). The options skill's
-`REQUIRED_SOURCES=["cotahist"]` is already a subset of the price skill's
-`REQUIRED_SOURCES=["cotahist", "b3_dividends"]`, so no new sync guard
-wiring is needed.
+No new sync guard needed — the options skill's `REQUIRED_SOURCES=["cotahist",
+"sgs"]` is a subset of the price skill's `REQUIRED_SOURCES=["cotahist",
+"b3_dividends"]`.
 
 ---
 
-*Last updated: 2026-08-22 (v1.6 — P7 + P8 shipped). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-09-05 (v1.7 — P10 shipped). See [CHANGELOG.md](CHANGELOG.md) for version history.*

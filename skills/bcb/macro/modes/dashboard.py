@@ -41,6 +41,7 @@ from skills.bcb.macro.modes.inflation import inflation as inflation_mode
 from skills.bcb.macro.modes.fx import fx as fx_mode
 from skills.bcb.macro.modes.real_returns import real_returns as real_returns_mode
 from skills.bcb.macro.modes.expectations import expectations as expectations_mode
+from skills.bcb.macro.modes.yield_curve import yield_curve as yield_curve_mode
 
 from data_sources.bcb.sgs.query_engine import last_value, series as query_series
 
@@ -152,9 +153,10 @@ def _build_atividade_sections() -> list[dict]:
 @register_mode(
     "dashboard",
     description=(
-        "BCB macro dashboard - 6 tabs: Resumo (KPIs), Juros, Inflacao, Cambio, "
-        "Atividade, Retorno Real (Fisher equation). Composes rates + inflation "
-        "+ fx + real_returns modes. KPIs at top level."
+        "BCB macro dashboard - 8 tabs: Resumo (KPIs), Juros, Inflacao, Cambio, "
+        "Atividade, Retorno Real (Fisher equation), Expectativas Focus, "
+        "Curva de Juros (Focus expected Selic). Composes rates + inflation + "
+        "fx + real_returns + expectations + yield_curve modes. KPIs at top level."
     ),
     params={
         "days":   "int. Daily-series window. Default: 365.",
@@ -171,6 +173,8 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     [v3] Default days=365 (was 30) and months=24 (was 12) for meaningful trends.
     [v1.4] Added 6th tab "Retorno Real" (Fisher equation) composing the
            real_returns mode sections.
+    [v1.5] Added 8th tab "Curva de Juros" (Focus expected Selic path) composing
+           the yield_curve mode sections.
     """
     _t0 = _dt.now()
     print(f"[bcb.macro] Starting dashboard...", flush=True)
@@ -186,7 +190,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     kpis = _build_resumo_kpis()
 
     # [v5] One-line section timers (ratios pattern): 6 sections.
-    _SEC_TOTAL = 7
+    _SEC_TOTAL = 8
     _sec_count = 0
     _sec_t0 = _dt.now()
 
@@ -261,7 +265,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Retorno Real ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 7/7: Expectativas Focus ─────────────────────────────────
+    # ── Section 7/8: Expectativas Focus ─────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     exp_res = _safe_call(expectations_mode)
@@ -272,6 +276,17 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Expectativas Focus ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
+    # ── Section 8/8: Curva de Juros (Focus expected Selic) ──────────────
+    _sec_count += 1
+    _s_t0 = _dt.now()
+    yc_res = _safe_call(yield_curve_mode)
+    yield_curve_sections = yc_res.get("sections", []) or [
+        build_error_section("Curva de Juros", yc_res.get("error", "sem dados")),
+    ]
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
+    print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Curva de Juros ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
+
     tabs = [
         {"name": "Resumo",             "group": "Resumo",      "sections": resumo_sections},
         {"name": "Juros",              "group": "Indicadores", "sections": juros_sections},
@@ -280,6 +295,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
         {"name": "Atividade",          "group": "Indicadores", "sections": atividade_sections},
         {"name": "Retorno Real",       "group": "Analise",     "sections": real_returns_sections},
         {"name": "Expectativas Focus", "group": "Analise",     "sections": expectations_sections},
+        {"name": "Curva de Juros",     "group": "Analise",     "sections": yield_curve_sections},
     ]
 
     # Surface sub-mode errors as a note (but keep status=ok so the dashboard
@@ -287,7 +303,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     errors = []
     for name, res in [("rates", rates_res), ("inflation", inflation_res),
                        ("fx", fx_res), ("real_returns", real_res),
-                       ("expectations", exp_res)]:
+                       ("expectations", exp_res), ("yield_curve", yc_res)]:
         if res.get("status") not in ("ok", None):
             errors.append(f"{name}: {res.get('error', '')}")
 

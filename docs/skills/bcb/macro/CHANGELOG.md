@@ -2,6 +2,35 @@
 
 # 📋 Macro Changelog
 
+## v1.5 — 2026-09-05
+
+**Yield curve mode (Focus expected Selic) — 8th 'Curva de Juros' tab. BMF DI futures deferred (no public URL).**
+
+### Required Summary
+
+- **New mode `yield_curve`** — Focus-based expected Selic yield curve. Queries `data_sources.bcb.focus.query_engine.expectations(indicador="Selic", frequency="annual")` for ALL annual Selic expectations, groups by `data_referencia` (year, e.g. "2026"), and keeps the LATEST observation per year (the most recent `data` field). Returns `{"status": "ok", "mode": "yield_curve", "kpis": [...], "sections": [...]}`. Two sections: (1) line chart of DataReferencia (x-axis, year) vs Mediana (y-axis, % a.a.) with min/max dashed bands (uncertainty range), (2) table of latest expectations per year (Ano | Mediana | Minimo | Maximo | Resp. | Data Focus). Three KPIs: Selic atual (SGS series 432 = "Meta Selic Copom", % a.a.), Selic esperada próximo ano (Focus median for current_year + 1), Selic longo prazo (Focus median for current_year + 5, or the farthest year available when +5 is missing). `include_in_all=False`. Graceful degradation: if the Focus DB is not synced, returns an error section + still emits the current-Selic KPI if SGS is available. Self-contained — section dicts are built inline (does not import the macro `report` module's builders) so the mode is robust to API drift.
+- **Dashboard extended to 8 tabs** — added 8th "Curva de Juros" tab (group: Analise) that composes the `yield_curve` mode sections. Sub-mode failures return an error section, dashboard still renders (graceful-degradation pattern). `_SEC_TOTAL` bumped 7 → 8.
+- **Option A (BMF DI futures) deferred** — B3 does not publish BMF historical data at a public URL like COTAHIST. The Focus-based yield curve (Option B) ships now; Option A needs API portal investigation.
+
+### Dashboard Tabs (8)
+
+| Tab | Name | Group | Content |
+|-----|------|-------|---------|
+| 1 | Resumo | Resumo | Text overview. |
+| 2 | Juros | Indicadores | rates mode sections (5 series). |
+| 3 | Inflacao | Indicadores | inflation mode sections (2 series). |
+| 4 | Cambio | Indicadores | fx mode sections (2 series). |
+| 5 | Atividade | Indicadores | PIB + Salario minimo (chart + table). |
+| 6 | Retorno Real | Analise | real_returns mode (Fisher equation). |
+| 7 | Expectativas Focus | Analise | expectations mode (IPCA / Selic / Cambio). |
+| 8 | Curva de Juros | Analise | yield_curve mode (Focus expected Selic path). |
+
+### Modes (7)
+
+dashboard, rates, inflation, fx, real_returns, expectations, yield_curve.
+
+---
+
 ## v1.4 — 2026-08-22
 
 **Real-returns mode (Fisher equation) — Selic vs IPCA 12m acumulado. New 6th 'Retorno Real' tab.**
@@ -100,4 +129,4 @@ dashboard, rates, inflation, fx.
 
 ---
 
-*Last updated: 2026-08-22 (v1.4).*
+*Last updated: 2026-09-05 (v1.5).*

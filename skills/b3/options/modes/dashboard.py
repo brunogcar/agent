@@ -786,8 +786,9 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
          Collapsible, expanded.
       3. IV Term Structure heatmap — strike (rows) × maturity (cols), each
          cell colored by IV (green=calm, yellow=mid, red=panic).
-         [v2] Renders even with a single maturity (single-column heatmap is
-         still useful — shows the smile).
+         [v3] ALWAYS renders — even with a single maturity (single-column
+         heatmap is still useful — shows the smile). If `available_maturities`
+         returns empty, falls back to the nearest-maturity chain (chain_res).
 
     Graceful degradation: if the spot price or Selic rate can't be fetched,
     the tab shows an error section but the rest of the dashboard is unaffected.
@@ -952,19 +953,34 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
     })
 
     # ── IV Term Structure heatmap (strike × maturity) ─────────────────────
-    # [v2] Render even with a single maturity (single-column heatmap is still
-    # useful — shows the smile for the nearest expiry).
-    if all_maturities:
+    # [v3] ALWAYS render — even with a single maturity (single-column heatmap
+    # is still useful: shows the smile for the nearest expiry). If
+    # `available_maturities` came back empty (failed or returned nothing),
+    # fall back to the maturity from `chain_res` (already fetched above) so we
+    # still render a single-column heatmap from the nearest-maturity chain.
+    heatmap_maturities = list(all_maturities)
+    if not heatmap_maturities and maturity_str and maturity_str != "-":
+        heatmap_maturities = [maturity_str]
+
+    if heatmap_maturities:
         # Build the (strike, maturity) -> IV map across all maturities.
-        # Re-fetch each maturity's chain so we have IVs at every expiry.
+        # For each maturity, re-fetch the chain so we have IVs at every expiry.
+        # Exception: if the maturity matches the one we already fetched via
+        # `chain_res` (the single-maturity fallback path), reuse `options`
+        # instead of querying again.
         strike_set: set[float] = set()
         iv_map: dict[tuple[float, str], float | None] = {}
-        for mat in all_maturities:
-            r = _safe_query(options_chain, underlying=underlying, maturity=mat)
-            if r.get("status") != "ok":
-                continue
-            mat_refdate = r.get("refdate") or refdate or ""
-            for opt in r.get("options", []):
+        for mat in heatmap_maturities:
+            if mat == maturity_str and options:
+                opts_for_mat = options
+                mat_refdate = refdate or ""
+            else:
+                r = _safe_query(options_chain, underlying=underlying, maturity=mat)
+                if r.get("status") != "ok":
+                    continue
+                opts_for_mat = r.get("options", [])
+                mat_refdate = r.get("refdate") or refdate or ""
+            for opt in opts_for_mat:
                 K = opt.get("strike_parsed")
                 if K is None:
                     continue
@@ -978,7 +994,7 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
 
         if strike_set:
             strikes_sorted = sorted(strike_set)
-            maturities_sorted = sorted(all_maturities)
+            maturities_sorted = sorted(heatmap_maturities)
             # Format maturity headers as DD/MM/YY for compactness.
             def _fmt_mat(m: str) -> str:
                 try:

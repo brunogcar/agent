@@ -44,6 +44,18 @@ from skills.b3.price.report import (
     build_spread_sections,
 )
 
+# [v1.7] Cross-skill integration: import the b3/options dashboard so we can
+# embed its Cadeia de Opções tab as a 9th tab here. Wrapped in try/except so
+# the price dashboard still works if the options skill is missing or if
+# there's a circular-import issue (b3/options imports from cotahist + sgs,
+# which the price skill also depends on).
+try:
+    from skills.b3.options.modes.dashboard import dashboard as _options_dashboard
+    _OPTIONS_AVAILABLE = True
+except Exception:  # ImportError, circular dep, missing skill, etc.
+    _options_dashboard = None
+    _OPTIONS_AVAILABLE = False
+
 
 def _today_iso() -> str:
     return _date.today().isoformat()
@@ -53,16 +65,68 @@ def _ten_years_ago_iso() -> str:
     return (_date.today() - _timedelta(days=365 * 10)).isoformat()
 
 
+
+
+def _build_options_tab(ticker: str) -> list[dict]:
+    """Build the Opções tab sections (Cadeia de Opções from b3/options).
+
+    Calls the options skill's ``dashboard`` mode and extracts just the
+    "Cadeia de Opções" tab sections (calls table + puts table + legend).
+    Skips the P/C ratio, Volume por Strike, Exercicios, and IV tabs to keep
+    the price dashboard compact.
+
+    [v1.7] Cross-skill integration. Graceful degradation:
+      - If the options skill import failed (circular dep / missing), returns
+        a single text section "Sem opções disponíveis para este ticker".
+      - If the options dashboard call fails or returns no Cadeia de Opções
+        tab, returns a single text section.
+    """
+    if not _OPTIONS_AVAILABLE:
+        return [{
+            "type":  "text",
+            "title": "Opções",
+            "text":  ("Sem opções disponíveis para este ticker "
+                      "(skill b3/options indisponível)."),
+        }]
+    try:
+        res = _options_dashboard(underlying=ticker)
+    except Exception as e:
+        return [{
+            "type":  "text",
+            "title": "Opções",
+            "text":  f"Erro ao consultar opções: {e}",
+        }]
+    if res.get("status") != "ok":
+        return [{
+            "type":  "text",
+            "title": "Opções",
+            "text":  ("Sem opções disponíveis para este ticker "
+                      f"({res.get('error', 'erro')})."),
+        }]
+    # Extract just the "Cadeia de Opções" tab sections.
+    for tab in res.get("tabs", []):
+        if tab.get("name") == "Cadeia de Opções":
+            secs = tab.get("sections", [])
+            if secs:
+                return secs
+            break
+    return [{
+        "type":  "text",
+        "title": "Opções",
+        "text":  "Sem opções disponíveis para este ticker.",
+    }]
+
 @register_mode(
     "dashboard",
     description=(
-        "B3 price analytics dashboard. 8 tabs: Cotação (candlestick + volume + KPIs), "
+        "B3 price analytics dashboard. 9 tabs: Cotação (candlestick + volume + KPIs), "
         "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + price overlay), "
         "Indicadores (RSI + MACD + Stochastic + OBV + ADX + CCI + Williams %R + signals), "
         "Retornos (cumulative + adjusted + drawdown), "
         "Volatilidade (rolling vol + Bollinger), "
         "Fibonacci (levels + COMPRA/VENDA trade setup), "
-        "Bid-Ask Spread (spread absoluto + % + bid/ask/close + liquidez)."
+        "Bid-Ask Spread (spread absoluto + % + bid/ask/close + liquidez), "
+        "Opções (Cadeia de Opções from b3/options — calls + puts + legend)."
     ),
     params={"ticker": "str. Required. B3 ticker (e.g. PETR4)."},
     include_in_all=False,
@@ -72,7 +136,13 @@ def _ten_years_ago_iso() -> str:
     ],
 )
 def dashboard(ticker: str = "") -> dict:
-    """Build the 8-tab B3 price dashboard for a single ticker."""
+    """Build the 9-tab B3 price dashboard for a single ticker.
+
+    [v1.7] Added 9th "Opções" tab — embeds the Cadeia de Opções (calls + puts
+    + legend) from the b3/options skill. Cross-skill integration: if the
+    options skill is missing or has no options for the ticker, the tab
+    shows a graceful "Sem opções disponíveis" text section.
+    """
     _t0 = _dt.now()
     print(f"[b3.price] Starting dashboard for {ticker!r}...", flush=True)
 
@@ -235,6 +305,8 @@ def dashboard(ticker: str = "") -> dict:
         volumes=volumes,
         trade_counts=[p.get("trade_count") for p in ohlcv],
     )
+    # [v1.7] Opções tab — cross-skill integration with b3/options.
+    options_sections = _build_options_tab(tk)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Sections built ({_s_elapsed:.1f}s)", flush=True)
 
@@ -247,6 +319,7 @@ def dashboard(ticker: str = "") -> dict:
         {"name": "Volatilidade",  "group": "Performance",       "sections": volatilidade_sections},
         {"name": "Fibonacci",     "group": "Análise Técnica",  "sections": fibonacci_sections},
         {"name": "Bid-Ask Spread", "group": "Liquidez",           "sections": spread_sections},
+        {"name": "Opções",          "group": "Derivativos",        "sections": options_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()
