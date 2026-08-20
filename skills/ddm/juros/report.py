@@ -267,6 +267,7 @@ def build_table_section(title: str, observations: list[dict],
                          "Media no ano (%)", "Media 12 meses (%)"],
         "rows":         rows,
         "column_align": ["left", "right", "right", "right"],
+        "negative_red": True,
     }
 
 

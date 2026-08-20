@@ -39,6 +39,7 @@ def build_chart_section(title: str, observations: list[dict],
     # [v2] Use _format_mes_ano for display labels
     labels = [_format_mes_ano(r["ref_date"]) for r in rows]
     month_data = [r.get("month_value") for r in rows]
+    year_acum_data = [r.get("year_acumulado") for r in rows]
     acum12m_data = [r.get("acumulado_12m") for r in rows]
     color = INDEX_COLORS.get(slug, "#3b82f6")
 
@@ -61,13 +62,23 @@ def build_chart_section(title: str, observations: list[dict],
                         "yAxisID":         "y",
                     },
                     {
+                        "label":           "Acumulado no ano (%)",
+                        "data":            year_acum_data,
+                        "borderColor":     "#a855f7",
+                        "backgroundColor": "#a855f7",
+                        "fill":            False,
+                        "tension":         0.3,
+                        "borderDash":      [5, 5],
+                        "yAxisID":         "y",
+                    },
+                    {
                         "label":           "Acumulado 12 meses (%)",
                         "data":            acum12m_data,
                         "borderColor":     "#94a3b8",
                         "backgroundColor": "#94a3b8",
                         "fill":            False,
                         "tension":         0.3,
-                        "borderDash":      [5, 5],
+                        "borderDash":      [2, 4],
                         "yAxisID":         "y",
                     },
                 ],
@@ -88,8 +99,9 @@ def build_chart_section(title: str, observations: list[dict],
         "price_range_selector": True,
         "price_full_labels":    labels,
         "price_full_datasets":  [
-            {"data": month_data,   "label": "Variacao no mes (%)"},
-            {"data": acum12m_data, "label": "Acumulado 12 meses (%)"},
+            {"data": month_data,     "label": "Variacao no mes (%)"},
+            {"data": year_acum_data, "label": "Acumulado no ano (%)"},
+            {"data": acum12m_data,   "label": "Acumulado 12 meses (%)"},
         ],
         "price_full_data": month_data,
     }
@@ -168,6 +180,7 @@ def build_table_section(title: str, observations: list[dict],
                          "Acumulado no ano (%)", "Acumulado 12m (%)"],
         "rows":         build_observation_rows(observations, limit=limit),
         "column_align": ["left", "right", "right", "right"],
+        "negative_red": True,
     }
 
 
