@@ -94,7 +94,7 @@ def _build_historico_subtab(slug: str, name: str,
     if hist.get("status") == "ok":
         observations = hist.get("observations", [])
         sections.append(build_chart_section(
-            "Evolução mensal",
+            f"{name} - evolucao mensal",
             observations,
             slug=slug,
             description=(f"Indice do mes (% a.a.), media no ano (%) e "
@@ -102,7 +102,7 @@ def _build_historico_subtab(slug: str, name: str,
                          f"Ultimos {months} meses."),
         ))
         sections.append(build_table_section(
-            "Histórico mensal",
+            f"{name} - historico mensal",
             observations,
             limit=months,
             descending=True,
@@ -110,7 +110,7 @@ def _build_historico_subtab(slug: str, name: str,
         ))
     else:
         sections.append(build_error_section(
-            "Histórico", hist.get("error", "sem dados")))
+            f"{name} - historico", hist.get("error", "sem dados")))
 
     return sections, kpis
 
@@ -121,7 +121,7 @@ def _build_matriz_subtab(slug: str, name: str) -> list[dict]:
     mat = _safe_call(monthly_matrix, slug=slug)
     if mat.get("status") == "ok":
         sections.append(build_matrix_table_section(
-            "Matriz mensal",
+            f"{name} - matriz mensal",
             mat,
             description=("Matriz ano x mes. Cores divergentes vermelho "
                          "-> branco -> verde indicam o valor relativo da "
@@ -130,11 +130,11 @@ def _build_matriz_subtab(slug: str, name: str) -> list[dict]:
         ))
     else:
         sections.append(build_error_section(
-            "Matriz", mat.get("error", "sem dados")))
+            f"{name} - matriz", mat.get("error", "sem dados")))
     return sections
 
 
-def _build_index_tab(slug: str, months: int = 60) -> dict:
+def _build_index_tab(slug: str, months: int = 0) -> dict:
     """Build one per-index tab with subtabs (Historico + Matriz).
 
     Returns a tab dict: {"name": "Selic", "group": "Indices",
@@ -222,7 +222,7 @@ def _build_comparativo_tab(months: int = 24) -> dict:
         "(last 24 months). KPIs at top level."
     ),
     params={
-        "months": "int. Monthly-series window for per-index tabs. Default: 60.",
+        "months": "int. Monthly-series window for per-index tabs. Default: 0 (all available data).",
         "compare_months": "int. Window for Comparativo tab. Default: 24.",
     },
     include_in_all=False,
@@ -230,7 +230,7 @@ def _build_comparativo_tab(months: int = 24) -> dict:
         'skill(domain="ddm", sub_domain="juros", mode="dashboard")',
     ],
 )
-def dashboard(months: int = 60, compare_months: int = 24) -> dict:
+def dashboard(months: int = 0, compare_months: int = 24) -> dict:
     """Build the 4-tab DDM juros dashboard.
 
     KPIs are collected per-tab and promoted to the top-level `kpis` array

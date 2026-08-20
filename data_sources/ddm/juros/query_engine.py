@@ -46,8 +46,8 @@ def juros_history(slug: str = "", limit: int = 60) -> dict:
         rows = list(reversed(conn.execute(
             "SELECT ref_date, month_value, media_no_ano, media_12m "
             "FROM juros_observations WHERE slug=? "
-            "ORDER BY ref_date DESC LIMIT ?",
-            (slug, limit),
+            "ORDER BY ref_date DESC" + (" LIMIT ?" if limit and limit > 0 else ""),
+            (slug, limit) if limit and limit > 0 else (slug,),
         ).fetchall()))
 
         if not rows:

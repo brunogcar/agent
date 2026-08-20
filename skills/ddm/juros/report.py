@@ -100,7 +100,7 @@ def build_chart_section(title: str, observations: list[dict],
         [o for o in observations if o.get("ref_date")],
         key=lambda o: o["ref_date"],
     )
-    labels = [r["ref_date"] for r in rows]
+    labels = [_format_mes_ano(r["ref_date"]) for r in rows]
     month_data = [r.get("month_value") for r in rows]
     media_ano_data = [r.get("media_no_ano") for r in rows]
     media_12m_data = [r.get("media_12m") for r in rows]
@@ -255,9 +255,18 @@ def build_table_section(title: str, observations: list[dict],
 
     If descending=True, rows are reversed (newest first) for display.
     """
-    rows = build_observation_rows(observations, limit=limit)
-    if descending:
-        rows = list(reversed(rows))
+    # [v3] Sort DESC (newest first) directly — don't rely on build_observation_rows
+    sorted_obs = sorted(observations, key=lambda o: o.get("ref_date", ""), reverse=True)
+    if limit > 0:
+        sorted_obs = sorted_obs[:limit]
+    rows = []
+    for o in sorted_obs:
+        rows.append([
+            _format_mes_ano(o.get("ref_date", "")),
+            format_pct(o.get("month_value")),
+            format_pct(o.get("media_no_ano" if "juros" == "juros" else "acumulado_no_ano")),
+            format_pct(o.get("media_12m" if "juros" == "juros" else "acumulado_12m")),
+        ])
 
     return {
         "type":         "table",
@@ -267,7 +276,6 @@ def build_table_section(title: str, observations: list[dict],
                          "Media no ano (%)", "Media 12 meses (%)"],
         "rows":         rows,
         "column_align": ["left", "right", "right", "right"],
-        "negative_red": True,
     }
 
 

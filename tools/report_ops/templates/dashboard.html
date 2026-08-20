@@ -272,7 +272,14 @@
       var cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
       var cutoffStr = cutoff.toISOString().slice(0, 10);
-      keep = labels.map(function(l) { return l >= cutoffStr; });
+      // [v2] Convert PT-BR month labels (Jul/2026) to ISO (2026-07) for comparison
+      var meses = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
+      function labelToISO(l) {
+        var m = l.match(/^(\w{3})\/(\d{4})$/);
+        if (m) return m[2] + '-' + (meses[m[1]] || '01');
+        return l;  // already ISO or unknown format
+      }
+      keep = labels.map(function(l) { return labelToISO(l) >= cutoffStr; });
     }
 
     // Filter labels.

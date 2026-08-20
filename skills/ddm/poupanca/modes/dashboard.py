@@ -139,7 +139,7 @@ def _build_matriz_subtab(slug: str) -> list[dict]:
     return sections
 
 
-def _build_index_tab(slug: str, months: int = 60) -> dict:
+def _build_index_tab(slug: str, months: int = 0) -> dict:
     """Build the index tab with subtabs (Historico + Matriz).
 
     Returns a tab dict: {"name": "Poupanca", "group": "Renda Fixa",
@@ -184,14 +184,14 @@ def _build_index_tab(slug: str, months: int = 60) -> dict:
         "NO Comparativo tab (only 1 index). KPIs at top level."
     ),
     params={
-        "months": "int. Monthly-series window for the index tab. Default: 60.",
+        "months": "int. Monthly-series window for the index tab. Default: 0 (all available data).",
     },
     include_in_all=False,
     examples=[
         'skill(domain="ddm", sub_domain="poupanca", mode="dashboard")',
     ],
 )
-def dashboard(months: int = 60) -> dict:
+def dashboard(months: int = 0) -> dict:
     """Build the 1-tab DDM poupanca dashboard.
 
     KPIs are collected per-tab and promoted to the top-level `kpis` array

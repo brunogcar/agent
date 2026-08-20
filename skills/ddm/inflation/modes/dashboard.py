@@ -38,7 +38,7 @@ def _safe_call(fn, **kwargs):
         return {"status": "error", "error": str(e)}
 
 
-def _build_index_tab(slug: str, months: int = 60) -> dict:
+def _build_index_tab(slug: str, months: int = 0) -> dict:
     """Build one index tab with subtabs (Histórico + Matriz).
 
     Returns a tab dict: {"name": "IGP-M", "group": "Indices",
@@ -164,7 +164,7 @@ def _build_comparativo_tab(months: int = 24) -> dict:
         "Comparativo overlays 12m acumulado for all 3 indices."
     ),
     params={
-        "months": "int. Monthly-series window for per-index tabs. Default: 60.",
+        "months": "int. Monthly-series window for per-index tabs. Default: 0 (all available data).",
         "compare_months": "int. Window for Comparativo tab. Default: 24.",
     },
     include_in_all=False,
@@ -172,7 +172,7 @@ def _build_comparativo_tab(months: int = 24) -> dict:
         'skill(domain="ddm", sub_domain="inflation", mode="dashboard")',
     ],
 )
-def dashboard(months: int = 60, compare_months: int = 24) -> dict:
+def dashboard(months: int = 0, compare_months: int = 24) -> dict:
     _t0 = _dt.now()
     print(f"[ddm.inflation] Starting dashboard...", flush=True)
 
