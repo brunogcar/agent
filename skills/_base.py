@@ -982,6 +982,14 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # re-fetches all 3 indices (IGP-M, IPCA, INPC) from the HTML scraper.
         "ddm":          ("data_sources.ddm.inflation.sync_engine", "sync_all",
                          lambda: {"force": True}),
+        # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
+        # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)
+        # re-fetches all 3 juros indices from the HTML scraper + derives the
+        # historical series (month_value, media_no_ano, media_12m) from the
+        # monthly matrix. Skills may explicitly request this via
+        # _trigger_sync("ddm-juros") or list it in REQUIRED_SOURCES.
+        "ddm-juros":    ("data_sources.ddm.juros.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:

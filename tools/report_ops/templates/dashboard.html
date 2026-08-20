@@ -102,10 +102,8 @@
         {% endif %}
         {% if sec.type == 'table' and sec.columns and sec.rows %}
         {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None)) }}
+        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
         {% if sec.wide %}</div>{% endif %}
-        {% elif sec.type == 'heatmap' and sec.columns and sec.rows %}
-        {{ m.heatmap_table(sec.columns, sec.rows) }}
         {% elif sec.type == 'table' %}
         <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
         {% endif %}
@@ -129,10 +127,8 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None)) }}
+    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
     {% if sec.wide %}</div>{% endif %}
-    {% elif sec.type == 'heatmap' and sec.columns and sec.rows %}
-    {{ m.heatmap_table(sec.columns, sec.rows) }}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
     {% endif %}
@@ -556,6 +552,9 @@
         {% for sub_sec in subtab.sections %}
           {% if sub_sec.type == 'chart' and sub_sec.chart_data %}
           <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}', {{ sub_sec.chart_data | tojson }});</script>
+          {% endif %}
+          {% if sub_sec.type == 'chart' and sub_sec.price_range_selector %}
+          <script>_priceChartFullData['tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ sub_sec.price_full_labels | default([]) | tojson }}, datasets: {{ sub_sec.price_full_datasets | default([]) | tojson }}, data: {{ sub_sec.price_full_data | default([]) | tojson }}, ohlc: {{ sub_sec.price_full_ohlc | default([]) | tojson }}};</script>
           {% endif %}
           {# Subtab period_toggle charts #}
           {% if sub_sec.type == 'period_toggle' %}
