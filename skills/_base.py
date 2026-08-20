@@ -990,6 +990,17 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # _trigger_sync("ddm-juros") or list it in REQUIRED_SOURCES.
         "ddm-juros":    ("data_sources.ddm.juros.sync_engine", "sync_all",
                          lambda: {"force": True}),
+        # [v1] DDM Poupanca sync - separate sync_map entry for the poupanca
+        # subdomain (Poupanca - Brazilian savings account). Mirrors the
+        # ddm + ddm-juros entries: sync_all(force=True) re-fetches the
+        # poupanca page from the HTML scraper + derives the historical
+        # series (month_value, acumulado_no_ano, acumulado_12m) from the
+        # monthly matrix using SUM (NOT AVERAGE like juros - poupanca
+        # monthly yield is a percentage return, so summing produces the
+        # cumulative return). Skills may explicitly request this via
+        # _trigger_sync("ddm-poupanca") or list it in REQUIRED_SOURCES.
+        "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:
