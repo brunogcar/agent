@@ -166,7 +166,7 @@ def _build_index_tab(slug: str, months: int = 0) -> dict:
     }
 
 
-def _build_comparativo_tab(months: int = 24) -> dict:
+def _build_comparativo_tab(months: int = 0) -> dict:
     """Build the Comparativo tab (overlay chart, NO tables).
 
     Returns a tab dict: {"name": "Comparativo", "group": "Analise",
@@ -223,14 +223,14 @@ def _build_comparativo_tab(months: int = 24) -> dict:
     ),
     params={
         "months": "int. Monthly-series window for per-index tabs. Default: 0 (all available data).",
-        "compare_months": "int. Window for Comparativo tab. Default: 24.",
+        "compare_months": "int. Window for Comparativo tab. Default: 0 (all available data).",
     },
     include_in_all=False,
     examples=[
         'skill(domain="ddm", sub_domain="juros", mode="dashboard")',
     ],
 )
-def dashboard(months: int = 0, compare_months: int = 24) -> dict:
+def dashboard(months: int = 0, compare_months: int = 0) -> dict:
     """Build the 4-tab DDM juros dashboard.
 
     KPIs are collected per-tab and promoted to the top-level `kpis` array

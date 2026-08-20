@@ -118,7 +118,7 @@ def _build_index_tab(slug: str, months: int = 0) -> dict:
     }
 
 
-def _build_comparativo_tab(months: int = 24) -> dict:
+def _build_comparativo_tab(months: int = 0) -> dict:
     series = []
     for slug in _INDEX_SLUGS:
         meta = INDEX_CATALOG.get(slug, (slug.upper(), "Inflacao", "", "%"))
@@ -165,14 +165,14 @@ def _build_comparativo_tab(months: int = 24) -> dict:
     ),
     params={
         "months": "int. Monthly-series window for per-index tabs. Default: 0 (all available data).",
-        "compare_months": "int. Window for Comparativo tab. Default: 24.",
+        "compare_months": "int. Window for Comparativo tab. Default: 0 (all available data).",
     },
     include_in_all=False,
     examples=[
         'skill(domain="ddm", sub_domain="inflation", mode="dashboard")',
     ],
 )
-def dashboard(months: int = 0, compare_months: int = 24) -> dict:
+def dashboard(months: int = 0, compare_months: int = 0) -> dict:
     _t0 = _dt.now()
     print(f"[ddm.inflation] Starting dashboard...", flush=True)
 
