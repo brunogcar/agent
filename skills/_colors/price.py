@@ -1,9 +1,10 @@
-"""skills/_price_colors.py -- Shared price-range coloring for stock-price UIs.
+"""skills/_colors/price.py -- Shared price-range coloring for stock-price UIs.
 
 A reusable module for price-range coloring. Used by DDM acoes + any future
-skill that displays stock prices.
+skill that displays stock prices. Migrated from the legacy skills/_price_colors.py
+module (now deleted) into the modular skills/_colors/ package.
 
-16 price ranges (matching the user's reference chart):
+22 price ranges (red -> pink -> yellow -> green -> teal -> blue gradient):
     X < 1          -> #dc2626 (red)             text: white
     1 <= X < 2     -> #ef4444 (light red)       text: white
     2 <= X < 5     -> #f8bbd0 (light pink)      text: black
@@ -18,17 +19,25 @@ skill that displays stock prices.
     60 <= X < 70   -> #43a047 (medium green)    text: white
     70 <= X < 80   -> #2e7d32 (forest green)    text: white
     80 <= X < 90   -> #1b5e20 (dark green)      text: white
-    90 <= X < 100  -> #0d9488 (teal - "neon" outlier)  text: white
-    X >= 100       -> #3b82f6 (blue)            text: white
+    90 <= X < 100  -> #0d9488 (teal)            text: white
+    100 <= X < 125 -> #1e3a8a (dark blue)       text: white
+    125 <= X < 150 -> #2563eb (royal blue)      text: white
+    150 <= X < 175 -> #3b82f6 (medium blue)     text: white
+    175 <= X < 200 -> #60a5fa (cornflower)      text: black
+    200 <= X < 250 -> #93c5fd (light blue)      text: black
+    250 <= X < 300 -> #bfdbfe (very light blue) text: black
+    X >= 300       -> #dbeafe (pale ice blue)   text: black
 
 Functions:
   - price_range_color(price)      -> {"bg", "color", "range"}
-  - price_range_label(price)      -> "X < 1" / "1 <= X < 2" / ... / "X >= 100"
+  - price_range_label(price)      -> "X < 1" / "1 <= X < 2" / ... / "X >= 300"
   - price_distribution(prices)    -> [{"range", "count", "color", "text_color"}, ...]
 
-The 16-range palette is stored in a single constant (_RANGES) so adding /
-reordering ranges only edits one place. The "neon teal" at 90-100 is a
-deliberate outlier (matches the reference chart's visual signature).
+The 22-range palette is stored in a single constant (ALL_RANGES source:
+_RANGES) so adding / reordering ranges only edits one place. The "neon teal"
+at 90-100 is a deliberate outlier (matches the reference chart's visual
+signature). The 100+ bands use a graduated blue gradient (dark -> pale ice)
+so the very-high-price tail still reads as a continuous visual band.
 """
 from __future__ import annotations
 
@@ -45,7 +54,7 @@ from typing import Optional
 # Text-color heuristic: dark backgrounds get white text, light backgrounds
 # get black text. The thresholds below were chosen by visual inspection of
 # the reference chart (red/dark-green/teal/blue backgrounds use white text;
-# pink/yellow/cream/light-green backgrounds use black text).
+# pink/yellow/cream/light-green + light-blue backgrounds use black text).
 _RANGES: list[tuple[float, Optional[float], str, str, str]] = [
     (0.0,    1.0,    "#dc2626", "#fff", "X < 1"),
     (1.0,    2.0,    "#ef4444", "#fff", "1 \u2264 X < 2"),
@@ -62,7 +71,16 @@ _RANGES: list[tuple[float, Optional[float], str, str, str]] = [
     (70.0,   80.0,   "#2e7d32", "#fff", "70 \u2264 X < 80"),
     (80.0,   90.0,   "#1b5e20", "#fff", "80 \u2264 X < 90"),
     (90.0,   100.0,  "#0d9488", "#fff", "90 \u2264 X < 100"),
-    (100.0,  None,   "#3b82f6", "#fff", "X \u2265 100"),
+    # [v2] 7 new bands for the 100-300+ tail (dark blue -> pale ice blue).
+    # Dark blue (white text) for 100-175, lighter blue (black text) for
+    # 175-300+ so the very-high-price tail still reads as a gradient.
+    (100.0,  125.0,  "#1e3a8a", "#fff", "100 \u2264 X < 125"),
+    (125.0,  150.0,  "#2563eb", "#fff", "125 \u2264 X < 150"),
+    (150.0,  175.0,  "#3b82f6", "#fff", "150 \u2264 X < 175"),
+    (175.0,  200.0,  "#60a5fa", "#000", "175 \u2264 X < 200"),
+    (200.0,  250.0,  "#93c5fd", "#000", "200 \u2264 X < 250"),
+    (250.0,  300.0,  "#bfdbfe", "#000", "250 \u2264 X < 300"),
+    (300.0,  None,   "#dbeafe", "#000", "X \u2265 300"),
 ]
 
 
@@ -94,13 +112,13 @@ def price_range_color(price: float | None) -> dict:
         elif lo <= p < hi:
             return {"bg": bg, "color": color, "range": label}
 
-    # Fallback (should be unreachable — the last range covers X >= 100).
+    # Fallback (should be unreachable -- the last range covers X >= 300).
     return {"bg": "", "color": "", "range": "-"}
 
 
 def price_range_label(price: float | None) -> str:
     """Get the range label: 'X < 1', '1 <= X < 2', '2 <= X < 5', ...,
-    'X >= 100'.
+    'X >= 300'.
 
     Returns "-" for None / unparseable prices.
     """
@@ -108,14 +126,14 @@ def price_range_label(price: float | None) -> str:
 
 
 def price_distribution(prices: list[float | None]) -> list[dict]:
-    """Compute the distribution of prices across the 16 ranges.
+    """Compute the distribution of prices across the 22 ranges.
 
     Returns: [{"range": "X < 1", "count": 12, "color": "#dc2626",
                "text_color": "#fff"}, ...]
-    Includes ALL 16 ranges (even if count=0). Order matches the palette
+    Includes ALL 22 ranges (even if count=0). Order matches the palette
     (lowest price band first, highest last).
     """
-    # Initialize all 16 ranges with count=0.
+    # Initialize all 22 ranges with count=0.
     buckets: list[dict] = [
         {"range": label, "count": 0, "color": bg, "text_color": color}
         for (_, _, bg, color, label) in _RANGES
@@ -143,7 +161,7 @@ def price_distribution(prices: list[float | None]) -> list[dict]:
     return buckets
 
 
-# Convenience: list of all 16 ranges as (label, bg, text_color) tuples.
+# Convenience: list of all 22 ranges as (label, bg, text_color) tuples.
 # Useful for building legends / distribution tables without re-deriving.
 ALL_RANGES: list[tuple[str, str, str]] = [
     (label, bg, color) for (_, _, bg, color, label) in _RANGES

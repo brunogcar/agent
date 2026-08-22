@@ -9,8 +9,10 @@ DB / HTTP access is needed. Verifies:
   - Sortable dividends table section (sortable=True + sort_types +
     default_sort + column_align + correct columns)
   - Date cells displayed as DD/MM/YYYY (PT-BR)
-  - Numeric Valor cells are dicts {"text", "data-value"} for sortable data
-  - NO negative_red / NO price colors on the Valor column
+  - Numeric Valor cells are dicts {"text", "data-value", "bg", "color"} for
+    sortable data + DPA-range coloring (skills/_colors/dpa.py)
+  - NO table-level negative_red / price_colors / cell_colors keys (per-cell
+    bg/color is applied to Valor via dpa_range_color)
 """
 from __future__ import annotations
 
@@ -321,9 +323,12 @@ def test_dividends_table_default_sort_is_value_desc(monkeypatch):
     assert tables[0]["default_sort"] == {"column": 2, "direction": "desc"}
 
 
-def test_dividends_table_no_negative_red_no_price_colors(monkeypatch):
-    """The dividends table MUST NOT carry negative_red or any price-color
-    metadata (these are dividend amounts, not stock prices)."""
+def test_dividends_table_no_table_level_color_keys(monkeypatch):
+    """The dividends table MUST NOT carry negative_red or table-level color
+    metadata (price_colors / cell_colors). Per-cell bg/color on Valor comes
+    from dpa_range_color (skills/_colors/dpa.py) and is applied directly to
+    each Valor cell dict, not as a bulk table attribute.
+    """
     _patch_query(monkeypatch)
     from skills.ddm.dividends.modes import dashboard
     res = dashboard.dashboard()
@@ -350,8 +355,10 @@ def test_dividends_table_dates_displayed_as_ptbr(monkeypatch):
 
 
 def test_dividends_table_numeric_cell_is_dict_with_data_value(monkeypatch):
-    """Each Valor cell is a dict {"text": "R$ 0,017250", "data-value": "0.017250"}
-    so the sortable macro can emit <td data-value="0.017250">R$ 0,017250</td>."""
+    """Each Valor cell is a dict {"text": "R$ 0,017250", "data-value": "0.017250",
+    "bg": "#fff3d6", "color": "#000"} so the sortable macro can emit
+    <td data-value="0.017250" style="background:#fff3d6;color:#000">R$ 0,017250</td>.
+    The bg + color come from dpa_range_color (skills/_colors/dpa.py)."""
     _patch_query(monkeypatch)
     from skills.ddm.dividends.modes import dashboard
     res = dashboard.dashboard()
@@ -360,10 +367,49 @@ def test_dividends_table_numeric_cell_is_dict_with_data_value(monkeypatch):
     bbdc3 = next(r for r in rows if r[0] == "BBDC3")
     valor_cell = bbdc3[2]
     assert isinstance(valor_cell, dict)
-    assert set(valor_cell.keys()) == {"text", "data-value"}
+    # Cell shape: text + data-value + bg + color (DPA range coloring).
+    assert set(valor_cell.keys()) == {"text", "data-value", "bg", "color"}
     assert valor_cell["text"] == "R$ 0,017250"
     # data_value should be a parseable float string.
     assert float(valor_cell["data-value"]) == 0.017250
+    # BBDC3 value=0.017250 -> "0 < X <= 0.15" -> bg=#fff3d6, color=#000.
+    assert valor_cell["bg"] == "#fff3d6"
+    assert valor_cell["color"] == "#000"
+
+
+def test_dividends_table_dpa_colors_match_value_range(monkeypatch):
+    """Each Valor cell's bg + color come from skills/_colors/dpa.dpa_range_color.
+
+    Mock data + expected DPA range:
+      BBDC3  value=0.017250 -> "0 < X <= 0.15"  -> #fff3d6 / #000
+      PETR4  value=7.96     -> "X > 7.0"        -> #1a3a8a / #fff
+      VALE3  value=0.006    -> "0 < X <= 0.15"  -> #fff3d6 / #000
+      ITUB4  value=0.50     -> "0.30 < X <= 1.0" -> #deebf7 / #000
+      ABEV3  value=0.12     -> "0 < X <= 0.15"  -> #fff3d6 / #000
+    """
+    _patch_query(monkeypatch)
+    from skills.ddm.dividends.modes import dashboard
+    from skills._colors.dpa import dpa_range_color
+    res = dashboard.dashboard()
+    tables = [s for s in res["tabs"][0]["sections"] if s.get("type") == "table"]
+    rows = tables[0]["rows"]
+    by_ticker = {r[0]: r for r in rows}
+    for ticker, expected_value in [
+        ("BBDC3", 0.017250),
+        ("PETR4", 7.96),
+        ("VALE3", 0.006),
+        ("ITUB4", 0.50),
+        ("ABEV3", 0.12),
+    ]:
+        row = by_ticker[ticker]
+        valor_cell = row[2]
+        expected = dpa_range_color(expected_value)
+        assert valor_cell["bg"] == expected["bg"], (
+            f"{ticker} value={expected_value}: expected bg={expected['bg']}, "
+            f"got bg={valor_cell['bg']}")
+        assert valor_cell["color"] == expected["color"], (
+            f"{ticker} value={expected_value}: expected color={expected['color']}, "
+            f"got color={valor_cell['color']}")
 
 
 def test_dividends_table_small_value_uses_6_decimals(monkeypatch):

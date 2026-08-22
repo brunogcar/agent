@@ -48,6 +48,7 @@ Usage:
     d = dividends_at("PETR4", "2024-06-30")  # -> 1.85 (R$/share TTM)
     ps = dividends_periods("PETR4")          # -> [{date, dpa}, ...]
 """
+# Color scheme: skills/_colors/dpa.py — 11 ranges (salmon → blue gradient for DPA values)
 
 from __future__ import annotations
 

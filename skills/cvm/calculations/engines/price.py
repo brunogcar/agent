@@ -8,6 +8,7 @@ Usage:
     p = price_at("PETR4", "2024-06-30")      # → 38.50
     s = price_series("PETR4", "2024-01-01", "2024-12-31")  # → [{date, close}, ...]
 """
+# Color scheme: skills/_colors/price.py — 22 ranges (red → green → blue gradient)
 
 from __future__ import annotations
 

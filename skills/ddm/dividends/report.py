@@ -25,11 +25,13 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
   - section.sortable=True  -> macros.html emits th.sortable + onclick handlers
   - section.sort_types     -> "text" | "number" per column (read by JS)
   - section.default_sort   -> {"column": <int 0-indexed>, "direction": "asc"|"desc"}
-  - Each Valor cell is a dict {"text": "R$ 0,017250", "data-value": "0.017250"}
-    so the macro can emit <td data-value="0.017250">R$ 0,017250</td>. The
-    sortTable() JS reads data-value for numeric columns and textContent for
+  - Each Valor cell is a dict {"text": "R$ 0,017250", "data-value": "0.017250",
+    "bg": "#fff3d6", "color": "#000"} so the macro can emit
+    <td data-value="0.017250" style="background:#fff3d6;color:#000">R$ 0,017250</td>.
+    The sortTable() JS reads data-value for numeric columns and textContent for
     text columns.
-  - NO price colors on Valor (these are dividend amounts, not stock prices).
+  - [v6] DPA colors applied to Valor cells (bg + color from
+    skills/_colors/dpa.py — salmon -> pale yellow -> mint -> blue gradient).
   - Dates displayed as DD/MM/YYYY (PT-BR) but stored in DB as YYYY-MM-DD.
 """
 
@@ -99,13 +101,19 @@ def build_dividends_table(title: str, dividends: list[dict],
       - sortable=True               -> headers get class "sortable" + onclick
       - sort_types                  -> per-column "text" | "number" hint
       - default_sort                -> {column, direction} to apply on load
-      - Numeric cells are dicts {"text", "data-value"} so the macro can emit
-        <td data-value="0.017250">R$ 0,017250</td>. Text cells are plain
-        strings.
+      - Numeric cells are dicts {"text", "data-value", "bg", "color"} so the
+        macro can emit <td data-value="0.017250" style="background:#fff3d6;color:#000">R$ 0,017250</td>.
+        Text cells are plain strings.
 
-    NO price colors on Valor (these are dividend amounts, not stock prices).
+    [v6] DPA colors on Valor (bg + color from skills/_colors/dpa.py —
+    salmon -> pale yellow -> mint -> blue gradient for dividend-per-share
+    amounts).
     Dates are displayed as DD/MM/YYYY (PT-BR).
     """
+    # Lazy import to avoid loading skills._colors.dpa when this module is
+    # imported (keeps the skill importable in standalone mode).
+    from skills._colors.dpa import dpa_range_color
+
     rows = []
     for d in dividends:
         value = d.get("value")
@@ -114,9 +122,13 @@ def build_dividends_table(title: str, dividends: list[dict],
             value_cell: dict | str = {"text": "-", "data-value": ""}
         else:
             try:
+                # [v6] Apply DPA-range color (bg + text color) to the Valor cell.
+                dpa_color = dpa_range_color(float(value))
                 value_cell = {
-                    "text":      format_brl(value),
+                    "text":       format_brl(value),
                     "data-value": f"{float(value):.6f}",
+                    "bg":         dpa_color.get("bg", ""),
+                    "color":      dpa_color.get("color", ""),
                 }
             except (ValueError, TypeError):
                 value_cell = {"text": str(value), "data-value": ""}
@@ -151,8 +163,10 @@ def build_dividends_table(title: str, dividends: list[dict],
         "sortable":     True,
         "sort_types":   ["text", "text", "number", "text", "text", "text"],
         "default_sort": {"column": 2, "direction": "desc"},
-        # NOTE: NO negative_red, NO price-color logic - these are dividend
-        # amounts (always >= 0), not stock prices.
+        # NOTE: NO negative_red, NO price-color logic at the table level - the
+        # per-cell bg/color on Valor comes from the DPA range color scheme
+        # (skills/_colors/dpa.py). Dividend amounts are always >= 0, so
+        # negative_red is meaningless here.
     }
 
 

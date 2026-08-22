@@ -24,6 +24,8 @@ Usage:
     pay  = payout_at("PETR4", "2024-06-30") # -> 0.42 (42% of earnings)
     h    = dpa_history("PETR4", "2024-01-01", "2024-12-31")
 """
+# Color scheme: skills/_colors/dpa.py — 11 ranges (salmon → blue gradient for DPA values)
+
 from __future__ import annotations
 
 from skills.cvm.calculations.engines.price import price_at, price_series

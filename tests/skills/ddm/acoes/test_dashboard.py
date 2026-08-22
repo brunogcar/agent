@@ -9,8 +9,8 @@ HTTP access is needed. Verifies:
     + sort_types = ["text","text","number","number","number"]
   - Numeric cells are dicts with text + data-value attributes
   - Variation cells with negative values would be red (negative_red=True)
-  - Distribution chart present + uses 16 colored bars (one per price range)
-  - Distribution chart bar colors match skills._price_colors palette
+  - Distribution chart present + uses 22 colored bars (one per price range)
+  - Distribution chart bar colors match skills._colors.price palette
 """
 from __future__ import annotations
 
@@ -149,7 +149,7 @@ def test_dashboard_table_columns(monkeypatch):
     res = dashboard.dashboard()
     ts = next(s for s in res["tabs"][0]["sections"] if s.get("type") == "table")
     assert ts["columns"] == ["Ticker", "Nome", "Negocios",
-                             "Ultima (R$)", "Variacao"]
+                             "Valor", "Variacao"]
 
 
 def test_dashboard_numeric_cells_have_data_value(monkeypatch):
@@ -207,8 +207,12 @@ def test_dashboard_has_distribution_chart(monkeypatch):
     assert len(cs["chart_data"]["data"]["datasets"]) == 1
 
 
-def test_distribution_chart_has_16_bars(monkeypatch):
-    """Distribution chart has 16 bars (one per price-range bucket)."""
+def test_distribution_chart_has_22_bars(monkeypatch):
+    """Distribution chart has 22 bars (one per price-range bucket).
+
+    The price palette was extended from 16 to 22 ranges in the
+    skills/_colors/price.py refactor (added 7 bands for the 100-300+ tail).
+    """
     _patch_query(monkeypatch)
     from skills.ddm.acoes.modes import dashboard
     res = dashboard.dashboard()
@@ -216,9 +220,9 @@ def test_distribution_chart_has_16_bars(monkeypatch):
     labels = cs["chart_data"]["data"]["labels"]
     counts = cs["chart_data"]["data"]["datasets"][0]["data"]
     bg_colors = cs["chart_data"]["data"]["datasets"][0]["backgroundColor"]
-    assert len(labels) == 16
-    assert len(counts) == 16
-    assert len(bg_colors) == 16
+    assert len(labels) == 22
+    assert len(counts) == 22
+    assert len(bg_colors) == 22
 
 
 def test_distribution_chart_counts_match_input(monkeypatch):
@@ -244,10 +248,10 @@ def test_distribution_chart_counts_match_input(monkeypatch):
 
 
 def test_distribution_chart_bar_colors_match_price_palette(monkeypatch):
-    """Bar colors match skills/_price_colors.ALL_RANGES palette exactly."""
+    """Bar colors match skills/_colors/price.ALL_RANGES palette exactly."""
     _patch_query(monkeypatch)
     from skills.ddm.acoes.modes import dashboard
-    from skills._price_colors import ALL_RANGES
+    from skills._colors.price import ALL_RANGES
     res = dashboard.dashboard()
     cs = next(s for s in res["tabs"][0]["sections"] if s.get("type") == "chart")
     bg_colors = cs["chart_data"]["data"]["datasets"][0]["backgroundColor"]

@@ -7,8 +7,8 @@
       * sort_types: ["text", "text", "number", "number", "number"]
       * Each numeric cell is a dict {"text": <display>, "data-value": <raw>}
         so the JS sorter can read the raw numeric value via getAttribute.
-  - build_distribution_chart: Chart.js bar chart with 16 colored bars (one
-      per price-range bucket from skills/_price_colors.py). The bars' colors
+  - build_distribution_chart: Chart.js bar chart with 22 colored bars (one
+      per price-range bucket from skills/_colors/price.py). The bars' colors
       match the price-range palette exactly (red -> pink -> yellow -> green
       -> teal -> blue).
 
@@ -99,7 +99,7 @@ def build_stocks_table(title: str, stocks: list[dict],
             data_value=str(negocios) if negocios is not None else "0",
         )
         # [v2] Apply price-range color to the Valor cell
-        from skills._price_colors import price_range_color
+        from skills._colors.price import price_range_color
         price_color = price_range_color(last_price) if last_price is not None else {"bg": "", "color": ""}
         price_cell = _cell(
             format_brl(last_price),
@@ -138,8 +138,8 @@ def build_distribution_chart(title: str, prices: list[float | None],
                              description: str = "") -> dict:
     """Build a column chart of the price-range distribution.
 
-    Uses ``skills._price_colors.price_distribution`` to bucket each price
-    into one of 16 ranges (red -> pink -> yellow -> green -> teal -> blue).
+    Uses ``skills._colors.price.price_distribution`` to bucket each price
+    into one of 22 ranges (red -> pink -> yellow -> green -> teal -> blue).
     Each bar gets its range's color so the chart is a single-glance view
     of where B3 prices cluster (most stocks trade below R$50).
 
@@ -151,9 +151,9 @@ def build_distribution_chart(title: str, prices: list[float | None],
     Returns:
         Chart section dict with Chart.js bar config in ``chart_data``.
     """
-    # Lazy import to avoid loading skills._price_colors when this module
+    # Lazy import to avoid loading skills._colors.price when this module
     # is imported (keeps the skill importable in standalone mode).
-    from skills._price_colors import price_distribution
+    from skills._colors.price import price_distribution
 
     buckets = price_distribution(prices)
     labels = [b["range"] for b in buckets]
