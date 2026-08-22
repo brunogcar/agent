@@ -359,17 +359,29 @@ See [BCB Skills](skills/BCB.md) for the BCB landing page.
   (own source key — the focus page is CloudFront-protected, so the fetcher
   sends the full Chrome 127 browser header set to bypass the WAF). Values
   are preserved as PT-BR strings verbatim ("5,151%", "R$ 5,200").
+- **fluxo**: 5-tab dashboard (B3 investment flow by investor type). 1
+  Fluxo tab (group: Fluxo) with KPIs + 4-dataset daily bar chart +
+  sortable table of all daily observations + 4 per-investor tabs (group:
+  Investidores: Estrangeiro, Institucional, Pessoa física, Inst. Financeira)
+  each with 3 subtabs (Diário/Mensal/Anual) showing a daily bar chart, a
+  monthly cumulative line chart, and a running annual cumulative line
+  chart. Reads from `data_sources/ddm/fluxo`.
+  `REQUIRED_SOURCES=["ddm-fluxo"]` (own source key — the fluxo page is
+  CloudFront-protected, so the fetcher sends the full Chrome 127 browser
+  header set to bypass the WAF). Values are parsed to REAL (floats in
+  millions R$) at the fetcher boundary; dates are normalized to YYYY-MM-DD.
 
 **Freshness tracking** (v1 — added with the acoes skill):
 `skills/_freshness.get_freshness()` returns the last-sync timestamp for
-ALL 5 DDM sub-domains in a single dict (`{"ddm": ..., "ddm-juros": ...,
-"ddm-poupanca": ..., "ddm-acoes": ..., "ddm-focus": ...}`). Consumers can
-poll a single dict instead of importing per-subdomain helpers.
+ALL 6 DDM sub-domains in a single dict (`{"ddm": ..., "ddm-juros": ...,
+"ddm-poupanca": ..., "ddm-acoes": ..., "ddm-focus": ..., "ddm-fluxo":
+...}`). Consumers can poll a single dict instead of importing
+per-subdomain helpers.
 
 See [DDM Skills](#) for the DDM landing pages (one per sub-domain:
 [INFLATION.md](skills/ddm/INFLATION.md), [JUROS.md](skills/ddm/JUROS.md),
 [POUPANCA.md](skills/ddm/POUPANCA.md), [ACOES.md](skills/ddm/ACOES.md),
-[FOCUS.md](skills/ddm/FOCUS.md)).
+[FOCUS.md](skills/ddm/FOCUS.md), [FLUXO.md](skills/ddm/FLUXO.md)).
 
 ---
 
@@ -416,6 +428,7 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 | [poupanca](skills/ddm/POUPANCA.md) | ddm | 1 | ✅ | ✅ | POUPANCA.md |
 | [acoes](skills/ddm/ACOES.md) | ddm | 1 | ✅ | ✅ | ACOES.md |
 | [focus](skills/ddm/FOCUS.md) | ddm | 13 | ✅ | ✅ | FOCUS.md |
+| [fluxo](skills/ddm/FLUXO.md) | ddm | 5 | ✅ | ✅ | FLUXO.md |
 
 **Notes:**
 

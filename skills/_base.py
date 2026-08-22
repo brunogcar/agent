@@ -1024,6 +1024,21 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # sync guard auto-refreshes focus.db before each dashboard run.
         "ddm-focus":    ("data_sources.ddm.focus.sync_engine", "sync_all",
                          lambda: {"force": True}),
+        # [v1] DDM Fluxo sync - separate sync_map entry for the fluxo
+        # subdomain (B3 investment flow by investor type). Mirrors the
+        # ddm + ddm-juros + ddm-poupanca + ddm-acoes + ddm-focus entries:
+        # sync_all(force=True) re-fetches the single /fluxo page
+        # (CloudFront-protected - fetcher sends full Chrome 127 browser
+        # headers) + parses the 1 table (~247 daily rows: Data |
+        # Estrangeiro | Institucional | Pessoa fisica | Inst. Financeira
+        # | Outros). Values are parsed from PT-BR format ("1.582,35 mi")
+        # to REAL (millions R$) at the fetcher boundary. Skills may
+        # explicitly request this via _trigger_sync("ddm-fluxo") or list
+        # it in REQUIRED_SOURCES. The fluxo dashboard declares
+        # REQUIRED_SOURCES=["ddm-fluxo"] so the sync guard auto-refreshes
+        # fluxo.db before each dashboard run.
+        "ddm-fluxo":     ("data_sources.ddm.fluxo.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:

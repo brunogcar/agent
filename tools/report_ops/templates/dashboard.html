@@ -272,9 +272,17 @@
       var cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
       var cutoffStr = cutoff.toISOString().slice(0, 10);
-      // [v2] Convert PT-BR month labels (Jul/2026) to ISO (2026-07) for comparison
+      // [v2] Convert PT-BR labels to ISO for comparison.
+      // [v4] Added DD/MM/YYYY → YYYY-MM-DD parsing (Fluxo/Diario/Anual charts
+      //   use daily labels; without this, the string comparison "19/08/2026"
+      //   >= "2025-08-23" fails lexicographically because "1" < "2", so
+      //   sub-10A ranges filtered out almost every label).
       var meses = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
       function labelToISO(l) {
+        // DD/MM/YYYY → YYYY-MM-DD (daily charts)
+        var d = l.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (d) return d[3] + '-' + d[2] + '-' + d[1];
+        // Mon/YYYY → YYYY-MM (monthly charts, PT-BR abbrev)
         var m = l.match(/^(\w{3})\/(\d{4})$/);
         if (m) return m[2] + '-' + (meses[m[1]] || '01');
         return l;  // already ISO or unknown format
@@ -334,6 +342,52 @@
       var label = ctx.label || '';
       return label + ': ' + Number(val).toLocaleString('pt-BR') + ' (' + pctVal + '%)';
     };
+  }
+
+  // [ddm.fluxo v3/v4] Segment color injector — paints each line SEGMENT
+  // based on the sign of its endpoints:
+  //   pos→pos : green   (_segment_pos_color)
+  //   neg→neg : red     (_segment_neg_color)
+  //   crossing: yellow  (_segment_cross_color)  [v4]
+  //
+  // Opt-in: only activates when chartData.options._segment_negative_red
+  // === true. WHY: Chart.js colors line segments via a `segment.borderColor`
+  // *function* callback, but _renderChart does JSON.parse(JSON.stringify(
+  // chartData)) to clone the config, which STRIPS functions. So Python sets
+  // flags, and this function injects the real callback post-clone — same
+  // pattern as _applyTooltipPercent above. Safe for other skills: no-op
+  // when the flag is absent. Wrapped in try/catch so a cosmetic error
+  // never breaks chart rendering.
+  function _applySegmentColors(config) {
+    try {
+      if (!config || !config.options) return;
+      if (!config.options._segment_negative_red) return;
+      delete config.options._segment_negative_red;
+      var posColor = config.options._segment_pos_color || '#22c55e';
+      var negColor = config.options._segment_neg_color || '#ef4444';
+      var crossColor = config.options._segment_cross_color || '#eab308';
+      delete config.options._segment_pos_color;
+      delete config.options._segment_neg_color;
+      delete config.options._segment_cross_color;
+      if (!config.data || !config.data.datasets) return;
+      config.data.datasets.forEach(function(ds) {
+        ds.segment = {
+          borderColor: function(ctx) {
+            var y0 = ctx.p0 && ctx.p0.parsed && ctx.p0.parsed.y;
+            var y1 = ctx.p1 && ctx.p1.parsed && ctx.p1.parsed.y;
+            if (y0 === null || y0 === undefined || y1 === null || y1 === undefined) {
+              return posColor;
+            }
+            // [v4] 3-color rule:
+            //   both positive → green, both negative → red,
+            //   sign change (crossing zero) → yellow.
+            if (y0 >= 0 && y1 >= 0) return posColor;
+            if (y0 < 0 && y1 < 0) return negColor;
+            return crossColor;
+          }
+        };
+      });
+    } catch (e) { /* segment coloring is cosmetic — never break rendering */ }
   }
 
   // [b3.price v2] Vanilla OHLC candlestick renderer — no external plugin.
@@ -423,6 +477,7 @@
     }
     var config = JSON.parse(JSON.stringify(chartData));
     _applyTooltipPercent(config);
+    _applySegmentColors(config);
     var chart = new Chart(canvas.getContext('2d'), config);
     _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
   }
@@ -601,6 +656,7 @@
         } else {
           var config = JSON.parse(JSON.stringify(entry.chartData));
           _applyTooltipPercent(config);
+          _applySegmentColors(config);
           entry.chart = new Chart(entry.canvas.getContext('2d'), config);
         }
       });

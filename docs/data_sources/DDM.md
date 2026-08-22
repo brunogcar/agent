@@ -39,6 +39,15 @@ normalized to "up"/"down"/"flat". The endpoint is CloudFront-protected —
 the fetcher sends the full Chrome 127 browser header set to bypass the
 WAF rules.
 
+The fluxo page (B3 investment flow) is ONE table of daily net inflow /
+outflow by investor type (~247 rows = ~1 year of trading days), with 6
+columns: Data | Estrangeiro | Institucional | Pessoa física | Inst.
+Financeira | Outros. Values use PT-BR formatting with the "mi" suffix
+(millions of R$): "-1.582,35 mi" = -1582.35 million R$. Values are
+parsed to REAL (floats in millions R$) at the fetcher boundary, dates
+are normalized to YYYY-MM-DD. The endpoint is CloudFront-protected —
+full Chrome 127 browser headers (same as focus).
+
 ## Sub-domains
 
 | Sub-domain   | DB path                                  | Description                                            |
@@ -48,6 +57,7 @@ WAF rules.
 | `poupanca`   | `memory_db/ddm/poupanca.db`              | Brazilian savings-account monthly yield (Poupanca). Uses SUM for derived `acumulado_no_ano` + `acumulado_12m`. |
 | `acoes`      | `memory_db/ddm/acoes.db`                 | B3 listed stocks (PETR4, VALE3, ...) — flat snapshot table (Ticker \| Nome \| Negócios \| Última \| Variação). Pre-sorted by Negócios DESC. |
 | `focus`      | `memory_db/ddm/focus.db`                 | Boletim Focus (market expectations survey). 4 yearly tables (2026-2029) × 12 indicators. Values stored as PT-BR strings verbatim. CloudFront-protected (full Chrome 127 browser headers). |
+| `fluxo`      | `memory_db/ddm/fluxo.db`                 | B3 investment flow (daily net inflow / outflow by investor type). 1 table × ~247 daily rows × 6 columns (Data \| Estrangeiro \| Institucional \| Pessoa física \| Inst. Financeira \| Outros). Values parsed to REAL (millions R$); dates normalized to YYYY-MM-DD. CloudFront-protected (full Chrome 127 browser headers). |
 
 ### Per-subdomain differences
 
@@ -64,9 +74,9 @@ WAF rules.
 | Primary key           | `(slug, ref_date)`                  | `(slug, ref_date)`                            | `(slug, ref_date)`                                    | `ticker` (single row per stock)                        | `(year, indicator, ref_date)` (history-aware)            |
 | DB file location      | `memory_db/ddm/inflation/inflation.db` | `memory_db/ddm/juros.db`                   | `memory_db/ddm/poupanca.db`                           | `memory_db/ddm/acoes.db`                               | `memory_db/ddm/focus.db`                                 |
 
-All 5 DB files live under `memory_db/ddm/` (the inflation DB is in a
-sub-folder; juros, poupanca, acoes, and focus sit directly in the `ddm/`
-folder side-by-side).
+All 6 DB files live under `memory_db/ddm/` (the inflation DB is in a
+sub-folder; juros, poupanca, acoes, focus, and fluxo sit directly in
+the `ddm/` folder side-by-side).
 
 ### Planned (not yet built)
 
@@ -90,6 +100,7 @@ folder side-by-side).
   - `sub_domain="poupanca"` → route directly to the poupanca sub-domain.
   - `sub_domain="acoes"` → route directly to the acoes sub-domain.
   - `sub_domain="focus"` → route directly to the focus sub-domain.
+  - `sub_domain="fluxo"` → route directly to the fluxo sub-domain.
 
 Auto-discovery is filesystem-driven — dropping a new sub-domain directory
 (`funds/`) into `data_sources/ddm/` is enough to make it available via
@@ -115,6 +126,9 @@ ddm(sub_domain="acoes", mode="sync_all")
 # Sync the boletim-focus page (single HTTP call, CloudFront-protected).
 ddm(sub_domain="focus", mode="sync_all")
 
+# Sync the fluxo page (single HTTP call, CloudFront-protected, ~247 daily rows).
+ddm(sub_domain="fluxo", mode="sync_all")
+
 # Query the latest IPCA observation.
 ddm(sub_domain="inflation", mode="last", slug="ipca")
 
@@ -135,6 +149,15 @@ ddm(sub_domain="focus", mode="focus_data")
 
 # Get all years for a specific indicator.
 ddm(sub_domain="focus", mode="indicator", indicator="IPCA")
+
+# Get all fluxo observations (daily series, ASC by date).
+ddm(sub_domain="fluxo", mode="fluxo_data")
+
+# Get the latest trading day's flow.
+ddm(sub_domain="fluxo", mode="last")
+
+# Monthly cumulative sum for one investor.
+ddm(sub_domain="fluxo", mode="fluxo_by_investor", investor="estrangeiro")
 ```
 
 ## See also
@@ -154,3 +177,6 @@ ddm(sub_domain="focus", mode="indicator", indicator="IPCA")
 - [`ddm/focus/API.md`](ddm/focus/API.md) — 8-mode focus API.
 - [`ddm/focus/ARCHITECTURE.md`](ddm/focus/ARCHITECTURE.md) —
   focus file map and DB schema (4 yearly tables, CloudFront-protected).
+- [`ddm/fluxo/API.md`](ddm/fluxo/API.md) — 8-mode fluxo API.
+- [`ddm/fluxo/ARCHITECTURE.md`](ddm/fluxo/ARCHITECTURE.md) —
+  fluxo file map and DB schema (1 daily table, CloudFront-protected).

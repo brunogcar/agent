@@ -8,18 +8,19 @@ without importing per-subdomain helpers.
 Functions:
   - get_freshness()        -> {"ddm": str, "ddm-juros": str,
                                "ddm-poupanca": str, "ddm-acoes": str,
-                               "ddm-focus": str}
+                               "ddm-focus": str, "ddm-fluxo": str}
     Each value is the ISO timestamp of the most recent ``sync_state`` row
     in the corresponding DB, or ``""`` if not synced yet.
 
-The DDM family currently has 5 sub-domains:
+The DDM family currently has 6 sub-domains:
   - ddm          (inflation: IGP-M, IPCA, INPC)               -> inflation.db
   - ddm-juros    (Selic, Meta Selic, CDI)                     -> juros.db
   - ddm-poupanca (Poupanca - savings account yield)           -> poupanca.db
   - ddm-acoes    (B3 listed stocks - PETR4, VALE3...)         -> acoes.db
   - ddm-focus    (Boletim Focus - market expectations survey) -> focus.db
+  - ddm-fluxo    (B3 investment flow by investor type)        -> fluxo.db
 
-All 5 DBs live in the shared ``memory_db/ddm/`` folder. The sync guard
+All 6 DBs live in the shared ``memory_db/ddm/`` folder. The sync guard
 (``skills/_base._trigger_sync.sync_map``) has a separate entry per
 sub-domain so the dashboard can refresh only what's stale.
 """
@@ -109,6 +110,13 @@ def get_freshness() -> dict[str, str]:
         result["ddm-focus"] = _check_db_freshness(ddm_focus_path())
     except Exception:
         result["ddm-focus"] = ""
+
+    # DDM Fluxo (sync_map key = "ddm-fluxo").
+    try:
+        from data_sources.ddm.fluxo.catalog import db_path as ddm_fluxo_path
+        result["ddm-fluxo"] = _check_db_freshness(ddm_fluxo_path())
+    except Exception:
+        result["ddm-fluxo"] = ""
 
     return result
 
