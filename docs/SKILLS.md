@@ -301,6 +301,7 @@ missing).
 - **index**: 3-tab dashboard (composition + history + ticker) + compare + ticker modes. Reads from `data_sources/b3/index` + `data_sources/b3/api` + CVM bridge.
 - **price**: 7-tab dashboard (Cotação / Médias / Volume / Indicadores / Retornos / Volatilidade / Fibonacci) + quote mode. Reads from `data_sources/b3/cotahist` + `data_sources/b3/dividends`.
 - **options**: 3-tab dashboard (Cadeia de Opções / Put/Call Ratio / Volume por Strike). Reads from `data_sources/b3/cotahist_derivatives` (shared `cotahist.db`). `REQUIRED_SOURCES=["cotahist"]` (derivatives ride on the cotahist sync — no separate sync).
+- **term**: 3-tab dashboard (Contratos Ativos + Spread Termo vs Spot + Volume Histórico). Reads from `data_sources/b3/cotahist` (derivatives table). `REQUIRED_SOURCES=["cotahist"]`.
 
 See [B3 Skills](skills/B3.md) for the B3 landing page.
 
@@ -329,6 +330,37 @@ skill(domain="bcb", sub_domain="macro", mode="fx")
 ```
 
 See [BCB Skills](skills/BCB.md) for the BCB landing page.
+
+### DDM (Dados de Mercado)
+
+**Location**: `skills/ddm/`
+**Purpose**: Brazilian financial-data dashboard scraped from
+  dadosdemercado.com.br (no auth, no JS, regex-parsed HTML).
+
+**Sub-domains:**
+- **inflation**: 4-tab dashboard (IGP-M + IPCA + INPC + Comparativo) with
+  subtabs (Histórico + Matriz) per index. Reads from `data_sources/ddm/inflation`.
+  `REQUIRED_SOURCES=["ddm"]`.
+- **juros**: 4-tab dashboard (Selic + Meta Selic + CDI + Comparativo) with
+  subtabs per index. Reads from `data_sources/ddm/juros`. `REQUIRED_SOURCES=["ddm"]`.
+- **poupanca**: 1-tab dashboard (Poupanca) with subtabs (Histórico + Matriz).
+  Reads from `data_sources/ddm/poupanca`. `REQUIRED_SOURCES=["ddm"]`.
+- **acoes**: 1-tab dashboard (Ações) with KPIs + sortable stocks table +
+  price-distribution chart. Reads from `data_sources/ddm/acoes`.
+  `REQUIRED_SOURCES=["ddm-acoes"]` (own source key — separate from the other
+  DDM skills). The acoes skill introduces the **sortable-table feature**
+  (clickable headers, JS sortTable, data-value attributes on numeric cells)
+  + the shared `skills/_price_colors.py` 16-range palette used by the chart.
+
+**Freshness tracking** (v1 — added with the acoes skill):
+`skills/_freshness.get_freshness()` returns the last-sync timestamp for
+ALL 4 DDM sub-domains in a single dict (`{"ddm": ..., "ddm-juros": ...,
+"ddm-poupanca": ..., "ddm-acoes": ...}`). Consumers can poll a single
+dict instead of importing per-subdomain helpers.
+
+See [DDM Skills](#) for the DDM landing pages (one per sub-domain:
+[INFLATION.md](skills/ddm/INFLATION.md), [JUROS.md](skills/ddm/JUROS.md),
+[POUPANCA.md](skills/ddm/POUPANCA.md), [ACOES.md](skills/ddm/ACOES.md)).
 
 ---
 
@@ -369,6 +401,11 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 | [index](skills/b3/INDEX.md) | b3 | 3 | ✅ | ✅ | INDEX.md |
 | [price](skills/b3/PRICE.md) | b3 | 7 | ✅ | ✅ | PRICE.md |
 | [options](skills/b3/OPTIONS.md) | b3 | 3 | ✅ | ✅ | OPTIONS.md |
+| [term](skills/b3/TERM.md) | b3 | 3 | ✅ | ✅ | TERM.md |
+| [inflation](skills/ddm/INFLATION.md) | ddm | 4 | ✅ | ✅ | INFLATION.md |
+| [juros](skills/ddm/JUROS.md) | ddm | 4 | ✅ | ✅ | JUROS.md |
+| [poupanca](skills/ddm/POUPANCA.md) | ddm | 1 | ✅ | ✅ | POUPANCA.md |
+| [acoes](skills/ddm/ACOES.md) | ddm | 1 | ✅ | ✅ | ACOES.md |
 
 **Notes:**
 
@@ -497,4 +534,4 @@ On 401 Unauthorized: `[brapi] DISABLED for this session: 401 Unauthorized on {ti
 
 ---
 
-*Last updated: 2026-08-18 (v1.23 — added B3 skills: index, price, options to the skills table).*
+*Last updated: 2026-08-18 (v1.24 — added DDM skills: inflation, juros, poupanca, acoes; added `skills/_freshness.py` top-level freshness helper; added sortable-table feature in macros.html + base.html; added `skills/_price_colors.py` shared 16-range palette).*

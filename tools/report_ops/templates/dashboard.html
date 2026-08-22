@@ -102,7 +102,7 @@
         {% endif %}
         {% if sec.type == 'table' and sec.columns and sec.rows %}
         {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
+        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
         {% if sec.wide %}</div>{% endif %}
         {% elif sec.type == 'table' %}
         <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -127,7 +127,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False)) }}
+    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>

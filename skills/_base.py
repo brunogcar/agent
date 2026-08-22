@@ -778,10 +778,10 @@ SYNC_FRESHNESS_HOURS = 24
 def _source_last_sync(source: str) -> str:
     """Get the last-sync timestamp for a data source (ISO string, or "").
 
-    Delegates to skills._freshness.get_freshness() for all sources.
+    Delegates to skills.cvm._freshness.get_freshness() for CVM sources.
     """
     try:
-        from skills._freshness import get_freshness
+        from skills.cvm._freshness import get_freshness
         fresh = get_freshness()
         return fresh.get(source, "")
     except Exception:
@@ -980,7 +980,7 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
         # includes "ddm". Mirrors the sgs + focus entries: sync_all(force=True)
         # re-fetches all 3 indices (IGP-M, IPCA, INPC) from the HTML scraper.
-        "ddm-inflation": ("data_sources.ddm.inflation.sync_engine", "sync_all",
+        "ddm":          ("data_sources.ddm.inflation.sync_engine", "sync_all",
                          lambda: {"force": True}),
         # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
         # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)
@@ -1000,6 +1000,17 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # cumulative return). Skills may explicitly request this via
         # _trigger_sync("ddm-poupanca") or list it in REQUIRED_SOURCES.
         "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",
+                         lambda: {"force": True}),
+        # [v1] DDM Acoes sync - separate sync_map entry for the acoes
+        # subdomain (B3 tradable stocks). Mirrors the ddm + ddm-juros +
+        # ddm-poupanca entries: sync_all(force=True) re-fetches the single
+        # /acoes page from the HTML scraper + parses the stocks table
+        # (~380 rows of Ticker | Nome | Negocios | Ultima (R$) | Variacao).
+        # Skills may explicitly request this via _trigger_sync("ddm-acoes")
+        # or list it in REQUIRED_SOURCES. The acoes dashboard declares
+        # REQUIRED_SOURCES=["ddm-acoes"] so the sync guard auto-refreshes
+        # acoes.db before each dashboard run.
+        "ddm-acoes":    ("data_sources.ddm.acoes.sync_engine", "sync_all",
                          lambda: {"force": True}),
     }
 
