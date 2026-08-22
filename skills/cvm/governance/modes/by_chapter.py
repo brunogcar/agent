@@ -33,5 +33,5 @@ def by_chapter(company: str = "") -> dict:
     from data_sources.cvm.cgvn.query_engine import query
     r = query(company=company, by_chapter=True)
 
-    from skills.cvm._freshness import add_freshness
+    from skills._freshness import add_freshness
     return add_freshness(r)

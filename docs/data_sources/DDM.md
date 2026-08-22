@@ -92,6 +92,8 @@ ddm(sub_domain="juros", mode="sync_all")
 # Sync the poupanca index (single HTTP call).
 ddm(sub_domain="poupanca", mode="sync_all")
 
+Freshness tracking: all 3 DDM subdomains are tracked by skills/_freshness.py via their sync_state tables. Source names: ddm-inflation, ddm-juros, ddm-poupanca.
+
 # Query the latest IPCA observation.
 ddm(sub_domain="inflation", mode="last", slug="ipca")
 

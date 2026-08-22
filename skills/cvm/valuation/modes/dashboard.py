@@ -433,7 +433,7 @@ def dashboard(company: str = "") -> dict:
     # ── Freshness footer ────────────────────────────────────────────────
     freshness_footer = ""
     try:
-        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        from skills._freshness import get_freshness, get_last_synced_period
         fresh = get_freshness()
         last = get_last_synced_period()
         dfp_sync = fresh.get("dfp", "")

@@ -47,5 +47,5 @@ def summary(company: str = "") -> dict:
                           else "selling" if total_sold > total_bought
                           else "neutral")
 
-    from skills.cvm._freshness import add_freshness
+    from skills._freshness import add_freshness
     return add_freshness(r)

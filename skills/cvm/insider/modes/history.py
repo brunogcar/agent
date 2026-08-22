@@ -36,5 +36,5 @@ def history(company: str = "", limit: int = 50) -> dict:
     r = query(company=company, limit=limit)
 
     # Add freshness
-    from skills.cvm._freshness import add_freshness
+    from skills._freshness import add_freshness
     return add_freshness(r)

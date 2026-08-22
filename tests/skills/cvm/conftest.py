@@ -19,7 +19,7 @@ setdefault() ensures:
   - No monkeypatch scoping issues -- the singleton is stable
 
 [v2] Added `mock_freshness` autouse fixture — mocks
-skills.cvm._freshness.get_freshness so no test opens real SQLite DBs
+skills._freshness.get_freshness so no test opens real SQLite DBs
 to check sync timestamps. Without this, every CVM skill mode that calls
 add_freshness() (insider, governance, historical, etc.) opens 9 SQLite
 databases per call, making tests take 2+ minutes on a machine with real
@@ -80,4 +80,4 @@ def mock_freshness(monkeypatch):
         if isinstance(result, dict):
             result["data_freshness"] = _dummy_freshness
         return result
-    monkeypatch.setattr("skills.cvm._freshness.add_freshness", _fake_add_freshness)
+    monkeypatch.setattr("skills._freshness.add_freshness", _fake_add_freshness)

@@ -38,5 +38,5 @@ def by_role(company: str = "", limit: int = 50) -> dict:
     from data_sources.cvm.vlmo.query_engine import query
     r = query(company=company, limit=limit, by_role=True)
 
-    from skills.cvm._freshness import add_freshness
+    from skills._freshness import add_freshness
     return add_freshness(r)

@@ -196,7 +196,7 @@ def ratios(company: str = "") -> dict:
     if price_data.get("status") != "ok":
         result["ratios"] = {"status": "error",
                             "error": f"Price unavailable: {price_data.get('error','')}"}
-        from skills.cvm._freshness import add_freshness
+        from skills._freshness import add_freshness
         return add_freshness(result)
 
     price = price_data["last_price"]
@@ -222,7 +222,7 @@ def ratios(company: str = "") -> dict:
             result["ratios"]["market_cap_source"] = "computed"
         if total_shares:
             result["ratios"]["total_shares"] = total_shares
-        from skills.cvm._freshness import add_freshness
+        from skills._freshness import add_freshness
         return add_freshness(result)
 
     pl_positive = pl is not None and pl > 0
@@ -368,5 +368,5 @@ def ratios(company: str = "") -> dict:
     result["ratios"] = ratios_result
 
     # [v1.0.14] Data freshness
-    from skills.cvm._freshness import add_freshness
+    from skills._freshness import add_freshness
     return add_freshness(result)

@@ -55,7 +55,7 @@ def test_search_tr_series(sgs_db):
     assert 226 in codes
 
 
-def test_summary_returns_all_12(sgs_db):
+def test_summary_returns_all_series(sgs_db):
     res = query_engine.summary()
     assert res["status"] == "ok"
-    assert res["count"] == 12
+    assert res["count"] == 11

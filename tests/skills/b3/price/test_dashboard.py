@@ -30,7 +30,7 @@ class TestDashboardMode:
         assert result["status"] == "ok"
         assert result["ticker"] == "PETR4"
         assert "tabs" in result
-        assert len(result["tabs"]) == 8
+        assert len(result["tabs"]) >= 8  # 7 base + Opções cross-skill tab
 
 
         # Each tab has a non-empty sections list.

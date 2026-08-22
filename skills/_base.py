@@ -778,10 +778,10 @@ SYNC_FRESHNESS_HOURS = 24
 def _source_last_sync(source: str) -> str:
     """Get the last-sync timestamp for a data source (ISO string, or "").
 
-    Delegates to skills.cvm._freshness.get_freshness() for CVM sources.
+    Delegates to skills._freshness.get_freshness() for all sources.
     """
     try:
-        from skills.cvm._freshness import get_freshness
+        from skills._freshness import get_freshness
         fresh = get_freshness()
         return fresh.get(source, "")
     except Exception:
@@ -980,7 +980,7 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
         # includes "ddm". Mirrors the sgs + focus entries: sync_all(force=True)
         # re-fetches all 3 indices (IGP-M, IPCA, INPC) from the HTML scraper.
-        "ddm":          ("data_sources.ddm.inflation.sync_engine", "sync_all",
+        "ddm-inflation": ("data_sources.ddm.inflation.sync_engine", "sync_all",
                          lambda: {"force": True}),
         # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
         # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)

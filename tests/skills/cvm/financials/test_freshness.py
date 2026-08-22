@@ -1,4 +1,4 @@
-"""Tests for skills/cvm/_freshness.py (v1.5).
+"""Tests for skills/_freshness.py (v1.5).
 
 Covers TestFreshness (4 tests):
   - test_get_freshness_returns_dict   : get_freshness() returns dict with expected DB keys
@@ -48,7 +48,7 @@ class TestFreshness:
         inserts contas rows), so freshness values may be "". We only
         verify the keys are present.
         """
-        from skills.cvm._freshness import get_freshness
+        from skills._freshness import get_freshness
         result = get_freshness()
         assert isinstance(result, dict)
         for key in ("dfp", "itr", "fre", "ipe", "cad", "vlmo", "cgvn", "fca"):
@@ -63,7 +63,7 @@ class TestFreshness:
         be '2023-12-31'. The ITR fixture inserts '2023-03-31', '2023-06-30',
         '2023-09-30' — MAX should be '2023-09-30'.
         """
-        from skills.cvm._freshness import get_last_synced_period
+        from skills._freshness import get_last_synced_period
         result = get_last_synced_period()
         assert isinstance(result, dict)
         # All 8 CVM DB keys must be present (those without a `contas` table
@@ -84,7 +84,7 @@ class TestFreshness:
         We monkeypatch dfp_db_path to point to a nonexistent path and verify
         the function returns "" instead of raising FileNotFoundError.
         """
-        from skills.cvm import _freshness
+        from skills import _freshness
         nonexistent = tmp_path / "nonexistent.db"
         # Patch the dfp_db_path symbol that _freshness imports at call time.
         import data_sources.cvm._db as cvm_db
@@ -96,7 +96,7 @@ class TestFreshness:
     def test_add_freshness_includes_both(self, financials_env):
         """[v1.5] add_freshness() now adds BOTH data_freshness AND
         last_synced_period keys to the result dict (in-place + return)."""
-        from skills.cvm._freshness import add_freshness
+        from skills._freshness import add_freshness
         result = add_freshness({"status": "ok"})
         assert "data_freshness" in result, "missing data_freshness key"
         assert "last_synced_period" in result, "missing last_synced_period key"

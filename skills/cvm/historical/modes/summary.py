@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from skills.cvm._freshness import add_freshness
+from skills._freshness import add_freshness
 from skills.cvm.calculations._registry import resolve_metric, list_metrics
 from skills.cvm.historical._registry import register_mode
 from skills.cvm.historical.helpers import _months_ago

@@ -142,7 +142,7 @@ def build_company_header(company: str) -> dict:
     # Shows the latest quarterly financial statement available. Uses the
     # shared freshness helper which queries ITR's MAX(data_fim_exerc).
     try:
-        from skills.cvm._freshness import get_last_synced_period
+        from skills._freshness import get_last_synced_period
         periods = get_last_synced_period()
         itr_period = periods.get("itr", "")
         if itr_period:

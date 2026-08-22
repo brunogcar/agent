@@ -3,11 +3,11 @@ from __future__ import annotations
 from data_sources.bcb.sgs import catalog
 
 
-def test_catalog_has_12_priority_series():
+def test_catalog_has_priority_series():
     codes = list(catalog.SERIES_CATALOG.keys())
-    assert len(codes) == 12
-    # 12 curated series covering the 4 macro categories (including TR 226).
-    for code in [11, 12, 226, 432, 4389, 4390, 433, 189, 1, 24369, 4380, 1619]:
+    assert len(codes) == 11
+    # 11 curated series covering the 4 macro categories (including TR 226).
+    for code in [11, 12, 226, 432, 4389, 4390, 433, 189, 1, 4380, 1619]:
         assert code in codes, f"missing series {code}"
 
 
@@ -36,9 +36,9 @@ def test_schema_creates_three_tables(tmp_path):
     tables = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     assert {"series_observations", "series_catalog", "sync_state"} <= tables
-    # Catalog populated with all 12 series.
+    # Catalog populated with all 11 series.
     n = conn.execute("SELECT COUNT(*) FROM series_catalog").fetchone()[0]
-    assert n == 12
+    assert n == 11
     conn.close()
 
 

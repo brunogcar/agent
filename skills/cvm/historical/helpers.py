@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from skills.cvm._freshness import add_freshness
+from skills._freshness import add_freshness
 from skills.cvm.calculations._registry import resolve_metric
 
 

@@ -97,7 +97,7 @@ def dashboard(ticker: str = "", strategy: str = "value_pe", start_date: str = ""
     # Freshness footer
     freshness_footer = ""
     try:
-        from skills.cvm._freshness import get_freshness
+        from skills._freshness import get_freshness
         fresh = get_freshness()
         cot = fresh.get("cotahist", "")
         freshness_footer = f"COTAHIST: {cot[:10] if cot else '—'}"

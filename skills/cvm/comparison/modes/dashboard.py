@@ -123,7 +123,7 @@ def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> 
     # Freshness footer (DFP + ITR + COTAHIST sync dates) — computed once.
     freshness_footer = ""
     try:
-        from skills.cvm._freshness import get_freshness, get_last_synced_period
+        from skills._freshness import get_freshness, get_last_synced_period
         fresh = get_freshness()
         last = get_last_synced_period()
         dfp_sync = fresh.get("dfp", "")
