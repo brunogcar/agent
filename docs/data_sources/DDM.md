@@ -28,8 +28,10 @@ Juros + poupanca pages ship ONLY the matrix table (no historical table, no
 "Ano" column). The historical series is DERIVED from the matrix at parse
 time. Inflation pages ship BOTH tables (matrix + historical).
 
-The acoes page is a SINGLE flat table of stock snapshots (no per-index
-slugs, no historical series, no matrix) — different shape, same domain.
+The dividends page ships a single `<table class="normal-table">` with
+~200 rows of corporate dividend events (Codigo | Tipo | Valor (R$) |
+Registro | Ex | Pagamento). No matrix, no derivation needed — the rows
+are stored as-is.
 
 ## Sub-domains
 
@@ -38,32 +40,32 @@ slugs, no historical series, no matrix) — different shape, same domain.
 | `inflation`  | `memory_db/ddm/inflation/inflation.db`   | Brazilian inflation indices (IGP-M, IPCA, INPC).       |
 | `juros`      | `memory_db/ddm/juros.db`                 | Brazilian interest-rate indices (Selic, Meta Selic, CDI). Uses AVERAGE for derived `media_no_ano` + `media_12m`. |
 | `poupanca`   | `memory_db/ddm/poupanca.db`              | Brazilian savings-account monthly yield (Poupanca). Uses SUM for derived `acumulado_no_ano` + `acumulado_12m`. |
-| `acoes`      | `memory_db/ddm/acoes.db`                 | B3 listed stocks (PETR4, VALE3, ...) — flat snapshot table (Ticker \| Nome \| Negócios \| Última \| Variação). Pre-sorted by Negócios DESC. |
+| `dividends`  | `memory_db/ddm/dividends.db`             | Brazilian corporate dividend events (Dividendo + JCP) scraped from the agenda-de-dividendos page. Single page, ~200 rows, no derivation. |
 
 ### Per-subdomain differences
 
-| Aspect                | `inflation`                         | `juros`                                       | `poupanca`                                            | `acoes`                                                |
-| --------------------- | ----------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
-| Tables per page       | 2 (matrix + historical)             | 1 (matrix only)                               | 1 (matrix only)                                       | 1 (flat stocks list)                                   |
-| "Ano" column          | Yes (year acumulado)                | No (daily rates, not cumulative)              | No (monthly yield, not cumulative)                    | N/A (no matrix)                                        |
-| Historical series     | Parsed directly from HTML table 2   | DERIVED from matrix (AVERAGE)                 | DERIVED from matrix (SUM)                             | None (single snapshot, no history)                     |
-| Numeric fields        | `month_value`, `year_acumulado`, `acumulado_12m` | `month_value`, `media_no_ano`, `media_12m`     | `month_value`, `acumulado_no_ano`, `acumulado_12m`    | `negocios`, `last_price`, `variation`                  |
-| Unit                  | `%` (monthly variation)             | `% a.a.` (annualized daily rate)              | `%` (monthly yield)                                   | `R$` (price) + `%` (variation)                         |
-| Indices               | IGP-M, IPCA, INPC                   | Selic, Meta Selic, CDI                        | Poupanca                                              | (no catalog — flat list of ~380 stocks)                |
-| Catalog category      | `Inflacao`                          | `Juros`                                       | `Renda Fixa`                                          | (no catalog)                                           |
-| Pre-sort              | None (matrix is year × month)       | None                                          | None                                                  | Negócios DESC (DDM pre-sorts the page)                 |
-| Primary key           | `(slug, ref_date)`                  | `(slug, ref_date)`                            | `(slug, ref_date)`                                    | `ticker` (single row per stock)                        |
-| DB file location      | `memory_db/ddm/inflation/inflation.db` | `memory_db/ddm/juros.db`                   | `memory_db/ddm/poupanca.db`                           | `memory_db/ddm/acoes.db`                               |
+| Aspect                | `inflation`                         | `juros`                                       | `poupanca`                                            | `dividends`                                       |
+| --------------------- | ----------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| Tables per page       | 2 (matrix + historical)             | 1 (matrix only)                               | 1 (matrix only)                                       | 1 (`normal-table` rows)                           |
+| "Ano" column          | Yes (year acumulado)                | No (daily rates, not cumulative)              | No (monthly yield, not cumulative)                    | N/A (no matrix)                                   |
+| Historical series     | Parsed directly from HTML table 2   | DERIVED from matrix (AVERAGE)                 | DERIVED from matrix (SUM)                             | Parsed directly from rows (no derivation)         |
+| Numeric fields        | `month_value`, `year_acumulado`, `acumulado_12m` | `month_value`, `media_no_ano`, `media_12m`     | `month_value`, `acumulado_no_ano`, `acumulado_12m`    | `value` (R$)                                      |
+| Date fields           | `ref_date` (YYYY-MM)                | `ref_date` (YYYY-MM)                          | `ref_date` (YYYY-MM)                                  | `record_date`, `ex_date`, `payment_date` (YYYY-MM-DD) |
+| Unit                  | `%` (monthly variation)             | `% a.a.` (annualized daily rate)              | `%` (monthly yield)                                   | `R$` (REAL)                                       |
+| Indices / rows        | IGP-M, IPCA, INPC                   | Selic, Meta Selic, CDI                        | Poupanca                                              | ~200 rows (~149 Dividendo + ~52 JCP)              |
+| Catalog category      | `Inflacao`                          | `Juros`                                       | `Renda Fixa`                                          | N/A (no catalog)                                  |
+| DB file location      | `memory_db/ddm/inflation/inflation.db` | `memory_db/ddm/juros.db`                   | `memory_db/ddm/poupanca.db`                           | `memory_db/ddm/dividends.db`                      |
 
 All 4 DB files live under `memory_db/ddm/` (the inflation DB is in a
-sub-folder; juros, poupanca, and acoes sit directly in the `ddm/` folder
-side-by-side).
+sub-folder; juros + poupanca + dividends sit directly in the `ddm/`
+folder side-by-side).
 
 ### Planned (not yet built)
 
 | Sub-domain | DB path                                | Description                                                  |
 | ---------- | -------------------------------------- | ------------------------------------------------------------ |
-| `funds`    | `memory_db/ddm/funds.db`               | Investment fund quotes / portfolios.                         |
+| `stocks`   | `memory_db/ddm/stocks/stocks.db`       | Equity snapshots / price history from DDM.                   |
+| `funds`    | `memory_db/ddm/funds/funds.db`         | Investment fund quotes / portfolios.                         |
 
 ## Domain hub
 
@@ -79,11 +81,11 @@ side-by-side).
   - `sub_domain="inflation"` → route directly to the inflation sub-domain.
   - `sub_domain="juros"` → route directly to the juros sub-domain.
   - `sub_domain="poupanca"` → route directly to the poupanca sub-domain.
-  - `sub_domain="acoes"` → route directly to the acoes sub-domain.
+  - `sub_domain="dividends"` → route directly to the dividends sub-domain.
 
 Auto-discovery is filesystem-driven — dropping a new sub-domain directory
-(`funds/`) into `data_sources/ddm/` is enough to make it available via
-`data_source(domain="ddm", sub_domain="...", ...)`.
+(`stocks/`, `funds/`) into `data_sources/ddm/` is enough to make it
+available via `data_source(domain="ddm", sub_domain="...", ...)`.
 
 ## Usage
 
@@ -99,8 +101,8 @@ ddm(sub_domain="juros", mode="sync_all")
 # Sync the poupanca index (single HTTP call).
 ddm(sub_domain="poupanca", mode="sync_all")
 
-# Sync the acoes page (single HTTP call, ~380 stocks).
-ddm(sub_domain="acoes", mode="sync_all")
+# Sync the dividend agenda (single HTTP call, ~200 rows).
+ddm(sub_domain="dividends", mode="sync_all")
 
 # Query the latest IPCA observation.
 ddm(sub_domain="inflation", mode="last", slug="ipca")
@@ -111,11 +113,9 @@ ddm(sub_domain="inflation", mode="matrix", slug="igp-m")
 # Get the latest poupanca yield.
 ddm(sub_domain="poupanca", mode="last", slug="poupanca")
 
-# List all B3 stocks sorted by variation DESC.
-ddm(sub_domain="acoes", mode="stocks", order_by="variation", direction="desc")
-
-# Get the snapshot for a specific ticker.
-ddm(sub_domain="acoes", mode="ticker", ticker="PETR4")
+# List all dividends sorted by value (DESC).
+ddm(sub_domain="dividends", mode="dividends",
+    order_by="value", direction="desc")
 ```
 
 ## See also
@@ -129,6 +129,6 @@ ddm(sub_domain="acoes", mode="ticker", ticker="PETR4")
 - [`ddm/poupanca/API.md`](ddm/poupanca/API.md) — 8-mode poupanca API.
 - [`ddm/poupanca/ARCHITECTURE.md`](ddm/poupanca/ARCHITECTURE.md) —
   poupanca file map and DB schema (SUM-derived).
-- [`ddm/acoes/API.md`](ddm/acoes/API.md) — 8-mode acoes API.
-- [`ddm/acoes/ARCHITECTURE.md`](ddm/acoes/ARCHITECTURE.md) —
-  acoes file map and DB schema (flat stocks table).
+- [`ddm/dividends/API.md`](ddm/dividends/API.md) — 8-mode dividends API.
+- [`ddm/dividends/ARCHITECTURE.md`](ddm/dividends/ARCHITECTURE.md) —
+  dividends file map + DB schema (single-page row scrape, no derivation).
