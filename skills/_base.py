@@ -1001,15 +1001,29 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # _trigger_sync("ddm-poupanca") or list it in REQUIRED_SOURCES.
         "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",
                          lambda: {"force": True}),
-        # [v1] DDM Dividends sync - separate sync_map entry for the dividends
-        # subdomain (Brazilian corporate dividend events scraped from the
-        # agenda-de-dividendos page). Mirrors the ddm-poupanca entry:
-        # sync_all(force=True) re-fetches the single dividends page + parses
-        # the normal-table into (ticker, tipo, value, record_date, ex_date,
-        # payment_date) rows. Skills may explicitly request this via
-        # _trigger_sync("ddm-dividends") or list it in REQUIRED_SOURCES.
-        "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",
-                          lambda: {"force": True}),
+        # [v1] DDM Acoes sync - separate sync_map entry for the acoes
+        # subdomain (B3 tradable stocks). Mirrors the ddm + ddm-juros +
+        # ddm-poupanca entries: sync_all(force=True) re-fetches the single
+        # /acoes page from the HTML scraper + parses the stocks table
+        # (~380 rows of Ticker | Nome | Negocios | Ultima (R$) | Variacao).
+        # Skills may explicitly request this via _trigger_sync("ddm-acoes")
+        # or list it in REQUIRED_SOURCES. The acoes dashboard declares
+        # REQUIRED_SOURCES=["ddm-acoes"] so the sync guard auto-refreshes
+        # acoes.db before each dashboard run.
+        "ddm-acoes":    ("data_sources.ddm.acoes.sync_engine", "sync_all",
+                         lambda: {"force": True}),
+        # [v1] DDM Focus sync - separate sync_map entry for the focus
+        # subdomain (Boletim Focus market expectations survey). Mirrors
+        # the ddm + ddm-juros + ddm-poupanca + ddm-acoes entries:
+        # sync_all(force=True) re-fetches the single /boletim-focus page
+        # (CloudFront-protected - fetcher sends full Chrome 127 browser
+        # headers) + parses the 4 yearly tables (2026-2029) of 12
+        # indicators each. Skills may explicitly request this via
+        # _trigger_sync("ddm-focus") or list it in REQUIRED_SOURCES. The
+        # focus dashboard declares REQUIRED_SOURCES=["ddm-focus"] so the
+        # sync guard auto-refreshes focus.db before each dashboard run.
+        "ddm-focus":    ("data_sources.ddm.focus.sync_engine", "sync_all",
+                         lambda: {"force": True}),
     }
 
     if source not in sync_map:
