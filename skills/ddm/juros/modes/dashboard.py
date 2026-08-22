@@ -87,14 +87,14 @@ def _build_historico_subtab(slug: str, name: str,
         ]
     else:
         sections.append(build_error_section(
-            f"{name} - ultimo valor", lv.get("error", "sem dados")))
+            "Último valor", lv.get("error", "sem dados")))
 
     # --- Historical chart + table (last N months) ---
     hist = _safe_call(juros_history, slug=slug, limit=months)
     if hist.get("status") == "ok":
         observations = hist.get("observations", [])
         sections.append(build_chart_section(
-            f"{name} - evolucao mensal",
+            "Evolução mensal",
             observations,
             slug=slug,
             description=(f"Indice do mes (% a.a.), media no ano (%) e "
@@ -102,7 +102,7 @@ def _build_historico_subtab(slug: str, name: str,
                          f"Ultimos {months} meses."),
         ))
         sections.append(build_table_section(
-            f"{name} - historico mensal",
+            "Histórico mensal",
             observations,
             limit=months,
             descending=True,
@@ -110,7 +110,7 @@ def _build_historico_subtab(slug: str, name: str,
         ))
     else:
         sections.append(build_error_section(
-            f"{name} - historico", hist.get("error", "sem dados")))
+            "Histórico", hist.get("error", "sem dados")))
 
     return sections, kpis
 
@@ -121,7 +121,7 @@ def _build_matriz_subtab(slug: str, name: str) -> list[dict]:
     mat = _safe_call(monthly_matrix, slug=slug)
     if mat.get("status") == "ok":
         sections.append(build_matrix_table_section(
-            f"{name} - matriz mensal",
+            "Matriz mensal",
             mat,
             description=("Matriz ano x mes. Cores divergentes vermelho "
                          "-> branco -> verde indicam o valor relativo da "
@@ -130,7 +130,7 @@ def _build_matriz_subtab(slug: str, name: str) -> list[dict]:
         ))
     else:
         sections.append(build_error_section(
-            f"{name} - matriz", mat.get("error", "sem dados")))
+            "Matriz", mat.get("error", "sem dados")))
     return sections
 
 

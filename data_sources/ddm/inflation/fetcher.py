@@ -68,7 +68,7 @@ def _parse_mes_ano(s: str) -> str:
     if not match:
         return ""
     mon, year = match.group(1), match.group(2)
-    return f"{year}-{_MONTHS_PT.get(mon, '01')}"
+    return f"{year}-{_MONTHS_PT.get(mon, '')}"
 
 
 def _parse_br_number(s: str) -> float | None:

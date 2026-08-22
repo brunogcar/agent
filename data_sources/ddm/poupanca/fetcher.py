@@ -259,7 +259,9 @@ def flatten_matrix_to_observations(matrix: dict) -> list[dict]:
             val = row.get(mon)
             if val is None:
                 continue
-            mm = _MONTHS_PT.get(mon, "01")
+            mm = _MONTHS_PT.get(mon, "")
+            if not mm:
+                continue  # unknown month abbreviation — skip row
             flat.append((f"{year}-{mm}", val))
 
     if not flat:

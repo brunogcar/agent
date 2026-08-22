@@ -54,7 +54,7 @@ auto_discover_modes(__name__)
 # Data sources this skill needs. The route() wrapper checks freshness
 # before each dispatch and triggers force-sync if stale. Tests use
 # CVM_SKIP_SYNC=1 to bypass.
-REQUIRED_SOURCES = ["ddm"]
+REQUIRED_SOURCES = ["ddm-juros"]
 
 # Build MANIFEST from the registered modes.
 MANIFEST = {

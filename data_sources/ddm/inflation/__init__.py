@@ -12,7 +12,7 @@ monthly series). Server-rendered HTML, no JS, no auth.
 8 modes: sync_all, sync_index, series, last, matrix, search, summary, status.
 
 Data source: www.dadosdemercado.com.br/indices/{slug} (HTML scrape)
-Storage:     memory_db/ddm/inflation/inflation.db
+Storage:     memory_db/ddm/inflation.db
 
 The route() dispatcher follows the bcb/sgs pattern: lazy-imports each mode's
 module on first dispatch, filters kwargs by the target function's signature,
@@ -36,7 +36,7 @@ MANIFEST = {
         "Thread-safe concurrent syncer (3 workers)."
     ),
     "source":  "www.dadosdemercado.com.br/indices/{slug} (HTML scrape, no auth)",
-    "storage": "memory_db/ddm/inflation/inflation.db",
+    "storage": "memory_db/ddm/inflation.db",
     "modes": {
         "sync_all": {
             "description": (

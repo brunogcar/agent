@@ -183,9 +183,9 @@ def test_matriz_subtab_has_no_ano_column(monkeypatch):
     for tab in res["tabs"][:3]:
         sub = tab["sections"][0]
         matriz = sub["tabs"][1]  # Matriz
-        tables = [s for s in matriz["sections"] if s.get("type") == "table"]
-        assert len(tables) == 1, f"{tab['name']}: missing matriz table"
-        cols = tables[0]["columns"]
+        heatmaps = [s for s in matriz["sections"] if s.get("type") == "heatmap"]
+        assert len(heatmaps) == 1, f"{tab['name']}: missing matriz heatmap"
+        cols = heatmaps[0]["columns"]
         assert cols[0] == "Ano"  # year-label column (corner)
         # The remaining 12 columns should be Jan..Dez (no trailing "Ano").
         assert "Ano" not in cols[1:]
@@ -193,8 +193,8 @@ def test_matriz_subtab_has_no_ano_column(monkeypatch):
                             "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 
-def test_matriz_subtab_has_heatmap_metadata(monkeypatch):
-    """Matriz table carries heatmap metadata (diverging red->white->green)."""
+def test_matriz_subtab_has_heatmap_cells(monkeypatch):
+    """Matriz heatmap cells are {text, bg, color} dicts (NOT plain strings)."""
     _patch_query(monkeypatch)
     from skills.ddm.juros.modes import dashboard
     res = dashboard.dashboard(months=12, compare_months=12)
@@ -202,13 +202,18 @@ def test_matriz_subtab_has_heatmap_metadata(monkeypatch):
     for tab in res["tabs"][:3]:
         sub = tab["sections"][0]
         matriz = sub["tabs"][1]
-        tables = [s for s in matriz["sections"] if s.get("type") == "table"]
-        assert tables[0].get("heatmap", {}).get("diverging") is True
-        assert tables[0].get("heatmap", {}).get("low_color") == "#dc2626"
-        assert tables[0].get("heatmap", {}).get("high_color") == "#16a34a"
-        # cell_colors is a parallel matrix of bg-color strings per row.
-        assert "cell_colors" in tables[0]
-        assert len(tables[0]["cell_colors"]) == len(tables[0]["rows"])
+        heatmaps = [s for s in matriz["sections"] if s.get("type") == "heatmap"]
+        assert len(heatmaps) == 1
+        rows = heatmaps[0]["rows"]
+        assert len(rows) > 0
+        # First cell is the year (string), rest are {text, bg, color} dicts
+        assert isinstance(rows[0][0], str)  # year label
+        if len(rows[0]) > 1:
+            cell = rows[0][1]  # first month cell
+            assert isinstance(cell, dict), f"expected dict, got {type(cell)}"
+            assert "text" in cell
+            assert "bg" in cell
+            assert "color" in cell
 
 
 def test_comparativo_tab_has_no_tables(monkeypatch):

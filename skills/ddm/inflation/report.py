@@ -15,9 +15,17 @@ from skills.ddm.inflation.helpers import (
 
 
 INDEX_COLORS = {
-    "igp-m": "#3b82f6",
-    "ipca":  "#f59e0b",
-    "inpc":  "#a855f7",
+    "igp-m": "#3b82f6",  # blue
+    "ipca":  "#f59e0b",  # amber
+    "inpc":  "#a855f7",  # purple
+}
+
+# [v3] Secondary colors for the dashed "Acumulado no ano" line per index.
+# Mirrors the juros INDEX_COLORS_MEDIA_ANO pattern (lighter 300-shade).
+INDEX_COLORS_ACUM_ANO = {
+    "igp-m": "#93c5fd",  # blue-300
+    "ipca":  "#fcd34d",  # amber-300
+    "inpc":  "#d8b4fe",  # purple-300
 }
 
 
@@ -58,15 +66,19 @@ def build_chart_section(title: str, observations: list[dict],
                         "borderColor":     color,
                         "backgroundColor": color,
                         "fill":            False,
+                        "pointRadius":     1.5,
+                        "pointHoverRadius": 5,
                         "tension":         0.3,
                         "yAxisID":         "y",
                     },
                     {
                         "label":           "Acumulado no ano (%)",
                         "data":            year_acum_data,
-                        "borderColor":     "#a855f7",
-                        "backgroundColor": "#a855f7",
+                        "borderColor":     INDEX_COLORS_ACUM_ANO.get(slug, "#10b981"),
+                        "backgroundColor": INDEX_COLORS_ACUM_ANO.get(slug, "#10b981"),
                         "fill":            False,
+                        "pointRadius":     1.5,
+                        "pointHoverRadius": 5,
                         "tension":         0.3,
                         "borderDash":      [5, 5],
                         "yAxisID":         "y",
@@ -77,6 +89,8 @@ def build_chart_section(title: str, observations: list[dict],
                         "borderColor":     "#94a3b8",
                         "backgroundColor": "#94a3b8",
                         "fill":            False,
+                        "pointRadius":     1.5,
+                        "pointHoverRadius": 5,
                         "tension":         0.3,
                         "borderDash":      [2, 4],
                         "yAxisID":         "y",
@@ -135,6 +149,8 @@ def build_overlay_chart_section(title: str, series: list[dict],
             "borderColor":     INDEX_COLORS.get(slug, "#64748b"),
             "backgroundColor": INDEX_COLORS.get(slug, "#64748b"),
             "fill":            False,
+                        "pointRadius":     1.5,
+                        "pointHoverRadius": 5,
             "tension":         0.3,
         })
 

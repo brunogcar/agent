@@ -94,15 +94,15 @@ def _heat_color(value, vmin: float, vmax: float) -> dict:
     if t <= mid_t:
         # Red→white. t=0 at lo (full red), t=mid_t at mid (white).
         ratio = t / mid_t if mid_t > 0 else 1.0
-        r = int(220 + (255 - 220) * ratio)
-        g = int(38 + (255 - 38) * ratio)
-        b = int(38 + (255 - 38) * ratio)
+        r = int(239 + (255 - 239) * ratio)
+        g = int(68 + (255 - 68) * ratio)
+        b = int(68 + (255 - 68) * ratio)
     else:
         # White→green. t=mid_t at mid (white), t=1 at hi (full green).
         ratio = (t - mid_t) / (1 - mid_t) if mid_t < 1 else 1.0
-        r = int(255 + (22 - 255) * ratio)
-        g = int(255 + (163 - 255) * ratio)
-        b = int(255 + (74 - 255) * ratio)
+        r = int(255 + (34 - 255) * ratio)
+        g = int(255 + (197 - 255) * ratio)
+        b = int(255 + (94 - 255) * ratio)
 
     bg = f"#{r:02x}{g:02x}{b:02x}"
     brightness = (r + g + b) / 3

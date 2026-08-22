@@ -306,9 +306,13 @@
   </div>
   <script>
     function showTab(btn, panelId) {
-      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(b => {
+        b.classList.remove('active');
+        b.classList.remove('ok');
+      });
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
+      btn.classList.add('ok');
       document.getElementById(panelId).classList.add('active');
     }
     function showSubTab(btn, panelId) {

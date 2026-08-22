@@ -122,16 +122,30 @@ def test_dashboard_kpis_at_top_level(monkeypatch):
 
 
 def test_index_tabs_have_kpis_chart_table_matrix(monkeypatch):
-    """Each per-index tab has: 3 KPIs (promoted), 1 chart, 1 history table, 1 matrix."""
+    """Each per-index tab has subtabs with chart + table (Historico) + heatmap (Matriz)."""
     _patch_query(monkeypatch)
     from skills.ddm.inflation.modes import dashboard
     res = dashboard.dashboard(months=12, compare_months=12)
 
     for tab in res["tabs"][:3]:  # IGP-M, IPCA, INPC
-        section_types = [s["type"] for s in tab["sections"]]
-        # 1 chart + 2 tables (history + matrix)
-        assert section_types.count("chart") == 1, f"{tab['name']}: missing chart"
-        assert section_types.count("table") == 2, f"{tab['name']}: missing tables"
+        # v3: each tab is ONE section of type="subtabs" with 2 subtabs
+        assert len(tab["sections"]) == 1, f"{tab['name']}: expected 1 section"
+        sub = tab["sections"][0]
+        assert sub["type"] == "subtabs", f"{tab['name']}: expected subtabs"
+        subtab_names = [s["name"] for s in sub["tabs"]]
+        assert "Histórico" in subtab_names or "Historico" in subtab_names
+        assert "Matriz" in subtab_names
+
+        # Historico subtab: chart + table
+        hist = sub["tabs"][0]
+        hist_types = [s["type"] for s in hist["sections"]]
+        assert "chart" in hist_types, f"{tab['name']}: missing chart in Historico"
+        assert "table" in hist_types, f"{tab['name']}: missing table in Historico"
+
+        # Matriz subtab: heatmap
+        mat = sub["tabs"][1]
+        mat_types = [s["type"] for s in mat["sections"]]
+        assert "heatmap" in mat_types, f"{tab['name']}: missing heatmap in Matriz"
 
 
 def test_comparativo_tab_has_no_tables(monkeypatch):
