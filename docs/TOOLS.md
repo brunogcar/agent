@@ -301,7 +301,10 @@ tools/
 │   │   ├── map.html
 │   │   ├── report.html
 │   │   ├── scorecard.html
-│   │   └── timeline.html
+│   │   ├── timeline.html
+│   │   └── js/
+│   │       ├── dashboard_charts.html       # [Phase 3 C3] Chart-rendering JS (extracted from dashboard.html Block 1)
+│   │       └── dashboard_theme_override.html  # [Phase 3 C3] Theme-toggle chart re-render (Block 10)
 │   └── actions/
 │       ├── chart.py
 │       ├── compare.py

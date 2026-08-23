@@ -101,14 +101,19 @@ tools/report_ops/templates/
 ├── macros.html         # Reusable components (kpi_card, data_table, bug_card, statement_table, ratio_grid, two_column, subtabs, ...)  — v1.5 added statement/ratio_grid/two_column; v1.9 added subtabs
 ├── chart.html          # Dedicated Chart.js canvas template (NEW v1.1)
 ├── report.html         # Single-scroll report sections
-├── dashboard.html      # Multi-panel tabs + KPIs + subtabs (v1.9 added subtabs dispatch + centered body)
+├── dashboard.html      # Multi-panel tabs + KPIs + subtabs (v1.9 added subtabs dispatch + centered body; Phase 3 C3 extracted inline JS to js/ partials)
 ├── map.html            # Full-screen Leaflet map
 ├── diagram.html        # Mermaid architecture diagram
 ├── compare.html        # Side-by-side diff with delta highlighting
 ├── timeline.html       # SVG Gantt + event list
 ├── scorecard.html      # RAG cards + radar chart
-└── table.html          # Multi-table statements + per-column fmt + search (v1.2)
+├── table.html          # Multi-table statements + per-column fmt + search (v1.2)
+└── js/                 # [Phase 3 C3] Jinja2 {% include %} partials (plain <script> blocks, no {% raw %} needed — verified zero {{ }} / {% %} / {# #})
+    ├── dashboard_charts.html          # Chart library: _chartRegistry, filterPriceChart, _applySegmentColors, _renderOHLCChart, _renderChart, Chart.register(priceDatalabels), togglePeriod, toggleChartCollapsible (was dashboard.html Block 1)
+    └── dashboard_theme_override.html  # window.toggleTheme override — destroy + re-render every chart on theme change (was dashboard.html Block 10)
 ```
+
+> **Note (Phase 3 C3):** `dashboard.html` previously had ~365 lines of inline JS. The chart-rendering library (Block 1) + theme-toggle override (Block 10) were extracted to `js/dashboard_charts.html` + `js/dashboard_theme_override.html` and are wired via `{% include %}`. The 8 per-chart `<script>_renderChart(...);</script>` loops stay inline in `dashboard.html` because they reference Jinja2 loop-scoped vars (`outer_loop`, `loop`, `sec`, `pt_sec`, `sub_sec`).
 
 ---
 
@@ -204,4 +209,4 @@ tests/tools/report/
 
 ---
 
-*Last updated: 2026-07-29 (v1.9 — subtabs support + financials_statement adapter + dashboard centering). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*
+*Last updated: 2026-08-13 (Phase 3 C3 — dashboard.html inline JS extracted to `js/` partials via `{% include %}`). See [API.md](API.md) for action details, [CHANGELOG.md](CHANGELOG.md) for version history, [INSTRUCTIONS.md](INSTRUCTIONS.md) for AI editing rules.*

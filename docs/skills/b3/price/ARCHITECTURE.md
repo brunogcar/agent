@@ -122,9 +122,11 @@ assert the shape of the output dict).
 ## Candlestick Chart Shape
 
 [v1.2] The candlestick is rendered by the vanilla `_renderOHLCChart`
-helper in `dashboard.html` (flagged via `chart_data._ohlc = True`). The
-body is drawn as floating-bar datasets `[min(o,c), max(o,c)]`; wicks are
-rendered via an inline Chart.js plugin that reads from `chart._ohlc`.
+helper in `templates/js/dashboard_charts.html` (included by `dashboard.html`
+via `{% include %}` — extracted in Phase 3 C3; was inline in dashboard.html).
+Flagged via `chart_data._ohlc = True`. The body is drawn as floating-bar
+datasets `[min(o,c), max(o,c)]`; wicks are rendered via an inline Chart.js
+plugin that reads from `chart._ohlc`.
 
 The `chartjs-chart-financial` plugin was used in the initial v1.0 draft
 but removed because it forced a `time` x-scale that required a date
@@ -139,8 +141,9 @@ volume right) is configured via `scales.y` + `scales.y1`.
 ## Range Selector
 
 The price_range_selector renders 7 buttons: Tudo / 10A / 5A / 1A / 6M / 3M / 1M.
-`filterPriceChart(btn, canvasId, range)` JS in `dashboard.html` filters the
-chart's dataset client-side based on the selected range.
+`filterPriceChart(btn, canvasId, range)` JS in `templates/js/dashboard_charts.html`
+(included by `dashboard.html`) filters the chart's dataset client-side based
+on the selected range.
 
 For candlestick + multi-dataset charts (e.g., MA overlays), the
 `price_full_datasets` field carries the auxiliary series so they can be

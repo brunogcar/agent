@@ -764,14 +764,16 @@ def test_dashboard_template_parses_dd_mm_yyyy_labels():
     """The dashboard.html template's labelToISO handles DD/MM/YYYY.
 
     Reads the actual template file (not the generated HTML) to ensure
-    the regex is present at the source.
+    the regex is present at the source. After the Phase 3 Commit 3 JS
+    split, the chart-rendering JS lives in templates/js/dashboard_charts.html
+    (extracted from dashboard.html Block 1).
     """
     from pathlib import Path
-    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "dashboard.html"
+    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "js" / "dashboard_charts.html"
     content = tpl.read_text(encoding="utf-8")
     # DD/MM/YYYY regex must be present (with capturing groups + escapes).
     assert r"\d{2})\/(\d{2})\/(\d{4}" in content, (
-        "DD/MM/YYYY regex missing from dashboard.html labelToISO")
+        "DD/MM/YYYY regex missing from dashboard_charts.html labelToISO")
     # The conversion must reorder to YYYY-MM-DD (group 3 - 2 - 1).
     assert "d[3] + '-' + d[2] + '-' + d[1]" in content, (
         "DD/MM/YYYY -> YYYY-MM-DD reordering missing")
@@ -779,9 +781,13 @@ def test_dashboard_template_parses_dd_mm_yyyy_labels():
 
 def test_dashboard_template_has_3color_segment_logic():
     """The _applySegmentColors function implements the 3-color rule:
-    pos→pos=green, neg→neg=red, crossing=yellow."""
+    pos→pos=green, neg→neg=red, crossing=yellow.
+
+    After the Phase 3 Commit 3 JS split, _applySegmentColors lives in
+    templates/js/dashboard_charts.html (extracted from dashboard.html Block 1).
+    """
     from pathlib import Path
-    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "dashboard.html"
+    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "js" / "dashboard_charts.html"
     content = tpl.read_text(encoding="utf-8")
     assert "_segment_cross_color" in content, (
         "_segment_cross_color missing from _applySegmentColors")
@@ -794,9 +800,13 @@ def test_dashboard_template_has_3color_segment_logic():
 
 
 def test_dashboard_template_segment_colors_called_in_render():
-    """_applySegmentColors is called in _renderChart (not just defined)."""
+    """_applySegmentColors is called in _renderChart (not just defined).
+
+    After the Phase 3 Commit 3 JS split, _renderChart lives in
+    templates/js/dashboard_charts.html (extracted from dashboard.html Block 1).
+    """
     from pathlib import Path
-    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "dashboard.html"
+    tpl = Path(__file__).resolve().parents[4] / "tools" / "report_ops" / "templates" / "js" / "dashboard_charts.html"
     content = tpl.read_text(encoding="utf-8")
     # Must be called right after _applyTooltipPercent in the render path.
     assert "_applySegmentColors(config)" in content, (

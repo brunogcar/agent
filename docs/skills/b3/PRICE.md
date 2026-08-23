@@ -11,8 +11,10 @@ candlestick + moving averages + volume + returns + volatility (Bollinger Bands).
   COTAHIST ZIP files). No CVM cross-domain joins, no investsite. Pure price action.
 - **10-year window** — fetches up to 10 years of history so the range selector
   (Tudo/10A/5A/1A/6M/3M/1M) has data to filter.
-- **Candlestick support** — dashboard.html loads `chartjs-chart-financial` to
-  render OHLC candles; the Cotação tab is the only place this chart type appears.
+- **Candlestick support** — the Cotação tab's OHLC candles are rendered by the
+  vanilla `_renderOHLCChart` helper (flagged via `chart_data._ohlc = True`),
+  not the `chartjs-chart-financial` plugin (removed in v1.1). The helper lives
+  in `templates/js/dashboard_charts.html` (included by `dashboard.html`).
 - **Computational engines** — `engines.py` is the single home for all math:
   SMA, returns, drawdowns, rolling volatility, Bollinger Bands, MA crossovers,
   52-week range. Report builders in `report/` are pure shape — they consume
@@ -59,10 +61,19 @@ Pipe a `price` result into the `report` tool to render a table or export to
 Excel. The `dashboard` action auto-writes HTML — see [B3 Skills — Auto-HTML
 Generation](../B3.md#-auto-html-generation).
 
-The dashboard template (`tools/report_ops/templates/dashboard.html`) loads two
-Chart.js plugins:
-1. **chart.js 4.4.1** — line, bar, doughnut, area charts.
-2. **chartjs-chart-financial 0.2.0** — candlestick charts (used by the Cotação tab).
+The dashboard template (`tools/report_ops/templates/dashboard.html`) loads one
+Chart.js library:
+1. **chart.js 4.4.1** — line, bar, doughnut, area charts. The candlestick chart
+   in the Cotação tab is rendered by the vanilla `_renderOHLCChart` helper
+   (flagged via `chart_data._ohlc = True`), NOT the `chartjs-chart-financial`
+   plugin (removed in v1.1).
+
+The chart-rendering JS (`_renderChart`, `filterPriceChart`, `_applySegmentColors`,
+`_renderOHLCChart`, `togglePeriod`, `toggleChartCollapsible`, the
+`priceDatalabels` Chart.js plugin, and the theme-toggle re-render override)
+lives in `templates/js/dashboard_charts.html` + `templates/js/dashboard_theme_override.html`,
+wired into `dashboard.html` via Jinja2 `{% include %}` (Phase 3 C3 extraction —
+was inline in dashboard.html).
 
 The range selector (Tudo/10A/5A/1A/6M/3M/1M) is rendered by `macros.html`'s
 `_section_inner()` macro and filtered client-side by `filterPriceChart()` JS.

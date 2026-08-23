@@ -1,0 +1,53 @@
+{# ── dashboard_theme_override.html — Theme-toggle chart re-render ──────────
+   [Phase 3 Commit 3 — dashboard.html JS split] Extracted from dashboard.html
+   Block 10 (was L651-L675). Overrides window.toggleTheme (defined in
+   base.html) to destroy + re-render every chart in _chartRegistry after
+   the original theme toggle runs.
+
+   WHY: Chart.js bakes axis colors into the canvas at render time. Switching
+   the CSS theme (light/dark) recolors the page background + text, but the
+   charts stay in their original colors. Re-rendering from the original
+   chartData (preserved in _chartRegistry) re-reads the CSS variables
+   and repaints the charts in the new theme.
+
+   WHY HERE (not in dashboard_charts.html): the override must run AFTER the
+   per-chart script loops populate _chartRegistry. So it's included
+   after those loops in dashboard.html block "scripts".
+
+   DEPS: reads _chartRegistry (declared in dashboard_charts.html); calls
+   _renderOHLCChart, _applyTooltipPercent, _applySegmentColors,
+   new Chart(). Must load AFTER dashboard_charts.html + the per-chart
+   render loops.
+
+   JINJA2 SAFETY: this partial contains ZERO Jinja2 variable, block, or
+   comment syntax (verified by programmatic scan). No raw-block wrapping
+   is needed.
+
+   CONTEXT: included from dashboard.html block "scripts" via the include
+   statement (last statement before endblock).
+#}
+<script>
+  // Re-render charts on theme change (preserves _tooltipPercent flag by
+  // re-rendering from the original chartData stored in _chartRegistry).
+  var origToggle = window.toggleTheme;
+  if (origToggle) {
+    window.toggleTheme = function() {
+      origToggle();
+      _chartRegistry.forEach(function(entry) {
+        if (entry.chart) {
+          entry.chart.destroy();
+        }
+        // [b3.price v2] Re-render OHLC candlesticks through the vanilla
+        // renderer so wicks + scriptable colors survive a theme switch.
+        if (entry.chartData && entry.chartData._ohlc) {
+          entry.chart = _renderOHLCChart(entry.canvas, entry.chartData);
+        } else {
+          var config = JSON.parse(JSON.stringify(entry.chartData));
+          _applyTooltipPercent(config);
+          _applySegmentColors(config);
+          entry.chart = new Chart(entry.canvas.getContext('2d'), config);
+        }
+      });
+    };
+  }
+</script>
