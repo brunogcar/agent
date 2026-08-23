@@ -1,9 +1,9 @@
 """tests/test_sync_guard_mapping.py -- Pure mapping test (no DB, no HTTP).
 
 Asserts that every DDM skill's REQUIRED_SOURCES has a matching entry in
-the skills/_base.py sync_map. Catches the B1/B2/B3 regression cluster
-(skills declaring sync keys the sync_map doesn't have) without touching
-any database or making any HTTP call.
+the skills/_base/sync_guard.py sync_map. Catches the B1/B2/B3 regression
+cluster (skills declaring sync keys the sync_map doesn't have) without
+touching any database or making any HTTP call.
 
 Fast (<0.1s): imports the sync_map dict + each skill's REQUIRED_SOURCES
 list, then asserts set equality. No sync_all calls, no DB reads.
@@ -15,18 +15,16 @@ from pathlib import Path
 
 
 def _get_sync_map_keys() -> set[str]:
-    """Extract the set of keys from the sync_map in skills/_base.py.
+    """Extract the set of keys from the sync_map in skills/_base/sync_guard.py.
 
-    Imports skills._base and accesses the sync_map dict directly.
-    The sync_map is built inside the _trigger_sync function, so we
-    call _trigger_sync with an invalid source to get the error path
-    (which still builds the dict). Alternatively, we can read the
-    source file and parse it — but importing is cleaner and faster.
+    Imports skills._base.sync_guard and accesses the sync_map dict indirectly
+    (it's a local inside _trigger_sync, so we can't import it by name).
+    The sync_map is built inside the _trigger_sync function, so we read the
+    source file and parse it — clean and fast.
     """
-    # The sync_map is a local variable inside _trigger_sync. To access
-    # it without triggering a real sync, we read the source file and
-    # extract the keys via a simple regex (the dict is literal).
-    base_path = Path(__file__).resolve().parents[1] / "skills" / "_base.py"
+    # [Phase 3 C2] skills/_base.py was split into a package — the sync_map
+    # now lives in skills/_base/sync_guard.py (was skills/_base.py before).
+    base_path = Path(__file__).resolve().parents[1] / "skills" / "_base" / "sync_guard.py"
     content = base_path.read_text(encoding="utf-8")
 
     # Find all sync_map keys: lines like  "ddm-fluxo":  ("data_sources...

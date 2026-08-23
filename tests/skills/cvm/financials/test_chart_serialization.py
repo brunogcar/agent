@@ -52,7 +52,7 @@ def test_financials_dashboard_chart_data_is_json_serializable(tmp_path, monkeypa
     from skills.cvm.financials import route
 
     # Mock the sync guard to skip network calls
-    monkeypatch.setattr("skills._base._SYNC_CHECKED", lambda: True)
+    monkeypatch.setattr("skills._base.route._SYNC_CHECKED", lambda: True)
 
     try:
         result = route(mode="dashboard", company="PETR4")
@@ -79,7 +79,7 @@ def test_historical_dashboard_chart_data_is_json_serializable(tmp_path, monkeypa
     """All chart_data in historical dashboard must be JSON-serializable."""
     from skills.cvm.historical import route
 
-    monkeypatch.setattr("skills._base._SYNC_CHECKED", lambda: True)
+    monkeypatch.setattr("skills._base.route._SYNC_CHECKED", lambda: True)
 
     try:
         result = route(mode="dashboard", company="PETR4")

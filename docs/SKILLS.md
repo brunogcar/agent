@@ -70,35 +70,53 @@ def execute(action: str, **kwargs) -> dict:
 
 ---
 
-## 🏗️ Modular Skill Pattern (skills/_base.py)
+## 🏗️ Modular Skill Pattern (skills/_base/)
 
 All skills (CVM + investsite + BCB) use a shared modular pattern built on
-`skills/_base.py`. This file provides the infrastructure so each skill only
-needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
+the `skills/_base/` package. This package provides the infrastructure so each
+skill only needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
 
-**What `skills/_base.py` provides:**
+> **Phase 3 Commit 2 (2026-08):** `skills/_base.py` was split into a 6-file
+> package. The `skills._base` module path is preserved via `__init__.py`
+> re-exports — all 92 `from skills._base import X` import sites keep working.
 
-| Component | Purpose | Version |
-|-----------|---------|---------|
-| `ModeSpec` dataclass | Mode metadata (name, fn, description, params, examples) | v1.0 |
-| `make_registry()` | Creates a per-skill MODES dict + `register_mode` decorator | v1.0 |
-| `build_manifest_modes(MODES)` | Turns registry into MANIFEST["modes"] dict | v1.0 |
-| `auto_discover_modes(__name__)` | Importlib-based modes/*.py auto-discovery | v1.0 |
-| `make_route(manifest_key, skill_name, MODES, ...)` | Generates the route() dispatcher | v1.0 |
-| `_dispatch(...)` | Internal dispatch (filters kwargs by signature) | v1.0 |
-| `@engine_cached` decorator | Caches engine at_fn/periods_fn within a scope | v1.9 F7 |
-| `engine_cache_scope` context manager | Activates the engine cache for its block | v1.9 F7 |
-| `ensure_fresh(sources, ...)` | Force-syncs stale data sources before dispatch | v1.14 |
-| `_source_is_stale(source)` | Checks sync_state timestamp against 24h window | v1.14 |
-| `_cvm_has_new_data(source, year)` | HEAD check before downloading (CVM only) | v1.14 |
-| `_trigger_sync(source, company, ...)` | Maps source name to sync fn with right args | v1.14 |
-| `_route_with_sync_guard(...)` | Wraps sync check + dispatch with re-entrancy guard | v1.14 |
+**What `skills/_base/` provides:**
+
+| Component | Module | Purpose | Version |
+|-----------|--------|---------|---------|
+| `ModeSpec` dataclass | `registry.py` | Mode metadata (name, fn, description, params, examples) | v1.0 |
+| `make_registry()` | `registry.py` | Creates a per-skill MODES dict + `register_mode` decorator | v1.0 |
+| `build_manifest_modes(MODES)` | `registry.py` | Turns registry into MANIFEST["modes"] dict | v1.0 |
+| `list_modes(MODES)` / `get_mode(MODES, name)` | `registry.py` | Registry accessors | v1.0 |
+| `auto_discover_modes(__name__)` | `registry.py` | Importlib-based modes/*.py auto-discovery | v1.0 |
+| `make_route(...)` | `route.py` | Generates the route() dispatcher | v1.0 |
+| `_dispatch(...)` | `route.py` | Internal dispatch (filters kwargs by signature) | v1.0 |
+| `_route_with_sync_guard(...)` | `route.py` | Wraps sync check + dispatch with re-entrancy guard | v1.14 |
+| `_SYNC_CHECKED` ContextVar | `route.py` | Re-entrancy guard (nested route calls run ensure_fresh once) | v1.14 |
+| `_auto_generate_html(...)` | `html_gen.py` | Writes dashboard-mode HTML to workspace/reports/ | v5 |
+| `_ENGINE_CACHE` ContextVar | `engine_cache.py` | Per-call engine cache slot | v1.9 F7 |
+| `@engine_cached` decorator | `engine_cache.py` | Caches engine at_fn/periods_fn within a scope (3-layer) | v1.9 F7 |
+| `engine_cache_scope` context manager | `engine_cache.py` | Activates the engine cache for its block | v1.9 F7 |
+| `SYNC_FRESHNESS_HOURS = 24` | `sync_guard.py` | Freshness window constant | v1.14 |
+| `ensure_fresh(sources, ...)` | `sync_guard.py` | Force-syncs stale data sources before dispatch | v1.14 |
+| `_source_is_stale(source)` | `sync_guard.py` | Checks sync_state timestamp against 24h window | v1.14 |
+| `_source_last_sync(source)` | `sync_guard.py` | Reads last-sync ISO timestamp from skills/_freshness.py | v1.14 |
+| `_cvm_has_new_data(source, year)` | `sync_guard.py` | HEAD check before downloading (CVM only) | v1.14 |
+| `_cvm_has_new_data_cached(source, year)` | `sync_guard.py` | TTL-cached HEAD check (1h) | v1.14 |
+| `_trigger_sync(source, company, ...)` | `sync_guard.py` | Maps source name to sync fn with right args | v1.14 |
 
 ### Architecture
 
 ```
 skills/
-├── _base.py                          # Shared infrastructure (ModeSpec, make_registry, make_route)
+├── _base/                            # Shared infrastructure package (Phase 3 C2 split)
+│   ├── __init__.py                   # Re-exports all public + private names (backward compat)
+│   ├── registry.py                   # ModeSpec + make_registry + accessors + auto_discover_modes
+│   ├── route.py                      # make_route + _route_with_sync_guard + _dispatch + _SYNC_CHECKED
+│   ├── html_gen.py                   # _auto_generate_html (dashboard HTML writer)
+│   ├── engine_cache.py               # _ENGINE_CACHE + engine_cached + engine_cache_scope
+│   └── sync_guard.py                 # SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+├── _freshness.py                     # Cross-domain freshness dict (CVM + B3 + BCB + DDM) — stays separate
 ├── dispatcher.py                     # Auto-discovers skill domains
 ├── cvm/
 │   ├── __init__.py                   # CVM domain hub (routes sub_domain → skill)
@@ -268,7 +286,7 @@ Skills never write to databases. They assume data is already synced via
 
 ### Performance Infrastructure (v1.8 F7)
 
-`skills/_base.py` provides a **ContextVar-scoped engine cache** that
+`skills/_base/engine_cache.py` provides a **ContextVar-scoped engine cache** that
 eliminates redundant DB queries when multiple metrics compose the same
 engine within a single `compute_all_ratios()` call.
 
@@ -283,7 +301,7 @@ it force-syncs them BEFORE running the skill.
 - `route(..., skip_sync=True)` per-call kwarg
 
 **BCB macro skill note:** `required_sources=["sgs"]` is wired, and
-`skills/_base._trigger_sync.sync_map` now includes the `sgs` entry (v1.2
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` now includes the `sgs` entry (v1.2
 docs — the wiring shipped in an earlier commit but was undocumented). The
 sync guard triggers `sync_all(force=True)` when SGS is stale (>24h or
 missing).

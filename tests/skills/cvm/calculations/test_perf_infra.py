@@ -410,9 +410,9 @@ class TestSyncGuard:
         from datetime import datetime
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
         recent = datetime.now().isoformat()
-        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent)
+        monkeypatch.setattr("skills._base.sync_guard._source_last_sync", lambda s: recent)
         sync_called = []
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"])
@@ -423,11 +423,11 @@ class TestSyncGuard:
     def test_ensure_fresh_triggers_sync_when_stale(self, monkeypatch):
         """Stale source → sync called with force=True."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         # [v2.0] Mock _cvm_has_new_data_cached (the TTL-cached version used by ensure_fresh)
-        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: True)
+        monkeypatch.setattr("skills._base.sync_guard._cvm_has_new_data_cached", lambda s, y: True)
         sync_called = []
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"])
@@ -437,9 +437,9 @@ class TestSyncGuard:
     def test_ensure_fresh_skips_when_env_set(self, monkeypatch):
         """CVM_SKIP_SYNC=1 → no sync, source goes to 'skipped'."""
         monkeypatch.setenv("CVM_SKIP_SYNC", "1")
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         sync_called = []
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"])
@@ -450,9 +450,9 @@ class TestSyncGuard:
     def test_ensure_fresh_skips_with_kwarg(self, monkeypatch):
         """skip_sync=True kwarg → no sync."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         sync_called = []
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"], skip_sync=True)
@@ -462,11 +462,11 @@ class TestSyncGuard:
     def test_ensure_fresh_head_check_skips_when_no_new_data(self, monkeypatch):
         """Stale source but HEAD says no new data → no sync, goes to 'fresh'."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         # [v2.0] Mock _cvm_has_new_data_cached
-        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: False)
+        monkeypatch.setattr("skills._base.sync_guard._cvm_has_new_data_cached", lambda s, y: False)
         sync_called = []
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": sync_called.append(s) or {"status": "ok", "source": s})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"])
@@ -477,10 +477,10 @@ class TestSyncGuard:
     def test_ensure_fresh_sync_failure_proceeds(self, monkeypatch):
         """Sync failure → recorded in errors, doesn't raise."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         # [v2.0] Mock _cvm_has_new_data_cached
-        monkeypatch.setattr("skills._base._cvm_has_new_data_cached", lambda s, y: True)
-        monkeypatch.setattr("skills._base._trigger_sync",
+        monkeypatch.setattr("skills._base.sync_guard._cvm_has_new_data_cached", lambda s, y: True)
+        monkeypatch.setattr("skills._base.sync_guard._trigger_sync",
                             lambda s, company=None, trace_id="": {"status": "error", "source": s, "error": "network"})
         from skills._base import ensure_fresh
         result = ensure_fresh(["dfp"])
@@ -494,7 +494,7 @@ class TestSyncGuard:
         from unittest.mock import MagicMock
         recent_sync = (datetime.now() - timedelta(hours=1)).isoformat()
         older_remote = (datetime.now() - timedelta(days=2)).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent_sync)
+        monkeypatch.setattr("skills._base.sync_guard._source_last_sync", lambda s: recent_sync)
         mock_resp = MagicMock()
         mock_resp.headers = {"Last-Modified": older_remote}
         monkeypatch.setattr("requests.head", lambda *a, **kw: mock_resp)
@@ -510,7 +510,7 @@ class TestSyncGuard:
 
     def test_source_is_stale_empty_timestamp(self, monkeypatch):
         """Source with no sync timestamp → stale."""
-        monkeypatch.setattr("skills._base._source_last_sync", lambda s: "")
+        monkeypatch.setattr("skills._base.sync_guard._source_last_sync", lambda s: "")
         from skills._base import _source_is_stale
         assert _source_is_stale("dfp") is True
 
@@ -518,7 +518,7 @@ class TestSyncGuard:
         """Source synced 1 hour ago → NOT stale."""
         from datetime import datetime, timedelta
         recent = (datetime.now() - timedelta(hours=1)).isoformat()
-        monkeypatch.setattr("skills._base._source_last_sync", lambda s: recent)
+        monkeypatch.setattr("skills._base.sync_guard._source_last_sync", lambda s: recent)
         from skills._base import _source_is_stale
         assert _source_is_stale("dfp") is False
 
@@ -531,8 +531,8 @@ class TestRouteSyncGuard:
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
         # [v4] CVM sources use _cvm_has_new_data (HEAD check), not _source_is_stale.
         # Monkeypatch both so dfp is treated as fresh/no-new-data.
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: False)
-        monkeypatch.setattr("skills._base._cvm_has_new_data", lambda s, y: False)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: False)
+        monkeypatch.setattr("skills._base.sync_guard._cvm_has_new_data", lambda s, y: False)
         from skills._base import make_route, make_registry
         MODES, register_mode = make_registry()
 
@@ -564,7 +564,7 @@ class TestRouteSyncGuard:
     def test_route_skip_sync_kwarg(self, monkeypatch):
         """route(..., skip_sync=True) bypasses sync."""
         monkeypatch.delenv("CVM_SKIP_SYNC", raising=False)
-        monkeypatch.setattr("skills._base._source_is_stale", lambda s, h=24: True)
+        monkeypatch.setattr("skills._base.sync_guard._source_is_stale", lambda s, h=24: True)
         from skills._base import make_route, make_registry
         MODES, register_mode = make_registry()
 
@@ -585,6 +585,15 @@ class TestRouteSyncGuard:
         test can never accidentally trigger a real sync. The re-entrancy
         guard is tested by counting ensure_fresh calls — should be 1
         (outer), not 2 (outer + inner).
+
+        NOTE [Phase 3 C2]: After the skills/_base/ split, route.py imports
+        `ensure_fresh` from sync_guard via `from .sync_guard import ensure_fresh`
+        — this binds the name in route.py's __dict__ at module load time.
+        _route_with_sync_guard resolves `ensure_fresh` via route.py's
+        namespace, NOT sync_guard's. So the monkeypatch MUST target
+        `skills._base.route.ensure_fresh` (the binding route.py actually
+        uses), not `skills._base.sync_guard.ensure_fresh` (where the
+        function is defined but where route.py doesn't re-look it up).
         """
         ensure_fresh_calls = []
 
@@ -592,7 +601,7 @@ class TestRouteSyncGuard:
             ensure_fresh_calls.append(sources)
             return {"synced": [], "fresh": sources, "errors": [], "skipped": []}
 
-        monkeypatch.setattr("skills._base.ensure_fresh", mock_ensure_fresh)
+        monkeypatch.setattr("skills._base.route.ensure_fresh", mock_ensure_fresh)
 
         from skills._base import make_route, make_registry
         MODES, register_mode = make_registry()

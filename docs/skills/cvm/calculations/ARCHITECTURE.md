@@ -6,7 +6,7 @@
 
 | File | Purpose |
 |---|---|
-| `skills/_base.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.9] `@engine_cached` decorator + `engine_cache_scope`** (3-layer: in-memory + DB cache + real fn) |
+| `skills/_base/engine_cache.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.9] `@engine_cached` decorator + `engine_cache_scope`** (3-layer: in-memory + DB cache + real fn). Part of the `skills/_base/` package (Phase 3 C2 split — was `skills/_base.py`). |
 | `data_sources/_cache.py` | **[engine-cache] Persistent engine result cache** — `memory_db/cache/engine_cache.db`. Cross-skill caching with per-company invalidation. See [DATA_SOURCES.md](../../../DATA_SOURCES.md#-engine-result-cache-_cachepy). |
 | `data_sources/cvm/_db.py` | **Shared CVM helpers** — paths, `connect_dfp/itr/fre/...`, `parse_escala`, `_get_company_fingerprint()` (cache invalidation) |
 | `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ + `compute_all_ratios()` (wraps loop in `engine_cache_scope()`) |
@@ -172,16 +172,16 @@ force-syncs them BEFORE dispatching to the mode function.
 The first call of the day may take 30+ seconds (DFP sync); subsequent
 calls within 24h are fast.
 
-**Components (all in `skills/_base.py`):**
-- `ensure_fresh(sources, company, skip_sync, trace_id)` — main entry point
-- `_source_is_stale(source)` — reads `sync_state` timestamp, checks 24h window
+**Components (all in `skills/_base/` — `route.py` + `sync_guard.py`):**
+- `ensure_fresh(sources, company, skip_sync, trace_id)` — main entry point (in `sync_guard.py`)
+- `_source_is_stale(source)` — reads `sync_state` timestamp, checks 24h window (in `sync_guard.py`)
 - `_cvm_has_new_data(source, year)` — HEAD request to CVM URL, compares
-  `Last-Modified` header to last sync. Timeout=5s. On network error → sync.
+  `Last-Modified` header to last sync. Timeout=5s. On network error → sync. (in `sync_guard.py`)
 - `_trigger_sync(source, company, trace_id)` — maps source name to sync fn
-  with right args (current-year-only `force=True`, ticker-only for bridge)
+  with right args (current-year-only `force=True`, ticker-only for bridge) (in `sync_guard.py`)
 - `_SYNC_CHECKED` ContextVar — re-entrancy guard (nested route calls run
-  ensure_fresh at most once)
-- `_route_with_sync_guard()` — wraps sync check + dispatch in the guard
+  ensure_fresh at most once) (in `route.py`)
+- `_route_with_sync_guard()` — wraps sync check + dispatch in the guard (in `route.py`)
 
 **Force-sync args by source:**
 - DFP/ITR/FRE/IPE: `sync(years=[current_year], force=True)`
