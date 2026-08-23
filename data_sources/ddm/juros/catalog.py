@@ -14,11 +14,16 @@ DERIVED from the matrix at fetch-time (see fetcher.flatten_matrix_to_observation
 Storage: memory_db/ddm/juros.db (per-subdomain DB, mirrors the bcb/focus
 pattern of one DB per subdomain. Sits alongside inflation.db in the
 shared memory_db/ddm/ folder.)
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMCatalog). The shared ddm_data_dir() / connect() / ensure_schema()
+scaffold now lives in _base/catalog_base.py; this module keeps only the
+source-specific SCHEMA_SQL + JUROS_CATALOG + URL helper.
 """
 
 from __future__ import annotations
 
-API_BASE = "https://www.dadosdemercado.com.br"
+from data_sources.ddm._base.catalog_base import API_BASE, BaseDDMCatalog
 
 # Curated catalog of 3 juros indices.
 # Tuple shape: (name, category, description, unit)
@@ -76,77 +81,20 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def ddm_data_dir():
-    """Return the DDM juros data directory (creates it if missing).
+class _Catalog(BaseDDMCatalog):
+    """Juros-specific catalog config (DB_FILENAME, schema, JUROS_CATALOG)."""
 
-    Layout mirrors the bcb/sgs + bcb/focus per-subdomain DB convention:
-      memory_root/ddm/                (when core.config.cfg.memory_root is set)
-      memory_db/ddm/                  (fallback relative to cwd)
-
-    NOTE: juros.db lives in the SAME parent folder as inflation.db
-    (memory_db/ddm/) - both are per-subdomain DBs under the ddm domain
-    folder, not under their own subdomain folder.
-    """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    DB_FILENAME = "juros.db"
+    SOURCE_NAME = "juros"
+    SCHEMA_SQL = SCHEMA_SQL
+    INDEX_CATALOG = JUROS_CATALOG
+    CATALOG_TABLE = "juros_catalog"
 
 
-def db_path():
-    """Return the path to juros.db (in memory_db/ddm/juros.db)."""
-    return ddm_data_dir() / "juros.db"
-
-
-def connect(read_only: bool = True):
-    """Open a connection to juros.db.
-
-    read_only=True uses the SQLite URI mode=ro (fails if DB missing).
-    read_only=False opens (or creates) the DB for writes.
-    """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM juros database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create tables if they don't exist + populate juros_catalog.
-
-    Idempotent: INSERT OR REPLACE refreshes metadata on every sync.
-    """
-    conn.executescript(SCHEMA_SQL)
-    rows = [
-        (slug, meta[0], meta[1], meta[2], meta[3])
-        for slug, meta in JUROS_CATALOG.items()
-    ]
-    conn.executemany(
-        "INSERT OR REPLACE INTO juros_catalog "
-        "(slug, name, category, description, unit) "
-        "VALUES (?, ?, ?, ?, ?)",
-        rows,
-    )
-    conn.commit()
+# Re-export as module-level callables for backward compatibility.
+db_path = _Catalog.db_path
+connect = _Catalog.connect
+ensure_schema = _Catalog.ensure_schema
 
 
 def index_url(slug: str) -> str:

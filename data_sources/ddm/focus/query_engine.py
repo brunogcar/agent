@@ -310,7 +310,3 @@ def all_data() -> dict:
     finally:
         conn.close()
 
-
-def _unused_path() -> str:
-    """Expose db_path for diagnostics/tests (imported but not used in queries)."""
-    return str(db_path())

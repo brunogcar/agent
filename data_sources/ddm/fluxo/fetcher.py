@@ -20,19 +20,21 @@ CloudFront protection note: the /fluxo page is fronted by CloudFront and
 will reject requests with a non-browser User-Agent header. We send the
 full Chrome 127 header set (User-Agent + Accept + Accept-Language +
 Connection + Upgrade-Insecure-Requests) to match a real browser as
-closely as possible (mirrors the ddm/focus fetcher).
+closely as possible. NOTE: this is the BROWSER_HEADERS variant (without
+Accept-Encoding), distinct from CLOUDFRONT_HEADERS used by focus.
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMFetcher). The shared _cache / _cache_lock / _concurrency_semaphore
+scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
+in _base/fetcher_base.py; this module keeps only the parser functions
+(which are NOT shared) + a thin fetch_fluxo_page() wrapper.
 """
 
 from __future__ import annotations
 
 import re
-import sys
-import threading
-import time
-from datetime import datetime, timezone
 
-import httpx
-
+from data_sources.ddm._base.fetcher_base import BROWSER_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import (
     parse_br_date_iso,
     parse_br_number,
@@ -40,44 +42,11 @@ from data_sources.ddm._parsers import (
 )
 from data_sources.ddm.fluxo.catalog import fluxo_url
 
-# 5-minute cache TTL. Fluxo is published daily (after market close BRT),
-# so 5 min is well within the freshness window. Cache is single-key (one
-# page only, like ddm/focus).
-_CACHE_TTL = 300
 
-_cache: dict[str, tuple[object, float]] = {}
+class _Fetcher(BaseDDMFetcher):
+    """Fluxo-specific fetcher config (SOURCE_NAME for log/error prefix)."""
 
-# Thread-safety primitives (mirror ddm/focus fetcher):
-#   _cache_lock             - guards all reads/writes to the _cache dict
-#   _concurrency_semaphore  - caps in-flight HTTP requests
-_cache_lock = threading.Lock()
-_concurrency_semaphore = threading.Semaphore(5)
-
-# Full browser-like headers (Chrome 127 on Windows). CloudFront's WAF on
-# the /fluxo endpoint rejects bare or identifying bot UAs, so we send
-# the complete set of browser headers to look like a real browser.
-_BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/127.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/webp,*/*;q=0.8"
-    ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-}
-
-
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    SOURCE_NAME = "fluxo"
 
 
 def parse_fluxo_table(html: str) -> list[dict]:
@@ -163,44 +132,21 @@ def fetch_fluxo_page(force: bool = False) -> dict:
         {"status": "ok", "html": <str>, "synced_at": <iso>}
         On error: {"status": "error", "error": <str>}
 
-    The fetcher sends full browser-like headers (Chrome 127 on Windows) to
-    bypass the CloudFront WAF that guards the fluxo endpoint. The site
-    rejects bare or identifying bot UAs with a 403, so we use a complete
-    header set matching a real browser.
+    The fetcher sends full browser-like headers (Chrome 127 on Windows,
+    BROWSER_HEADERS variant without Accept-Encoding) to bypass the
+    CloudFront WAF that guards the fluxo endpoint. The site rejects bare
+    or identifying bot UAs with a 403, so we use a complete header set
+    matching a real browser.
     """
-    cache_key = "page:fluxo"
-
-    with _cache_lock:
-        if not force and cache_key in _cache:
-            data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL:
-                return data
-
-    url = fluxo_url()
-
-    _progress(f"[ddm.fluxo] Fetching fluxo page ({url})")
-
-    with _concurrency_semaphore:
-        try:
-            resp = httpx.get(url, headers=_BROWSER_HEADERS, timeout=30,
-                             follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return {"status": "error", "error": f"ddm.fluxo: {e}"}
-
-    html = resp.text
-    result = {
-        "status":    "ok",
-        "html":      html,
-        "synced_at": _now_iso(),
-    }
-
-    with _cache_lock:
-        _cache[cache_key] = (result, time.time())
-    return result
+    return _Fetcher.fetch_page(
+        url=fluxo_url(),
+        cache_key="page:fluxo",
+        headers=BROWSER_HEADERS,
+        slug=None,
+        force=force,
+    )
 
 
 def clear_cache():
     """Clear the in-memory cache (thread-safe)."""
-    with _cache_lock:
-        _cache.clear()
+    _Fetcher.clear_cache()

@@ -19,57 +19,32 @@ sync_engine.py stores parsed observations to focus.db.
 
 CloudFront protection note: the boletim-focus page is fronted by
 CloudFront and will reject requests with a non-browser User-Agent header.
-We send the full Chrome 127 header set (User-Agent + Accept + Accept-Language
-+ Accept-Encoding + Connection + Upgrade-Insecure-Requests) to match a real
-browser as closely as possible. This mirrors the headers used by the existing
-DDM scrapers but is more comprehensive (the CloudFront WAF rules on this
-endpoint are stricter than the /acoes and /indices endpoints).
+We send the full Chrome 127 header set (CLOUDFRONT_HEADERS, which includes
+Accept-Encoding) to match a real browser as closely as possible. This is
+a DISTINCT variant from the BROWSER_HEADERS used by fluxo (which omits
+Accept-Encoding).
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMFetcher). The shared _cache / _cache_lock / _concurrency_semaphore
+scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
+in _base/fetcher_base.py; this module keeps only the parser functions
+(which are NOT shared) + a thin fetch_focus_page() wrapper.
 """
 
 from __future__ import annotations
 
 import re
-import sys
-import threading
-import time
-from datetime import datetime, timezone
 
-import httpx
-
+from data_sources.ddm._base.fetcher_base import CLOUDFRONT_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import strip_html
 from data_sources.ddm.focus.catalog import focus_url
 
-# 5-minute cache TTL. Focus is published weekly (Friday afternoons BRT),
-# so 5 min is well within the freshness window. Cache is single-key (one
-# page only, unlike inflation/juros which have per-slug caches).
-_CACHE_TTL = 300
 
-_cache: dict[str, tuple[object, float]] = {}
+class _Fetcher(BaseDDMFetcher):
+    """Focus-specific fetcher config (SOURCE_NAME for log/error prefix)."""
 
-# Thread-safety primitives (mirror ddm/acoes fetcher):
-#   _cache_lock             - guards all reads/writes to the _cache dict
-#   _concurrency_semaphore  - caps in-flight HTTP requests
-_cache_lock = threading.Lock()
-_concurrency_semaphore = threading.Semaphore(5)
+    SOURCE_NAME = "focus"
 
-# Full browser-like headers (Chrome 127 on Windows). CloudFront's WAF on
-# the /boletim-focus endpoint rejects bare or identifying bot UAs, so we
-# send the complete set of browser headers to look like a real browser.
-_BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/127.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,"
-        "image/webp,*/*;q=0.8"
-    ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-}
 
 # Comparison-symbol -> normalized string mapping. The Focus page renders
 # the Comp. column with one of three Unicode glyphs:
@@ -81,19 +56,6 @@ _COMPARISON_MAP = {
     "down": "down",
     "flat": "flat",
 }
-
-
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _today_date() -> str:
-    """Return today's date as YYYY-MM-DD (local)."""
-    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _parse_int(s: str) -> int | None:
@@ -273,44 +235,21 @@ def fetch_focus_page(force: bool = False) -> dict:
         {"status": "ok", "html": <str>, "synced_at": <iso>}
         On error: {"status": "error", "error": <str>}
 
-    The fetcher sends full browser-like headers (Chrome 127 on Windows) to
-    bypass the CloudFront WAF that guards the boletim-focus endpoint. The
-    site rejects bare or identifying bot UAs with a 403, so we use a
-    complete header set matching a real browser.
+    The fetcher sends full browser-like headers (Chrome 127 on Windows,
+    CLOUDFRONT_HEADERS variant with Accept-Encoding) to bypass the
+    CloudFront WAF that guards the boletim-focus endpoint. The site
+    rejects bare or identifying bot UAs with a 403, so we use a complete
+    header set matching a real browser.
     """
-    cache_key = "page:focus"
-
-    with _cache_lock:
-        if not force and cache_key in _cache:
-            data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL:
-                return data
-
-    url = focus_url()
-
-    _progress(f"[ddm.focus] Fetching boletim-focus page ({url})")
-
-    with _concurrency_semaphore:
-        try:
-            resp = httpx.get(url, headers=_BROWSER_HEADERS, timeout=30,
-                             follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return {"status": "error", "error": f"ddm.focus: {e}"}
-
-    html = resp.text
-    result = {
-        "status":    "ok",
-        "html":      html,
-        "synced_at": _now_iso(),
-    }
-
-    with _cache_lock:
-        _cache[cache_key] = (result, time.time())
-    return result
+    return _Fetcher.fetch_page(
+        url=focus_url(),
+        cache_key="page:focus",
+        headers=CLOUDFRONT_HEADERS,
+        slug=None,
+        force=force,
+    )
 
 
 def clear_cache():
     """Clear the in-memory cache (thread-safe)."""
-    with _cache_lock:
-        _cache.clear()
+    _Fetcher.clear_cache()

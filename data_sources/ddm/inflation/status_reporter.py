@@ -2,28 +2,29 @@
 
 Mirrors the bcb/sgs status_reporter pattern: a single status() function that
 returns DB path, size, per-index row counts, and last-sync timestamps.
+
+[Phase 3, Commit 1] Refactored to inherit from
+`data_sources/ddm/_base/status_base.py` (BaseDDMStatusReporter). The shared
+path-check + connect + try/except + finally scaffold now lives in
+_base/status_base.py; this module keeps only the source-specific
+queries (per-index loop over INDEX_CATALOG).
 """
 
 from __future__ import annotations
 
+from data_sources.ddm._base.status_base import BaseDDMStatusReporter
 from data_sources.ddm.inflation.catalog import (
     INDEX_CATALOG, connect, db_path,
 )
 
 
-def status() -> dict:
-    """Show inflation.db stats: per-index row counts + last sync timestamps."""
-    path = db_path()
-    if not path.exists():
-        return {"status": "not_synced",
-                "message": "inflation.db not found. Run sync_all first."}
+class _StatusReporter(BaseDDMStatusReporter):
+    """Inflation-specific status reporter (SOURCE_NAME for not_synced msg)."""
 
-    try:
-        conn = connect(read_only=True)
-    except FileNotFoundError:
-        return {"status": "not_synced", "message": "inflation.db not found."}
+    SOURCE_NAME = "inflation"
 
-    try:
+    @classmethod
+    def _build_status_dict(cls, conn, path, db_size_kb: float) -> dict:
         total_rows = conn.execute(
             "SELECT COUNT(*) as n FROM index_observations"
         ).fetchone()["n"]
@@ -52,15 +53,15 @@ def status() -> dict:
             })
 
         return {
-            "status":       "ok",
-            "path":         str(path),
-            "db_size_kb":   round(path.stat().st_size / 1024, 1),
+            "status":        "ok",
+            "path":          str(path),
+            "db_size_kb":    db_size_kb,
             "indices_count": len(INDEX_CATALOG),
-            "total_rows":   total_rows,
-            "indices":      per_index,
+            "total_rows":    total_rows,
+            "indices":       per_index,
         }
-    except Exception:
-        return {"status": "not_synced",
-                "message": "DB exists but tables not created. Run sync_all."}
-    finally:
-        conn.close()
+
+
+def status() -> dict:
+    """Show inflation.db stats: per-index row counts + last sync timestamps."""
+    return _StatusReporter.status(db_path, connect)

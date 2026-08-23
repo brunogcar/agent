@@ -183,3 +183,40 @@ No new third-party packages required.
 
 - [`API.md`](API.md) — 8-mode reference.
 - [`INSTRUCTIONS.md`](INSTRUCTIONS.md) — NEVER DO + ALWAYS DO rules.
+
+
+## Shared infrastructure (`_base/`)
+
+[Phase 3, Commit 1] The shared scaffolding (ddm_data_dir, connect,
+ensure_schema, fetcher cache/concurrency/HTTP, sync_engine patterns,
+status_reporter scaffold, route() dispatcher) was extracted to
+[`data_sources/ddm/_base/`](../../_base/ARCHITECTURE.md). This module
+keeps only the source-specific code:
+
+- **catalog.py**: SCHEMA_SQL + URL helpers (+ INDEX_CATALOG for multi-page
+  sources). The `db_path` / `connect` / `ensure_schema` module-level
+  callables are now thin wrappers over `BaseDDMCatalog` classmethods.
+- **fetcher.py**: HTML parser functions (NOT shared — each source has its
+  own table shape) + a thin `fetch_<src>_page()` wrapper that calls
+  `BaseDDMFetcher.fetch_page()` with the right URL, cache_key, and
+  headers (`BOT_HEADERS` for acoes/dividends/inflation/juros/poupanca;
+  `BROWSER_HEADERS` for fluxo; `CLOUDFRONT_HEADERS` for focus).
+- **sync_engine.py**: per-source config (INSERT SQL, row mapper, B4
+  full-refresh flag, last_date computation) + the `sync_index()` entry
+  point. The `sync_all()` body delegates to
+  `BaseDDMSyncEngine.sync_single_page()` (single-page sources) or
+  `BaseDDMSyncEngine.sync_multi_page()` (multi-page sources).
+- **status_reporter.py**: source-specific queries in
+  `_StatusReporter._build_status_dict()`. The path-check + connect +
+  try/except + finally scaffold lives in `BaseDDMStatusReporter.status()`.
+- **__init__.py**: MANIFEST (source-specific) + `_MODE_MAP` (a
+  `{mode: (module_path, function_name)}` dict) + a
+  `route = make_ddm_route(...)` call. The route() dispatcher logic lives
+  in `make_ddm_route()`.
+
+The `_base/` package is excluded from sub-domain auto-discovery (the hub
+skips directories starting with `_`), so it does NOT register a
+sub-domain MANIFEST.
+
+See [`docs/data_sources/ddm/_base/ARCHITECTURE.md`](../../_base/ARCHITECTURE.md)
+for the full `_base/` package reference.

@@ -221,7 +221,3 @@ def stocks(order_by: str = "negocios", direction: str = "desc",
     """
     return stocks_list(order_by=order_by, direction=direction, limit=limit)
 
-
-def _unused_path() -> str:
-    """Expose db_path for diagnostics/tests (imported but not used in queries)."""
-    return str(db_path())

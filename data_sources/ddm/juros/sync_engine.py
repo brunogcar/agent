@@ -10,41 +10,51 @@ Two sync entry points:
 
 Idempotency: uses INSERT OR REPLACE on (slug, ref_date) primary key.
 Re-syncing an index replaces existing rows rather than appending duplicates.
+
+[Phase 3, Commit 1] Refactored to delegate to `data_sources/ddm/_base/`
+(BaseDDMSyncEngine.sync_multi_page). The TPE + as_completed + sequential
+DB-write pattern now lives in _base/sync_base.py; this module keeps only
+the per-source config (JUROS_CATALOG, fetcher fn, parser pipeline,
+INSERT SQL, row mapper) + the sync_index() entry point (which has
+juros-specific slug validation + the matrix-flatten pipeline).
 """
 
 from __future__ import annotations
 
-import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
-
+from data_sources.ddm._base.sync_base import BaseDDMSyncEngine
 from data_sources.ddm.juros.catalog import (
     JUROS_CATALOG, connect, ensure_schema,
 )
 from data_sources.ddm.juros.fetcher import (
-    fetch_juros_page, parse_matrix_only, flatten_matrix_to_observations,
+    fetch_juros_page, flatten_matrix_to_observations, parse_matrix_only,
 )
 
 
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+class _SyncEngine(BaseDDMSyncEngine):
+    """Juros-specific sync engine config (SOURCE_NAME for log prefix)."""
+
+    SOURCE_NAME = "juros"
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# SQL + row mapper shared by sync_index + sync_all.
+_INSERT_SQL = (
+    "INSERT OR REPLACE INTO juros_observations "
+    "(slug, ref_date, month_value, media_no_ano, media_12m, synced_at) "
+    "VALUES (?, ?, ?, ?, ?, ?)"
+)
 
 
-def _record_sync_state(conn, slug: str, observations: list[dict], now: str) -> None:
-    """Write (or update) the sync_state row for an index."""
-    last_date = ""
-    if observations:
-        last_date = max(o.get("ref_date", "") for o in observations)
-    conn.execute(
-        "INSERT OR REPLACE INTO sync_state "
-        "(slug, last_date, synced_at, row_count) "
-        "VALUES (?, ?, ?, ?)",
-        (slug, last_date, now, len(observations)),
+def _row_mapper(obs: dict, slug: str, now: str) -> tuple:
+    return (
+        slug, obs["ref_date"], obs.get("month_value"),
+        obs.get("media_no_ano"), obs.get("media_12m"), now,
     )
+
+
+def _parse_pipeline(html: str) -> list[dict]:
+    """juros pipeline: parse_matrix_only -> flatten_matrix_to_observations."""
+    matrix = parse_matrix_only(html)
+    return flatten_matrix_to_observations(matrix)
 
 
 def sync_index(slug: str, force: bool = False) -> dict:
@@ -70,30 +80,28 @@ def sync_index(slug: str, force: bool = False) -> dict:
     if page.get("status") != "ok":
         return page
 
-    matrix = parse_matrix_only(page.get("html", ""))
-    observations = flatten_matrix_to_observations(matrix)
-    now = _now()
+    observations = _parse_pipeline(page.get("html", ""))
+    now = _SyncEngine._now()
 
     conn = connect(read_only=False)
     ensure_schema(conn)
     try:
-        rows = [
-            (slug, obs["ref_date"], obs.get("month_value"),
-             obs.get("media_no_ano"), obs.get("media_12m"), now)
-            for obs in observations
-        ]
-        conn.executemany(
-            "INSERT OR REPLACE INTO juros_observations "
-            "(slug, ref_date, month_value, media_no_ano, media_12m, synced_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            rows,
+        rows = [_row_mapper(obs, slug, now) for obs in observations]
+        conn.executemany(_INSERT_SQL, rows)
+        last_date = ""
+        if observations:
+            last_date = max((o.get("ref_date", "") for o in observations),
+                            default="")
+        _SyncEngine._record_sync_state(
+            conn, slug, last_date, len(observations), now,
         )
-        _record_sync_state(conn, slug, observations, now)
         conn.commit()
     finally:
         conn.close()
 
-    _progress(f"[ddm.juros] Index {slug}: {len(rows)} observations derived + synced")
+    _SyncEngine._progress(
+        f"[ddm.juros] Index {slug}: {len(rows)} observations derived + synced"
+    )
     return {"status": "ok", "slug": slug, "rows": len(rows), "synced_at": now}
 
 
@@ -108,76 +116,13 @@ def sync_all(force: bool = False) -> dict:
          "indices_failed": <int>, "rows_total": <int>,
          "results": {slug: sync_result, ...}}
     """
-    slugs = list(JUROS_CATALOG.keys())
-    now = _now()
-
-    index_synced = 0
-    index_failed = 0
-    rows_total = 0
-    per_index: dict[str, dict] = {}
-
-    # Concurrent fetch + parse, then sequential DB writes (single connection).
-    fetch_results: dict[str, list[dict]] = {}
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_slug = {
-            executor.submit(fetch_juros_page, slug, force): slug
-            for slug in slugs
-        }
-        for future in as_completed(future_to_slug):
-            slug = future_to_slug[future]
-            try:
-                page = future.result()
-            except Exception as e:
-                fetch_results[slug] = []
-                per_index[slug] = {"status": "error", "slug": slug,
-                                   "error": str(e)}
-                index_failed += 1
-                continue
-            if page.get("status") != "ok":
-                fetch_results[slug] = []
-                per_index[slug] = page
-                index_failed += 1
-                continue
-            matrix = parse_matrix_only(page.get("html", ""))
-            fetch_results[slug] = flatten_matrix_to_observations(matrix)
-
-    conn = connect(read_only=False)
-    ensure_schema(conn)
-    try:
-        for slug, observations in fetch_results.items():
-            if not observations and slug not in per_index:
-                # Already errored above; skip.
-                continue
-            if slug in per_index and per_index[slug].get("status") == "error":
-                continue
-            rows = [
-                (slug, obs["ref_date"], obs.get("month_value"),
-                 obs.get("media_no_ano"), obs.get("media_12m"), now)
-                for obs in observations
-            ]
-            conn.executemany(
-                "INSERT OR REPLACE INTO juros_observations "
-                "(slug, ref_date, month_value, media_no_ano, media_12m, synced_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                rows,
-            )
-            _record_sync_state(conn, slug, observations, now)
-            index_synced += 1
-            rows_total += len(rows)
-            per_index[slug] = {"status": "ok", "slug": slug,
-                               "rows": len(rows), "synced_at": now}
-        conn.commit()
-    finally:
-        conn.close()
-
-    status = "ok" if index_failed == 0 else "partial"
-    _progress(f"[ddm.juros] sync_all: {index_synced}/{len(slugs)} indices, "
-              f"{rows_total} total rows ({index_failed} failed)")
-    return {
-        "status":         status,
-        "indices_synced": index_synced,
-        "indices_failed": index_failed,
-        "rows_total":     rows_total,
-        "results":        per_index,
-        "synced_at":      now,
-    }
+    return _SyncEngine.sync_multi_page(
+        catalog=JUROS_CATALOG,
+        fetch_fn=fetch_juros_page,
+        parse_pipeline_fn=_parse_pipeline,
+        connect_fn=connect,
+        ensure_schema_fn=ensure_schema,
+        insert_sql=_INSERT_SQL,
+        row_mapper=_row_mapper,
+        force=force,
+    )

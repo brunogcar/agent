@@ -2,28 +2,29 @@
 
 Mirrors the ddm/focus status_reporter pattern: a single status() function
 that returns DB path, size, row count, date range, and last-sync timestamp.
+
+[Phase 3, Commit 1] Refactored to inherit from
+`data_sources/ddm/_base/status_base.py` (BaseDDMStatusReporter). The shared
+path-check + connect + try/except + finally scaffold now lives in
+_base/status_base.py; this module keeps only the source-specific
+queries (COUNT(*) + sync_state + MIN/MAX(ref_date)).
 """
 
 from __future__ import annotations
 
+from data_sources.ddm._base.status_base import BaseDDMStatusReporter
 from data_sources.ddm.fluxo.catalog import (
     connect, db_path,
 )
 
 
-def status() -> dict:
-    """Show fluxo.db stats: row count + date range + last sync."""
-    path = db_path()
-    if not path.exists():
-        return {"status": "not_synced",
-                "message": "fluxo.db not found. Run sync_all first."}
+class _StatusReporter(BaseDDMStatusReporter):
+    """Fluxo-specific status reporter (SOURCE_NAME for not_synced msg)."""
 
-    try:
-        conn = connect(read_only=True)
-    except FileNotFoundError:
-        return {"status": "not_synced", "message": "fluxo.db not found."}
+    SOURCE_NAME = "fluxo"
 
-    try:
+    @classmethod
+    def _build_status_dict(cls, conn, path, db_size_kb: float) -> dict:
         total_rows = conn.execute(
             "SELECT COUNT(*) as n FROM fluxo_observations"
         ).fetchone()["n"]
@@ -41,7 +42,7 @@ def status() -> dict:
         return {
             "status":       "ok",
             "path":         str(path),
-            "db_size_kb":   round(path.stat().st_size / 1024, 1),
+            "db_size_kb":   db_size_kb,
             "total_rows":   total_rows,
             "first_date":   range_row["first_date"] if range_row else "",
             "last_date":    (sync_row["last_date"] if sync_row else
@@ -49,8 +50,8 @@ def status() -> dict:
             "last_sync":    sync_row["synced_at"] if sync_row else "",
             "synced_rows":  sync_row["row_count"] if sync_row else 0,
         }
-    except Exception:
-        return {"status": "not_synced",
-                "message": "DB exists but tables not created. Run sync_all."}
-    finally:
-        conn.close()
+
+
+def status() -> dict:
+    """Show fluxo.db stats: row count + date range + last sync."""
+    return _StatusReporter.status(db_path, connect)

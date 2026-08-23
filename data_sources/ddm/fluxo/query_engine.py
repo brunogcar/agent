@@ -478,7 +478,3 @@ def _month_label(month: str) -> str:
         pass
     return month
 
-
-def _unused_path() -> str:
-    """Expose db_path for diagnostics/tests (imported but not used in queries)."""
-    return str(db_path())

@@ -14,18 +14,19 @@ Handles:
 
 NO local database writes - this module only fetches + parses.
 sync_engine.py stores parsed stocks to acoes.db.
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMFetcher). The shared _cache / _cache_lock / _concurrency_semaphore
+scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
+in _base/fetcher_base.py; this module keeps only the parser functions
+(which are NOT shared) + a thin fetch_acoes_page() wrapper.
 """
 
 from __future__ import annotations
 
 import re
-import sys
-import threading
-import time
-from datetime import datetime, timezone
 
-import httpx
-
+from data_sources.ddm._base.fetcher_base import BOT_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import (
     parse_br_int,
     parse_br_number,
@@ -34,31 +35,11 @@ from data_sources.ddm._parsers import (
 )
 from data_sources.ddm.acoes.catalog import acoes_url
 
-# 5-minute cache TTL. Stock prices change intraday but the auto-sync guard
-# already enforces a 24h freshness window; the in-memory cache prevents
-# redundant fetches within a single dashboard run.
-_CACHE_TTL = 300
 
-_cache: dict[str, tuple[object, float]] = {}
+class _Fetcher(BaseDDMFetcher):
+    """Acoes-specific fetcher config (SOURCE_NAME for log/error prefix)."""
 
-# Thread-safety primitives (mirror ddm/inflation fetcher):
-#   _cache_lock             - guards all reads/writes to the _cache dict
-#   _concurrency_semaphore  - caps in-flight HTTP requests
-_cache_lock = threading.Lock()
-_concurrency_semaphore = threading.Semaphore(5)
-
-
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _today_date() -> str:
-    """Return today's date as YYYY-MM-DD (local)."""
-    return datetime.now().strftime("%Y-%m-%d")
+    SOURCE_NAME = "acoes"
 
 
 def parse_stocks_table(html: str) -> list[dict]:
@@ -148,42 +129,15 @@ def fetch_acoes_page(force: bool = False) -> dict:
         {"status": "ok", "html": <str>, "synced_at": <iso>}
         On error: {"status": "error", "error": <str>}
     """
-    cache_key = "page:acoes"
-
-    with _cache_lock:
-        if not force and cache_key in _cache:
-            data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL:
-                return data
-
-    url = acoes_url()
-    headers = {
-        "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 (compatible; ddm-fetcher/1.0)",
-    }
-
-    _progress(f"[ddm.acoes] Fetching acoes page ({url})")
-
-    with _concurrency_semaphore:
-        try:
-            resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return {"status": "error", "error": f"ddm.acoes: {e}"}
-
-    html = resp.text
-    result = {
-        "status":    "ok",
-        "html":      html,
-        "synced_at": _now_iso(),
-    }
-
-    with _cache_lock:
-        _cache[cache_key] = (result, time.time())
-    return result
+    return _Fetcher.fetch_page(
+        url=acoes_url(),
+        cache_key="page:acoes",
+        headers=BOT_HEADERS,
+        slug=None,
+        force=force,
+    )
 
 
 def clear_cache():
     """Clear the in-memory cache (thread-safe)."""
-    with _cache_lock:
-        _cache.clear()
+    _Fetcher.clear_cache()

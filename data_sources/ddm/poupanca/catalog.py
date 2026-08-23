@@ -19,11 +19,16 @@ return. This matches the analyst's Google Sheet layout.
 Storage: memory_db/ddm/poupanca.db (per-subdomain DB, mirrors the juros +
 inflation pattern of one DB per subdomain. Sits alongside inflation.db +
 juros.db in the shared memory_db/ddm/ folder.)
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMCatalog). The shared ddm_data_dir() / connect() / ensure_schema()
+scaffold now lives in _base/catalog_base.py; this module keeps only the
+source-specific SCHEMA_SQL + POUPANCA_CATALOG + URL helper.
 """
 
 from __future__ import annotations
 
-API_BASE = "https://www.dadosdemercado.com.br"
+from data_sources.ddm._base.catalog_base import API_BASE, BaseDDMCatalog
 
 # Curated catalog of 1 poupanca index.
 # Tuple shape: (name, category, description, unit)
@@ -72,79 +77,20 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def ddm_data_dir():
-    """Return the DDM poupanca data directory (creates it if missing).
+class _Catalog(BaseDDMCatalog):
+    """Poupanca-specific catalog config (DB_FILENAME, schema, POUPANCA_CATALOG)."""
 
-    Layout mirrors the bcb/sgs + bcb/focus + ddm/juros per-subdomain DB
-    convention:
-      memory_root/ddm/                (when core.config.cfg.memory_root is set)
-      memory_db/ddm/                  (fallback relative to cwd)
-
-    NOTE: poupanca.db lives in the SAME parent folder as inflation.db +
-    juros.db (memory_db/ddm/) - all are per-subdomain DBs under the ddm
-    domain folder, not under their own subdomain folder. This keeps the
-    ddm folder tidy (inflation.db + juros.db + poupanca.db side-by-side).
-    """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    DB_FILENAME = "poupanca.db"
+    SOURCE_NAME = "poupanca"
+    SCHEMA_SQL = SCHEMA_SQL
+    INDEX_CATALOG = POUPANCA_CATALOG
+    CATALOG_TABLE = "poupanca_catalog"
 
 
-def db_path():
-    """Return the path to poupanca.db (in memory_db/ddm/poupanca.db)."""
-    return ddm_data_dir() / "poupanca.db"
-
-
-def connect(read_only: bool = True):
-    """Open a connection to poupanca.db.
-
-    read_only=True uses the SQLite URI mode=ro (fails if DB missing).
-    read_only=False opens (or creates) the DB for writes.
-    """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM poupanca database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create tables if they don't exist + populate poupanca_catalog.
-
-    Idempotent: INSERT OR REPLACE refreshes metadata on every sync.
-    """
-    conn.executescript(SCHEMA_SQL)
-    rows = [
-        (slug, meta[0], meta[1], meta[2], meta[3])
-        for slug, meta in POUPANCA_CATALOG.items()
-    ]
-    conn.executemany(
-        "INSERT OR REPLACE INTO poupanca_catalog "
-        "(slug, name, category, description, unit) "
-        "VALUES (?, ?, ?, ?, ?)",
-        rows,
-    )
-    conn.commit()
+# Re-export as module-level callables for backward compatibility.
+db_path = _Catalog.db_path
+connect = _Catalog.connect
+ensure_schema = _Catalog.ensure_schema
 
 
 def index_url(slug: str) -> str:

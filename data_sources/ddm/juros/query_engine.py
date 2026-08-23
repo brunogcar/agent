@@ -214,7 +214,3 @@ def summary() -> dict:
     ]
     return {"status": "ok", "count": len(indices), "indices": indices}
 
-
-def _unused_path() -> str:
-    """Expose db_path for diagnostics/tests (imported but not used in queries)."""
-    return str(db_path())

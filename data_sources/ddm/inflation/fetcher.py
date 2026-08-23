@@ -13,18 +13,19 @@ Handles:
 
 NO local database writes - this module only fetches + parses.
 sync_engine.py stores parsed observations to inflation.db.
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMFetcher). The shared _cache / _cache_lock / _concurrency_semaphore
+scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
+in _base/fetcher_base.py; this module keeps only the parser functions
+(which are NOT shared) + a thin fetch_index_page() wrapper.
 """
 
 from __future__ import annotations
 
 import re
-import sys
-import threading
-import time
-from datetime import datetime, timezone
 
-import httpx
-
+from data_sources.ddm._base.fetcher_base import BOT_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import (
     parse_br_number,
     parse_mes_ano,
@@ -32,26 +33,26 @@ from data_sources.ddm._parsers import (
 )
 from data_sources.ddm.inflation.catalog import index_url
 
-# 5-minute cache TTL. DDM publishes monthly series once per month, so 5 min
-# is well within the freshness window. Cache is per-slug.
-_CACHE_TTL = 300
 
-_cache: dict[str, tuple[object, float]] = {}
+class _Fetcher(BaseDDMFetcher):
+    """Inflation-specific fetcher config (SOURCE_NAME for log/error prefix)."""
 
-# Thread-safety primitives (mirror bcb/sgs fetcher):
-#   _cache_lock             - guards all reads/writes to the _cache dict
-#   _concurrency_semaphore  - caps in-flight HTTP requests (DDM has no
-#                             documented rate limit; this is conservative)
-_cache_lock = threading.Lock()
-_concurrency_semaphore = threading.Semaphore(5)
+    SOURCE_NAME = "inflation"
 
 
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# Re-export the parser helpers (imported from _parsers.py) in this module's
+# namespace so existing tests `from data_sources.ddm.inflation.fetcher
+# import parse_br_number, parse_mes_ano` keep working.
+__all__ = [
+    "parse_br_number",
+    "parse_mes_ano",
+    "strip_html",
+    "_parse_data_value",
+    "parse_historical_table",
+    "parse_monthly_matrix",
+    "fetch_index_page",
+    "clear_cache",
+]
 
 
 def _parse_data_value(td: str) -> float | None:
@@ -197,44 +198,15 @@ def fetch_index_page(slug: str, force: bool = False) -> dict:
     Returns:
         {"status": "ok", "slug": <str>, "html": <str>, "synced_at": <iso>}
     """
-    cache_key = f"page:{slug}"
-
-    with _cache_lock:
-        if not force and cache_key in _cache:
-            data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL:
-                return data
-
-    url = index_url(slug)
-    headers = {
-        "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 (compatible; ddm-fetcher/1.0)",
-    }
-
-    _progress(f"[ddm.inflation] Fetching index page {slug} ({url})")
-
-    with _concurrency_semaphore:
-        try:
-            resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return {"status": "error", "slug": slug,
-                    "error": f"ddm.inflation: {e}"}
-
-    html = resp.text
-    result = {
-        "status":    "ok",
-        "slug":      slug,
-        "html":      html,
-        "synced_at": _now_iso(),
-    }
-
-    with _cache_lock:
-        _cache[cache_key] = (result, time.time())
-    return result
+    return _Fetcher.fetch_page(
+        url=index_url(slug),
+        cache_key=f"page:{slug}",
+        headers=BOT_HEADERS,
+        slug=slug,
+        force=force,
+    )
 
 
 def clear_cache():
     """Clear the in-memory cache (thread-safe)."""
-    with _cache_lock:
-        _cache.clear()
+    _Fetcher.clear_cache()

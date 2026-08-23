@@ -259,7 +259,3 @@ def _today_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-
-def _unused_path() -> str:
-    """Expose db_path for diagnostics/tests (imported but not used in queries)."""
-    return str(db_path())

@@ -8,11 +8,16 @@ Each index has its own page at /indices/{slug} with 2 HTML tables:
 
 Storage: memory_db/ddm/inflation.db (per-subdomain DB in the DDM base folder)
 the bcb/focus pattern of one DB per subdomain).
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMCatalog). The shared ddm_data_dir() / connect() / ensure_schema()
+scaffold now lives in _base/catalog_base.py; this module keeps only the
+source-specific SCHEMA_SQL + INDEX_CATALOG + URL helper.
 """
 
 from __future__ import annotations
 
-API_BASE = "https://www.dadosdemercado.com.br"
+from data_sources.ddm._base.catalog_base import API_BASE, BaseDDMCatalog
 
 # Curated catalog of 3 inflation indices.
 # Tuple shape: (name, category, description, unit)
@@ -67,73 +72,22 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def ddm_data_dir():
-    """Return the DDM base data directory (creates it if missing).
+class _Catalog(BaseDDMCatalog):
+    """Inflation-specific catalog config (DB_FILENAME, schema, INDEX_CATALOG)."""
 
-    [v5] All DDM DBs live in the SAME base folder (memory_db/ddm/), not
-    per-subdomain subfolders. So inflation.db, stocks.db, funds.db, etc.
-    all sit side-by-side in memory_db/ddm/.
-    """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    DB_FILENAME = "inflation.db"
+    SOURCE_NAME = "inflation"
+    SCHEMA_SQL = SCHEMA_SQL
+    INDEX_CATALOG = INDEX_CATALOG
+    CATALOG_TABLE = "index_catalog"
 
 
-def db_path():
-    """Return the path to inflation.db."""
-    return ddm_data_dir() / "inflation.db"
-
-
-def connect(read_only: bool = True):
-    """Open a connection to inflation.db.
-
-    read_only=True uses the SQLite URI mode=ro (fails if DB missing).
-    read_only=False opens (or creates) the DB for writes.
-    """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM inflation database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create tables if they don't exist + populate index_catalog.
-
-    Idempotent: INSERT OR REPLACE refreshes metadata on every sync.
-    """
-    conn.executescript(SCHEMA_SQL)
-    rows = [
-        (slug, meta[0], meta[1], meta[2], meta[3])
-        for slug, meta in INDEX_CATALOG.items()
-    ]
-    conn.executemany(
-        "INSERT OR REPLACE INTO index_catalog "
-        "(slug, name, category, description, unit) "
-        "VALUES (?, ?, ?, ?, ?)",
-        rows,
-    )
-    conn.commit()
+# Re-export as module-level callables for backward compatibility.
+# (sync_engine.py, status_reporter.py, query_engine.py, and
+# skills/_freshness.py all import `connect`, `db_path`, `ensure_schema`.)
+db_path = _Catalog.db_path
+connect = _Catalog.connect
+ensure_schema = _Catalog.ensure_schema
 
 
 def index_url(slug: str) -> str:

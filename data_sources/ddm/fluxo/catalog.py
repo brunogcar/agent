@@ -21,11 +21,16 @@ cumulative monthly/annual views).
 Storage: memory_db/ddm/fluxo.db (per-subdomain DB in the DDM base folder,
 mirroring ddm/focus.db + ddm/acoes.db + ddm/juros.db + ddm/poupanca.db +
 ddm/inflation/inflation.db side-by-side layout).
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMCatalog). The shared ddm_data_dir() / connect() / ensure_schema()
+scaffold now lives in _base/catalog_base.py; this module keeps only the
+source-specific SCHEMA_SQL + FLUXO_URL + URL helper.
 """
 
 from __future__ import annotations
 
-API_BASE = "https://www.dadosdemercado.com.br"
+from data_sources.ddm._base.catalog_base import API_BASE, BaseDDMCatalog
 
 # Canonical URL for the Fluxo page. Single page, no slug substitution.
 FLUXO_URL = f"{API_BASE}/fluxo"
@@ -67,64 +72,21 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def ddm_data_dir():
-    """Return the DDM base data directory (creates it if missing).
+class _Catalog(BaseDDMCatalog):
+    """Fluxo-specific catalog config (DB_FILENAME, schema; no INDEX_CATALOG)."""
 
-    All DDM DBs live in the SAME base folder (memory_db/ddm/), not
-    per-subdomain subfolders. So inflation.db, acoes.db, juros.db,
-    poupanca.db, focus.db, and fluxo.db all sit side-by-side in
-    memory_db/ddm/.
-    """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    DB_FILENAME = "fluxo.db"
+    SOURCE_NAME = "fluxo"
+    SCHEMA_SQL = SCHEMA_SQL
+    # Single-page source: no INDEX_CATALOG, no CATALOG_TABLE.
+    INDEX_CATALOG = {}
+    CATALOG_TABLE = ""
 
 
-def db_path():
-    """Return the path to fluxo.db."""
-    return ddm_data_dir() / "fluxo.db"
-
-
-def connect(read_only: bool = True):
-    """Open a connection to fluxo.db.
-
-    read_only=True uses the SQLite URI mode=ro (fails if DB missing).
-    read_only=False opens (or creates) the DB for writes.
-    """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM fluxo database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create tables if they don't exist.
-
-    Idempotent: CREATE TABLE IF NOT EXISTS is safe to re-run.
-    """
-    conn.executescript(SCHEMA_SQL)
-    conn.commit()
+# Re-export as module-level callables for backward compatibility.
+db_path = _Catalog.db_path
+connect = _Catalog.connect
+ensure_schema = _Catalog.ensure_schema
 
 
 def fluxo_url() -> str:

@@ -37,7 +37,8 @@ __init__.py + MANIFEST + route() is picked up automatically).
 """
 
 from __future__ import annotations
-import inspect
+
+from data_sources.ddm._base.route_base import make_ddm_route
 
 MANIFEST = {
     "sub_domain":  "poupanca",
@@ -147,47 +148,20 @@ MANIFEST = {
 }
 
 
-def route(mode: str = "", **kwargs) -> dict:
-    """Dispatch poupanca mode call (sgs pattern: lazy-import + filter kwargs)."""
-    if not mode:
-        return {"status": "error",
-                "error": f"mode required. Options: {list(MANIFEST['modes'].keys())}"}
-    if mode not in MANIFEST["modes"]:
-        return {"status": "error",
-                "error": f"Unknown mode '{mode}'. Available: {list(MANIFEST['modes'].keys())}"}
+# mode -> (module_path, function_name) lazy-import map.
+_MODE_MAP = {
+    "sync_all":   ("data_sources.ddm.poupanca.sync_engine",     "sync_all"),
+    "sync_index": ("data_sources.ddm.poupanca.sync_engine",     "sync_index"),
+    "series":     ("data_sources.ddm.poupanca.query_engine",    "poupanca_history"),
+    "last":       ("data_sources.ddm.poupanca.query_engine",    "last_value"),
+    "matrix":     ("data_sources.ddm.poupanca.query_engine",    "monthly_matrix"),
+    "search":     ("data_sources.ddm.poupanca.query_engine",    "search"),
+    "summary":    ("data_sources.ddm.poupanca.query_engine",    "summary"),
+    "status":     ("data_sources.ddm.poupanca.status_reporter", "status"),
+}
 
-    try:
-        if mode == "sync_all":
-            from data_sources.ddm.poupanca.sync_engine import sync_all as _fn
-        elif mode == "sync_index":
-            from data_sources.ddm.poupanca.sync_engine import sync_index as _fn
-        elif mode == "series":
-            from data_sources.ddm.poupanca.query_engine import poupanca_history as _fn
-        elif mode == "last":
-            from data_sources.ddm.poupanca.query_engine import last_value as _fn
-        elif mode == "matrix":
-            from data_sources.ddm.poupanca.query_engine import monthly_matrix as _fn
-        elif mode == "search":
-            from data_sources.ddm.poupanca.query_engine import search as _fn
-        elif mode == "summary":
-            from data_sources.ddm.poupanca.query_engine import summary as _fn
-        elif mode == "status":
-            from data_sources.ddm.poupanca.status_reporter import status as _fn
-        else:
-            return {"status": "error", "error": f"Mode '{mode}' not implemented."}
-
-        sig = inspect.signature(_fn)
-        filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
-        return _fn(**filtered)
-
-    except FileNotFoundError as e:
-        return {"status": "not_synced", "error": str(e)}
-    except Exception as e:
-        import traceback
-        return {
-            "status":     "error",
-            "sub_domain": "poupanca",
-            "mode":       mode,
-            "error":      str(e),
-            "traceback":  traceback.format_exc(),
-        }
+route = make_ddm_route(
+    sub_domain="poupanca",
+    mode_map=_MODE_MAP,
+    manifest=MANIFEST,
+)

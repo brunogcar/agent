@@ -10,11 +10,16 @@ Tipos:   Dividendo | JCP (Juros sobre Capital Proprio)
 Storage: memory_db/ddm/dividends.db (per-subdomain DB, mirrors the
 bcb/focus + ddm/juros + ddm/poupanca pattern of one DB per subdomain.
 Sits alongside inflation.db / juros.db / poupanca.db in memory_db/ddm/.)
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMCatalog). The shared ddm_data_dir() / connect() / ensure_schema()
+scaffold now lives in _base/catalog_base.py; this module keeps only the
+source-specific SCHEMA_SQL + DIVIDENDS_URL + TIPOS + SORT_KEYS.
 """
 
 from __future__ import annotations
 
-API_BASE = "https://www.dadosdemercado.com.br"
+from data_sources.ddm._base.catalog_base import API_BASE, BaseDDMCatalog
 
 DIVIDENDS_URL = f"{API_BASE}/agenda-de-dividendos"
 
@@ -58,60 +63,18 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def ddm_data_dir():
-    """Return the DDM base data directory (creates it if missing).
+class _Catalog(BaseDDMCatalog):
+    """Dividends-specific catalog config (DB_FILENAME, schema; no INDEX_CATALOG)."""
 
-    Mirrors ddm/inflation/juros/poupanca: all DDM DBs live in the SAME
-    base folder (memory_db/ddm/), not per-subdomain subfolders.
-    dividends.db sits side-by-side with inflation.db, juros.db, poupanca.db.
-    """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    DB_FILENAME = "dividends.db"
+    SOURCE_NAME = "dividends"
+    SCHEMA_SQL = SCHEMA_SQL
+    # Single-page source: no INDEX_CATALOG, no CATALOG_TABLE.
+    INDEX_CATALOG = {}
+    CATALOG_TABLE = ""
 
 
-def db_path():
-    """Return the path to dividends.db (in memory_db/ddm/dividends.db)."""
-    return ddm_data_dir() / "dividends.db"
-
-
-def connect(read_only: bool = True):
-    """Open a connection to dividends.db.
-
-    read_only=True uses the SQLite URI mode=ro (fails if DB missing).
-    read_only=False opens (or creates) the DB for writes.
-    """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM dividends database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_schema(conn):
-    """Create tables if they don't exist.
-
-    Idempotent: safe to call on every connect-for-write.
-    """
-    conn.executescript(SCHEMA_SQL)
-    conn.commit()
+# Re-export as module-level callables for backward compatibility.
+db_path = _Catalog.db_path
+connect = _Catalog.connect
+ensure_schema = _Catalog.ensure_schema

@@ -9,41 +9,57 @@ Two sync entry points:
 
 Idempotency: uses INSERT OR REPLACE on the ticker primary key.
 Re-syncing replaces existing rows rather than appending duplicates.
+
+[Phase 3, Commit 1] Refactored to delegate to `data_sources/ddm/_base/`
+(BaseDDMSyncEngine.sync_single_page). The fetch + parse + DELETE + INSERT
++ sync_state pattern now lives in _base/sync_base.py; this module keeps
+only the per-source config (fetcher fn, parser fn, INSERT SQL, row
+mapper, B4 full-refresh flag, last_date computation) + the sync_index()
+alias.
 """
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
-
+from data_sources.ddm._base.sync_base import BaseDDMSyncEngine
 from data_sources.ddm.acoes.catalog import (
     connect, ensure_schema,
 )
 from data_sources.ddm.acoes.fetcher import fetch_acoes_page, parse_stocks_table
 
 
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+class _SyncEngine(BaseDDMSyncEngine):
+    """Acoes-specific sync engine config (SOURCE_NAME for log prefix)."""
+
+    SOURCE_NAME = "acoes"
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+_INSERT_SQL = (
+    "INSERT OR REPLACE INTO stocks "
+    "(ticker, name, negocios, last_price, variation, synced_at, ref_date) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
 
 
-def _today_date() -> str:
-    """Return today's date as YYYY-MM-DD (local)."""
-    return datetime.now().strftime("%Y-%m-%d")
+def _row_mapper(stock: dict, now: str) -> tuple:
+    """Map a parsed stock dict to the INSERT SQL tuple shape.
 
-
-def _record_sync_state(conn, slug: str, stocks: list[dict], now: str) -> None:
-    """Write (or update) the sync_state row for the acoes page."""
-    last_date = _today_date()
-    conn.execute(
-        "INSERT OR REPLACE INTO sync_state "
-        "(slug, last_date, synced_at, row_count) "
-        "VALUES (?, ?, ?, ?)",
-        (slug, last_date, now, len(stocks)),
+    ref_date is the scrape date (acoes has no per-row ref_date in the
+    payload -- DDM does not expose a "data do pregao" column).
+    """
+    ref_date = _SyncEngine._today_date()
+    return (
+        stock["ticker"], stock.get("name"), stock.get("negocios"),
+        stock.get("last_price"), stock.get("variation"), now, ref_date,
     )
+
+
+def _compute_last_date(observations: list[dict]) -> str:
+    """last_date = today's date (the scrape date).
+
+    The acoes page has no per-row ref_date; the sync_state.last_date is
+    the day the snapshot was scraped.
+    """
+    return _SyncEngine._today_date()
 
 
 def sync_all(force: bool = False) -> dict:
@@ -55,40 +71,23 @@ def sync_all(force: bool = False) -> dict:
     Returns:
         {"status": "ok"|"error", "rows": <int>, "synced_at": <iso>}
     """
-    page = fetch_acoes_page(force=force)
-    if page.get("status") != "ok":
-        return page
-
-    stocks = parse_stocks_table(page.get("html", ""))
-    now = _now()
-    ref_date = _today_date()
-
-    conn = connect(read_only=False)
-    ensure_schema(conn)
-    try:
+    return _SyncEngine.sync_single_page(
+        fetch_fn=fetch_acoes_page,
+        parse_fn=parse_stocks_table,
+        connect_fn=connect,
+        ensure_schema_fn=ensure_schema,
+        insert_sql=_INSERT_SQL,
+        row_mapper=_row_mapper,
+        slug="acoes",
+        table_name="stocks",
         # [v2 fix B4] Full-refresh pattern: delete ALL existing rows before
         # re-inserting. This removes delisted stocks that DDM dropped from
         # the /acoes page (INSERT OR REPLACE only touches rows in the new
         # payload, leaving stale rows behind).
-        conn.execute("DELETE FROM stocks")
-        rows = [
-            (s["ticker"], s.get("name"), s.get("negocios"),
-             s.get("last_price"), s.get("variation"), now, ref_date)
-            for s in stocks
-        ]
-        conn.executemany(
-            "INSERT OR REPLACE INTO stocks "
-            "(ticker, name, negocios, last_price, variation, synced_at, ref_date) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
-        _record_sync_state(conn, "acoes", stocks, now)
-        conn.commit()
-    finally:
-        conn.close()
-
-    _progress(f"[ddm.acoes] sync_all: {len(rows)} stocks synced")
-    return {"status": "ok", "rows": len(rows), "synced_at": now}
+        full_refresh=True,
+        compute_last_date=_compute_last_date,
+        force=force,
+    )
 
 
 def sync_index(slug: str = "acoes", force: bool = False) -> dict:

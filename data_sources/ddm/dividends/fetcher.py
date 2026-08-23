@@ -31,18 +31,19 @@ DDM dividends page shape (single table, class="normal-table"):
 
 NO local database writes - this module only fetches + parses.
 sync_engine.py stores parsed rows to dividends.db.
+
+[Phase 3, Commit 1] Refactored to inherit from `data_sources/ddm/_base/`
+(BaseDDMFetcher). The shared _cache / _cache_lock / _concurrency_semaphore
+scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
+in _base/fetcher_base.py; this module keeps only the parser functions
+(which are NOT shared) + a thin fetch_dividends_page() wrapper.
 """
 
 from __future__ import annotations
 
 import re
-import sys
-import threading
-import time
-from datetime import datetime, timezone
 
-import httpx
-
+from data_sources.ddm._base.fetcher_base import BOT_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import (
     parse_br_date_iso,
     parse_br_number,
@@ -50,25 +51,11 @@ from data_sources.ddm._parsers import (
 )
 from data_sources.ddm.dividends.catalog import DIVIDENDS_URL
 
-# 5-minute cache TTL. DDM publishes the dividend agenda on a rolling basis;
-# 5 min is well within the freshness window. Single-key cache (one page).
-_CACHE_TTL = 300
 
-_cache: dict[str, tuple[object, float]] = {}
+class _Fetcher(BaseDDMFetcher):
+    """Dividends-specific fetcher config (SOURCE_NAME for log/error prefix)."""
 
-# Thread-safety primitives (mirror bcb/sgs + ddm/juros + ddm/poupanca):
-#   _cache_lock             - guards all reads/writes to the _cache dict
-#   _concurrency_semaphore  - caps in-flight HTTP requests (conservative)
-_cache_lock = threading.Lock()
-_concurrency_semaphore = threading.Semaphore(5)
-
-
-def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    SOURCE_NAME = "dividends"
 
 
 def _extract_ticker(td: str) -> str:
@@ -157,43 +144,15 @@ def fetch_dividends_page(force: bool = False) -> dict:
         {"status": "ok", "html": <str>, "synced_at": <iso>}
         On error: {"status": "error", "error": <msg>}
     """
-    cache_key = "page:dividends"
-
-    with _cache_lock:
-        if not force and cache_key in _cache:
-            data, ts = _cache[cache_key]
-            if time.time() - ts < _CACHE_TTL:
-                return data
-
-    headers = {
-        "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 (compatible; ddm-fetcher/1.0)",
-    }
-
-    _progress(f"[ddm.dividends] Fetching agenda-de-dividendos ({DIVIDENDS_URL})")
-
-    with _concurrency_semaphore:
-        try:
-            resp = httpx.get(DIVIDENDS_URL, headers=headers,
-                             timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            return {"status": "error",
-                    "error": f"ddm.dividends: {e}"}
-
-    html = resp.text
-    result = {
-        "status":    "ok",
-        "html":      html,
-        "synced_at": _now_iso(),
-    }
-
-    with _cache_lock:
-        _cache[cache_key] = (result, time.time())
-    return result
+    return _Fetcher.fetch_page(
+        url=DIVIDENDS_URL,
+        cache_key="page:dividends",
+        headers=BOT_HEADERS,
+        slug=None,
+        force=force,
+    )
 
 
 def clear_cache():
     """Clear the in-memory cache (thread-safe)."""
-    with _cache_lock:
-        _cache.clear()
+    _Fetcher.clear_cache()
