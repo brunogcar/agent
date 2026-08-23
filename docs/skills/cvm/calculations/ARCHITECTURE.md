@@ -6,7 +6,7 @@
 
 | File | Purpose |
 |---|---|
-| `skills/_base/engine_cache.py` | **Shared skill infrastructure** — ModeSpec + make_registry + make_route + auto_discover_modes + **[v1.9] `@engine_cached` decorator + `engine_cache_scope`** (3-layer: in-memory + DB cache + real fn). Part of the `skills/_base/` package (Phase 3 C2 split — was `skills/_base.py`). |
+| `skills/_base/engine_cache.py` | **[Phase 3 C2] Engine cache only** — `@engine_cached` decorator + `engine_cache_scope` context manager + `_ENGINE_CACHE` ContextVar (3-layer: in-memory + DB cache + real fn). Part of the `skills/_base/` package (was `skills/_base.py` before the Phase 3 C2 split). For the rest of the shared skill infrastructure (ModeSpec + make_registry + make_route + auto_discover_modes), see `skills/_base/registry.py` + `skills/_base/route.py`. |
 | `data_sources/_cache.py` | **[engine-cache] Persistent engine result cache** — `memory_db/cache/engine_cache.db`. Cross-skill caching with per-company invalidation. See [DATA_SOURCES.md](../../../DATA_SOURCES.md#-engine-result-cache-_cachepy). |
 | `data_sources/cvm/_db.py` | **Shared CVM helpers** — paths, `connect_dfp/itr/fre/...`, `parse_escala`, `_get_company_fingerprint()` (cache invalidation) |
 | `skills/cvm/calculations/_registry.py` | **Central registry** — EngineSpec + MetricSpec + auto-discovery for both engines/ and metrics/ + `compute_all_ratios()` (wraps loop in `engine_cache_scope()`) |

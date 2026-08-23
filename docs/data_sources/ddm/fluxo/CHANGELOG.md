@@ -81,7 +81,7 @@ CREATE TABLE sync_state (
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-fluxo` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-fluxo` entry:
 
 ```python
 "ddm-fluxo": ("data_sources.ddm.fluxo.sync_engine", "sync_all",

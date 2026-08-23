@@ -66,7 +66,7 @@ For the first 11 months of the catalog (no full 12-month window),
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-juros` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-juros` entry:
 
 ```python
 "ddm-juros": ("data_sources.ddm.juros.sync_engine", "sync_all",

@@ -167,13 +167,33 @@ docs/
 │       ├── API.md               # Core uses API.md, same as tools
 │       ├── CHANGELOG.md
 │       └── INSTRUCTIONS.md
-└── workflows/
-    ├── RESEARCH.md              # Landing page (root index)
-    └── research/
-        ├── ARCHITECTURE.md
-        ├── API.md               # Workflows use API.md, same as tools
-        ├── CHANGELOG.md
-        └── INSTRUCTIONS.md
+├── workflows/
+│   ├── RESEARCH.md              # Landing page (root index)
+│   └── research/
+│       ├── ARCHITECTURE.md
+│       ├── API.md               # Workflows use API.md, same as tools
+│       ├── CHANGELOG.md
+│       └── INSTRUCTIONS.md
+├── data_sources/                # One subfolder per domain (cvm, b3, bcb, ddm)
+│   ├── CVM.md                   # Domain landing page (root index)
+│   ├── B3.md
+│   ├── BCB.md
+│   ├── DDM.md
+│   ├── cvm/
+│   │   ├── DFP.md               # Sub-domain landing page
+│   │   ├── dfp/                  # {ARCHITECTURE, API, CHANGELOG, INSTRUCTIONS}.md
+│   │   └── ...
+│   └── ...                      # b3/, bcb/, ddm/ follow the same pattern
+└── skills/                      # One subfolder per skill domain (cvm, b3, bcb, ddm, investsite)
+    ├── SKILLS.md                # Skills-layer landing page
+    ├── CVM.md                   # Domain landing page
+    ├── B3.md
+    ├── BCB.md
+    ├── cvm/
+    │   ├── FINANCIALS.md        # Skill landing page
+    │   ├── financials/          # {ARCHITECTURE, API, CHANGELOG, INSTRUCTIONS, ROADMAP}.md
+    │   └── ...
+    └── ...                      # b3/, bcb/, ddm/, investsite/ follow the same pattern
 ```
 
 ---
@@ -281,4 +301,4 @@ These rules are for AI assistants splitting docs. They are non-negotiable.
 
 ---
 
-*Last updated: 2026-07-14. Applies to all docs in `docs/tools/`, `docs/core/`, `docs/workflows/`, `docs/skills/`, and future areas. For session workflow conventions (compile-check, test commands, zip delivery, git format), see [SESSION_WORKFLOW.md](SESSION_WORKFLOW.md).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — added `data_sources/` + `skills/` subtrees to the Folder Layout). Applies to all docs in `docs/tools/`, `docs/core/`, `docs/workflows/`, `docs/skills/`, `docs/data_sources/`, and future areas. For session workflow conventions (compile-check, test commands, zip delivery, git format), see [SESSION_WORKFLOW.md](SESSION_WORKFLOW.md).*

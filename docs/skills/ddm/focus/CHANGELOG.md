@@ -57,7 +57,7 @@ Section titles do NOT prefix with the skill name (already in tab name)
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-focus` entry
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-focus` entry
 that calls `data_sources.ddm.focus.sync_engine.sync_all(force=True)`.
 The focus skill declares `REQUIRED_SOURCES = ["ddm-focus"]` so the
 sync guard auto-refreshes `focus.db` before each dashboard run.

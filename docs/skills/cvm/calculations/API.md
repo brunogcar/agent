@@ -470,7 +470,7 @@ compute_all_ratios(company: str, date: str,
                    exclude: list[str] | None = None) -> dict[str, float | None]
 ```
 
-### `skills/_base.py` — Engine Cache API (v1.9 F7)
+### `skills/_base/engine_cache.py` — Engine Cache API (v1.9 F7)
 ```python
 # Decorator — apply to engine at_fn + periods_fn at definition time.
 # Passthrough when no scope active (zero overhead). Caches within scope.

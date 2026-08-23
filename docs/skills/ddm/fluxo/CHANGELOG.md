@@ -66,7 +66,7 @@ Section titles do NOT prefix with the skill name (already in tab name)
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-fluxo` entry
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-fluxo` entry
 that calls `data_sources.ddm.fluxo.sync_engine.sync_all(force=True)`.
 The fluxo skill declares `REQUIRED_SOURCES = ["ddm-fluxo"]` so the
 sync guard auto-refreshes `fluxo.db` before each dashboard run.

@@ -26,7 +26,7 @@ Shared calculations layer between raw `data_sources/` and user-facing skills (hi
 - **Multi-code sum** — debt engine sums BPP 2.01.04 + 2.02.01
 - **PT + EN aliases** on all 21 metrics
 - **Pattern template** for other skills that need extensibility
-- **3-layer engine cache** — `@engine_cached` decorator (in `skills/_base.py`) provides:
+- **3-layer engine cache** — `@engine_cached` decorator (in `skills/_base/engine_cache.py`) provides:
   1. **In-memory cache** (ContextVar `engine_cache_scope`) — within one `route()` call
   2. **DB cache** (`data_sources/_cache.py` → `memory_db/cache/engine_cache.db`) — persistent, cross-skill
   3. **Real engine fn** — queries DFP/ITR/COTAHIST/SGS
@@ -88,4 +88,4 @@ No own config. Uses:
 
 ---
 
-*Last updated: 2026-08-01 (v1.11 — Magic Number metric: EV/EBITDA × ROIC; see CHANGELOG.md).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — updated `skills/_base/` reference to `skills/_base/engine_cache.py`). Prior: v1.11 — Magic Number metric: EV/EBITDA × ROIC; see CHANGELOG.md.*

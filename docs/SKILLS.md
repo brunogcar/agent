@@ -72,7 +72,7 @@ def execute(action: str, **kwargs) -> dict:
 
 ## 🏗️ Modular Skill Pattern (skills/_base/)
 
-All skills (CVM + investsite + BCB) use a shared modular pattern built on
+All skills (CVM + investsite + BCB + B3 + DDM) use a shared modular pattern built on
 the `skills/_base/` package. This package provides the infrastructure so each
 skill only needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
 
@@ -141,18 +141,33 @@ skills/
 │   ├── report.py
 │   └── modes/
 │       └── ... (6 mode files)
-└── bcb/                              # BCB domain (Brazilian Central Bank)
-    ├── __init__.py                   # Domain hub
-    └── macro/                        # Macro skill (5-tab dashboard)
-        ├── __init__.py               # MANIFEST + route (required_sources=["sgs"])
-        ├── _registry.py              # MODES + register_mode (with standalone fallback)
-        ├── helpers.py                # format_value, annualize_rate, compute_stats
-        ├── report.py                 # build_kpi_card, build_chart_section, build_table_section
-        └── modes/
-            ├── dashboard.py          # @register_mode("dashboard") 5-tab composition
-            ├── rates.py              # @register_mode("rates") Selic/CDI/TR/Copom
-            ├── inflation.py          # @register_mode("inflation") IPCA/IGP-M
-            └── fx.py                 # @register_mode("fx") USD/BRL
+├── bcb/                              # BCB domain (Brazilian Central Bank)
+│   ├── __init__.py                   # Domain hub
+│   └── macro/                        # Macro skill (5-tab dashboard)
+│       ├── __init__.py               # MANIFEST + route (required_sources=["sgs"])
+│       ├── _registry.py              # MODES + register_mode (with standalone fallback)
+│       ├── helpers.py                # format_value, annualize_rate, compute_stats
+│       ├── report.py                 # build_kpi_card, build_chart_section, build_table_section
+│       └── modes/
+│           ├── dashboard.py          # @register_mode("dashboard") 5-tab composition
+│           ├── rates.py              # @register_mode("rates") Selic/CDI/TR/Copom
+│           ├── inflation.py          # @register_mode("inflation") IPCA/IGP-M
+│           └── fx.py                 # @register_mode("fx") USD/BRL
+├── b3/                               # B3 skills (Phase 1)
+│   ├── __init__.py                   # Domain hub
+│   ├── index/                        # 3-tab dashboard (composition + history + ticker) + compare + ticker
+│   ├── price/                        # 7-tab dashboard + quote mode (cotahist OHLCV)
+│   ├── options/                      # 3-tab dashboard (Cadeia de Opções / Put-Call / Volume)
+│   └── term/                         # 3-tab dashboard (Contratos Ativos / Spread / Volume)
+└── ddm/                              # DDM skills (Phase 2) — mirrors data_sources/ddm/ sub-domains
+    ├── __init__.py                   # Domain hub (auto-discovers sub-domains)
+    ├── inflation/                    # 4-tab dashboard (IGP-M + IPCA + INPC + Comparativo)
+    ├── juros/                        # 4-tab dashboard (Selic + Meta Selic + CDI + Comparativo)
+    ├── poupanca/                     # 1-tab dashboard (Poupança)
+    ├── acoes/                        # 1-tab dashboard (Ações — sortable-table feature + price-distribution chart)
+    ├── focus/                        # 13-tab dashboard (Boletim Focus market expectations)
+    ├── fluxo/                        # 5-tab dashboard (B3 investment flow by investor type)
+    └── dividends/                    # Dividends dashboard (corporate actions history)
 ```
 
 ### How to Create a New Skill
@@ -368,7 +383,7 @@ See [BCB Skills](skills/BCB.md) for the BCB landing page.
   `REQUIRED_SOURCES=["ddm-acoes"]` (own source key — separate from the other
   DDM skills). The acoes skill introduces the **sortable-table feature**
   (clickable headers, JS sortTable, data-value attributes on numeric cells)
-  + the shared `skills/_price_colors.py` 16-range palette used by the chart.
+  + the shared `skills/_colors/price.py` 16-range palette used by the chart.
 - **focus**: 13-tab dashboard (Boletim Focus market expectations survey).
   1 Focus tab with 4 year subtabs (2026-2029, each showing all 12 indicators)
   + 12 per-indicator tabs (IPCA, PIB Total, Câmbio, Selic, ...) each with a
@@ -391,9 +406,9 @@ See [BCB Skills](skills/BCB.md) for the BCB landing page.
 
 **Freshness tracking** (v1 — added with the acoes skill):
 `skills/_freshness.get_freshness()` returns the last-sync timestamp for
-ALL 6 DDM sub-domains in a single dict (`{"ddm": ..., "ddm-juros": ...,
-"ddm-poupanca": ..., "ddm-acoes": ..., "ddm-focus": ..., "ddm-fluxo":
-...}`). Consumers can poll a single dict instead of importing
+ALL 7 DDM sub-domains in a single dict (`{"ddm": ..., "ddm-juros": ...,
+"ddm-poupanca": ..., "ddm-acoes": ..., "ddm-focus": ..., "ddm-fluxo": ...,
+"ddm-dividends": ...}`). Consumers can poll a single dict instead of importing
 per-subdomain helpers.
 
 See [DDM Skills](#) for the DDM landing pages (one per sub-domain:
@@ -575,4 +590,4 @@ On 401 Unauthorized: `[brapi] DISABLED for this session: 401 Unauthorized on {ti
 
 ---
 
-*Last updated: 2026-08-18 (v1.24 — added DDM skills: inflation, juros, poupanca, acoes; added `skills/_freshness.py` top-level freshness helper; added sortable-table feature in macros.html + base.html; added `skills/_price_colors.py` shared 16-range palette).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — updated `_base.py` → `_base/` package split footprints across dependent docs; corrected `skills/_price_colors.py` ref to `skills/_colors/price.py`; refreshed DDM skills freshness dict to 7 sub-domains). Prior: v1.24 — added DDM skills: inflation, juros, poupanca, acoes; added `skills/_freshness.py` top-level freshness helper; added sortable-table feature in macros.html + base.html; added shared 16-range palette.*

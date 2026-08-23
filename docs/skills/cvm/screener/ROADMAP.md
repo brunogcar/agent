@@ -10,7 +10,7 @@
 | P2 | S2 — Metric toggle for top companies chart | Add a `chart_metric` param so the user can pick which metric drives the Peers chart (ROE, Div Yield, etc.) |
 | P3 | S3 — Historical comparison | Compare a ticker's current P/L vs its own historical P/L range (needs COTAHIST + historical financials) |
 | Done | v1.2 dashboard reorg | Top companies chart (P/L) added to Peers tab; detailed `[screener]` print output |
-| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base.py` |
+| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base/` |
 | Done | v1.4 modular split | Modes split into `modes/` + `report.py` + dashboard mode |
 | Done | v1.2 calculations integration | v1.4 calculations metrics (roa, margem_liquida, divida_pl + 9 more) surfaced in peers |
 

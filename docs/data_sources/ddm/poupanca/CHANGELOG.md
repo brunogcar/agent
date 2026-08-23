@@ -78,7 +78,7 @@ AVERAGE formulas for juros).
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-poupanca` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-poupanca` entry:
 
 ```python
 "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",

@@ -18,7 +18,7 @@ Single-ticker price analytics from B3 COTAHIST daily OHLCV data. Seven tabs:
 ```text
 skills/b3/price/
 ├── __init__.py        MANIFEST + route() dispatch (auto-discovery) + REQUIRED_SOURCES=["cotahist","b3_dividends"]
-├── _registry.py       ModeSpec + register_mode + MODES dict (delegates to skills/_base.py)
+├── _registry.py       ModeSpec + register_mode + MODES dict (delegates to skills/_base/)
 ├── engines.py         ALL computation: ohlcv_series, latest_quote, compute_sma, compute_returns,
 │                      compute_cumulative_returns, compute_drawdowns, compute_volatility,
 │                      compute_bollinger_bands, find_ma_crossovers, compute_52w_range,

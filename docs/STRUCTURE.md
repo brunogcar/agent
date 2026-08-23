@@ -2,7 +2,7 @@
 
 > Canonical map of the MCP Agent Stack repo. This is the reference for "where does X live?" — the README is a summary, this is the full layout.
 
-Last updated: 2026-08-04
+Last updated: 2026-09-15 (Phase 3: ddm/_base/ extraction, skills/_base/ package split, dashboard.html JS partials)
 
 ---
 
@@ -20,7 +20,7 @@ agent/
 ├── core/                  # Foundation layer — 13 subsystems
 ├── tools/                 # 18 meta-tools exposed to the LLM
 ├── workflows/             # 6 LangGraph state machines
-├── data_sources/          # Raw data ingestion + query (CVM, B3)
+├── data_sources/          # Raw data ingestion + query (CVM, B3, BCB, DDM)
 ├── skills/                # Analytical views combining data sources
 ├── benchmark/             # Role benchmarking tool
 ├── docs/                  # 5-file documentation standard per component
@@ -83,6 +83,9 @@ tools/
 - **`list.py`** (not `list_workflows.py`) — bare action names; aligns with `report_ops` convention. v1.1 cleaned up the legacy `list_workflows.py` / `test_notify.py` outliers.
 - **`test.py`** is safe in `tools/` — pytest only collects under `tests/`.
 - **Action files use bare names** — the `action_name` is set by `@register_action`, NOT the filename.
+
+### Notable per-tool subdirectories
+- **`tools/report_ops/templates/`** — Jinja2 HTML templates (`base.html`, `dashboard.html`, `macros.html`, + per-action templates). As of **Phase 3 C3**, `dashboard.html` is 296 lines (down from 676) — its inline JS was extracted to `templates/js/dashboard_charts.html` (chart-rendering helpers) + `templates/js/dashboard_theme_override.html` (theme CSS overrides), pulled into `dashboard.html` via `{% include "js/dashboard_charts.html" %}`. The 8 per-chart `<script>` loops stay inline (per-chart config is data-driven). `sortTable` stays in `base.html` (used by every sortable table, not just dashboard). See [tools/REPORT.md](tools/REPORT.md).
 
 ---
 
@@ -207,12 +210,32 @@ data_sources/
 │   ├── api/                   # Market data: instruments, trades, derivatives
 │   ├── brapi/                 # brapi.dev quotes + OHLCV + ticker list
 │   ├── cotahist/              # COTAHIST historical OHLCV (fixed-width ZIP)
+│   │                          # (also stores cotahist_derivatives table — same DB)
 │   └── dividends/             # Corporate actions: cash/stock dividends, subscriptions
-└── bcb/                       # Brazilian Central Bank data
-    └── sgs/                   # SGS macro series (Selic, CDI, IPCA, etc.)
+├── bcb/                       # Brazilian Central Bank data
+│   ├── __init__.py            # Domain manifest + route
+│   └── sgs/                   # SGS macro series (Selic, CDI, IPCA, etc.)
+└── ddm/                       # Dados de Mercado (dadosdemercado.com.br) — Phase 2 + Phase 3 C1
+    ├── __init__.py            # Domain manifest + route (auto-discovers sub-domains)
+    ├── _parsers.py            # Shared: HTML regex extractors (matrix table, historical table,
+    │                          # acoes flat table, focus 4-year tables, fluxo daily table)
+    ├── _base/                 # [Phase 3 C1] Shared infrastructure package — 6 modules:
+    │   ├── __init__.py        #   Re-exports the public API
+    │   ├── catalog_base.py    #   BaseDDMCatalog: db_path()/connect()/ensure_schema() scaffold
+    │   ├── fetcher_base.py    #   BaseDDMFetcher: HTTP + cache + concurrency + Chrome 127 WAF
+    │   ├── sync_base.py       #   BaseDDMSyncEngine: sync_all() concurrency scaffold + DELETE+INSERT
+    │   ├── status_base.py     #   BaseDDMStatusReporter: DB stats scaffold
+    │   └── route_base.py      #   BaseDDMRoute: route() dispatcher scaffold (used by domain hub)
+    ├── inflation/             # Brazilian inflation indices (IGP-M, IPCA, INPC)
+    ├── juros/                 # Brazilian interest-rate indices (Selic, Meta Selic, CDI)
+    ├── poupanca/              # Brazilian savings-account monthly yield
+    ├── acoes/                 # B3 listed stocks (~380 flat snapshot rows)
+    ├── focus/                 # Boletim Focus (market expectations, 4 yearly tables)
+    ├── fluxo/                 # B3 investment flow (daily by investor type)
+    └── dividends/             # DDM dividends (corporate actions history)
 ```
 
-**Each sub-domain has:** `__init__.py` (MANIFEST + route), `catalog.py` (schema), `sync_engine.py` (download), `query_engine.py` (read), `status_reporter.py` (stats).
+**Each sub-domain has:** `__init__.py` (MANIFEST + route), `catalog.py` (schema), `fetcher.py` (HTTP + parse), `sync_engine.py` (download → store), `query_engine.py` (read), `status_reporter.py` (stats). **DDM sub-domains** additionally inherit shared infrastructure from `data_sources/ddm/_base/` (Phase 3 C1) — catalog/fetcher/sync_engine/status_reporter keep only source-specific constants + thin re-exports of the base class.
 
 **`_repair/` subpackage (v1.1.0):** One-time data repair scripts for CVM databases. Auto-skipped by `__init__.py` discovery (underscore prefix). Run as modules:
 - `python -m data_sources.cvm._repair.purge_penultimo --vacuum` — delete legacy PENÚLTIMO rows
@@ -228,22 +251,64 @@ Analytical views that combine multiple data sources with domain reasoning. Read-
 ```text
 skills/
 ├── dispatcher.py              # @tool skill(domain, sub_domain, mode, params)
+├── _base/                     # [Phase 3 C2] Shared infrastructure package (was skills/_base.py)
+│   ├── __init__.py            #   Re-exports all public + private names (backward compat —
+│   │                          #   `from skills._base import make_registry` still works)
+│   ├── registry.py            #   ModeSpec + make_registry + accessors + auto_discover_modes
+│   ├── route.py               #   make_route + _route_with_sync_guard + _dispatch + _SYNC_CHECKED
+│   ├── html_gen.py            #   _auto_generate_html (dashboard HTML writer)
+│   ├── engine_cache.py        #   _ENGINE_CACHE + @engine_cached + engine_cache_scope (3-layer)
+│   └── sync_guard.py          #   SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+├── _freshness.py              # Cross-domain freshness dict (CVM + B3 + BCB + DDM) — stays separate
+├── _colors/                   # Shared color palettes (price 16-range, dpa dividend bands)
+│   ├── __init__.py
+│   ├── price.py               # price 16-range red→pink→yellow→green→teal→blue palette
+│   └── dpa.py                 # dividend-band palette
 ├── cvm/                       # CVM analytical skills
 │   ├── __init__.py            # Domain manifest + route
-│   ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
-│   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
+│   ├── _shared_report/        # Shared dashboard builders (all CVM skills)
+│   ├── calculations/          # Shared engine/metric library (18 engines + 21 metrics)
 │   ├── financials/            # Financial statements + ratios (DFP + ITR + DVA) — rapina-style
 │   ├── valuation/             # Valuation ratios (b3 price + DFP TTM + FRE shares + ROIC + Graham)
+│   ├── historical/            # Historical metric time-series + quartiles
 │   ├── comparison/            # Multi-ticker compare (orchestrates financials + valuation + dividends)
 │   ├── screener/              # Sector screener (orchestrates CAD + bridge + valuation + FCA)
+│   ├── shareholders/          # Named shareholders + equity structure (FRE + DFP)
+│   ├── dividends/             # Dividend events + annual totals + filings (B3 + DFP + IPE)
 │   ├── insider/               # Insider trading analysis (VLMO disclosures)
-│   └── governance/            # Governance practices analysis (CGVN score)
-└── investsite/                # Investsite.com.br scraper (indicators, statements, events)
+│   ├── governance/            # Governance practices analysis (CGVN score)
+│   └── backtest/              # Backtesting (historical price + fundamentals scenarios)
+├── investsite/                # Investsite.com.br scraper (indicators, statements, events)
+├── b3/                        # B3 analytical skills
+│   ├── __init__.py            # Domain manifest + route
+│   ├── index/                 # Index dashboard + compare + ticker (IBOV, SMLL, BDRX, IFIX, IDIV)
+│   ├── price/                 # Price dashboard + quote (cotahist OHLCV + candlestick + MAs)
+│   ├── options/               # Options dashboard (Cadeia de Opções + Put/Call Ratio + Volume)
+│   └── term/                  # Term dashboard (Contratos Ativos + Spread + Volume Histórico)
+├── bcb/                       # BCB analytical skills
+│   ├── __init__.py            # Domain manifest + route
+│   └── macro/                 # Macro skill (5-tab dashboard: Resumo / Juros / Inflação / Câmbio / Atividade)
+└── ddm/                       # DDM analytical skills (Phase 2)
+    ├── __init__.py            # Domain manifest + route (auto-discovers sub-domains)
+    ├── inflation/             # 4-tab dashboard (IGP-M + IPCA + INPC + Comparativo)
+    ├── juros/                 # 4-tab dashboard (Selic + Meta Selic + CDI + Comparativo)
+    ├── poupanca/              # 1-tab dashboard (Poupança)
+    ├── acoes/                 # 1-tab dashboard (Ações sortable table + price-distribution chart)
+    ├── focus/                 # 13-tab dashboard (Boletim Focus market expectations)
+    ├── fluxo/                 # 5-tab dashboard (B3 investment flow by investor type)
+    └── dividends/             # Dividends dashboard (corporate actions history)
 ```
 
-**Each skill has:** `__init__.py` (MANIFEST + route), `<skill>.py` (logic — delegates to data_source query engines).
+**Each skill uses the modular pattern** (was 1 big `<skill>.py`; now `_registry.py` + `__init__.py` + `modes/` + optional `report.py` / `helpers.py` / `fetchers.py`):
+- `__init__.py` (~20 lines) — auto_discover_modes() + MANIFEST + `route = make_route(...)`
+- `_registry.py` (~3 lines) — `MODES, register_mode = make_registry()`
+- `modes/<mode>.py` — one file per mode, decorated with `@register_mode(...)`
+- `report.py` (optional) — dashboard composition helpers
+- `helpers.py` / `fetchers.py` (optional) — internal utilities
 
-**To add a new skill:** create `skills/<domain>/<skill>/__init__.py` with `MANIFEST` + `route()`. The domain router auto-discovers it.
+**Adding a new mode** = drop a file in `modes/` + `@register_mode(...)`. No edits to `__init__.py` or `_registry.py`.
+
+**Adding a new skill** = create `skills/<domain>/<skill>/` with 3 files (`_registry.py` + `__init__.py` + `modes/__init__.py`). The domain router auto-discovers it on next server restart.
 
 **Report wiring (v1.2):** Skills stay read-only and report-agnostic. The report tool's `tools/report_ops/adapters/` package flattens each skill's JSON into the `table` action (and `export` xlsx) via `config["adapter"]` (e.g. `financials_quarterly`, `valuation_ratios`). See [tools/REPORT.md](tools/REPORT.md).
 
@@ -358,4 +423,4 @@ tests/
 
 ---
 
-*Last updated: 2026-08-04. This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — DDM `_base/` extraction + `skills/_base/` package split + `templates/js/` partials). This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*

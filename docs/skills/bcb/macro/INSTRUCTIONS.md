@@ -13,7 +13,7 @@ Rules for AI agents editing the BCB macro skill. Follow these to avoid breaking 
 5. **NEVER use list-of-dicts for table `rows`** — use list of lists: `[["2024-01-02", "0.001234"], ...]`. The template's `data_table` macro iterates cells with `{% for cell in row %}`.
 6. **NEVER use em-dashes (—) or en-dashes (–)** in Python strings. Use ASCII hyphens (-). The test suite runs with `-W error`.
 7. **NEVER add `__init__.py` to test directories** or a root-level `conftest.py`.
-8. **NEVER remove the `_registry.py` standalone fallback** — it lets the skill work without `skills/_base.py` (for `bcb-sgs-v3/` standalone testing). When merged into the agent tree, the `try` branch succeeds and the fallback is never used.
+8. **NEVER remove the `_registry.py` standalone fallback** — it lets the skill work without `skills/_base/` (for `bcb-sgs-v3/` standalone testing). When merged into the agent tree, the `try` branch succeeds and the fallback is never used. (Phase 3 C2 — was `skills/_base.py`; the package's `__init__.py` re-exports preserve the `from skills._base import ...` import path.)
 9. **NEVER import `skills._base` inside mode files** — import from `skills.bcb.macro._registry` instead. The `_registry.py` handles the fallback transparently.
 
 ## ALWAYS DO

@@ -14,7 +14,7 @@ Combines B3 INDEX data with light domain reasoning to answer common index questi
 ```text
 skills/b3/index/
 ├── __init__.py        MANIFEST + route() dispatch (auto-discovery) + REQUIRED_SOURCES=["index"]
-├── _registry.py       ModeSpec + register_mode + MODES dict (delegates to skills/_base.py)
+├── _registry.py       ModeSpec + register_mode + MODES dict (delegates to skills/_base/)
 ├── helpers.py         compute_jaccard, compute_sector_breakdown, compute_returns, format_pct
 ├── report.py          dashboard section builders (KPI cards, constituent table, sector chart, history line)
 └── modes/             one file per mode, auto-discovered via importlib

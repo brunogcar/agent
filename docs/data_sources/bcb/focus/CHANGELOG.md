@@ -46,7 +46,7 @@ sync_all, sync_expectations, sync_indicator, expectations, last, summary, status
 ### Integration
 
 - `skills/bcb/macro/__init__.py` `REQUIRED_SOURCES` extended to `["sgs", "focus"]`.
-- `skills/_base.py` `_trigger_sync.sync_map` extended with a `"focus"` entry pointing to `data_sources.bcb.focus.sync_engine.sync_all` with `lambda: {"force": True}`.
+- `skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` extended with a `"focus"` entry pointing to `data_sources.bcb.focus.sync_engine.sync_all` with `lambda: {"force": True}`.
 - `skills/bcb/macro/modes/expectations.py` reads from `data_sources.bcb.focus.query_engine`.
 - `skills/bcb/macro/modes/dashboard.py` adds a 7th "Expectativas Focus" tab (group: Analise) that calls the expectations mode.
 

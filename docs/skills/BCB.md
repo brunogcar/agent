@@ -47,14 +47,15 @@ skills/
             └── fx.py              # USD/BRL ptax diaria + mensal
 ```
 
-Skills follow the **modular skill pattern** from `skills/_base.py` (same as CVM financials): `_registry.py` + `helpers.py` + `report.py` + `modes/` + `@register_mode`.
+Skills follow the **modular skill pattern** from `skills/_base/` (same as CVM financials): `_registry.py` + `helpers.py` + `report.py` + `modes/` + `@register_mode`. (Phase 3 C2 split the old `skills/_base.py` into the `_base/` package — `make_registry` lives in `registry.py`, `make_route` in `route.py`, `ensure_fresh` in `sync_guard.py`; `from skills._base import X` still works via `__init__.py` re-exports.)
 
 ---
 
 ## 🔒 Force Sync (24h Window)
 
 The macro skill declares `required_sources=["sgs"]`. The `route()` wrapper
-(from `skills/_base.py`) calls `ensure_fresh(["sgs"])` before each dispatch.
+(from `skills/_base/route.py`, the `make_route()` factory) calls `ensure_fresh(["sgs"])`
+(defined in `skills/_base/sync_guard.py`) before each dispatch.
 
 **BCB sources use a 24h freshness window** (unlike CVM sources which always
 HEAD-check). If the last SGS sync is older than 24h (or missing), it triggers
@@ -79,4 +80,4 @@ the result dict includes an `html_path` key. See [CVM.md](CVM.md) for details.
 
 ---
 
-*Last updated: 2026-08-09 (v5 — auto-HTML + force-sync visibility).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — updated `skills/_base.py` references to the split `_base/` package modules). Prior: v5 — auto-HTML + force-sync visibility.*

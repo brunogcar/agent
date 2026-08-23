@@ -19,7 +19,7 @@ Three tabs:
 skills/b3/options/
 ├── __init__.py        MANIFEST + route() dispatch (auto-discovery)
 │                      + REQUIRED_SOURCES=["cotahist"] (shared DB)
-├── _registry.py       MODES dict + register_mode (delegates to skills/_base.py)
+├── _registry.py       MODES dict + register_mode (delegates to skills/_base/)
 ├── helpers.py         format_value, format_brl, format_int (pure functions,
 │                      PT-BR convention; adds "ratio" unit for P/C ratio)
 ├── report.py          Section builders: build_kpi_card, build_chart_section,

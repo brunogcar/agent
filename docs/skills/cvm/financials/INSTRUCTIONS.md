@@ -4,7 +4,7 @@
 
 ### NEVER DO
 
-1. **Never add sync logic to a skill mode function** — Skills are read-only. Sync belongs in `data_sources/`. **[v1.14 exception]** The sync GUARD (`ensure_fresh()`) lives in `skills/_base.py` and is wired via `make_route(required_sources=[...])` in `__init__.py` — it triggers `data_sources/` sync functions before dispatch, but the skill mode functions themselves never call sync. This is a routing-layer concern, not a mode-function concern.
+1. **Never add sync logic to a skill mode function** — Skills are read-only. Sync belongs in `data_sources/`. **[v1.14 exception]** The sync GUARD (`ensure_fresh()`) lives in `skills/_base/` and is wired via `make_route(required_sources=[...])` in `__init__.py` — it triggers `data_sources/` sync functions before dispatch, but the skill mode functions themselves never call sync. This is a routing-layer concern, not a mode-function concern.
 2. **Never use `float(escala)` directly** — DFP stores escala as Portuguese words ("MIL", "MILHOES"). Always use `parse_escala()` from `_db.py`.
 3. **Never return cumulative values as standalone** — ITR values are cumulative. Flow items (DRE/DFC/DVA) must be subtracted to get standalone quarters. Snapshot items (BPA/BPP) use period-end value directly.
 4. **Never change the EBITDA formula** — `EBITDA = EBIT (DRE 3.05) + D&A (DFC 6.01.01.02)`. The D&A comes from the cash flow statement, not the DRE.

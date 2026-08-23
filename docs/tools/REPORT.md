@@ -14,6 +14,7 @@ The `report()` tool generates self-contained interactive HTML reports — charts
 - **Multi-section reports (v1.3)** — `action="report"` renders single-scroll HTML with KPIs + text + charts + tables + mermaid + code + collapsibles. `action="dashboard"` renders multi-tab HTML with sidebar navigation. Both support `config["adapter"]`.
 - **StatusInvest-inspired styling (v1.3)** — rounded cards, larger KPI values, sticky-header tables with alternating rows, badge pills.
 - **[v1.9] Subtabs + centering** — `dashboard.html` template now supports `type: "subtabs"` sections (nested tab navigation within a dashboard tab, used by the financials v1.12 Balanço tab to switch between BPA + BPP). Body is centered (`margin-right: auto` on `.main`) so dashboards render in a readable column on wide screens. New `financials_statement` adapter (generic table adapter for the 5 standalone statement modes from financials v1.12: bpa / bpp / dre / dfc / dva).
+- **[Phase 3 C3] JS partials** — `dashboard.html` shrunk from 676 → 296 lines: inline JS extracted into `templates/js/dashboard_charts.html` (Chart.js dataset helper functions) + `templates/js/dashboard_theme_override.html` (theme CSS overrides), pulled into `dashboard.html` via Jinja2 `{% include "js/dashboard_charts.html" %}`. The 8 per-chart `<script>` loops stay inline (per-chart config is data-driven). `sortTable` stays in `base.html` (used by every sortable table, not just dashboard). See [report/ARCHITECTURE.md](report/ARCHITECTURE.md).
 
 ---
 

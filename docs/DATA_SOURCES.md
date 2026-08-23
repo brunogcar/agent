@@ -1,6 +1,6 @@
 # 📊 Data Sources
 
-Data sources are external data connectors that sync from APIs (CVM, B3, BCB) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
+Data sources are external data connectors that sync from APIs (CVM, B3, BCB, DDM) into local SQLite DBs, plus a query interface. They follow the hub-and-spoke pattern: a single `@tool`-decorated dispatcher routes to domain hubs, which route to sub-domains.
 
 **vs skills/**: Data sources handle raw data storage + retrieval. The skills/ layer handles domain reasoning that combines multiple data sources (e.g., computing standalone quarters from DFP + ITR, or valuation ratios). See [SKILLS.md](SKILLS.md).
 
@@ -11,6 +11,7 @@ Data sources are external data connectors that sync from APIs (CVM, B3, BCB) int
 | **CVM** | Brazilian SEC data: DFP (annual), ITR (quarterly), FRE (governance), IPE (events), CAD (register), Bridge (ticker→CNPJ) | [CVM.md](data_sources/CVM.md) |
 | **B3** | Brazilian stock exchange: API (instruments, trades, derivatives), Dividends (corporate actions), BRAPI (quotes/OHLCV), COTAHIST (historical equities), COTAHIST_DERIVATIVES (options + term — shared cotahist.db), INDEX (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued) | [B3.md](data_sources/B3.md) |
 | **BCB** | Brazilian Central Bank: SGS (12 curated macro series - Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo). Public API, no auth. | [BCB.md](data_sources/BCB.md) |
+| **DDM** | Dados de Mercado (dadosdemercado.com.br): inflation, juros, poupanca, acoes, focus, fluxo, dividends. Public HTML scraped with regex (no JS, no auth, no BeautifulSoup). 7 sub-domains + shared `_base/` package (Phase 3 C1). | [DDM.md](data_sources/DDM.md) |
 
 ## 🏗️ Architecture
 
@@ -47,12 +48,33 @@ data_sources/
 │
 └── bcb/                           # BCB domain (Brazilian Central Bank)
     ├── __init__.py                # Domain hub
+    ├── focus/                     # Boletim Focus (market expectations survey) → focus.db
+    │                              # (BCB's own Focus — different from DDM's focus mirror)
     └── sgs/                       # SGS (Sistema Gerenciador de Series Temporais) → sgs.db
         ├── catalog.py             # 12 curated series + schema
         ├── fetcher.py             # Thread-safe HTTP (Semaphore(5), 5-min cache)
         ├── sync_engine.py         # sync_series / sync_all / sync_series_range
         ├── query_engine.py        # series / last / search / summary
         └── status_reporter.py     # DB stats
+
+└── ddm/                           # DDM domain (Dados de Mercado — dadosdemercado.com.br)
+    ├── __init__.py                # Domain hub (auto-discovers sub-domains)
+    ├── _parsers.py                # Shared: HTML regex extractors (matrix, historical,
+    │                              # acoes flat, focus 4-year, fluxo daily tables)
+    ├── _base/                     # [Phase 3 C1] Shared infrastructure package — 6 modules
+    │   ├── __init__.py            #   Re-exports the public API
+    │   ├── catalog_base.py        #   BaseDDMCatalog: db_path()/connect()/ensure_schema()
+    │   ├── fetcher_base.py        #   BaseDDMFetcher: HTTP + cache + concurrency + Chrome 127 WAF
+    │   ├── sync_base.py           #   BaseDDMSyncEngine: sync_all() concurrency + DELETE+INSERT
+    │   ├── status_base.py         #   BaseDDMStatusReporter: DB stats scaffold
+    │   └── route_base.py          #   BaseDDMRoute: route() dispatcher scaffold
+    ├── inflation/                 # Brazilian inflation indices (IGP-M, IPCA, INPC)
+    ├── juros/                     # Brazilian interest-rate indices (Selic, Meta Selic, CDI)
+    ├── poupanca/                  # Brazilian savings-account monthly yield
+    ├── acoes/                     # B3 listed stocks (flat snapshot table)
+    ├── focus/                     # Boletim Focus (4 yearly tables, CloudFront-protected)
+    ├── fluxo/                     # B3 investment flow (daily, CloudFront-protected)
+    └── dividends/                 # DDM dividends (corporate actions history)
 ```
 
 ## 🗄️ Engine Result Cache (`_cache.py`)
@@ -109,9 +131,18 @@ D:\mcp\agent\venv\Scripts\python.exe -c "from data_sources.b3.index.sync_engine 
 
 # BCB — sync all 12 macro series (Selic, CDI, TR, IPCA, IGP-M, USD/BRL, PIB, Salario minimo)
 python3 -c "from data_sources.bcb.sgs.sync_engine import sync_all; print(sync_all())"
+
+# DDM — sync all 7 sub-domains (no auth, public HTML — regex-parsed)
+python3 -c "from data_sources.ddm.inflation.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.juros.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.poupanca.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.acoes.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.focus.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.fluxo.sync_engine import sync_all; print(sync_all())"
+python3 -c "from data_sources.ddm.dividends.sync_engine import sync_all; print(sync_all())"
 ```
 
-See [CVM.md](data_sources/CVM.md), [B3.md](data_sources/B3.md), and [BCB.md](data_sources/BCB.md) for full sync commands per sub-domain.
+See [CVM.md](data_sources/CVM.md), [B3.md](data_sources/B3.md), [BCB.md](data_sources/BCB.md), and [DDM.md](data_sources/DDM.md) for full sync commands per sub-domain.
 
 ## 🔧 Configuration
 
@@ -127,13 +158,15 @@ When adding a new data source **sub-domain** (e.g., `data_sources/b3/index/`), f
 
 1. **Pick the parent domain** — `cvm/`, `b3/`, or `bcb/`. If none fits, create a new domain folder (see below).
 2. **Create the sub-domain folder** — `data_sources/<domain>/<sub_domain>/`.
-3. **Write 4 Python modules** (no `__init__.py` for the sub-domain; the domain's `__init__.py` routes via dispatcher):
+3. **Write 5 Python modules** (no `__init__.py` for the sub-domain; the domain's `__init__.py` routes via dispatcher):
    - `catalog.py` — schema constants, URL templates, SQL DDL, DB path/connect helpers.
+   - `fetcher.py` — HTTP + parse (download → parse → return rows).
    - `sync_engine.py` — `sync_*` functions (download → parse → store). DELETE + INSERT for idempotency.
    - `query_engine.py` — query functions (filter, sort, paginate).
    - `status_reporter.py` — DB stats (rows, last sync, etc.).
+   - **DDM-only:** for new DDM sub-domains, subclass the shared base classes from `data_sources/ddm/_base/` (`BaseDDMCatalog`, `BaseDDMFetcher`, `BaseDDMSyncEngine`, `BaseDDMStatusReporter`) — keeps source-specific code thin (constants + URL helpers + SCHEMA_SQL) and pushes the HTTP / cache / concurrency / DB-connect scaffold into the shared package. See [`ddm/_base/ARCHITECTURE.md`](data_sources/ddm/_base/ARCHITECTURE.md).
 4. **Wire the route** — add the sub-domain to `data_sources/<domain>/__init__.py` MANIFEST + route dispatch (mirrors existing sub-domains like `b3/cotahist`).
-5. **Add `required_sources` integration** — if a skill will read this sub-domain, add its short name (e.g., `"index"`) to the skill's `REQUIRED_SOURCES` list AND to `skills/_base.py`'s `_trigger_sync.sync_map` so the sync guard knows which sync function to call.
+5. **Add `required_sources` integration** — if a skill will read this sub-domain, add its short name (e.g., `"index"`) to the skill's `REQUIRED_SOURCES` list AND to `skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` so the sync guard knows which sync function to call. (Phase 3 C2 split `_base.py` into the `_base/` package; `_trigger_sync` + `sync_map` now live in `sync_guard.py` — `skills._base` is preserved via `__init__.py` re-exports, so `from skills._base import ensure_fresh` still works.)
 6. **Create docs** in `docs/data_sources/<domain>/`:
    - `<SUB_DOMAIN>.md` — landing page (Quick Start, Configuration, Sync Commands, Subfile Directory).
    - `<sub_domain>/API.md` — modes (sync_* + query modes + status).
@@ -153,8 +186,8 @@ If the sub-domain doesn't fit under `cvm/`, `b3/`, or `bcb/`:
 4. Add a subtree to the **Architecture** tree above.
 5. Create `docs/data_sources/<NEW_DOMAIN>.md` (domain landing page) following the pattern of [B3.md](data_sources/B3.md) or [CVM.md](data_sources/CVM.md).
 6. Add sync commands to the **Quick Start** section.
-7. Add the new domain to **skills/_base.py `_trigger_sync.sync_map`** if any skill will declare it in `REQUIRED_SOURCES`.
+7. Add the new domain to **`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map`** if any skill will declare it in `REQUIRED_SOURCES`. (Phase 3 C2 — was `skills/_base.py`; now in the `_base/` package's `sync_guard.py` module. The `skills._base` import path still works via `__init__.py` re-exports.)
 
 ---
 
-*Last updated: 2026-08-18 (added cotahist_derivatives sub-domain to B3 tree).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — added DDM domain row + `ddm/_base/` shared infrastructure; updated `skills/_base.py` → `skills/_base/sync_guard.py` for `_trigger_sync.sync_map` references).*

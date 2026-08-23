@@ -81,7 +81,7 @@ The `acumulado_12m` line uses slate-400 (`#94a3b8`).
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-poupanca` entry that
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-poupanca` entry that
 calls `data_sources.ddm.poupanca.sync_engine.sync_all(force=True)`. The
 poupanca skill declares `REQUIRED_SOURCES = ["ddm"]` (auto-refreshes
 inflation.db before dashboard run; the `ddm-poupanca` entry is available

@@ -57,16 +57,16 @@ equivalent to dividends but tax-deductible for the company.
 
 ## File Layout
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base/` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
 
 | File | Purpose |
 |------|---------|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/_base/` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
 
 ```text
 skills/cvm/dividends/
-├── __init__.py           # [v2.0] uses auto_discover_modes() + make_route() from skills/_base.py — ~50 lines
-├── _registry.py          # [v2.0] delegates to skills/_base.py (make_registry()) — ~16 lines
+├── __init__.py           # [v2.0] uses auto_discover_modes() + make_route() from skills/_base/ — ~50 lines
+├── _registry.py          # [v2.0] delegates to skills/_base/ (make_registry()) — ~16 lines
 ├── report.py             # Skill-level report helpers (consumed by adapters)
 └── modes/
     ├── __init__.py
@@ -88,4 +88,4 @@ The skill follows the same `_registry.py` + `modes/` auto-discovery pattern used
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base/` extraction; see CHANGELOG.md for details).*

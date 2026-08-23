@@ -18,7 +18,7 @@
 ### ALWAYS DO
 
 1. **Always declare `REQUIRED_SOURCES = ["cotahist"]` in `__init__.py`** — NOT `["cotahist_derivatives"]`. The derivatives table shares the cotahist DB. The sync guard triggers the cotahist sync if stale; derivatives ride along.
-2. **Always use the modular `modes/ + _registry.py` pattern** — Adding a new mode = drop a file in `modes/` + `@register_mode(...)`. No edits to `__init__.py` or `_registry.py`. Delegates to `skills/_base.py` (shared infrastructure with all skills).
+2. **Always use the modular `modes/ + _registry.py` pattern** — Adding a new mode = drop a file in `modes/` + `@register_mode(...)`. No edits to `__init__.py` or `_registry.py`. Delegates to `skills/_base/` (shared infrastructure with all 23 skills).
 3. **Always wrap each query in `_safe_query()`** — Catches `FileNotFoundError` (DB missing), `sqlite3.OperationalError` (table missing), `RuntimeError` (config error). Emits an error section on failure so the dashboard stays `status=ok` (graceful-degradation contract).
 4. **Always set `price_range_selector: true` on every chart section** that uses a date axis — The 7-button range selector (Tudo/10A/5A/1A/6M/3M/1M) is the standard pattern for any time-series chart. The P/C ratio chart needs it; the Volume por Strike bar chart includes it for consistency (even though it's a single-day snapshot).
 5. **Always include `price_full_labels`, `price_full_datasets`, `price_full_data`** when using `price_range_selector` — The `filterPriceChart()` JS reads these to filter the chart client-side. Missing any of these three fields means the filter buttons do nothing.

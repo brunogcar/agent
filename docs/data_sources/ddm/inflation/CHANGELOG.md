@@ -43,7 +43,7 @@ CREATE TABLE index_observations (
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm` entry:
 
 ```python
 "ddm": ("data_sources.ddm.inflation.sync_engine", "sync_all",

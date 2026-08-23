@@ -13,8 +13,9 @@ Analytical skills that combine CVM + B3 data sources with domain reasoning.
 ## 🔄 Force Sync (HEAD Check)
 
 Every CVM skill declares `REQUIRED_SOURCES` in its `__init__.py`. When you call
-`route(mode=..., company=...)`, the `route()` wrapper (from `skills/_base.py`)
-calls `ensure_fresh(REQUIRED_SOURCES)` BEFORE dispatching to the mode function.
+`route(mode=..., company=...)`, the `route()` wrapper (from `skills/_base/route.py`,
+the `make_route()` factory) calls `ensure_fresh(REQUIRED_SOURCES)` (defined in
+`skills/_base/sync_guard.py`) BEFORE dispatching to the mode function.
 
 **CVM sources ALWAYS get a HEAD check** against CVM's server — not just a 24h
 freshness window. This catches new quarterly filings published within the 24h
@@ -81,7 +82,7 @@ redundant engine computation across skills — when valuation computes
 `revenue_at("PETR4", "2024-06-30")` and then financials computes the same, the
 second call is a cache hit.
 
-**3-layer cache** (in `@engine_cached` decorator, `skills/_base.py`):
+**3-layer cache** (in `@engine_cached` decorator, `skills/_base/engine_cache.py`):
 1. **In-memory** (ContextVar `engine_cache_scope`) — within one `route()` call
 2. **DB cache** (persistent) — cross-skill, cross-process
 3. **Real engine fn** — queries DFP/ITR/COTAHIST/SGS
@@ -217,4 +218,4 @@ LLM → skill(domain="cvm", sub_domain=..., mode=..., params=...)  [skills/dispa
 
 ---
 
-*Last updated: 2026-07-29 (v1.8 — screener/shareholders/insider/investsite modular splits + dashboard modes).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — updated `skills/_base.py` references to point at the split `_base/` package modules: `route.py` for `make_route`, `engine_cache.py` for `@engine_cached`). Prior: v1.8 — screener/shareholders/insider/investsite modular splits + dashboard modes.*

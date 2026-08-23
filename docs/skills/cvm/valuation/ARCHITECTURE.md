@@ -64,7 +64,7 @@ skills/cvm/valuation/
 | External File | Purpose |
 |------|---------|
 | `core/br_validator.py` | `validate_ticker()`, `parse_escala()` — shared parsing |
-| `skills/_base.py` | `make_registry`, `make_route`, `auto_discover_modes`, `engine_cache_scope` — shared skill infrastructure |
+| `skills/_base/` | Phase 3 C2 package (was `skills/_base.py`) — `make_registry` + `auto_discover_modes` (`registry.py`), `make_route` (`route.py`), `@engine_cached` + `engine_cache_scope` (`engine_cache.py`), `ensure_fresh` + sync guard (`sync_guard.py`), `_auto_generate_html` (`html_gen.py`). Shared skill infrastructure. |
 | `skills/cvm/_shared_report/` | `build_company_header`, `build_price_chart`, `get_tooltip` — shared dashboard builders |
 | `skills/cvm/calculations/` | 60 metrics via `compute_all_ratios()` + `*_history()` functions + engines |
 

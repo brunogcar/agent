@@ -4,13 +4,13 @@
 
 ## 🔗 Source Code Reference
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base/` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
 
 | File | Purpose |
 |---|---|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
-| `skills/cvm/insider/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route — skill hub, auto-discovers modes/*.py and builds MANIFEST["modes"] from the registry. 4 modes: history, by_role, summary, dashboard. |
-| `skills/cvm/insider/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
+| `skills/_base/` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/insider/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base/` — ~50 lines. MANIFEST + route — skill hub, auto-discovers modes/*.py and builds MANIFEST["modes"] from the registry. 4 modes: history, by_role, summary, dashboard. |
+| `skills/cvm/insider/_registry.py` | [v2.0] Delegates to `skills/_base/` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/insider/report.py` | Dashboard composition helpers used by `modes/dashboard.py`: `_fmt` / `_num` / `_kpi` / `_ok` + `build_overview_kpis` + `build_overview_section` + `build_recent_transactions_section` + `build_by_role_section` + `build_monthly_section`. Pre-formats KPI values via `apply_fmt` so adapters pass through verbatim. |
 | `skills/cvm/insider/modes/__init__.py` | Empty package marker — auto-discovered by `__init__.py`. |
 | `skills/cvm/insider/modes/history.py` | `history(company, limit)` mode — wraps `data_sources.cvm.vlmo.query_engine.query` + `add_freshness`. Registered as `history`. |
@@ -102,4 +102,4 @@ Each sub-call is independently try/except-wrapped so a missing VLMO DB degrades 
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base/` extraction; see CHANGELOG.md for details).*

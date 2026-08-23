@@ -8,7 +8,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
-| v1.0 | 2026-08-05 | **Initial implementation.** 3 modes: dashboard (single-index deep dive, 4-tab), compare (multi-index side-by-side, 3-tab), ticker (reverse-lookup). Modular `_registry.py` + `modes/` pattern (delegates to `skills/_base.py`). Sync guard wired via `required_sources=["index"]` + `make_route()`. 11 tests. Read-only over `data_sources/b3/index`. |
+| v1.0 | 2026-08-05 | **Initial implementation.** 3 modes: dashboard (single-index deep dive, 4-tab), compare (multi-index side-by-side, 3-tab), ticker (reverse-lookup). Modular `_registry.py` + `modes/` pattern (delegates to `skills/_base/`). Sync guard wired via `required_sources=["index"]` + `make_route()`. 11 tests. Read-only over `data_sources/b3/index`. |
 
 ---
 

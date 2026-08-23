@@ -10,7 +10,7 @@
 | P3 | I2 — By-asset breakdown | Add a tab breaking down movements by Tipo_Ativo (Ação, Opção, Bônus, etc.) |
 | P3 | I3 — Window filters | `start_date` / `end_date` params to filter the dashboard to a custom range |
 | Done | v1.2 dashboard reorg | Charts (monthly net + cumulative) added; detailed `[insider]` print output |
-| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base.py` |
+| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base/` |
 | Done | v1.1 modular split | Modes split into `modes/` + `report.py` + dashboard mode |
 
 ---

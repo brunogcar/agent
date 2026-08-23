@@ -4,13 +4,13 @@
 
 ## 🔗 Source Code Reference
 
-**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base.py` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
+**[v2.0]** `_registry.py` + `__init__.py` now delegate to the shared `skills/_base/` module (ModeSpec + `make_registry()` + `auto_discover_modes()` + `make_route()`). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md).
 
 | File | Purpose |
 |------|---------|
-| `skills/_base.py` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
-| `skills/cvm/comparison/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base.py` — ~50 lines. MANIFEST + route() — 4 modes. |
-| `skills/cvm/comparison/_registry.py` | [v2.0] Delegates to `skills/_base.py` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
+| `skills/_base/` | [v2.0] Shared infrastructure for ALL 11 skills: ModeSpec dataclass + make_registry() factory + auto_discover_modes() + make_route(). See [SKILLS.md → Modular Skill Pattern](../../SKILLS.md). |
+| `skills/cvm/comparison/__init__.py` | [v2.0] Uses `auto_discover_modes()` + `make_route()` from `skills/_base/` — ~50 lines. MANIFEST + route() — 4 modes. |
+| `skills/cvm/comparison/_registry.py` | [v2.0] Delegates to `skills/_base/` — creates skill's own MODES dict via `make_registry()`. ~16 lines. |
 | `skills/cvm/comparison/modes/side_by_side.py` | `side_by_side()` — 3 sections (valuation, financials, dividends), tickers as rows. [v1.3] `_VALUATION_COLS` extended with 5 calculations-sourced metrics (roe, roa, margem_liquida, divida_pl, liquidez_corrente) returned by valuation.ratios(). [v1.4] `_VALUATION_COLS` further extended with 15 v1.4 calculations-sourced metrics (ev_sales, ev_fcf, cash_ratio, quick_ratio, ocf_margin, fcf_margin, working_capital, cash_flow_to_debt, retention_ratio, sustainable_growth, interest_coverage, inventory_turnover, receivables_turnover, fixed_asset_turnover, price_to_tangible_book) — comparison surfaces them transitively via valuation.ratios(). |
 | `skills/cvm/comparison/modes/summary.py` | `summary()` — single quick-compare table (10 KPIs) |
 | `skills/cvm/comparison/modes/growth.py` | `growth()` — QoQ + YoY % change + TTM ratios |
@@ -175,4 +175,4 @@ Both the valuation column (calculations TTM snapshot) and the financials column 
 
 ---
 
-*Last updated: 2026-07-30 (v2.0 — `skills/_base.py` extraction; see CHANGELOG.md for details).*
+*Last updated: 2026-07-30 (v2.0 — `skills/_base/` extraction; see CHANGELOG.md for details).*

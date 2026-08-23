@@ -69,7 +69,7 @@ CREATE TABLE sync_state (
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-acoes` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-acoes` entry:
 
 ```python
 "ddm-acoes": ("data_sources.ddm.acoes.sync_engine", "sync_all",

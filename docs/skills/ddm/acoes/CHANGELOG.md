@@ -80,7 +80,7 @@ future skills that display stock prices share the same visual language.
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-acoes` entry that
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-acoes` entry that
 calls `data_sources.ddm.acoes.sync_engine.sync_all(force=True)`. The
 acoes skill declares `REQUIRED_SOURCES = ["ddm-acoes"]` so the sync
 guard auto-refreshes `acoes.db` before each dashboard run.

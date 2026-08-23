@@ -4,7 +4,7 @@
 
 ### NEVER DO
 
-1. **Never add sync logic to a skill mode function** — Skills are read-only. Sync belongs in `data_sources/`. The sync GUARD (`ensure_fresh()`) lives in `skills/_base.py` and is wired via `make_route(required_sources=["cotahist"])` in `__init__.py` — it triggers `data_sources.b3.cotahist.sync_engine.sync()` before dispatch, but the skill mode functions themselves never call sync.
+1. **Never add sync logic to a skill mode function** — Skills are read-only. Sync belongs in `data_sources/`. The sync GUARD (`ensure_fresh()`) lives in `skills/_base/sync_guard.py` and is wired via `make_route(required_sources=["cotahist"])` in `__init__.py` — it triggers `data_sources.b3.cotahist.sync_engine.sync()` before dispatch, but the skill mode functions themselves never call sync.
 2. **Never compute in `report/` builders** — Builders are pure shape: they accept already-computed arrays (closes, MAs, drawdowns, etc.) and emit section dicts. ALL computation belongs in `engines.py`. If a builder needs a derived value (e.g., volume MA20), import the engine function and call it from inside the builder — but the heavy lifting (DB queries, statistics) stays in `engines.py`.
 3. **Never call the `data_source()` tool function** — Import the query engines directly (`from skills.b3.price.engines import ohlcv_series, latest_quote`). Avoids JSON round-trip overhead.
 4. **Never duplicate engine functions in a builder** — If you need SMA, returns, drawdown, etc., call `compute_sma`, `compute_returns`, `compute_drawdowns` from `engines.py`. Re-implementing them in a builder creates a second source of truth that drifts.
@@ -17,7 +17,7 @@
 ### ALWAYS DO
 
 1. **Always declare `REQUIRED_SOURCES = ["cotahist"]` in `__init__.py`** — Sync guard checks freshness before each dispatch + force-syncs if stale. Tests use `CVM_SKIP_SYNC=1` (set in conftest). Per-call bypass: `route(..., skip_sync=True)`.
-2. **Always use the modular `modes/ + _registry.py` pattern** — Adding a new mode = drop a file in `modes/` + `@register_mode(...)`. No edits to `__init__.py` or `_registry.py`. Delegates to `skills/_base.py` (shared infrastructure with all 14 skills).
+2. **Always use the modular `modes/ + _registry.py` pattern** — Adding a new mode = drop a file in `modes/` + `@register_mode(...)`. No edits to `__init__.py` or `_registry.py`. Delegates to `skills/_base/` (shared infrastructure with all 23 skills).
 3. **Always keep computation in `engines.py`** — Report builders must accept already-computed values as parameters. If a new indicator is needed, add it to `engines.py` first, then pass its output to the relevant builder.
 4. **Always set `price_range_selector: true` on every chart section** that uses a date axis — The 7-button range selector (Tudo/10A/5A/1A/6M/3M/1M) is the standard pattern for any time-series chart. Without it, users can't zoom into shorter windows.
 5. **Always include `price_full_labels`, `price_full_datasets`, `price_full_data`** when using `price_range_selector` — The `filterPriceChart()` JS reads these to filter the chart client-side. Missing any of these three fields means the filter buttons do nothing.

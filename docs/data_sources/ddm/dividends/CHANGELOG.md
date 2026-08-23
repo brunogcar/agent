@@ -52,7 +52,7 @@ DB stores dates as ISO `YYYY-MM-DD`; the dashboard converts to PT-BR
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-dividends` entry:
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-dividends` entry:
 
 ```python
 "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",

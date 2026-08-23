@@ -58,25 +58,26 @@ full Chrome 127 browser headers (same as focus).
 | `acoes`      | `memory_db/ddm/acoes.db`                 | B3 listed stocks (PETR4, VALE3, ...) — flat snapshot table (Ticker \| Nome \| Negócios \| Última \| Variação). Pre-sorted by Negócios DESC. |
 | `focus`      | `memory_db/ddm/focus.db`                 | Boletim Focus (market expectations survey). 4 yearly tables (2026-2029) × 12 indicators. Values stored as PT-BR strings verbatim. CloudFront-protected (full Chrome 127 browser headers). |
 | `fluxo`      | `memory_db/ddm/fluxo.db`                 | B3 investment flow (daily net inflow / outflow by investor type). 1 table × ~247 daily rows × 6 columns (Data \| Estrangeiro \| Institucional \| Pessoa física \| Inst. Financeira \| Outros). Values parsed to REAL (millions R$); dates normalized to YYYY-MM-DD. CloudFront-protected (full Chrome 127 browser headers). |
+| `dividends`  | `memory_db/ddm/dividends.db`             | DDM dividends agenda — single flat table of upcoming + historical dividend events (ticker \| tipo \| value \| record_date \| ex_date \| payment_date). Mirrors the juros/poupanca single-page sync pattern. |
 
 ### Per-subdomain differences
 
-| Aspect                | `inflation`                         | `juros`                                       | `poupanca`                                            | `acoes`                                                | `focus`                                                  |
-| --------------------- | ----------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------- |
-| Tables per page       | 2 (matrix + historical)             | 1 (matrix only)                               | 1 (matrix only)                                       | 1 (flat stocks list)                                   | 4 (one per target year)                                  |
-| "Ano" column          | Yes (year acumulado)                | No (daily rates, not cumulative)              | No (monthly yield, not cumulative)                    | N/A (no matrix)                                        | N/A (years are separate tables, not columns)             |
-| Historical series     | Parsed directly from HTML table 2   | DERIVED from matrix (AVERAGE)                 | DERIVED from matrix (SUM)                             | None (single snapshot, no history)                     | None (single snapshot per ref_date; history via PK)      |
-| Numeric fields        | `month_value`, `year_acumulado`, `acumulado_12m` | `month_value`, `media_no_ano`, `media_12m`     | `month_value`, `acumulado_no_ano`, `acumulado_12m`    | `negocios`, `last_price`, `variation`                  | `four_weeks_ago`, `one_week_ago`, `today` (TEXT)         |
-| Unit                  | `%` (monthly variation)             | `% a.a.` (annualized daily rate)              | `%` (monthly yield)                                   | `R$` (price) + `%` (variation)                         | Mixed: `%` + `R$` + int (preserved as strings)           |
-| Indices               | IGP-M, IPCA, INPC                   | Selic, Meta Selic, CDI                        | Poupanca                                              | (no catalog — flat list of ~380 stocks)                | 12 indicators (IPCA, PIB Total, Cambio, ...)             |
-| Catalog category      | `Inflacao`                          | `Juros`                                       | `Renda Fixa`                                          | (no catalog)                                           | (no catalog — 4 year-tables)                             |
-| Pre-sort              | None (matrix is year × month)       | None                                          | None                                                  | Negócios DESC (DDM pre-sorts the page)                 | Indicator order (DDM-controlled)                         |
-| Primary key           | `(slug, ref_date)`                  | `(slug, ref_date)`                            | `(slug, ref_date)`                                    | `ticker` (single row per stock)                        | `(year, indicator, ref_date)` (history-aware)            |
-| DB file location      | `memory_db/ddm/inflation/inflation.db` | `memory_db/ddm/juros.db`                   | `memory_db/ddm/poupanca.db`                           | `memory_db/ddm/acoes.db`                               | `memory_db/ddm/focus.db`                                 |
+| Aspect                | `inflation`                         | `juros`                                       | `poupanca`                                            | `acoes`                                                | `focus`                                                  | `fluxo`                                                  | `dividends`                                          |
+| --------------------- | ----------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------- |
+| Tables per page       | 2 (matrix + historical)             | 1 (matrix only)                               | 1 (matrix only)                                       | 1 (flat stocks list)                                   | 4 (one per target year)                                  | 1 (daily flow by investor type)                          | 1 (dividend agenda)                                  |
+| "Ano" column          | Yes (year acumulado)                | No (daily rates, not cumulative)              | No (monthly yield, not cumulative)                    | N/A (no matrix)                                        | N/A (years are separate tables, not columns)             | N/A (daily series, not cumulative)                       | N/A (event list, not cumulative)                     |
+| Historical series     | Parsed directly from HTML table 2   | DERIVED from matrix (AVERAGE)                 | DERIVED from matrix (SUM)                             | None (single snapshot, no history)                     | None (single snapshot per ref_date; history via PK)      | None (full daily series is the only table)               | None (events are the series itself)                  |
+| Numeric fields        | `month_value`, `year_acumulado`, `acumulado_12m` | `month_value`, `media_no_ano`, `media_12m`     | `month_value`, `acumulado_no_ano`, `acumulado_12m`    | `negocios`, `last_price`, `variation`                  | `four_weeks_ago`, `one_week_ago`, `today` (TEXT)         | `estrangeiro`, `institucional`, `pessoa_fisica`, `inst_fin`, `outros` | `value`, `record_date`, `ex_date`, `payment_date`    |
+| Unit                  | `%` (monthly variation)             | `% a.a.` (annualized daily rate)              | `%` (monthly yield)                                   | `R$` (price) + `%` (variation)                         | Mixed: `%` + `R$` + int (preserved as strings)           | `R$ mi` (millions of R$, parsed to REAL float)           | `R$` + `%` (per share / yield)                        |
+| Indices               | IGP-M, IPCA, INPC                   | Selic, Meta Selic, CDI                        | Poupanca                                              | (no catalog — flat list of ~380 stocks)                | 12 indicators (IPCA, PIB Total, Cambio, ...)             | 5 investor-type columns                                  | (no catalog — one row per event per ticker)          |
+| Catalog category      | `Inflacao`                          | `Juros`                                       | `Renda Fixa`                                          | (no catalog)                                           | (no catalog — 4 year-tables)                             | (no catalog — single daily table)                        | (no catalog — single event table)                    |
+| Pre-sort              | None (matrix is year × month)       | None                                          | None                                                  | Negócios DESC (DDM pre-sorts the page)                 | Indicator order (DDM-controlled)                         | Date ASC                                                 | None (rows in DDM page order)                        |
+| Primary key           | `(slug, ref_date)`                  | `(slug, ref_date)`                            | `(slug, ref_date)`                                    | `ticker` (single row per stock)                        | `(year, indicator, ref_date)` (history-aware)            | `data` (single row per trading day)                      | `(ticker, record_date, tipo)`                        |
+| DB file location      | `memory_db/ddm/inflation/inflation.db` | `memory_db/ddm/juros.db`                   | `memory_db/ddm/poupanca.db`                           | `memory_db/ddm/acoes.db`                               | `memory_db/ddm/focus.db`                                 | `memory_db/ddm/fluxo.db`                                 | `memory_db/ddm/dividends.db`                         |
 
-All 6 DB files live under `memory_db/ddm/` (the inflation DB is in a
-sub-folder; juros, poupanca, acoes, focus, and fluxo sit directly in
-the `ddm/` folder side-by-side).
+All 7 DB files live under `memory_db/ddm/` (the inflation DB is in a
+sub-folder; juros, poupanca, acoes, focus, fluxo, and dividends sit directly
+in the `ddm/` folder side-by-side).
 
 ### Planned (not yet built)
 
@@ -101,10 +102,27 @@ the `ddm/` folder side-by-side).
   - `sub_domain="acoes"` → route directly to the acoes sub-domain.
   - `sub_domain="focus"` → route directly to the focus sub-domain.
   - `sub_domain="fluxo"` → route directly to the fluxo sub-domain.
+  - `sub_domain="dividends"` → route directly to the dividends sub-domain.
 
 Auto-discovery is filesystem-driven — dropping a new sub-domain directory
 (`funds/`) into `data_sources/ddm/` is enough to make it available via
-`data_source(domain="ddm", sub_domain="...", ...)`.
+`data_source(domain="ddm", sub_domain="...", ...)`. Directories prefixed
+with `_` (e.g. `_base/`, `_parsers.py`) are auto-skipped by the discovery
+loop — they provide shared infrastructure, not sub-domains.
+
+### Shared infrastructure (`_base/` package — Phase 3 C1)
+
+The 7 DDM sub-domains share ~80% of their catalog / fetcher / sync_engine /
+status_reporter / route code (HTTP cache, concurrency, DELETE+INSERT idempotency,
+DB-connect scaffold, route dispatcher). As of Phase 3 Commit 1, this shared
+code lives in `data_sources/ddm/_base/` (6 modules). Each sub-domain now
+subclasses `BaseDDMCatalog`, `BaseDDMFetcher`, `BaseDDMSyncEngine`,
+`BaseDDMStatusReporter` (and the domain hub subclasses `BaseDDMRoute`) instead
+of duplicating the scaffold. Per-source code is now thin: source-specific
+constants (URL, schema, catalog) + thin re-exports of the base class.
+
+See [`ddm/_base/ARCHITECTURE.md`](ddm/_base/ARCHITECTURE.md) for the canonical
+map of the shared package.
 
 ## Usage
 
@@ -162,6 +180,9 @@ ddm(sub_domain="fluxo", mode="fluxo_by_investor", investor="estrangeiro")
 
 ## See also
 
+- [`ddm/_base/ARCHITECTURE.md`](ddm/_base/ARCHITECTURE.md) — Phase 3 C1 shared
+  infrastructure package (6 modules: catalog_base, fetcher_base, sync_base,
+  status_base, route_base, `__init__`).
 - [`ddm/inflation/API.md`](ddm/inflation/API.md) — 8-mode inflation API.
 - [`ddm/inflation/ARCHITECTURE.md`](ddm/inflation/ARCHITECTURE.md) —
   inflation file map and DB schema.
@@ -180,3 +201,6 @@ ddm(sub_domain="fluxo", mode="fluxo_by_investor", investor="estrangeiro")
 - [`ddm/fluxo/API.md`](ddm/fluxo/API.md) — 8-mode fluxo API.
 - [`ddm/fluxo/ARCHITECTURE.md`](ddm/fluxo/ARCHITECTURE.md) —
   fluxo file map and DB schema (1 daily table, CloudFront-protected).
+- [`ddm/dividends/API.md`](ddm/dividends/API.md) — dividends API.
+- [`ddm/dividends/ARCHITECTURE.md`](ddm/dividends/ARCHITECTURE.md) —
+  dividends file map and DB schema (single dividend-event table).

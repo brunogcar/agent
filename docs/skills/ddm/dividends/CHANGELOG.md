@@ -79,7 +79,7 @@ The Dividendos tab contains:
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-dividends` entry
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-dividends` entry
 that calls `data_sources.ddm.dividends.sync_engine.sync_all(force=True)`.
 The dividends skill declares `REQUIRED_SOURCES = ["ddm-dividends"]` so
 the sync guard auto-refreshes the dividends DB before each dashboard run.

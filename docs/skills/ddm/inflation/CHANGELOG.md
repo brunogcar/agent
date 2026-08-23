@@ -39,7 +39,7 @@ Initial release. Mirrors `bcb/macro` skill pattern.
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm` entry that calls
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm` entry that calls
 `data_sources.ddm.inflation.sync_engine.sync_all(force=True)` when the
 `ddm` source is stale. Tests bypass via `CVM_SKIP_SYNC=1`.
 

@@ -20,6 +20,8 @@ data_sources/ddm/inflation/
 └── status_reporter.py   # status()
 ```
 
+> **Phase 3 C1 — shared infrastructure:** `catalog.py`, `fetcher.py`, `sync_engine.py`, `status_reporter.py`, and the route dispatcher all subclass the corresponding base classes in [`data_sources/ddm/_base/`](../../_base/ARCHITECTURE.md) (`BaseDDMCatalog`, `BaseDDMFetcher`, `BaseDDMSyncEngine`, `BaseDDMStatusReporter`, `BaseDDMRoute`). The file map above lists what each module exposes to callers — the implementation lives in `_base/`, and this module keeps only source-specific constants + URL/parse helpers. See the "Shared infrastructure (`_base/`)" section at the end of this file for details.
+
 ## Database
 
 `memory_db/ddm/inflation/inflation.db` (SQLite, per-subdomain DB pattern).

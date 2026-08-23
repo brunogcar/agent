@@ -62,7 +62,7 @@ Each per-index tab is ONE `type:"subtabs"` section with 2 subtabs:
 
 ### Sync wiring
 
-`skills/_base.py._trigger_sync.sync_map` gained a `ddm-juros` entry that
+`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` gained a `ddm-juros` entry that
 calls `data_sources.ddm.juros.sync_engine.sync_all(force=True)`. The
 juros skill declares `REQUIRED_SOURCES = ["ddm"]` (auto-refreshes
 inflation.db before dashboard run; the `ddm-juros` entry is available

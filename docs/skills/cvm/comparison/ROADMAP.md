@@ -10,7 +10,7 @@
 | P2 | C2 — Radar chart of normalized metrics | Multi-axis radar chart comparing tickers across normalized P/L, ROE, Div Yield, growth |
 | P3 | C3 — Historical comparison | Compare tickers at a past date (e.g. "PETR4 vs VALE3 as of 2022-12-31") |
 | Done | v1.2 dashboard reorg | Peer comparison chart (P/L) added to Valuation tab + new Ratio Grid tab; detailed `[comparison]` print output |
-| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base.py` |
+| Done | v2.0 _base.py extraction | _registry + __init__ delegate to shared `skills/_base/` |
 | Done | v1.5 modular split | Modes split into `modes/` + `report.py` + dashboard mode |
 | Done | v1.3 calculations integration | 5 new metrics (ROE, ROA, Marg. Líq., Dívida/PL, Liquidez Corrente) surfaced in side_by_side |
 
