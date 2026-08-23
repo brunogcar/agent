@@ -25,6 +25,11 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import (
+    parse_br_number,
+    parse_mes_ano,
+    strip_html,
+)
 from data_sources.ddm.inflation.catalog import index_url
 
 # 5-minute cache TTL. DDM publishes monthly series once per month, so 5 min
@@ -40,13 +45,6 @@ _cache: dict[str, tuple[object, float]] = {}
 _cache_lock = threading.Lock()
 _concurrency_semaphore = threading.Semaphore(5)
 
-# Portuguese month abbreviations used by DDM in 'Jul/2026' style dates.
-_MONTHS_PT = {
-    "Jan": "01", "Fev": "02", "Mar": "03", "Abr": "04",
-    "Mai": "05", "Jun": "06", "Jul": "07", "Ago": "08",
-    "Set": "09", "Out": "10", "Nov": "11", "Dez": "12",
-}
-
 
 def _progress(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
@@ -54,37 +52,6 @@ def _progress(msg: str) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_mes_ano(s: str) -> str:
-    """Convert 'Jul/2026' -> '2026-07'.
-
-    DDM historical rows use the Portuguese abbreviation 'Mon/YYYY'. Returns
-    "" if the input is empty or unparseable.
-    """
-    if not s:
-        return ""
-    match = re.match(r"(\w{3})/(\d{4})", s.strip())
-    if not match:
-        return ""
-    mon, year = match.group(1), match.group(2)
-    return f"{year}-{_MONTHS_PT.get(mon, '')}"
-
-
-def _parse_br_number(s: str) -> float | None:
-    """Parse a Brazilian-formatted number string ('-1,16') -> -1.16.
-
-    Returns None for empty strings, "--", or unparseable inputs.
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    try:
-        return float(s.replace(",", "."))
-    except (ValueError, TypeError):
-        return None
 
 
 def _parse_data_value(td: str) -> float | None:
@@ -108,12 +75,7 @@ def _parse_data_value(td: str) -> float | None:
     # Fallback: strip HTML + parse the cell text.
     text = re.sub(r"<[^>]+>", "", td).strip()
     text = text.replace("%", "").strip()
-    return _parse_br_number(text)
-
-
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
+    return parse_br_number(text)
 
 
 def parse_historical_table(html: str) -> list[dict]:
@@ -141,15 +103,15 @@ def parse_historical_table(html: str) -> list[dict]:
         cells = re.findall(r"<td[^>]*>([\s\S]*?)</td>", tr.group(1))
         if len(cells) < 4:
             continue
-        cleaned = [_strip_html(c) for c in cells[:4]]
-        ref_date = _parse_mes_ano(cleaned[0])
+        cleaned = [strip_html(c) for c in cells[:4]]
+        ref_date = parse_mes_ano(cleaned[0])
         if not ref_date:
             continue
         rows.append({
             "ref_date":        ref_date,
-            "month_value":     _parse_br_number(cleaned[1]),
-            "year_acumulado":  _parse_br_number(cleaned[2]),
-            "acumulado_12m":   _parse_br_number(cleaned[3]),
+            "month_value":     parse_br_number(cleaned[1]),
+            "year_acumulado":  parse_br_number(cleaned[2]),
+            "acumulado_12m":   parse_br_number(cleaned[3]),
         })
 
     # DDM rows are DESC (Jul/2026, Jun/2026, ...) - reverse to ASC.
@@ -189,13 +151,13 @@ def parse_monthly_matrix(html: str) -> dict:
         header_tr = re.search(r"<tr[^>]*>([\s\S]*?)</tr>", header_match.group(1))
         if header_tr:
             for th in re.findall(r"<th[^>]*>([\s\S]*?)</th>", header_tr.group(1)):
-                months.append(_strip_html(th))
+                months.append(strip_html(th))
     if not months:
         # Fallback: take the first <tr> in the table as the header.
         first_tr = re.search(r"<tr[^>]*>([\s\S]*?)</tr>", table)
         if first_tr:
             for cell in re.findall(r"<t[h|d][^>]*>([\s\S]*?)</t[h|d]>", first_tr.group(1)):
-                months.append(_strip_html(cell))
+                months.append(strip_html(cell))
 
     # Parse body rows.
     body_match = re.search(r"<tbody[^>]*>([\s\S]*?)</tbody>", table)
@@ -208,7 +170,7 @@ def parse_monthly_matrix(html: str) -> dict:
         if not cells:
             continue
         # First cell = year (string).
-        year_str = _strip_html(cells[0])
+        year_str = strip_html(cells[0])
         try:
             year = int(year_str)
         except (ValueError, TypeError):

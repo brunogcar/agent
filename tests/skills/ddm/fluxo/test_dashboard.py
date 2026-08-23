@@ -690,16 +690,21 @@ def test_monthly_chart_has_segment_negative_red_flag(monkeypatch):
     assert opts.get("_segment_negative_red") is True
 
 
-def test_monthly_chart_segment_colors_set(monkeypatch):
-    """Monthly chart carries explicit pos/neg/cross segment colors.
+def test_monthly_chart_segment_colors_use_template_defaults(monkeypatch):
+    """Monthly chart does NOT override segment colors — uses template defaults.
 
-    [v4] 3-color rule: pos→pos=green, neg→neg=red, crossing=yellow.
+    [v5] The _segment_pos_color / _segment_neg_color / _segment_cross_color
+    overrides were removed from report.py. The template's _applySegmentColors
+    function has its own defaults (#22c55e / #ef4444 / #eab308) that match.
+    Only the _segment_negative_red flag is set (to opt into segment coloring).
     """
     chart = _get_monthly_chart(monkeypatch)
     opts = chart["chart_data"]["options"]
-    assert opts.get("_segment_pos_color") == "#22c55e"
-    assert opts.get("_segment_neg_color") == "#ef4444"
-    assert opts.get("_segment_cross_color") == "#eab308"
+    assert opts.get("_segment_negative_red") is True
+    # The explicit color overrides should NOT be present (template defaults).
+    assert "_segment_pos_color" not in opts
+    assert "_segment_neg_color" not in opts
+    assert "_segment_cross_color" not in opts
 
 
 def test_monthly_chart_has_per_point_colors(monkeypatch):
@@ -721,16 +726,18 @@ def test_annual_chart_has_segment_negative_red_flag(monkeypatch):
     assert opts.get("_segment_negative_red") is True
 
 
-def test_annual_chart_segment_colors_set(monkeypatch):
-    """Annual chart carries explicit pos/neg/cross segment colors.
+def test_annual_chart_segment_colors_use_template_defaults(monkeypatch):
+    """Annual chart does NOT override segment colors — uses template defaults.
 
-    [v4] 3-color rule: pos→pos=green, neg→neg=red, crossing=yellow.
+    [v5] Same as monthly: the _segment_*_color overrides were removed.
+    Only _segment_negative_red=True is set (template handles the rest).
     """
     chart = _get_annual_chart(monkeypatch)
     opts = chart["chart_data"]["options"]
-    assert opts.get("_segment_pos_color") == "#22c55e"
-    assert opts.get("_segment_neg_color") == "#ef4444"
-    assert opts.get("_segment_cross_color") == "#eab308"
+    assert opts.get("_segment_negative_red") is True
+    assert "_segment_pos_color" not in opts
+    assert "_segment_neg_color" not in opts
+    assert "_segment_cross_color" not in opts
 
 
 def test_annual_chart_has_per_point_colors(monkeypatch):

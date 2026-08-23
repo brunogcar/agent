@@ -64,24 +64,113 @@ def _check_db_freshness(db_path: Path, table: str = "sync_state") -> str:
 
 
 def get_freshness() -> dict[str, str]:
-    """Get last-sync timestamps for all DDM databases.
+    """Get last-sync timestamps for ALL data source databases.
 
-    Returns:
-        ``{"ddm": ..., "ddm-juros": ..., "ddm-poupanca": ..., "ddm-acoes": ...}``
-        Missing / unsynced DBs return ``""``.
+    Returns: {"dfp": "2026-07-24T...", "sgs": "...", "ddm-inflation": "...", ...}
+    Missing/unsynced DBs return "".
 
     The keys match the ``sync_map`` keys in ``skills/_base._trigger_sync``
     so consumers can do ``fresh = get_freshness(); ensure_fresh([k for
     k, v in fresh.items() if not v])``.
+
+    [v2 fix B1] Restored CVM + B3 + BCB sections that were lost during
+    the 4ebdabf "move" from skills/cvm/_freshness.py. The DDM-only version
+    at main caused _source_last_sync() to return "" for every non-DDM
+    source, making every CVM/B3/BCB dashboard force-sync on every call.
     """
     result: dict[str, str] = {}
 
-    # DDM Inflation (sync_map key = "ddm").
+    # ── CVM databases ──────────────────────────────────────────────────
+    try:
+        from data_sources.cvm._db import (
+            dfp_db_path, itr_db_path, fre_db_path, ipe_db_path,
+            cad_db_path, vlmo_db_path, cgvn_db_path, fca_db_path,
+        )
+        from data_sources.cvm._db import bridge_db_path as bridge_path
+
+        for name, path_fn in [
+            ("dfp", dfp_db_path), ("itr", itr_db_path),
+            ("fre", fre_db_path), ("ipe", ipe_db_path),
+            ("cad", cad_db_path), ("vlmo", vlmo_db_path),
+            ("cgvn", cgvn_db_path), ("fca", fca_db_path),
+        ]:
+            try:
+                result[name] = _check_db_freshness(path_fn())
+            except Exception:
+                result[name] = ""
+
+        # Bridge — sync_log table
+        try:
+            bp = bridge_path()
+            if bp.exists():
+                conn = sqlite3.connect(f"file:{bp}?mode=ro", uri=True)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT synced_at FROM sync_log ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+                result["bridge"] = str(row["synced_at"]) if row and row["synced_at"] else ""
+                conn.close()
+            else:
+                result["bridge"] = ""
+        except Exception:
+            result["bridge"] = ""
+    except Exception:
+        pass
+
+    # ── B3 databases ───────────────────────────────────────────────────
+    try:
+        from data_sources.b3.dividends.catalog import db_path as b3_div_path
+        result["b3_dividends"] = _check_db_freshness(b3_div_path())
+    except Exception:
+        result["b3_dividends"] = ""
+
+    try:
+        from data_sources.b3.brapi.catalog import db_path as brapi_path
+        result["brapi"] = _check_db_freshness(brapi_path())
+    except Exception:
+        result["brapi"] = ""
+
+    try:
+        from data_sources.b3.cotahist.catalog import db_path as cotahist_path
+        cp = cotahist_path()
+        if cp.exists():
+            conn = sqlite3.connect(f"file:{cp}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT synced_at FROM sync_state ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+                result["cotahist"] = str(row["synced_at"]) if row and row["synced_at"] else ""
+            except Exception:
+                result["cotahist"] = ""
+            conn.close()
+        else:
+            result["cotahist"] = ""
+    except Exception:
+        result["cotahist"] = ""
+
+    # ── BCB databases ──────────────────────────────────────────────────
+    try:
+        from data_sources.bcb.sgs.catalog import db_path as sgs_path
+        result["sgs"] = _check_db_freshness(sgs_path())
+    except Exception:
+        result["sgs"] = ""
+
+    try:
+        from data_sources.bcb.focus.catalog import db_path as focus_path
+        result["focus"] = _check_db_freshness(focus_path())
+    except Exception:
+        result["focus"] = ""
+
+    # ── DDM databases ──────────────────────────────────────────────────
+
+    # DDM Inflation (sync_map key = "ddm-inflation" — renamed from "ddm"
+    # in v2 fix B3 to match the skill's REQUIRED_SOURCES).
     try:
         from data_sources.ddm.inflation.catalog import db_path as ddm_inflation_path
-        result["ddm"] = _check_db_freshness(ddm_inflation_path())
+        result["ddm-inflation"] = _check_db_freshness(ddm_inflation_path())
     except Exception:
-        result["ddm"] = ""
+        result["ddm-inflation"] = ""
 
     # DDM Juros (sync_map key = "ddm-juros").
     try:
@@ -118,11 +207,65 @@ def get_freshness() -> dict[str, str]:
     except Exception:
         result["ddm-fluxo"] = ""
 
+    # DDM Dividends (sync_map key = "ddm-dividends").
+    # [v2 fix B2] Added alongside the sync_map entry — was missing, causing
+    # _source_last_sync("ddm-dividends") to return "" even when the DB
+    # was freshly synced.
+    try:
+        from data_sources.ddm.dividends.catalog import db_path as ddm_div_path
+        result["ddm-dividends"] = _check_db_freshness(ddm_div_path())
+    except Exception:
+        result["ddm-dividends"] = ""
+
+    return result
+
+
+def get_last_synced_period() -> dict[str, str]:
+    """Get the last data period available in each CVM database.
+
+    Returns {"dfp": "2023-12-31", "itr": "2024-06-30", ...} for CVM sources
+    that have a contas table. Other sources return "".
+
+    [v2 fix B1] Restored from the old skills/cvm/_freshness.py (deleted in
+    commit 4ebdabf). The function was lost during the "move" — the DDM
+    freshness was extracted to skills/_freshness.py but the CVM-specific
+    get_last_synced_period was not carried over, causing 4 CVM freshness
+    tests to fail.
+    """
+    from data_sources.cvm._db import (
+        dfp_db_path, itr_db_path, fre_db_path, ipe_db_path,
+        cad_db_path, vlmo_db_path, cgvn_db_path, fca_db_path,
+    )
+
+    result: dict[str, str] = {}
+    for name, path_fn in [
+        ("dfp", dfp_db_path), ("itr", itr_db_path),
+        ("fre", fre_db_path), ("ipe", ipe_db_path),
+        ("cad", cad_db_path), ("vlmo", vlmo_db_path),
+        ("cgvn", cgvn_db_path), ("fca", fca_db_path),
+    ]:
+        try:
+            p = path_fn()
+            if not p.exists():
+                result[name] = ""
+                continue
+            conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT MAX(data_fim_exerc) as max_date FROM contas"
+                ).fetchone()
+                result[name] = str(row["max_date"]) if row and row["max_date"] else ""
+            except sqlite3.OperationalError:
+                result[name] = ""
+            conn.close()
+        except Exception:
+            result[name] = ""
     return result
 
 
 def add_freshness(result: dict) -> dict:
-    """Add data_freshness to a skill result dict (in-place + return).
+    """Add data_freshness + last_synced_period to a skill result dict.
 
     Usage at the end of a skill function:
         from skills._freshness import add_freshness
@@ -132,4 +275,8 @@ def add_freshness(result: dict) -> dict:
         result["data_freshness"] = get_freshness()
     except Exception:
         result["data_freshness"] = {}
+    try:
+        result["last_synced_period"] = get_last_synced_period()
+    except Exception:
+        result["last_synced_period"] = {}
     return result

@@ -277,17 +277,25 @@
       //   use daily labels; without this, the string comparison "19/08/2026"
       //   >= "2025-08-23" fails lexicographically because "1" < "2", so
       //   sub-10A ranges filtered out almost every label).
+      // [v5 fix B8] Strict month lookup: returns null for unknown months
+      //   (was silently mapping to '01' = January). Also changed \w{3} to
+      //   [A-Za-z]{3} so Q1/2026 doesn't match the regex at all.
       var meses = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
       function labelToISO(l) {
         // DD/MM/YYYY → YYYY-MM-DD (daily charts)
         var d = l.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
         if (d) return d[3] + '-' + d[2] + '-' + d[1];
         // Mon/YYYY → YYYY-MM (monthly charts, PT-BR abbrev)
-        var m = l.match(/^(\w{3})\/(\d{4})$/);
-        if (m) return m[2] + '-' + (meses[m[1]] || '01');
-        return l;  // already ISO or unknown format
+        // [v5 fix B8] Strict: only match 3 letters + 4 digits, and only
+        // return if the month is in the meses dict (no silent '01' fallback).
+        var m = l.match(/^([A-Za-z]{3})\/(\d{4})$/);
+        if (m && meses[m[1]]) return m[2] + '-' + meses[m[1]];
+        return null;  // unknown format — caller should skip this label
       }
-      keep = labels.map(function(l) { return labelToISO(l) >= cutoffStr; });
+      keep = labels.map(function(l) {
+        var iso = labelToISO(l);
+        return iso !== null && iso >= cutoffStr;
+      });
     }
 
     // Filter labels.
@@ -376,7 +384,9 @@
             var y0 = ctx.p0 && ctx.p0.parsed && ctx.p0.parsed.y;
             var y1 = ctx.p1 && ctx.p1.parsed && ctx.p1.parsed.y;
             if (y0 === null || y0 === undefined || y1 === null || y1 === undefined) {
-              return posColor;
+              // [v5 fix B10] Return transparent for null/NaN segments (was
+              // returning posColor = green, which painted gaps as positive).
+              return 'rgba(150,150,150,0.3)';
             }
             // [v4] 3-color rule:
             //   both positive → green, both negative → red,

@@ -33,6 +33,11 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import (
+    parse_br_date_iso,
+    parse_br_number,
+    strip_html,
+)
 from data_sources.ddm.fluxo.catalog import fluxo_url
 
 # 5-minute cache TTL. Fluxo is published daily (after market close BRT),
@@ -73,81 +78,6 @@ def _progress(msg: str) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
-
-
-def _parse_br_date(s: str) -> str:
-    """Parse a PT-BR date ("19/08/2026") to ISO YYYY-MM-DD ("2026-08-19").
-
-    Returns "" for empty / unparseable inputs. The /fluxo page formats
-    dates as DD/MM/YYYY (no leading-zero stripping - days and months are
-    always 2 digits in the source).
-    """
-    if not s:
-        return ""
-    s = _strip_html(s)
-    m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$", s)
-    if not m:
-        return ""
-    day, month, year = m.group(1), m.group(2), m.group(3)
-    try:
-        d = int(day)
-        mo = int(month)
-        y = int(year)
-        if not (1 <= d <= 31 and 1 <= mo <= 12 and 1900 <= y <= 2100):
-            return ""
-        return f"{y:04d}-{mo:02d}-{d:02d}"
-    except (ValueError, TypeError):
-        return ""
-
-
-def _parse_br_number(s: str) -> float | None:
-    """Parse a PT-BR formatted number with the "mi" suffix to a float.
-
-    Handles the value format on the /fluxo page:
-      "-1.582,35 mi"  ->  -1582.35  (negative, dot=thousands, comma=decimal)
-      "1.029,81 mi"   ->   1029.81
-      "42,36 mi"      ->     42.36  (no thousands separator)
-      "-9,31 mi"      ->     -9.31
-      "1.234.567,89 mi" -> 1234567.89
-
-    Algorithm:
-      1. Strip the "mi" suffix (case-insensitive, with surrounding space).
-      2. Strip whitespace and any stray HTML tags.
-      3. Remove ALL dots (PT-BR thousands separator).
-      4. Replace comma (PT-BR decimal separator) with dot.
-      5. Parse as float (preserving the leading minus sign).
-
-    Returns None for empty / "--" / unparseable inputs.
-    """
-    if s is None:
-        return None
-    if isinstance(s, (int, float)):
-        return float(s)
-    s = _strip_html(str(s))
-    if not s or s == "--" or s == "-":
-        return None
-    # Strip the "mi" suffix (case-insensitive) + any "R$" prefix + whitespace.
-    s = re.sub(r"\bmi\b", "", s, flags=re.IGNORECASE)
-    s = s.replace("R$", "").strip()
-    if not s or s == "--":
-        return None
-    # PT-BR uses "." for thousands and "," for decimals. To convert to a
-    # float-parseable string we remove ALL dots then replace comma with dot.
-    s = s.replace(".", "").replace(",", ".")
-    # Extract the first numeric run (sign + digits + optional dot + digits).
-    # Some cells may have trailing non-numeric residue (e.g. whitespace).
-    m = re.match(r"^(-?\d+(?:\.\d+)?)", s)
-    if not m:
-        return None
-    try:
-        return float(m.group(1))
-    except (ValueError, TypeError):
-        return None
 
 
 def parse_fluxo_table(html: str) -> list[dict]:
@@ -201,22 +131,22 @@ def parse_fluxo_table(html: str) -> list[dict]:
         if len(cells) < 6:
             # Header rows, malformed rows, or repeat-header rows.
             continue
-        date_str = _strip_html(cells[0])
+        date_str = strip_html(cells[0])
         if not date_str:
             continue
         # Skip the header row (first cell == "Data").
         if date_str.lower() in ("data", "data "):
             continue
-        ref_date = _parse_br_date(date_str)
+        ref_date = parse_br_date_iso(date_str)
         if not ref_date:
             continue
         row = {
             "ref_date":        ref_date,
-            "estrangeiro":     _parse_br_number(cells[1]),
-            "institucional":   _parse_br_number(cells[2]),
-            "pessoa_fisica":   _parse_br_number(cells[3]),
-            "inst_financeira": _parse_br_number(cells[4]),
-            "outros":          _parse_br_number(cells[5]),
+            "estrangeiro":     parse_br_number(cells[1]),
+            "institucional":   parse_br_number(cells[2]),
+            "pessoa_fisica":   parse_br_number(cells[3]),
+            "inst_financeira": parse_br_number(cells[4]),
+            "outros":          parse_br_number(cells[5]),
         }
         rows.append(row)
 

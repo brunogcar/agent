@@ -10,9 +10,9 @@ shape:
   - Dates are DD/MM/YYYY DESC (newest first)
 
 Verifies:
-  - _parse_br_number parses values with "mi" suffix (positive + negative)
-  - _parse_br_number handles no-thousands-separator values
-  - _parse_br_date parses DD/MM/YYYY -> YYYY-MM-DD
+  - parse_br_number parses values with "mi" suffix (positive + negative)
+  - parse_br_number handles no-thousands-separator values
+  - parse_br_date_iso parses DD/MM/YYYY -> YYYY-MM-DD
   - parse_fluxo_table returns rows with the right ref_date + fields
   - Header rows + malformed rows are skipped
   - Empty / malformed HTML is handled gracefully
@@ -20,9 +20,9 @@ Verifies:
 from __future__ import annotations
 
 from data_sources.ddm.fluxo.fetcher import (
-    _parse_br_date,
-    _parse_br_number,
-    _strip_html,
+    parse_br_date_iso,
+    parse_br_number,
+    strip_html,
     parse_fluxo_table,
 )
 
@@ -90,65 +90,65 @@ SAMPLE_FLUXO_HTML = """
 
 def test_parse_br_number_negative_with_thousands():
     """'-1.582,35 mi' -> -1582.35 (negative, dot=thousands, comma=decimal)."""
-    assert _parse_br_number("-1.582,35 mi") == -1582.35
+    assert parse_br_number("-1.582,35 mi") == -1582.35
 
 
 def test_parse_br_number_positive_with_thousands():
     """'1.029,81 mi' -> 1029.81."""
-    assert _parse_br_number("1.029,81 mi") == 1029.81
+    assert parse_br_number("1.029,81 mi") == 1029.81
 
 
 def test_parse_br_number_no_thousands():
     """'42,36 mi' -> 42.36 (no thousands separator)."""
-    assert _parse_br_number("42,36 mi") == 42.36
+    assert parse_br_number("42,36 mi") == 42.36
 
 
 def test_parse_br_number_negative_no_thousands():
     """'-9,31 mi' -> -9.31."""
-    assert _parse_br_number("-9,31 mi") == -9.31
+    assert parse_br_number("-9,31 mi") == -9.31
 
 
 def test_parse_br_number_large_value():
     """'1.234.567,89 mi' -> 1234567.89 (multiple thousands separators)."""
-    assert _parse_br_number("1.234.567,89 mi") == 1234567.89
+    assert parse_br_number("1.234.567,89 mi") == 1234567.89
 
 
 def test_parse_br_number_zero():
     """'0,00 mi' -> 0.0."""
-    assert _parse_br_number("0,00 mi") == 0.0
+    assert parse_br_number("0,00 mi") == 0.0
 
 
 def test_parse_br_number_dash_dash_is_none():
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_br_number_case_insensitive_mi():
     """'1.234,56 MI' (uppercase) -> 1234.56."""
-    assert _parse_br_number("1.234,56 MI") == 1234.56
+    assert parse_br_number("1.234,56 MI") == 1234.56
 
 
 def test_parse_br_date_pt_br_to_iso():
     """'19/08/2026' -> '2026-08-19'."""
-    assert _parse_br_date("19/08/2026") == "2026-08-19"
+    assert parse_br_date_iso("19/08/2026") == "2026-08-19"
 
 
 def test_parse_br_date_single_digit():
     """'9/8/2026' -> '2026-08-09' (single-digit day + month)."""
-    assert _parse_br_date("9/8/2026") == "2026-08-09"
+    assert parse_br_date_iso("9/8/2026") == "2026-08-09"
 
 
 def test_parse_br_date_invalid_returns_empty():
-    assert _parse_br_date("") == ""
-    assert _parse_br_date("not-a-date") == ""
-    assert _parse_br_date("2026-08-19") == ""  # not DD/MM/YYYY
+    assert parse_br_date_iso("") == ""
+    assert parse_br_date_iso("not-a-date") == ""
+    assert parse_br_date_iso("2026-08-19") == "2026-08-19"  # ISO passthrough
 
 
 def test_strip_html_strips_tags_and_collapses_whitespace():
-    assert _strip_html("<td>19/08/2026</td>") == "19/08/2026"
-    assert _strip_html("  hello   world  ") == "hello world"
-    assert _strip_html("<b>IPCA</b>") == "IPCA"
+    assert strip_html("<td>19/08/2026</td>") == "19/08/2026"
+    assert strip_html("  hello   world  ") == "hello world"
+    assert strip_html("<b>IPCA</b>") == "IPCA"
 
 
 # ────────────────────────────────────────────────────────────────────────

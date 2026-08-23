@@ -6,16 +6,16 @@ No network access. Uses synthetic HTML that mirrors the DDM page shape:
   - Table 2: class="normal-table" historical monthly (DESC rows)
 
 Verifies:
-  - _parse_mes_ano normalizes 'Jul/2026' -> '2026-07'
-  - _parse_br_number handles comma decimal + '--' -> None
+  - parse_mes_ano normalizes 'Jul/2026' -> '2026-07'
+  - parse_br_number handles comma decimal + '--' -> None
   - parse_historical_table returns ASC rows with all 4 fields
   - parse_monthly_matrix extracts year list + month labels + matrix dict
 """
 from __future__ import annotations
 
 from data_sources.ddm.inflation.fetcher import (
-    _parse_br_number,
-    _parse_mes_ano,
+    parse_br_number,
+    parse_mes_ano,
     _parse_data_value,
     parse_historical_table,
     parse_monthly_matrix,
@@ -100,28 +100,28 @@ SAMPLE_PAGE_HTML = SAMPLE_MATRIX_HTML + "\n" + SAMPLE_HISTORICAL_HTML
 # ────────────────────────────────────────────────────────────────────────
 
 def test_parse_mes_ano_basic():
-    assert _parse_mes_ano("Jul/2026") == "2026-07"
-    assert _parse_mes_ano("Jan/2025") == "2025-01"
-    assert _parse_mes_ano("Dez/2024") == "2024-12"
+    assert parse_mes_ano("Jul/2026") == "2026-07"
+    assert parse_mes_ano("Jan/2025") == "2025-01"
+    assert parse_mes_ano("Dez/2024") == "2024-12"
 
 
 def test_parse_mes_ano_invalid():
-    assert _parse_mes_ano("") == ""
-    assert _parse_mes_ano("garbage") == ""
-    assert _parse_mes_ano("13/2026") == ""  # not a 3-letter month abbreviation
+    assert parse_mes_ano("") == ""
+    assert parse_mes_ano("garbage") == ""
+    assert parse_mes_ano("13/2026") == ""  # not a 3-letter month abbreviation
 
 
 def test_parse_br_number_basic():
-    assert _parse_br_number("0,41") == 0.41
-    assert _parse_br_number("-1,16") == -1.16
-    assert _parse_br_number("3,12") == 3.12
+    assert parse_br_number("0,41") == 0.41
+    assert parse_br_number("-1,16") == -1.16
+    assert parse_br_number("3,12") == 3.12
 
 
 def test_parse_br_number_dash_dash_is_none():
     """Boundary contract: '--' is the DDM missing-value marker."""
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_data_value_attribute():

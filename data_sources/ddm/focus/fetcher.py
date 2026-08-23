@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import strip_html
 from data_sources.ddm.focus.catalog import focus_url
 
 # 5-minute cache TTL. Focus is published weekly (Friday afternoons BRT),
@@ -95,11 +96,6 @@ def _today_date() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
-
-
 def _parse_int(s: str) -> int | None:
     """Parse a plain integer ('149') -> 149.
 
@@ -135,7 +131,7 @@ def _normalize_comparison(s: str) -> str:
     """
     if not s:
         return ""
-    text = _strip_html(s)
+    text = strip_html(s)
     if not text:
         return ""
     if "\u25b2" in text or text.lower() == "up":
@@ -179,7 +175,7 @@ def _find_year_for_table(html: str, table_start: int) -> int | None:
         return None
     # Walk matches in reverse (most recent first).
     for m in reversed(matches):
-        heading_text = _strip_html(m.group(1))
+        heading_text = strip_html(m.group(1))
         year_match = re.search(r"(20\d{2})", heading_text)
         if year_match:
             try:
@@ -246,7 +242,7 @@ def parse_focus_tables(html: str) -> list[dict]:
             if len(cells) < 6:
                 # Header rows, malformed rows, or repeat-header rows.
                 continue
-            indicator = _strip_html(cells[0])
+            indicator = strip_html(cells[0])
             if not indicator:
                 continue
             # Skip rows that look like header repeats (the first cell may
@@ -256,11 +252,11 @@ def parse_focus_tables(html: str) -> list[dict]:
             row = {
                 "year":           year,
                 "indicator":      indicator,
-                "four_weeks_ago": _strip_html(cells[1]),
-                "one_week_ago":   _strip_html(cells[2]),
-                "today":          _strip_html(cells[3]),
+                "four_weeks_ago": strip_html(cells[1]),
+                "one_week_ago":   strip_html(cells[2]),
+                "today":          strip_html(cells[3]),
                 "comparison":     _normalize_comparison(cells[4]),
-                "respondents":    _parse_int(_strip_html(cells[5])),
+                "respondents":    _parse_int(strip_html(cells[5])),
             }
             rows.append(row)
 

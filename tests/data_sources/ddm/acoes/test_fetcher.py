@@ -9,17 +9,17 @@ No network access. Uses synthetic HTML that mirrors the DDM acoes page shape:
   - Variacao has a sign + comma decimal + "%" ("+2,78%" / "-10,85%")
 
 Verifies:
-  - _parse_br_int handles PT-BR thousands
-  - _parse_br_number handles PT-BR comma decimal
-  - _parse_variation handles sign + comma decimal + %
+  - parse_br_int handles PT-BR thousands
+  - parse_br_number handles PT-BR comma decimal
+  - parse_br_percentage handles sign + comma decimal + %
   - parse_stocks_table returns rows in page order with all 5 fields
 """
 from __future__ import annotations
 
 from data_sources.ddm.acoes.fetcher import (
-    _parse_br_int,
-    _parse_br_number,
-    _parse_variation,
+    parse_br_int,
+    parse_br_number,
+    parse_br_percentage,
     parse_stocks_table,
 )
 
@@ -71,44 +71,44 @@ SAMPLE_ACOES_HTML = """
 # ────────────────────────────────────────────────────────────────────────
 
 def test_parse_br_int_basic():
-    assert _parse_br_int("52.792.400") == 52792400
-    assert _parse_br_int("1.000") == 1000
-    assert _parse_br_int("42") == 42
+    assert parse_br_int("52.792.400") == 52792400
+    assert parse_br_int("1.000") == 1000
+    assert parse_br_int("42") == 42
 
 
 def test_parse_br_int_dash_dash_is_none():
-    assert _parse_br_int("--") is None
-    assert _parse_br_int("") is None
-    assert _parse_br_int(None) is None
+    assert parse_br_int("--") is None
+    assert parse_br_int("") is None
+    assert parse_br_int(None) is None
 
 
 def test_parse_br_number_basic():
-    assert _parse_br_number("44,30") == 44.30
-    assert _parse_br_number("-1,16") == -1.16
-    assert _parse_br_number("0,00") == 0.0
+    assert parse_br_number("44,30") == 44.30
+    assert parse_br_number("-1,16") == -1.16
+    assert parse_br_number("0,00") == 0.0
 
 
 def test_parse_br_number_dash_dash_is_none():
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_variation_signed():
-    assert _parse_variation("+2,78%") == 2.78
-    assert _parse_variation("-10,85%") == -10.85
-    assert _parse_variation("+0,00%") == 0.0
+    assert parse_br_percentage("+2,78%") == 2.78
+    assert parse_br_percentage("-10,85%") == -10.85
+    assert parse_br_percentage("+0,00%") == 0.0
 
 
 def test_parse_variation_strips_pct_only():
     """Without a sign, + is assumed (parseFloat handles it)."""
-    assert _parse_variation("2,78%") == 2.78
+    assert parse_br_percentage("2,78%") == 2.78
 
 
 def test_parse_variation_dash_dash_is_none():
-    assert _parse_variation("--") is None
-    assert _parse_variation("") is None
-    assert _parse_variation(None) is None
+    assert parse_br_percentage("--") is None
+    assert parse_br_percentage("") is None
+    assert parse_br_percentage(None) is None
 
 
 # ────────────────────────────────────────────────────────────────────────

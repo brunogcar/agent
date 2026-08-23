@@ -20,7 +20,7 @@ from __future__ import annotations
 from data_sources.ddm.focus.fetcher import (
     _parse_int,
     _normalize_comparison,
-    _strip_html,
+    strip_html,
     _find_year_for_table,
     parse_focus_tables,
 )
@@ -161,9 +161,9 @@ def test_normalize_comparison_empty_returns_empty():
 
 def test_strip_html_strips_anchor_and_tags():
     """Indicator names may be wrapped in <a href="/focus/ipca">IPCA</a>."""
-    assert _strip_html('<a href="/focus/ipca">IPCA</a>') == "IPCA"
-    assert _strip_html("  hello   world  ") == "hello world"
-    assert _strip_html("<b>Balanca</b>") == "Balanca"
+    assert strip_html('<a href="/focus/ipca">IPCA</a>') == "IPCA"
+    assert strip_html("  hello   world  ") == "hello world"
+    assert strip_html("<b>Balanca</b>") == "Balanca"
 
 
 # ────────────────────────────────────────────────────────────────────────

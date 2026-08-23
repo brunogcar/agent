@@ -44,6 +44,10 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import (
+    parse_br_number,
+    strip_html,
+)
 from data_sources.ddm.poupanca.catalog import index_url
 
 # 5-minute cache TTL. DDM publishes monthly series once per month, so 5 min
@@ -79,22 +83,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_br_number(s: str) -> float | None:
-    """Parse a Brazilian-formatted number string ('0,67') -> 0.67.
-
-    Returns None for empty strings, "--", or unparseable inputs.
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    try:
-        return float(s.replace(",", "."))
-    except (ValueError, TypeError):
-        return None
-
-
 def _parse_data_value(td: str) -> float | None:
     """Extract the data-value attribute from a <td data-value="..."> cell.
 
@@ -116,12 +104,7 @@ def _parse_data_value(td: str) -> float | None:
     # Fallback: strip HTML + parse the cell text.
     text = re.sub(r"<[^>]+>", "", td).strip()
     text = text.replace("%", "").strip()
-    return _parse_br_number(text)
-
-
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
+    return parse_br_number(text)
 
 
 def parse_matrix_only(html: str) -> dict:
@@ -157,13 +140,13 @@ def parse_matrix_only(html: str) -> dict:
         header_tr = re.search(r"<tr[^>]*>([\s\S]*?)</tr>", header_match.group(1))
         if header_tr:
             for th in re.findall(r"<th[^>]*>([\s\S]*?)</th>", header_tr.group(1)):
-                months.append(_strip_html(th))
+                months.append(strip_html(th))
     if not months:
         # Fallback: take the first <tr> in the table as the header.
         first_tr = re.search(r"<tr[^>]*>([\s\S]*?)</tr>", table)
         if first_tr:
             for cell in re.findall(r"<t[h|d][^>]*>([\s\S]*?)</t[h|d]>", first_tr.group(1)):
-                months.append(_strip_html(cell))
+                months.append(strip_html(cell))
 
     # Strip the leading year-label column (DDM uses an empty <th></th> corner
     # OR a labeled "Ano" header for the year column). Keep ONLY the 12
@@ -188,7 +171,7 @@ def parse_matrix_only(html: str) -> dict:
         if not cells:
             continue
         # First cell = year (string).
-        year_str = _strip_html(cells[0])
+        year_str = strip_html(cells[0])
         try:
             year = int(year_str)
         except (ValueError, TypeError):

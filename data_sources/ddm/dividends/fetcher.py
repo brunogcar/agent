@@ -43,6 +43,11 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import (
+    parse_br_date_iso,
+    parse_br_number,
+    strip_html,
+)
 from data_sources.ddm.dividends.catalog import DIVIDENDS_URL
 
 # 5-minute cache TTL. DDM publishes the dividend agenda on a rolling basis;
@@ -66,46 +71,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_br_number(s: str) -> float | None:
-    """Parse a Brazilian-formatted number string ('0,017250') -> 0.017250.
-
-    Returns None for empty strings, "--", or unparseable inputs.
-
-    Brazilian convention: comma is the decimal separator. DDM dividend values
-    are quoted as plain comma-decimals (e.g. "0,017250") with NO thousands
-    separators.
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    try:
-        return float(s.replace(",", "."))
-    except (ValueError, TypeError):
-        return None
-
-
-def _parse_br_date(s: str) -> str:
-    """Convert '01/07/2026' (DD/MM/YYYY) -> '2026-07-01' (YYYY-MM-DD).
-
-    Returns "" for empty or unparseable inputs.
-    """
-    if not s:
-        return ""
-    s = s.strip()
-    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s)
-    if not m:
-        return ""
-    dd, mm, yyyy = m.group(1), m.group(2), m.group(3)
-    return f"{yyyy}-{mm}-{dd}"
-
-
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
-
-
 def _extract_ticker(td: str) -> str:
     """Extract the ticker code from a Codigo cell.
 
@@ -118,7 +83,7 @@ def _extract_ticker(td: str) -> str:
     m = re.search(r"<a[^>]*>([^<]+)</a>", td)
     if m:
         return m.group(1).strip()
-    return _strip_html(td)
+    return strip_html(td)
 
 
 def parse_dividends_table(html: str) -> list[dict]:
@@ -164,11 +129,11 @@ def parse_dividends_table(html: str) -> list[dict]:
         if not ticker:
             continue
 
-        tipo = _strip_html(cells[1])
-        value = _parse_br_number(_strip_html(cells[2]))
-        record_date = _parse_br_date(_strip_html(cells[3]))
-        ex_date = _parse_br_date(_strip_html(cells[4]))
-        payment_date = _parse_br_date(_strip_html(cells[5]))
+        tipo = strip_html(cells[1])
+        value = parse_br_number(strip_html(cells[2]))
+        record_date = parse_br_date_iso(strip_html(cells[3]))
+        ex_date = parse_br_date_iso(strip_html(cells[4]))
+        payment_date = parse_br_date_iso(strip_html(cells[5]))
 
         rows.append({
             "ticker":       ticker,

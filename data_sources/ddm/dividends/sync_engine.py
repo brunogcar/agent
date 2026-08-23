@@ -61,6 +61,11 @@ def sync_all(force: bool = False) -> dict:
     conn = connect(read_only=False)
     ensure_schema(conn)
     try:
+        # [v2 fix B4] Full-refresh pattern: delete ALL existing rows before
+        # re-inserting. This removes cancelled dividends that DDM dropped
+        # from the agenda page (INSERT OR REPLACE only touches rows in the
+        # new payload, leaving stale rows behind).
+        conn.execute("DELETE FROM dividends")
         tuples = [
             (r["ticker"], r.get("tipo"), r.get("value"),
              r.get("record_date"), r.get("ex_date"), r.get("payment_date"), now)

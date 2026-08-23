@@ -71,7 +71,6 @@ _NEGATIVE_COLOR = "#ef4444"  # red-500
 # [v4] Color for line segments that CROSS zero (pos→neg or neg→pos).
 # Yellow-500: clearly distinct from green/red and from the amber used for
 # Pessoa fisica bars (#f59e0b).
-_CROSS_COLOR = "#eab308"
 
 
 def build_kpi_card(label: str, value, subtitle: str = "",
@@ -435,9 +434,6 @@ def build_investor_monthly_chart(title: str, monthly_data: list[dict],
                 # that paints each segment based on endpoint signs:
                 #   pos→pos=green, neg→neg=red, crossing=yellow.
                 "_segment_negative_red": True,
-                "_segment_pos_color":    _POSITIVE_COLOR,
-                "_segment_neg_color":    _NEGATIVE_COLOR,
-                "_segment_cross_color":  _CROSS_COLOR,
                 "plugins": {
                     "title":  {"display": True, "text": title},
                     "legend": {"display": True, "position": "top"},
@@ -515,9 +511,6 @@ def build_investor_annual_chart(title: str, cumulative_data: list[dict],
                 # [v3/v4] Flags consumed by _applySegmentColors in the
                 # dashboard template (see build_investor_monthly_chart).
                 "_segment_negative_red": True,
-                "_segment_pos_color":    _POSITIVE_COLOR,
-                "_segment_neg_color":    _NEGATIVE_COLOR,
-                "_segment_cross_color":  _CROSS_COLOR,
                 "plugins": {
                     "title":  {"display": True, "text": title},
                     "legend": {"display": True, "position": "top"},

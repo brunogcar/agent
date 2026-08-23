@@ -778,11 +778,28 @@ SYNC_FRESHNESS_HOURS = 24
 def _source_last_sync(source: str) -> str:
     """Get the last-sync timestamp for a data source (ISO string, or "").
 
-    Delegates to skills.cvm._freshness.get_freshness() for CVM sources.
+    Delegates to skills._freshness.get_freshness() for DDM sources +
+    skills.cvm._freshness.get_freshness() for CVM sources.
     """
     try:
-        from skills.cvm._freshness import get_freshness
+        # [v2 fix B1] Import from the new shared skills/_freshness.py
+        # (moved from skills/cvm/_freshness.py in commit 4ebdabf).
+        # The old import path pointed to a deleted module, causing
+        # ImportError → silently returned "" for every source → every
+        # dashboard force-synced. See review B1.
+        from skills._freshness import get_freshness
         fresh = get_freshness()
+        ts = fresh.get(source, "")
+        if ts:
+            return ts
+    except Exception:
+        pass
+    # Fallback: try the CVM-specific freshness module for CVM sources
+    # (DFP, ITR, etc.) that are not covered by the DDM-focused
+    # skills/_freshness.py.
+    try:
+        from skills.cvm._freshness import get_freshness as get_cvm_freshness
+        fresh = get_cvm_freshness()
         return fresh.get(source, "")
     except Exception:
         return ""
@@ -978,9 +995,13 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         "focus":        ("data_sources.bcb.focus.sync_engine", "sync_all",
                          lambda: {"force": True}),
         # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
-        # includes "ddm". Mirrors the sgs + focus entries: sync_all(force=True)
-        # re-fetches all 3 indices (IGP-M, IPCA, INPC) from the HTML scraper.
-        "ddm":          ("data_sources.ddm.inflation.sync_engine", "sync_all",
+        # includes "ddm-inflation". Mirrors the sgs + focus entries:
+        # sync_all(force=True) re-fetches all 3 indices (IGP-M, IPCA, INPC)
+        # from the HTML scraper.
+        # [v2 fix B3] Key renamed from "ddm" to "ddm-inflation" to match
+        # the skill's REQUIRED_SOURCES (was reverted in 32e5ab9, causing
+        # _trigger_sync("ddm-inflation") to fail with "unknown source").
+        "ddm-inflation": ("data_sources.ddm.inflation.sync_engine", "sync_all",
                          lambda: {"force": True}),
         # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
         # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)
@@ -1038,6 +1059,12 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         # REQUIRED_SOURCES=["ddm-fluxo"] so the sync guard auto-refreshes
         # fluxo.db before each dashboard run.
         "ddm-fluxo":     ("data_sources.ddm.fluxo.sync_engine", "sync_all",
+                         lambda: {"force": True}),
+        # [v2 fix B2] DDM Dividends sync - was silently removed from sync_map
+        # during the 30fa822 rebase (focus commit). The dividends skill
+        # declares REQUIRED_SOURCES=["ddm-dividends"], so without this
+        # entry, _trigger_sync("ddm-dividends") returned "unknown source".
+        "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",
                          lambda: {"force": True}),
     }
 

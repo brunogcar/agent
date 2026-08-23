@@ -398,11 +398,15 @@ def monthly_cumulative(investor: str = "") -> dict:
 
 
 def annual_cumulative(investor: str = "") -> dict:
-    """Running cumulative sum: each day = previous cumulative + today.
+    """Year-to-date running cumulative: resets on January 1st each year.
 
     Produces a daily series where each value is the running total of the
-    investor's flow from the first day in the DB to that day. Useful for
-    "how much has estrangeiro flowed into B3 year-to-date?".
+    investor's flow from January 1st of that year to the current day.
+    Resets to zero at each year boundary (sawtooth pattern).
+
+    [v2 fix B9] Previously this was a continuous running sum from the first
+    day in the DB (since-inception), not year-to-date. The tab is labeled
+    "Anual" / "Acumulado anual" which means YTD. See review B9/W1.
 
     Args:
         investor: Investor name (e.g. "estrangeiro" or "Pessoa física").
@@ -433,10 +437,16 @@ def annual_cumulative(investor: str = "") -> dict:
         ).fetchall())
         result: list[dict] = []
         running = 0.0
+        current_year = ""
         for r in rows:
             v = r["value"]
             if v is None:
                 continue
+            # [v2 fix B9] Reset the running sum on year boundary.
+            year = r["ref_date"][:4]
+            if year != current_year:
+                running = 0.0
+                current_year = year
             running += v
             result.append({"ref_date": r["ref_date"], "value": running})
         return {

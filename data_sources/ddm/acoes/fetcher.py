@@ -26,6 +26,12 @@ from datetime import datetime, timezone
 
 import httpx
 
+from data_sources.ddm._parsers import (
+    parse_br_int,
+    parse_br_number,
+    parse_br_percentage,
+    strip_html,
+)
 from data_sources.ddm.acoes.catalog import acoes_url
 
 # 5-minute cache TTL. Stock prices change intraday but the auto-sync guard
@@ -53,68 +59,6 @@ def _now_iso() -> str:
 def _today_date() -> str:
     """Return today's date as YYYY-MM-DD (local)."""
     return datetime.now().strftime("%Y-%m-%d")
-
-
-def _strip_html(s: str) -> str:
-    """Strip all HTML tags from a string and collapse whitespace."""
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s)).strip()
-
-
-def _parse_br_int(s: str) -> int | None:
-    """Parse a PT-BR formatted integer ('52.792.400') -> 52792400.
-
-    PT-BR uses '.' as the thousands separator. Returns None for empty
-    strings, '--', or unparseable inputs.
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    cleaned = s.replace(".", "").replace(" ", "")
-    try:
-        return int(cleaned)
-    except (ValueError, TypeError):
-        return None
-
-
-def _parse_br_number(s: str) -> float | None:
-    """Parse a PT-BR formatted number ('44,30') -> 44.30.
-
-    PT-BR uses ',' as the decimal separator. Returns None for empty
-    strings, '--', or unparseable inputs. Handles negative numbers
-    ('-1,16' -> -1.16).
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    try:
-        return float(s.replace(",", "."))
-    except (ValueError, TypeError):
-        return None
-
-
-def _parse_variation(s: str) -> float | None:
-    """Parse a signed PT-BR percentage ('+2,78%' or '-10,85%') -> 2.78 / -10.85.
-
-    DDM renders variation with:
-      - A leading sign ('+' or '-')
-      - PT-BR comma decimal ('2,78')
-      - A trailing percent sign ('%')
-
-    Returns None for empty strings, '--', or unparseable inputs.
-    """
-    if s is None:
-        return None
-    s = s.strip()
-    if not s or s == "--":
-        return None
-    # Strip the trailing '%' sign (if present).
-    s = s.replace("%", "").strip()
-    # The sign + comma-decimal format is handled by _parse_br_number.
-    return _parse_br_number(s)
 
 
 def parse_stocks_table(html: str) -> list[dict]:
@@ -173,11 +117,11 @@ def parse_stocks_table(html: str) -> list[dict]:
         cells = re.findall(r"<td[^>]*>([\s\S]*?)</td>", tr.group(1))
         if len(cells) < 5:
             continue
-        ticker = _strip_html(cells[0])
-        name = _strip_html(cells[1])
-        negocios = _parse_br_int(_strip_html(cells[2]))
-        last_price = _parse_br_number(_strip_html(cells[3]))
-        variation = _parse_variation(_strip_html(cells[4]))
+        ticker = strip_html(cells[0])
+        name = strip_html(cells[1])
+        negocios = parse_br_int(strip_html(cells[2]))
+        last_price = parse_br_number(strip_html(cells[3]))
+        variation = parse_br_percentage(strip_html(cells[4]))
 
         if not ticker:
             # Skip rows without a ticker (malformed / header repeat).

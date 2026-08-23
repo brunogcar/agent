@@ -66,6 +66,11 @@ def sync_all(force: bool = False) -> dict:
     conn = connect(read_only=False)
     ensure_schema(conn)
     try:
+        # [v2 fix B4] Full-refresh pattern: delete ALL existing rows before
+        # re-inserting. This removes delisted stocks that DDM dropped from
+        # the /acoes page (INSERT OR REPLACE only touches rows in the new
+        # payload, leaving stale rows behind).
+        conn.execute("DELETE FROM stocks")
         rows = [
             (s["ticker"], s.get("name"), s.get("negocios"),
              s.get("last_price"), s.get("variation"), now, ref_date)

@@ -8,15 +8,15 @@ shape:
                + 5 plain-text <td> cells
 
 Verifies:
-  - _parse_br_number handles comma decimal + '--' -> None
-  - _parse_br_date converts DD/MM/YYYY -> YYYY-MM-DD
+  - parse_br_number handles comma decimal + '--' -> None
+  - parse_br_date_iso converts DD/MM/YYYY -> YYYY-MM-DD
   - parse_dividends_table returns rows with the right shape + types
   - parse_dividends_table handles empty HTML + missing <a> tag fallback
 """
 from __future__ import annotations
 
 from data_sources.ddm.dividends.fetcher import (
-    _parse_br_number, _parse_br_date, _extract_ticker,
+    parse_br_number, parse_br_date_iso, _extract_ticker,
     parse_dividends_table,
 )
 
@@ -87,31 +87,35 @@ SAMPLE_DIVIDENDS_HTML_NO_A_TAG = """
 # ────────────────────────────────────────────────────────────────────────
 
 def test_parse_br_number_basic():
-    assert _parse_br_number("0,017250") == 0.017250
-    assert _parse_br_number("7,960000") == 7.96
-    assert _parse_br_number("0,006") == 0.006
+    assert parse_br_number("0,017250") == 0.017250
+    assert parse_br_number("7,960000") == 7.96
+    assert parse_br_number("0,006") == 0.006
 
 
 def test_parse_br_number_dash_dash_is_none():
     """Boundary contract: '--' is the DDM missing-value marker."""
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_br_date_basic():
     """DD/MM/YYYY -> YYYY-MM-DD."""
-    assert _parse_br_date("01/07/2026") == "2026-07-01"
-    assert _parse_br_date("15/06/2026") == "2026-06-15"
-    assert _parse_br_date("10/12/2026") == "2026-12-10"
+    assert parse_br_date_iso("01/07/2026") == "2026-07-01"
+    assert parse_br_date_iso("15/06/2026") == "2026-06-15"
+    assert parse_br_date_iso("10/12/2026") == "2026-12-10"
 
 
 def test_parse_br_date_invalid():
-    """Unparseable inputs return empty string."""
-    assert _parse_br_date("") == ""
-    assert _parse_br_date(None) == ""
-    assert _parse_br_date("2026-07-01") == ""  # already ISO - not DD/MM/YYYY
-    assert _parse_br_date("not-a-date") == ""
+    """Unparseable inputs return empty string.
+
+    Note: the shared parser also accepts ISO YYYY-MM-DD as passthrough
+    (returns the same string), so '2026-07-01' is NOT treated as invalid.
+    """
+    assert parse_br_date_iso("") == ""
+    assert parse_br_date_iso(None) == ""
+    assert parse_br_date_iso("2026-07-01") == "2026-07-01"  # ISO passthrough
+    assert parse_br_date_iso("not-a-date") == ""
 
 
 def test_extract_ticker_from_anchor():

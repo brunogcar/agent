@@ -6,7 +6,7 @@ No network access. Uses synthetic HTML that mirrors the DDM juros page shape:
   - Body rows: <td>year</td> + <td data-value="...">...</td> x12
 
 Verifies:
-  - _parse_br_number handles comma decimal + '--' -> None
+  - parse_br_number handles comma decimal + '--' -> None
   - parse_matrix_only returns years + month labels (12 only, no "Ano") + matrix
   - flatten_matrix_to_observations derives month_value + media_no_ano +
     media_12m from the matrix correctly
@@ -14,7 +14,7 @@ Verifies:
 from __future__ import annotations
 
 from data_sources.ddm.juros.fetcher import (
-    _parse_br_number,
+    parse_br_number,
     _parse_data_value,
     parse_matrix_only,
     flatten_matrix_to_observations,
@@ -79,16 +79,16 @@ SAMPLE_JUROS_HTML = """
 # ────────────────────────────────────────────────────────────────────────
 
 def test_parse_br_number_basic():
-    assert _parse_br_number("13,15") == 13.15
-    assert _parse_br_number("-1,16") == -1.16
-    assert _parse_br_number("12,75") == 12.75
+    assert parse_br_number("13,15") == 13.15
+    assert parse_br_number("-1,16") == -1.16
+    assert parse_br_number("12,75") == 12.75
 
 
 def test_parse_br_number_dash_dash_is_none():
     """Boundary contract: '--' is the DDM missing-value marker."""
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_data_value_attribute():

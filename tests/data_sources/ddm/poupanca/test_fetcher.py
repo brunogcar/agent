@@ -7,7 +7,7 @@ shape:
   - Body rows: <td>year</td> + <td data-value="...">...</td> x12
 
 Verifies:
-  - _parse_br_number handles comma decimal + '--' -> None
+  - parse_br_number handles comma decimal + '--' -> None
   - parse_matrix_only returns years + month labels (12 only, no "Ano") +
     matrix
   - flatten_matrix_to_observations derives month_value + acumulado_no_ano +
@@ -21,7 +21,7 @@ AVERAGE because the monthly cell is a daily rate quoted as annualized %.
 from __future__ import annotations
 
 from data_sources.ddm.poupanca.fetcher import (
-    _parse_br_number,
+    parse_br_number,
     _parse_data_value,
     parse_matrix_only,
     flatten_matrix_to_observations,
@@ -88,16 +88,16 @@ SAMPLE_POUPANCA_HTML = """
 # ────────────────────────────────────────────────────────────────────────
 
 def test_parse_br_number_basic():
-    assert _parse_br_number("0,67") == 0.67
-    assert _parse_br_number("-0,12") == -0.12
-    assert _parse_br_number("0,75") == 0.75
+    assert parse_br_number("0,67") == 0.67
+    assert parse_br_number("-0,12") == -0.12
+    assert parse_br_number("0,75") == 0.75
 
 
 def test_parse_br_number_dash_dash_is_none():
     """Boundary contract: '--' is the DDM missing-value marker."""
-    assert _parse_br_number("--") is None
-    assert _parse_br_number("") is None
-    assert _parse_br_number(None) is None
+    assert parse_br_number("--") is None
+    assert parse_br_number("") is None
+    assert parse_br_number(None) is None
 
 
 def test_parse_data_value_attribute():
