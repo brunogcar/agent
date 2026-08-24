@@ -160,13 +160,56 @@ def sync(
                     "error": "CSV download returned empty response."}
 
         # ── Parse the CSV ──────────────────────────────────────────────────
-        columns, rows = _parse_csv(csv_text)
+        columns, rows, file_status = _parse_csv(csv_text)
 
         if not columns:
             return {"status": "error", "table": table, "date": actual_date,
                     "error": "CSV has no column header."}
 
-        _progress(f"[b3_sync] CSV parsed: {len(rows):,} rows, {len(columns)} columns ({elapsed_download:.1f}s download)")
+        # [v3 fix] Skip partial data — keep previous full sync.
+        # B3 marks intraday snapshots as "Parcial" and end-of-day as "Final".
+        # If we sync partial data, we lose the complete previous day's data
+        # (the DELETE wipes it, then the INSERT puts partial data in).
+        if file_status == "Parcial":
+            _progress(f"[b3_sync] Skipping {table} for {actual_date} — data is Parcial (market hours). Previous full sync preserved.")
+            # Check if we already have data for this date from a previous Final sync
+            existing = conn.execute(
+                "SELECT * FROM sync_state WHERE table_name=? AND date=?",
+                (table, actual_date),
+            ).fetchone()
+            if existing and existing["row_count"] > 0:
+                return {
+                    "status": "skipped_partial",
+                    "table": table, "date": actual_date,
+                    "rows": existing["row_count"],
+                    "synced_at": existing["synced_at"],
+                    "message": "Data is Parcial — keeping previous Final sync.",
+                }
+            # No previous data — try yesterday
+            if not _user_specified_date:
+                dt = datetime.strptime(actual_date, "%Y-%m-%d") - timedelta(days=1)
+                prev_date = dt.strftime("%Y-%m-%d")
+                _progress(f"[b3_sync] No previous Final sync for {actual_date}, trying {prev_date}")
+                token = _get_download_token(api_name, prev_date)
+                if token:
+                    csv_text = _download_csv(token)
+                    if csv_text:
+                        columns, rows, file_status = _parse_csv(csv_text)
+                        if file_status == "Parcial":
+                            _progress(f"[b3_sync] {prev_date} is also Parcial — skipping")
+                            return {"status": "skipped_partial", "table": table,
+                                    "date": actual_date, "rows": 0,
+                                    "message": "No Final data available."}
+                        actual_date = prev_date
+                if not columns:
+                    return {"status": "no_data", "table": table, "date": actual_date,
+                            "error": "No Final data found."}
+            else:
+                return {"status": "skipped_partial", "table": table,
+                        "date": actual_date, "rows": 0,
+                        "message": "Data is Parcial — use force=True after market close."}
+
+        _progress(f"[b3_sync] CSV parsed: {len(rows):,} rows, {len(columns)} columns, status={file_status or 'N/A'} ({elapsed_download:.1f}s download)")
 
         # ── Create/update schema + insert all rows ────────────────────────
         # [v2 fix] ensure_schema now handles schema migration (adds missing
@@ -257,27 +300,29 @@ def _ensure_sync_state_table(conn: sqlite3.Connection) -> None:
 def _get_download_token(api_name: str, date_str: str) -> str | None:
     """Step 1: Request a download token from B3.
 
-    Returns the token string, or None if B3 has no data for this date
-    (HTTP 400 = no data, HTTP 200 + empty token = not yet published).
-
-    The token is valid for a limited time (~5 minutes). Use it immediately.
+    [v3 fix] Added retry with backoff (3 attempts). (Claude 2 review finding.)
     """
-    try:
-        resp = httpx.get(
-            DOWNLOAD_TOKEN_URL,
-            params={"fileName": api_name, "date": date_str},
-            headers=_HEADERS,
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        token = data.get("token", "")
-        if not token:
-            return None
-        return token
-    except Exception:
-        return None
+    for attempt in range(3):
+        try:
+            resp = httpx.get(
+                DOWNLOAD_TOKEN_URL,
+                params={"fileName": api_name, "date": date_str},
+                headers=_HEADERS,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                token = resp.json().get("token", "")
+                if token:
+                    return token
+                return None  # 200 but no token = not yet published
+            if resp.status_code == 400:
+                return None  # No data for this date
+            # 5xx or other — retry
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(1 * (attempt + 1))  # 1s, 2s backoff
+    return None
 
 
 def _download_csv(token: str) -> str:
@@ -286,57 +331,69 @@ def _download_csv(token: str) -> str:
     CRITICAL: The URL is /api/download/ (with trailing slash). Without it,
     B3 returns an HTML consent page instead of the CSV.
 
-    Returns the CSV text (ISO-8859-1 decoded), or empty string on error.
+    [v3 fix] Added retry with backoff (3 attempts). If the token expires
+    mid-download (possible for the ~37MB instruments file), the caller
+    re-requests a fresh token. (Claude 2 review finding.)
     """
-    try:
-        resp = httpx.get(
-            DOWNLOAD_CSV_URL,
-            params={"token": token},
-            headers=_HEADERS,
-            timeout=300,  # 5 min for large files (instruments is ~37 MB)
-            follow_redirects=True,
-        )
-        if resp.status_code != 200:
-            return ""
-        # B3 CSVs use ISO-8859-1 encoding (Portuguese accents).
-        return resp.content.decode(_CSV_ENCODING)
-    except Exception:
-        return ""
+    for attempt in range(3):
+        try:
+            resp = httpx.get(
+                DOWNLOAD_CSV_URL,
+                params={"token": token},
+                headers=_HEADERS,
+                timeout=300,  # 5 min for large files (instruments is ~37 MB)
+                follow_redirects=True,
+            )
+            if resp.status_code == 200:
+                return resp.content.decode(_CSV_ENCODING)
+            # Non-200 — retry
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(2 * (attempt + 1))  # 2s, 4s backoff
+    return ""
 
 
-def _parse_csv(csv_text: str) -> tuple[list[str], list[list[str]]]:
-    """Parse the B3 CSV into (columns, rows).
+def _parse_csv(csv_text: str) -> tuple[list[str], list[list[str]], str]:
+    """Parse the B3 CSV into (columns, rows, status).
 
-    Handles the "Status do Arquivo: Final" line that 3 of 4 tables have
-    before the actual header. Derivatives does NOT have this line.
+    Handles the "Status do Arquivo: Final/Parcial" line that 3 of 4 tables
+    have before the actual header. Derivatives does NOT have this line
+    (its first line IS the header — status is assumed "Final").
+
+    [v3 fix] Uses csv.reader instead of naive split(";") to handle
+    potential semicolons inside quoted fields (e.g. company names in
+    the 52-column instruments table). (Claude 1 review finding.)
 
     Returns:
-        (column_names, data_rows) where each row is a list of strings.
+        (column_names, data_rows, status) where:
+        - column_names: list of str
+        - data_rows: list of list[str]
+        - status: "Final" | "Parcial" | "" (empty if no status line)
     """
+    import io
     lines = csv_text.strip().split("\n")
     if not lines:
-        return [], []
+        return [], [], ""
 
     # Detect if line 0 is the "Status do Arquivo" line or the header.
-    # The status line has 1 column (no semicolons); the header has many.
-    line0_cols = lines[0].split(";")
-    if len(line0_cols) == 1 or "Status do Arquivo" in lines[0]:
-        # Skip the status line; header is line 1.
+    status = ""
+    header_idx = 0
+    if "Status do Arquivo" in lines[0]:
+        # Parse the status: "Status do Arquivo: Final" or "... Parcial"
+        status = lines[0].split(":")[-1].strip() if ":" in lines[0] else ""
         header_idx = 1
-    else:
-        header_idx = 0
 
     if header_idx >= len(lines):
-        return [], []
+        return [], [], status
 
-    columns = [c.strip() for c in lines[header_idx].split(";")]
-    data_lines = lines[header_idx + 1:]
+    # [v3 fix] Use csv.reader for proper quoting/escaping handling.
+    reader = csv.reader(io.StringIO("\n".join(lines[header_idx:])), delimiter=";")
+    rows_raw = list(reader)
+    if not rows_raw:
+        return [], [], status
 
-    # Parse data rows (split by semicolon — B3 doesn't quote/escape values).
-    rows = []
-    for line in data_lines:
-        if not line.strip():
-            continue
-        rows.append(line.split(";"))
+    columns = [c.strip() for c in rows_raw[0]]
+    rows = [r for r in rows_raw[1:] if r and any(v.strip() for v in r)]
 
-    return columns, rows
+    return columns, rows, status

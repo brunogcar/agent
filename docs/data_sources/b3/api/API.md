@@ -10,11 +10,21 @@ Download B3 data via CSV bulk download API and store to SQLite.
 [v2.0] Replaced the paginated JSON API (2,283 requests, 4 columns, 22 min)
 with a 2-step CSV bulk download (1 request, 15-52 columns, ~1-10s).
 
+[v2.1] Added partial data skip: if B3 returns "Status do Arquivo: Parcial"
+(intraday snapshot), the sync skips and keeps the previous Final data.
+Added retry with backoff (3 attempts) on both HTTP calls.
+
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `table` | `str` | `"instruments"` | instruments (52 cols), trades (15), after_hours (15), derivatives (17) |
 | `date_str` | `str` | today | YYYY-MM-DD (falls back up to 7 days if no data) |
-| `force` | `bool` | `false` | Re-download even if already synced |
+| `force` | `bool` | `false` | Re-download even if already synced (does NOT override partial data skip) |
+
+**Partial data behavior**: B3 marks intraday snapshots as "Parcial" and
+end-of-day data as "Final". If the sync detects "Parcial", it skips the
+DELETE+INSERT and returns `{status: "skipped_partial"}`, preserving the
+previous Final sync. To force a partial sync (not recommended), delete
+the sync_state row manually before syncing.
 
 ### `mode="status"`
 Show sync status for all B3 tables (no params).
@@ -122,4 +132,4 @@ data_source(domain="b3", sub_domain="api", mode="lookup_option_positions", param
 
 ---
 
-*Last updated: 2026-09-08 (v2.0 — open_positions + lookup_option_positions modes for the options skill's Posições em Aberto tab).*
+*Last updated: 2026-08-24 (v2.1 — hardening: CSV parser + retry + partial data skip + column validation).*

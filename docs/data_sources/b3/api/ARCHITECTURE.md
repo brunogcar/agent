@@ -12,21 +12,23 @@
 | `data_sources/b3/api/query_engine.py` | Query: query(), lookup_ticker(), search_company() — dynamically discovers columns via PRAGMA table_info |
 | `data_sources/b3/api/status_reporter.py` | Status: sync statistics for all B3 tables |
 
-## API Flow (v2.0 — CSV Bulk Download)
+## API Flow (v2.1 — CSV Bulk Download + Hardening)
 
 ```
 Step 1: GET /api/download/requestname?fileName={tableName}&date={date}
-  ↓
+  ↓ (3-attempt retry with 1s/2s backoff)
 JSON: {"token": "...", "file": {"name": "...", "extension": ".csv"}}
 
 Step 2: GET /api/download/?token={token}
-  ↓
+  ↓ (3-attempt retry with 2s/4s backoff)
 Full CSV file (semicolon-separated, ISO-8859-1, 15-52 columns)
   ↓
-Parse CSV (skip "Status do Arquivo: Final" line if present)
+Parse CSV via csv.reader (not naive split — handles quoted semicolons)
+  ↓
+Check status: "Final" → proceed | "Parcial" → skip (keep previous)
   ↓
 ensure_schema: CREATE TABLE IF NOT EXISTS (all columns)
-  OR  ALTER TABLE ADD COLUMN (migrate old 4-column schema)
+  OR  ALTER TABLE ADD COLUMN (with name validation: alphanumeric + underscore only)
   ↓
 DELETE old rows for this date
 COMMIT (close DELETE transaction)
@@ -40,12 +42,16 @@ Record sync_state
 
 - **CSV bulk download**: The paginated JSON API (v1.0) was fundamentally limited (4 columns, 2,283 pages, 22-minute sync, server-side throttling). The CSV bulk download returns ALL rows + ALL columns in 1 request (~1-10 seconds). Discovered by gemini + mistral + qwen during the 2026-08-24 multi-LLM code review.
 - **2-step token flow**: B3 requires a token (Step 1) before downloading (Step 2). The token is valid for ~5 minutes. CRITICAL: the download URL requires a trailing slash (`/api/download/`).
+- **Retry with backoff** [v2.1]: Both HTTP calls (token request + CSV download) have 3-attempt retry with exponential backoff. Handles transient failures + token expiry on large downloads. (Claude 2 review finding.)
+- **CSV parser** [v2.1]: Uses `csv.reader` instead of naive `split(";")` to handle potential semicolons inside quoted fields (e.g. company names in the 52-column instruments table). (Claude 1 review finding.)
+- **Partial data skip** [v2.1]: B3 marks intraday snapshots as "Parcial" and end-of-day as "Final". If "Parcial", the sync skips and keeps the previous Final data. Prevents partial market-hours data from overwriting complete end-of-day data.
+- **Column name sanitization** [v2.1]: Column names from the CSV header are validated (alphanumeric + underscore only) before `ALTER TABLE ADD COLUMN`. Skips invalid names with a warning. (Claude 2 review finding.)
 - **Dynamic schema**: Table columns are created from the CSV header on first sync. This makes it resilient to B3 schema changes — no hardcoded column lists.
 - **Schema migration**: If upgrading from the old 4-column JSON API schema, `ensure_schema` uses `ALTER TABLE ADD COLUMN` to add the missing columns without losing existing data.
 - **One DB per table**: instruments.db, trades.db, etc. Keeps each table self-contained, allows independent sync/query.
 - **Date-based replace**: Each sync deletes old rows for the same date before inserting. Idempotent re-syncs.
 - **ISO-8859-1 encoding**: B3 CSVs use Latin-1 encoding (Portuguese accents). The parser decodes via `resp.content.decode("iso-8859-1")`.
-- **Status line detection**: 3 of 4 tables (instruments, trades, after_hours) have a `Status do Arquivo: Final` line before the header. Derivatives does NOT. The parser auto-detects this by checking if line 0 has only 1 column.
+- **Status line detection**: 3 of 4 tables (instruments, trades, after_hours) have a `Status do Arquivo: Final/Parcial` line before the header. Derivatives does NOT. The parser auto-detects this and extracts the status.
 
 ## Performance Comparison
 
@@ -58,4 +64,4 @@ Record sync_state
 
 ---
 
-*Last updated: 2026-08-24 (v2.0 — CSV bulk download).*
+*Last updated: 2026-08-24 (v2.1 — hardening: CSV parser + retry + partial data skip + column validation).*

@@ -130,8 +130,15 @@ def ensure_schema(conn, table_name: str, columns: list[str]):
         # Table exists — check for missing columns and add them via ALTER TABLE.
         # SQLite ALTER TABLE ADD COLUMN can only add one column at a time,
         # and can't add columns that already exist.
+        import re
         for col in columns:
             if col not in existing_cols:
+                # [v3 fix] Sanitize column name — only allow alphanumeric + underscore.
+                # B3 controls the data, but a stray character would produce a
+                # confusing SQL error. (Claude 2 review finding.)
+                if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", col):
+                    _progress_msg(f"[b3_sync] WARNING: Skipping invalid column name '{col}' in {table}")
+                    continue
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
                 _progress_msg(f"[b3_sync] Added column '{col}' to {table} (schema migration)")
         # Also ensure _ingested_at exists
