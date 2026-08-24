@@ -4,8 +4,11 @@ B3 options (derivatives) analytics. The derivatives table
 (`cotahist_derivatives`) lives in the SAME cotahist.db used by the price
 skill. The IV tab also reads the Selic rate from `sgs.db` (BCB SGS series
 432 = "Meta Selic Copom") as the risk-free rate for Black-Scholes pricing.
-So REQUIRED_SOURCES = ["cotahist", "sgs"] (the sync guard triggers both
-sync engines if either is stale).
+The Posições em Aberto tab (v1.3) reads open interest + position breakdown
+from the B3 API CSV bulk download (`derivatives.db` + `instruments.db`).
+So REQUIRED_SOURCES = ["cotahist", "sgs", "b3-api-derivatives",
+"b3-api-instruments"] (the sync guard triggers all four sync engines if
+any is stale).
 
 Skill structure mirrors skills/b3/price + skills/bcb/macro:
   - _registry.py        : MODES + register_mode via skills._base.make_registry()
@@ -35,21 +38,30 @@ from skills.b3.options._registry import MODES  # noqa: F401
 auto_discover_modes(__name__)
 
 # [v1.2] The IV tab reads the Selic rate from sgs.db (BCB SGS series 432).
-# So the sync guard must trigger BOTH the cotahist sync (for derivatives +
-# spot prices) AND the sgs sync (for the Selic rate) if either is stale.
-REQUIRED_SOURCES = ["cotahist", "sgs"]
+# [v1.3] The Posições em Aberto tab reads open interest from the B3 API
+# CSV bulk download — derivatives.db (open positions + breakdown by
+# holder/writer/covered/uncovered) joined with instruments.db (strike,
+# expiration date, option style, company name) on TckrSymb. The Cadeia
+# de Opções tab is also enriched with OI/Coberta/Descoberta columns from
+# derivatives.db. So the sync guard must trigger FOUR sync engines if any
+# is stale: cotahist (derivatives + spot prices), sgs (Selic rate),
+# b3-api-derivatives (open positions), b3-api-instruments (option metadata).
+REQUIRED_SOURCES = ["cotahist", "sgs", "b3-api-derivatives", "b3-api-instruments"]
 
 MANIFEST = {
     "sub_domain":  "options",
     "description": (
         "B3 options (derivatives) analytics. "
-        "dashboard: 5-tab (Cadeia de Opções + Put/Call Ratio + Volume por "
-        "Strike + Exercicios + Volatilidade Implícita). The IV tab uses "
-        "Black-Scholes + the Selic rate from BCB SGS. "
-        "Sources: cotahist.db (cotahist_derivatives + equities tables) + "
-        "sgs.db (Selic rate, series 432)."
+        "dashboard: 6-tab (Cadeia de Opções + Put/Call Ratio + Volume por "
+        "Strike + Exercicios + Volatilidade Implícita + Posições em Aberto). "
+        "The IV tab uses Black-Scholes + the Selic rate from BCB SGS. The "
+        "Posições em Aberto tab uses the B3 API CSV bulk download "
+        "(derivatives.db + instruments.db) for open interest + position "
+        "breakdown. Sources: cotahist.db (cotahist_derivatives + equities "
+        "tables) + sgs.db (Selic rate, series 432) + b3/derivatives.db + "
+        "b3/instruments.db (B3 API CSV bulk download)."
     ),
-    "source":  "data_sources.b3.cotahist (shared cotahist.db) + data_sources.bcb.sgs (sgs.db)",
+    "source":  "data_sources.b3.cotahist (shared cotahist.db) + data_sources.bcb.sgs (sgs.db) + data_sources.b3.api (derivatives.db + instruments.db)",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
     "required_sources": REQUIRED_SOURCES,

@@ -84,6 +84,39 @@ MANIFEST = {
                 'data_source(domain="b3", sub_domain="api", mode="search_company", params=\'{"name":"PETROBRAS"}\')',
             ],
         },
+        # [v2.0] Open positions queries — DerivativesOpenPosition CSV bulk
+        # download (derivatives.db) joined with instruments.db on TckrSymb.
+        # Used by the options skill's "Posições em Aberto" tab.
+        "open_positions": {
+            "description": (
+                "Open interest + position breakdown (covered/blocked/"
+                "uncovered/holders/writers) for all options on an underlying. "
+                "Queries derivatives.db (B3 API CSV bulk download) + joins "
+                "instruments.db for strike/expiration. Returns summary + "
+                "by_strike aggregation + per-option detail."
+            ),
+            "include_in_all": False,
+            "params": {
+                "underlying": "str. 4-letter code (PETR) or full ticker (PETR4). Required.",
+            },
+            "examples": [
+                'data_source(domain="b3", sub_domain="api", mode="open_positions", params=\'{"underlying":"PETR4"}\')',
+            ],
+        },
+        "lookup_option_positions": {
+            "description": (
+                "Look up open positions for a SINGLE option ticker "
+                "(open interest, covered/uncovered qty, holders/writers). "
+                "Lighter than open_positions() — used to enrich a chain row."
+            ),
+            "include_in_all": False,
+            "params": {
+                "ticker": "str. Required. Option ticker (e.g. PETRA201).",
+            },
+            "examples": [
+                'data_source(domain="b3", sub_domain="api", mode="lookup_option_positions", params=\'{"ticker":"PETRA201"}\')',
+            ],
+        },
     },
 }
 
@@ -125,6 +158,18 @@ def route(mode: str = "", **kwargs) -> dict:
             sig = inspect.signature(_search)
             filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
             return _search(**filtered)
+
+        elif mode == "open_positions":
+            from data_sources.b3.api.query_engine import open_positions as _open_pos
+            sig = inspect.signature(_open_pos)
+            filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return _open_pos(**filtered)
+
+        elif mode == "lookup_option_positions":
+            from data_sources.b3.api.query_engine import lookup_option_positions as _lookup_pos
+            sig = inspect.signature(_lookup_pos)
+            filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return _lookup_pos(**filtered)
 
         else:
             return {"status": "error", "error": f"Mode '{mode}' not implemented."}

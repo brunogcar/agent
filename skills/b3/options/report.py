@@ -141,7 +141,10 @@ def build_chart_section(title: str, observations: list[dict],
 def build_table_section(title: str, rows: list[list],
                         columns: list[str] | None = None,
                         description: str = "",
-                        column_align: list[str] | None = None) -> dict:
+                        column_align: list[str] | None = None,
+                        sortable: bool = False,
+                        default_sort: dict | None = None,
+                        sort_types: list[str] | None = None) -> dict:
     """Build a table section with already-built rows (list-of-lists).
 
     Rows are a LIST OF LISTS (NOT list of dicts) so the dashboard template's
@@ -156,11 +159,24 @@ def build_table_section(title: str, rows: list[list],
                      provided, the macros.html data_table macro applies
                      text-align to each column + tabular-nums on right-
                      aligned columns. Length must match len(columns).
+        sortable:    [v3] If True, the table headers become clickable sort
+                     triggers. Same pattern as skills/ddm/fluxo/report.py —
+                     the macros.html data_table macro reads this flag +
+                     default_sort + sort_types to wire up the JS sortTable()
+                     handler (defined in base.html).
+        default_sort:[v3] Optional {"column": <int>, "direction":
+                     "asc"|"desc"} — sets the initial sort indicator
+                     (arrow icon + data-sorted attribute). The rows stay in
+                     their emitted order; this only controls the visual cue.
+        sort_types:  [v3] Optional list of "text"|"number" per column. If
+                     omitted, the macro auto-derives from column_align
+                     (right → number, left → text).
 
     Returns:
-        Section dict. If column_align is provided it is included as
-        "column_align" in the dict (otherwise the key is absent so the
-        macro falls back to its default left alignment).
+        Section dict. Sortable keys (sortable/default_sort/sort_types) are
+        only included when sortable=True (otherwise absent so the macro
+        renders a plain non-sortable table). column_align is included only
+        when provided.
     """
     out: dict = {
         "type":        "table",
@@ -171,6 +187,12 @@ def build_table_section(title: str, rows: list[list],
     }
     if column_align is not None:
         out["column_align"] = column_align
+    if sortable:
+        out["sortable"] = True
+        if default_sort is not None:
+            out["default_sort"] = default_sort
+        if sort_types is not None:
+            out["sort_types"] = sort_types
     return out
 
 

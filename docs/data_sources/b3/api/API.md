@@ -45,6 +45,68 @@ Search instruments by company name.
 | `name` | `str` | (required) | Company name fragment |
 | `limit` | `int` | `20` | Max results |
 
+### `mode="open_positions"` (v2.0)
+Open interest + position breakdown for all options on an underlying. Queries
+`derivatives.db` (DerivativesOpenPosition CSV bulk download) and joins
+`instruments.db` (InstrumentsConsolidated) on `TckrSymb` to enrich each
+option with strike (`ExrcPric`), expiration (`XprtnDt`), option style
+(`OptnStyle`), and company name (`CrpnNm`). Used by the options skill's
+"Posições em Aberto" tab.
+
+Filters:
+- Only `SgmtNm` = `EQUITY CALL` or `EQUITY PUT` (skips `FORWARD`,
+  `FINANCIAL`, etc.).
+- Skips rows with `OpnIntrst=0` AND `TtlPos=0` (no positions).
+
+Graceful degradation:
+- If `derivatives.db` is missing → `{status: "not_synced"}`.
+- If `instruments.db` is missing → returns derivatives data with `strike=None`,
+  `days_to_expiration=None`, `instruments_ok=false`.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `underlying` | `str` | (required) | 4-letter code (`PETR`) or full ticker (`PETR4`). Trailing digits stripped. |
+
+Returns:
+```python
+{
+  "status": "ok",
+  "underlying": "PETR",
+  "refdate": "2026-09-08",
+  "instruments_ok": true,
+  "count": 8,
+  "summary": {
+    "CALL": {"oi": 112000, "covered": 42000, "blocked": 21000,
+             "uncovered": 49000, "total": 112000, "holders": 67000,
+             "writers": 45000, "covered_pct": 37.5, "uncovered_pct": 43.75},
+    "PUT":  {...}
+  },
+  "by_strike": [
+    {"strike": 36.0, "call_oi": 12000, "put_oi": 8000, "call_count": 1, "put_count": 1},
+    ...
+  ],
+  "detail": [
+    {"ticker": "PETRG36", "type": "CALL", "strike": 36.0,
+     "expiration": "2026-08-17", "days_to_expiration": 313,
+     "oi": 12000, "var_oi": 500, "covered": 4000, "uncovered": 6000,
+     "total": 12000, "holders": 7000, "writers": 5000, "forward": 38.20},
+    ...
+  ]
+}
+```
+
+### `mode="lookup_option_positions"` (v2.0)
+Lighter single-ticker lookup — fetches one row from `derivatives.db`. Used by
+the Cadeia de Opções tab to enrich each chain row with OI / Coberta /
+Descoberta columns without a full `open_positions()` call.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `ticker` | `str` | (required) | Option ticker (e.g. `PETRA201`, `PETRG36`). Case-insensitive. |
+
+Returns `{status: "ok", ticker, oi, var_oi, covered, blocked, uncovered,
+total, holders, writers, forward}` or `{status: "not_found"}`.
+
 ## Tool Invocation
 
 ```python
@@ -53,8 +115,11 @@ data_source(domain="b3", sub_domain="api", mode="sync", params='{"table":"trades
 data_source(domain="b3", sub_domain="api", mode="query", params='{"ticker":"PETR4"}')
 data_source(domain="b3", sub_domain="api", mode="lookup_ticker", params='{"ticker":"PETR4"}')
 data_source(domain="b3", sub_domain="api", mode="search_company", params='{"name":"PETROBRAS"}')
+# [v2.0] Open positions queries:
+data_source(domain="b3", sub_domain="api", mode="open_positions", params='{"underlying":"PETR4"}')
+data_source(domain="b3", sub_domain="api", mode="lookup_option_positions", params='{"ticker":"PETRG36"}')
 ```
 
 ---
 
-*Last updated: 2026-08-24 (v2.0 — CSV bulk download).*
+*Last updated: 2026-09-08 (v2.0 — open_positions + lookup_option_positions modes for the options skill's Posições em Aberto tab).*

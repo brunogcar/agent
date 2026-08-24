@@ -1,11 +1,13 @@
-"""Mode: dashboard -- 5-tab B3 options analytics dashboard.
+"""Mode: dashboard -- 6-tab B3 options analytics dashboard.
 
 Tabs:
   Cadeia de Opções        (group: Opções)   — options chain tables + ticker legend
+                                            + [v1.3] OI/Coberta/Descoberta cols
   Put/Call Ratio          (group: Análise)  — daily P/C ratio chart + table
   Volume por Strike       (group: Análise)  — bar chart of volume per strike
   Exercicios              (group: Opções)   — exercise of calls/puts chart + table
   Volatilidade Implícita  (group: Análise)  — IV smile chart + IV table + IV term heatmap
+  Posições em Aberto      (group: Posições) — [v1.3] OI by strike + CALL/PUT summary + detail
 
 Workflow:
   1. Normalize the underlying code (PETR4 → PETR by stripping trailing digit)
@@ -15,6 +17,9 @@ Workflow:
   5. Query exercise_summary(underlying, days=90)  for the exercise trend
   6. [v1.2] Compute implied vol per option (Black-Scholes + Selic risk-free rate)
      + build IV smile chart + IV table + IV term structure heatmap.
+  7. [v1.3] Query open_positions(underlying) from the B3 API CSV bulk
+     download (derivatives.db + instruments.db join) for the open interest
+     breakdown by strike + CALL/PUT totals.
 
 Graceful degradation: if the cotahist_derivatives table doesn't exist or has
 no data, the dashboard returns status=ok with error sections (so the other
@@ -25,6 +30,13 @@ tabs still render). Mirrors the CVM financials + bcb/macro contract.
 "Meta Selic Copom", converted to continuous compounding). The IV tab is
 graceful — if the spot price or Selic rate can't be fetched, it shows an
 error section but doesn't break the dashboard.
+
+[v1.3] Added 6th tab "Posições em Aberto" — uses the B3 API CSV bulk
+download (derivatives.db + instruments.db) instead of COTAHIST. Shows
+open interest by strike (the options "wall" chart), CALL vs PUT summary
+matching the Google Sheet R2:U7 layout (Coberta/Travada/Descoberta/Total/
+Titulares/Lançadores), and a per-option detail table. Also enriches Tab 1
+(Cadeia de Opções) with OI/Coberta/Descoberta columns from derivatives.db.
 
 [v2] Legend reworked into a 2-column table (CALLS | PUTS) so users see both
 month-code systems side by side. Numeric/R$ columns in all tables now carry
@@ -51,6 +63,11 @@ from data_sources.b3.cotahist.query_engine import query as _spot_query
 from data_sources.b3.cotahist.derivatives_query import (
     options_chain, put_call_ratio, volume_by_strike, exercise_summary,
     available_maturities,
+)
+# [v1.3] Open positions from the B3 API CSV bulk download.
+from data_sources.b3.api.query_engine import (
+    open_positions as _open_positions,
+    lookup_option_positions as _lookup_option_positions,
 )
 
 
@@ -252,11 +269,20 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
     columns (Exercício/Último/Volume/Bid/Ask) now carry a `column_align` hint
     for right-alignment + tabular-nums.
 
+    [v1.3] Chain tables enriched with 3 new columns from derivatives.db:
+      - OI (Open Interest)       — from OpnIntrst
+      - Coberta (Covered)        — from CvrdQty
+      - Descoberta (Uncovered)   — from UcvrdQty
+    The enrichment is graceful — if derivatives.db doesn't exist or the
+    ticker isn't found, the columns show "-" (the rest of the table still
+    renders). Uses a single open_positions() call + a ticker→positions map
+    to avoid N+1 queries.
+
     Sections emitted (in order):
       1. Legend intro text section (format + examples)
       2. Legend 2-column table (CALLS | PUTS month codes)
       3. Calls table (collapsible, expanded) — Papel | Exercício | Vencimento |
-         Último | Volume | Bid | Ask
+         Último | Volume | Bid | Ask | OI | Coberta | Descoberta
       4. Puts table (collapsible, expanded) — same columns
     """
     sections: list[dict] = []
@@ -273,6 +299,7 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
         ["E=Mai  F=Jun  G=Jul  H=Ago", "Q=Mai  R=Jun  S=Jul  T=Ago"],
         ["I=Set  J=Out  K=Nov  L=Dez", "U=Set  V=Out  W=Nov  X=Dez"],
     ]
+    # [v3] Sortable — both columns are text (month-code labels).
     sections.append(build_table_section(
         "Códigos de Mês — CALLS vs PUTS",
         legend_rows,
@@ -281,6 +308,8 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
                     "M-X a PUTS (opção de venda). Cada letra mapeia um mês "
                     "do ano — idêntico para ambos os lados.",
         column_align=["left", "left"],
+        sortable=True,
+        sort_types=["text", "text"],
     ))
 
     # Query the options chain (nearest maturity if not specified).
@@ -307,17 +336,41 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
     maturity_str = res.get("maturity", "-")
     refdate = res.get("refdate", "-")
 
+    # [v1.3] Fetch open positions for the underlying + build a ticker→positions
+    # map so we can enrich each chain row with OI/Coberta/Descoberta without
+    # N+1 queries. Graceful: if derivatives.db is missing, the map is empty
+    # and the columns show "-".
+    pos_map: dict[str, dict] = {}
+    op_res = _safe_query(_open_positions, underlying=underlying)
+    if op_res.get("status") == "ok":
+        for d in op_res.get("detail", []):
+            t = (d.get("ticker") or "").upper()
+            if t:
+                pos_map[t] = d
+
     columns = [
         "Papel", "Exercício", "Vencimento",
         "Último", "Volume", "Bid", "Ask",
+        # [v1.3] Open positions columns from derivatives.db (B3 API CSV).
+        "OI", "Coberta", "Descoberta",
     ]
     # [v2] Papel=left, Exercício=right (R$), Vencimento=left (date),
     # Último=right (R$), Volume=right (number), Bid=right (R$), Ask=right (R$).
-    chain_align = ["left", "right", "left", "right", "right", "right", "right"]
+    # [v1.3] OI/Coberta/Descoberta = right (integers).
+    chain_align = ["left", "right", "left", "right", "right", "right", "right",
+                   "right", "right", "right"]
+    # [v3] Sortable: text for Papel/Vencimento, number for the rest
+    # (Exercício/Último/Volume/Bid/Ask/OI/Coberta/Descoberta).
+    # Default sort by Exercício (Strike, col 1) ASC.
+    chain_sort_types = ["text", "number", "text", "number", "number",
+                        "number", "number", "number", "number", "number"]
+    chain_default_sort = {"column": 1, "direction": "asc"}
 
     def _build_rows(opts: list[dict]) -> list[list]:
         rows = []
         for opt in opts:
+            ticker = (opt.get("symbol") or "").upper()
+            pos = pos_map.get(ticker, {})
             rows.append([
                 opt.get("symbol", ""),
                 format_brl(opt.get("strike_parsed")),
@@ -326,6 +379,10 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
                 format_int(opt.get("volume")),
                 format_brl(opt.get("best_bid")),
                 format_brl(opt.get("best_ask")),
+                # [v1.3] OI / Coberta / Descoberta from derivatives.db.
+                format_int(pos.get("oi"))         if pos else "-",
+                format_int(pos.get("covered"))    if pos else "-",
+                format_int(pos.get("uncovered"))  if pos else "-",
             ])
         return rows
 
@@ -336,13 +393,18 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
             "title": f"Calls — {underlying} ({maturity_str})",
             "description": (
                 f"{len(calls)} calls para o vencimento {maturity_str} (ref: {refdate}). "
-                "Ordenadas por strike."
+                "Ordenadas por strike. Colunas OI/Coberta/Descoberta vêm do "
+                "derivatives.db (B3 API CSV bulk download)."
             ),
             "columns": columns,
             "rows": _build_rows(calls),
             "collapsible": True,
             "collapsible_open": True,
             "column_align": chain_align,
+            # [v3] Sortable — default sort by Strike (Exercício, col 1) ASC.
+            "sortable": True,
+            "default_sort": chain_default_sort,
+            "sort_types": chain_sort_types,
         })
 
     # Puts table (collapsible, expanded).
@@ -352,13 +414,18 @@ def _build_chain_tab(underlying: str, maturity: str = "") -> list[dict]:
             "title": f"Puts — {underlying} ({maturity_str})",
             "description": (
                 f"{len(puts)} puts para o vencimento {maturity_str} (ref: {refdate}). "
-                "Ordenadas por strike."
+                "Ordenadas por strike. Colunas OI/Coberta/Descoberta vêm do "
+                "derivatives.db (B3 API CSV bulk download)."
             ),
             "columns": columns,
             "rows": _build_rows(puts),
             "collapsible": True,
             "collapsible_open": True,
             "column_align": chain_align,
+            # [v3] Sortable — default sort by Strike (Exercício, col 1) ASC.
+            "sortable": True,
+            "default_sort": chain_default_sort,
+            "sort_types": chain_sort_types,
         })
 
     return sections
@@ -514,12 +581,16 @@ def _build_put_call_ratio_tab(underlying: str, days: int = 90) -> list[dict]:
             format_value(obs.get("ratio"), "ratio"),
         ])
     # [v2] Right-align numeric columns (Data=left, the rest=right).
+    # [v3] Sortable — default sort by Data (col 0) DESC (newest first).
     sections.append(build_table_section(
         f"Últimas Observações — {underlying}",
         table_rows,
         ["Data", "Volume Calls", "Volume Puts", "P/C Ratio"],
         description="Últimas 15 observações diárias (mais recente primeiro).",
         column_align=["left", "right", "right", "right"],
+        sortable=True,
+        default_sort={"column": 0, "direction": "desc"},
+        sort_types=["text", "number", "number", "number"],
     ))
     return sections
 
@@ -618,6 +689,9 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
     # [v3] Split detail table into 2 collapsible tables: calls + puts.
     # [v2] Right-align all columns (Strike / Vol / # are all numeric).
     strike_align = ["right", "right", "right"]
+    # [v3] Sortable — all numeric columns, default sort by Strike (col 0) ASC.
+    strike_sort_types = ["number", "number", "number"]
+    strike_default_sort = {"column": 0, "direction": "asc"}
     call_rows = []
     put_rows = []
     for s in strikes:
@@ -644,6 +718,10 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
             "collapsible": True,
             "collapsible_open": True,
             "column_align": strike_align,
+            # [v3] Sortable — default sort by Strike (col 0) ASC.
+            "sortable": True,
+            "default_sort": strike_default_sort,
+            "sort_types": strike_sort_types,
         })
 
     if put_rows:
@@ -656,6 +734,10 @@ def _build_volume_by_strike_tab(underlying: str) -> list[dict]:
             "collapsible": True,
             "collapsible_open": True,
             "column_align": strike_align,
+            # [v3] Sortable — default sort by Strike (col 0) ASC.
+            "sortable": True,
+            "default_sort": strike_default_sort,
+            "sort_types": strike_sort_types,
         })
 
     return sections
@@ -759,12 +841,16 @@ def _build_exercise_tab(underlying: str, days: int = 90) -> list[dict]:
             format_int(obs.get("total")),
         ])
     # [v2] Right-align numeric columns (Data=left, the rest=right).
+    # [v3] Sortable — default sort by Data (col 0) DESC (newest first).
     sections.append(build_table_section(
         f"Ultimos Exercicios — {underlying}",
         table_rows,
         ["Data", "Ex. Calls (R$)", "Ex. Puts (R$)", "Total"],
         description="Ultimos 15 dias de exercicio (mais recente primeiro).",
         column_align=["left", "right", "right", "right"],
+        sortable=True,
+        default_sort={"column": 0, "direction": "desc"},
+        sort_types=["text", "number", "number", "number"],
     ))
     return sections
 
@@ -950,6 +1036,11 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
         "collapsible_open": True,
         # [v2] Right-align numeric columns (Strike/Prêmio/IV).
         "column_align": ["left", "left", "right", "right", "right"],
+        # [v3] Sortable — text for Papel/Tipo, number for Strike/Prêmio/IV.
+        # Default sort by Strike (col 2) ASC.
+        "sortable": True,
+        "default_sort": {"column": 2, "direction": "asc"},
+        "sort_types": ["text", "text", "number", "number", "number"],
     })
 
     # ── IV Term Structure heatmap (strike × maturity) ─────────────────────
@@ -1036,17 +1127,296 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
     return sections
 
 
+# ── Tab 6: Posições em Aberto ───────────────────────────────────────────────
+def _build_open_positions_tab(underlying: str) -> list[dict]:
+    """Build the Posições em Aberto tab sections.
+
+    [v1.3] Uses the B3 API CSV bulk download (derivatives.db + instruments.db)
+    instead of COTAHIST. Shows the OPEN INTEREST picture (who's holding
+    what), complementing the COTAHIST-based tabs which show traded volume.
+
+    Sections emitted (in order):
+      1. KPI summary table — Total OI (CALL+PUT) | Call/Put OI Ratio |
+         Covered % | Uncovered % (4-column row, computed from the summary).
+      2. Bar chart — Open Interest by Strike: CALL (green) vs PUT (red)
+         side-by-side bars. THE most important chart for options traders:
+         shows support/resistance "walls" where large OI concentrates.
+      3. Summary table — CALL vs PUT comparison matching the Google Sheet
+         R2:U7 layout: Coberta | Travada | Descoberta | Total | Titulares |
+         Lançadores (one row per type).
+      4. Detail table (collapsible, expanded) — per-option breakdown:
+         Ticker | Tipo | Strike | Vencimento | Dias | OI | Var OI | Coberta |
+         Descoberta | Total | Titulares | Lançadores | Forward.
+
+    Graceful degradation: if derivatives.db is missing, returns a single
+    error section (the rest of the dashboard is unaffected).
+    """
+    sections: list[dict] = []
+
+    res = _safe_query(_open_positions, underlying=underlying)
+    status = res.get("status")
+    if status != "ok":
+        sections.append(build_error_section(
+            "Posições em Aberto",
+            res.get("error", f"status={status}"),
+        ))
+        return sections
+
+    summary = res.get("summary", {})
+    by_strike = res.get("by_strike", [])
+    detail = res.get("detail", [])
+    refdate = res.get("refdate", "-")
+    instruments_ok = res.get("instruments_ok", False)
+
+    call_sum = summary.get("CALL", {})
+    put_sum  = summary.get("PUT", {})
+    total_oi = call_sum.get("oi", 0) + put_sum.get("oi", 0)
+    call_oi  = call_sum.get("oi", 0)
+    put_oi   = put_sum.get("oi", 0)
+    cp_ratio = (put_oi / call_oi) if call_oi > 0 else None
+
+    # Combined covered/uncovered % across CALL+PUT.
+    total_total = call_sum.get("total", 0) + put_sum.get("total", 0)
+    total_cov   = call_sum.get("covered", 0) + put_sum.get("covered", 0)
+    total_unc   = call_sum.get("uncovered", 0) + put_sum.get("uncovered", 0)
+    cov_pct = (total_cov / total_total * 100.0) if total_total > 0 else 0.0
+    unc_pct = (total_unc / total_total * 100.0) if total_total > 0 else 0.0
+
+    # ── 1. KPI summary table (4 columns, 1 row) ──────────────────────────
+    kpi_row = [[
+        format_int(total_oi),
+        format_value(cp_ratio, "ratio"),
+        format_pct(cov_pct / 100.0) if total_total > 0 else "-",
+        format_pct(unc_pct / 100.0) if total_total > 0 else "-",
+    ]]
+    # [v3] Sortable — all 4 columns are numeric values.
+    sections.append(build_table_section(
+        f"Resumo — {underlying}",
+        kpi_row,
+        ["OI Total (CALL+PUT)", "Call/Put OI Ratio", "Cobertura %", "Descoberta %"],
+        description=(
+            f"Interesse aberto total (calls + puts) em {refdate}. "
+            "Call/Put OI Ratio > 1 = mais posições em puts (bearish); < 1 = "
+            "mais em calls (bullish). Cobertura % = posições cobertas "
+            "(com lastro) / total. Descoberta % = sem lastro / total."
+        ),
+        column_align=["right", "right", "right", "right"],
+        sortable=True,
+        sort_types=["number", "number", "number", "number"],
+    ))
+
+    # ── 2. Bar chart: OI by Strike (CALL green vs PUT red) ──────────────
+    if by_strike:
+        labels = [format_brl(s.get("strike")) for s in by_strike]
+        call_data = [s.get("call_oi", 0) for s in by_strike]
+        put_data  = [s.get("put_oi", 0)  for s in by_strike]
+
+        chart_data = {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "OI Calls",
+                        "data": call_data,
+                        "backgroundColor": _COLOR_CALL,
+                        "borderColor": _COLOR_CALL,
+                        "borderWidth": 0,
+                    },
+                    {
+                        "label": "OI Puts",
+                        "data": put_data,
+                        "backgroundColor": _COLOR_PUT,
+                        "borderColor": _COLOR_PUT,
+                        "borderWidth": 0,
+                    },
+                ],
+            },
+            "options": {
+                "responsive": True,
+                "maintainAspectRatio": False,
+                "interaction": {"mode": "index", "intersect": False},
+                "scales": {
+                    "x": {"ticks": {"maxTicksLimit": 25}},
+                    "y": {
+                        "beginAtZero": True,
+                        "title": {"display": True, "text": "Open Interest (contratos)"},
+                    },
+                },
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": f"Interesse Aberto por Strike — {underlying}",
+                    },
+                    "legend": {"display": True, "position": "top"},
+                },
+            },
+        }
+        sections.append({
+            "type": "chart",
+            "title": f"Interesse Aberto por Strike — {underlying}",
+            "description": (
+                f"Open Interest por strike para {underlying} (ref: {refdate}). "
+                "Barras verdes = calls; barras vermelhas = puts. Concentrações "
+                "de OI em um strike indicam 'paredes' de suporte (puts) ou "
+                "resistência (calls) — níveis onde muitos traders têm posições "
+                "abertas e podem defender o preço."
+            ),
+            "chart_data": chart_data,
+        })
+
+    # ── 3. Summary table: CALL vs PUT comparison (R2:U7 layout) ─────────
+    # [v3] Tipo labels are uppercase ("CALL" / "PUT") to match the data +
+    # the Google Sheet R2:U7 layout (was title-case "Call" / "Put").
+    summary_rows = []
+    for ot in ("CALL", "PUT"):
+        s = summary.get(ot, {})
+        summary_rows.append([
+            ot,
+            format_int(s.get("covered", 0)),
+            format_int(s.get("blocked", 0)),
+            format_int(s.get("uncovered", 0)),
+            format_int(s.get("total", 0)),
+            format_int(s.get("holders", 0)),
+            format_int(s.get("writers", 0)),
+        ])
+    # [v3] Sortable — text for Tipo, number for all position columns.
+    sections.append(build_table_section(
+        f"Resumo CALL vs PUT — {underlying}",
+        summary_rows,
+        ["Tipo", "Coberta", "Travada", "Descoberta", "Total",
+         "Titulares", "Lançadores"],
+        description=(
+            f"Comparação CALL vs PUT (ref: {refdate}). Coberta = lastro em "
+            "ação (covered); Travada = garantia em cash/bloqueada (locked); "
+            "Descoberta = sem lastro (naked/uncovered). Titulares = "
+            "compradores da opção (holders/longs); Lançadores = vendedores "
+            "(writers/shorts)."
+        ),
+        column_align=["left", "right", "right", "right", "right", "right", "right"],
+        sortable=True,
+        sort_types=["text", "number", "number", "number", "number",
+                    "number", "number"],
+    ))
+
+    # ── 4. Detail tables (collapsible): per-option breakdown ───────────
+    # [v3] Split the single mixed CALL+PUT detail table into 2 separate
+    # collapsible tables (same pattern as Tab 1's Cadeia de Opções). The
+    # user reported "only have call not put" — the puts were there but
+    # buried after 1,256 call rows in a single table. Splitting by type
+    # makes both visible without scrolling past the other.
+    #
+    # Sort types per column (13 columns):
+    #   Ticker=text, Tipo=text, Strike=number, Vencimento=text, Dias=number,
+    #   OI=number, Var OI=number, Coberta=number, Descoberta=number,
+    #   Total=number, Titulares=number, Lançadores=number, Forward=number.
+    detail_columns = ["Ticker", "Tipo", "Strike", "Vencimento", "Dias",
+                      "OI", "Var OI", "Coberta", "Descoberta", "Total",
+                      "Titulares", "Lançadores", "Forward"]
+    detail_align = ["left", "left", "right", "left", "right",
+                    "right", "right", "right", "right", "right",
+                    "right", "right", "right"]
+    detail_sort_types = ["text", "text", "number", "text", "number",
+                         "number", "number", "number", "number", "number",
+                         "number", "number", "number"]
+    # Default sort by Strike (col 2) ASC.
+    detail_default_sort = {"column": 2, "direction": "asc"}
+
+    def _build_detail_rows(opts: list[dict]) -> list[list]:
+        # Sort by strike, then expiration.
+        sorted_opts = sorted(opts, key=lambda d: (
+            d.get("strike") if d.get("strike") is not None else -1.0,
+            d.get("expiration") or "",
+        ))
+        rows: list[list] = []
+        for d in sorted_opts:
+            days = d.get("days_to_expiration")
+            rows.append([
+                d.get("ticker", ""),
+                (d.get("type") or "").title(),
+                format_brl(d.get("strike")) if d.get("strike") is not None else "-",
+                d.get("expiration") or "-",
+                format_int(days) if days is not None else "-",
+                format_int(d.get("oi")),
+                format_int(d.get("var_oi")),
+                format_int(d.get("covered")),
+                format_int(d.get("uncovered")),
+                format_int(d.get("total")),
+                format_int(d.get("holders")),
+                format_int(d.get("writers")),
+                format_brl(d.get("forward")) if d.get("forward") is not None else "-",
+            ])
+        return rows
+
+    # [v3] Filter the detail list into CALL + PUT (per task spec).
+    calls_detail = [d for d in detail if d.get("type") == "CALL"]
+    puts_detail  = [d for d in detail if d.get("type") == "PUT"]
+
+    # CALL detail table (collapsible, expanded) — calls only, sorted by Strike ASC.
+    if calls_detail:
+        call_rows = _build_detail_rows(calls_detail)
+        sections.append({
+            "type": "table",
+            "title": f"Posições — CALL — {underlying}",
+            "description": (
+                f"{len(call_rows)} calls com posição aberta para {underlying} "
+                f"(ref: {refdate}). " + ("Join com instruments.db ativo "
+                "(strike + vencimento + estilo preenchidos)." if instruments_ok
+                else "instruments.db ausente — strike + vencimento + estilo não "
+                "disponíveis (join degradado).") + " Var OI = variação diária do "
+                "interesse aberto. Forward = preço forward."
+            ),
+            "columns": detail_columns,
+            "rows": call_rows,
+            "collapsible": True,
+            "collapsible_open": True,
+            "column_align": detail_align,
+            # [v3] Sortable — default sort by Strike (col 2) ASC.
+            "sortable": True,
+            "default_sort": detail_default_sort,
+            "sort_types": detail_sort_types,
+        })
+
+    # PUT detail table (collapsible, expanded) — puts only, sorted by Strike ASC.
+    if puts_detail:
+        put_rows = _build_detail_rows(puts_detail)
+        sections.append({
+            "type": "table",
+            "title": f"Posições — PUT — {underlying}",
+            "description": (
+                f"{len(put_rows)} puts com posição aberta para {underlying} "
+                f"(ref: {refdate}). " + ("Join com instruments.db ativo "
+                "(strike + vencimento + estilo preenchidos)." if instruments_ok
+                else "instruments.db ausente — strike + vencimento + estilo não "
+                "disponíveis (join degradado).") + " Var OI = variação diária do "
+                "interesse aberto. Forward = preço forward."
+            ),
+            "columns": detail_columns,
+            "rows": put_rows,
+            "collapsible": True,
+            "collapsible_open": True,
+            "column_align": detail_align,
+            # [v3] Sortable — default sort by Strike (col 2) ASC.
+            "sortable": True,
+            "default_sort": detail_default_sort,
+            "sort_types": detail_sort_types,
+        })
+
+    return sections
+
+
 # ── Dashboard entrypoint ────────────────────────────────────────────────────
 @register_mode(
     "dashboard",
     description=(
-        "B3 options (derivatives) analytics dashboard. 5 tabs: "
-        "Cadeia de Opções (options chain tables + ticker legend), "
+        "B3 options (derivatives) analytics dashboard. 6 tabs: "
+        "Cadeia de Opções (options chain tables + ticker legend + OI cols), "
         "Put/Call Ratio (sentiment trend chart + table), "
         "Volume por Strike (calls vs puts bar chart), "
         "Exercicios (exercise of calls/puts), "
-        "Volatilidade Implícita (IV smile + IV table + IV term heatmap via Black-Scholes + Selic). "
-        "Source: cotahist.db (cotahist_derivatives table) + sgs.db (Selic rate)."
+        "Volatilidade Implícita (IV smile + IV table + IV term heatmap via Black-Scholes + Selic), "
+        "Posições em Aberto (open interest by strike + CALL/PUT summary + detail from B3 API CSV). "
+        "Sources: cotahist.db + sgs.db + b3/derivatives.db + b3/instruments.db (B3 API CSV bulk download)."
     ),
     params={
         "underlying": (
@@ -1064,10 +1434,13 @@ def _build_iv_tab(underlying: str, original_input: str = "") -> list[dict]:
     ],
 )
 def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
-    """Build the 5-tab B3 options dashboard for a single underlying.
+    """Build the 6-tab B3 options dashboard for a single underlying.
 
     [v1.1] Added Exercicios tab (exercise of calls/puts — BDI 38/42).
     [v1.2] Added Volatilidade Implícita tab (Black-Scholes IV + Selic rate).
+    [v1.3] Added Posições em Aberto tab (open interest from B3 API CSV bulk
+           download — derivatives.db + instruments.db join). Also enriched
+           the Cadeia de Opções tab with OI/Coberta/Descoberta columns.
     [v2]    Legend reworked into 2-column CALLS|PUTS table + column_align on R$ cols.
 
     Args:
@@ -1088,7 +1461,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
     if not u:
         return {"status": "error", "error": "underlying is required"}
 
-    # ── Tab 1/5: Cadeia de Opções ──────────────────────────────────────────
+    # ── Tab 1/6: Cadeia de Opções ──────────────────────────────────────────
     _s_t0 = _dt.now()
     chain_sections = _build_chain_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -1098,7 +1471,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 2/5: Put/Call Ratio ──────────────────────────────────────────
+    # ── Tab 2/6: Put/Call Ratio ──────────────────────────────────────────
     _s_t0 = _dt.now()
     pc_sections = _build_put_call_ratio_tab(u, days=days)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -1108,7 +1481,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 3/5: Volume por Strike ───────────────────────────────────
+    # ── Tab 3/6: Volume por Strike ───────────────────────────────────
     _s_t0 = _dt.now()
     vbs_sections = _build_volume_by_strike_tab(u)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -1118,7 +1491,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 4/5: Exercicios ───────────────────────────────────────────
+    # ── Tab 4/6: Exercicios ───────────────────────────────────────────
     _s_t0 = _dt.now()
     exercise_sections = _build_exercise_tab(u, days=days)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
@@ -1128,12 +1501,22 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         flush=True,
     )
 
-    # ── Tab 5/5: Volatilidade Implícita ───────────────────────────────
+    # ── Tab 5/6: Volatilidade Implícita ───────────────────────────────
     _s_t0 = _dt.now()
     iv_sections = _build_iv_tab(u, original_input=underlying)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(
         f"  [step] Volatilidade Implícita: {len(iv_sections)} sections "
+        f"({_s_elapsed:.1f}s)",
+        flush=True,
+    )
+
+    # ── Tab 6/6: Posições em Aberto ───────────────────────────────────
+    _s_t0 = _dt.now()
+    op_sections = _build_open_positions_tab(u)
+    _s_elapsed = (_dt.now() - _s_t0).total_seconds()
+    print(
+        f"  [step] Posições em Aberto: {len(op_sections)} sections "
         f"({_s_elapsed:.1f}s)",
         flush=True,
     )
@@ -1144,6 +1527,7 @@ def dashboard(underlying: str = "PETR", days: int = 90) -> dict:
         {"name": "Volume por Strike",      "group": "Análise", "sections": vbs_sections},
         {"name": "Exercicios",             "group": "Opções",  "sections": exercise_sections},
         {"name": "Volatilidade Implícita", "group": "Análise", "sections": iv_sections},
+        {"name": "Posições em Aberto",     "group": "Posições", "sections": op_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()

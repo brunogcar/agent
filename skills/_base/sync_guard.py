@@ -191,6 +191,19 @@ _SYNC_REGISTRY: dict[str, tuple[str, str, KwargsFn]] = {
     # entry, _trigger_sync("ddm-dividends") returned "unknown source".
     "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",
                      lambda cy, py, co, ti: {"force": True}),
+    # [v2.0] B3 API CSV bulk download — derivatives open positions.
+    # The DerivativesOpenPosition table (17 cols, ~46K rows) feeds the
+    # options skill's new "Posições em Aberto" tab (open interest +
+    # position breakdown by holder/writer/covered/uncovered).
+    "b3-api-derivatives": ("data_sources.b3.api.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"table": "derivatives", "force": True, "trace_id": ti}),
+    # [v2.0] B3 API CSV bulk download — instruments (master reference).
+    # The InstrumentsConsolidated table (52 cols, ~169K rows) is joined
+    # with derivatives on TckrSymb to enrich each option row with
+    # ExrcPric (strike), XprtnDt (expiration date), OptnStyle (AMER/EURO),
+    # OptnTp (Call/Put), and CrpnNm (company name).
+    "b3-api-instruments": ("data_sources.b3.api.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"table": "instruments", "force": True, "trace_id": ti}),
 }
 
 
