@@ -141,7 +141,10 @@ class TestDashboard:
         assert len(chart["chart_data"]["data"]["datasets"]) == 3
 
     def test_indicator_chart_parses_currency(self, monkeypatch):
-        """[v4] Câmbio chart should have numeric values (5200, not None)."""
+        r"""[v5 fix B19] Câmbio chart should parse 'R$ 5,200' as 5.2 (PT-BR
+        decimal comma), not 5200.0 (old buggy behavior that stripped both
+        separators). The shared parse_br_number delegates to parse_brl,
+        which correctly interprets the comma as decimal."""
         _patch_query(monkeypatch)
         from skills.ddm.focus.modes import dashboard
         res = dashboard.dashboard()
@@ -150,7 +153,7 @@ class TestDashboard:
         # First dataset (four_weeks_ago), first data point (2026)
         val = chart["chart_data"]["data"]["datasets"][0]["data"][0]
         assert val is not None
-        assert val == 5200.0
+        assert val == 5.2
 
     def test_indicator_chart_parses_us_dollar(self, monkeypatch):
         """[v4] Conta corrente chart should have numeric values (US$)."""

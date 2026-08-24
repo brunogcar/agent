@@ -36,6 +36,7 @@ from skills.ddm.juros.report import (
     build_matrix_table_section, build_overlay_chart_section,
     build_error_section,
 )
+from skills.ddm.juros.helpers import format_pct
 from data_sources.ddm.juros.query_engine import (
     juros_history, last_value, monthly_matrix,
 )
@@ -73,16 +74,19 @@ def _build_historico_subtab(slug: str, name: str,
                 f"{name} (mes)",
                 lv.get("month_value"),
                 subtitle=f"ref: {lv.get('ref_date', '')}",
+                format_fn=format_pct,
             ),
             build_kpi_card(
                 f"{name} (media ano)",
                 lv.get("media_no_ano"),
                 subtitle="media no ano",
+                format_fn=format_pct,
             ),
             build_kpi_card(
                 f"{name} (media 12m)",
                 lv.get("media_12m"),
                 subtitle="media 12 meses",
+                format_fn=format_pct,
             ),
         ]
     else:

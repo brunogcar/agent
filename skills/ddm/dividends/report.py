@@ -37,6 +37,8 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
 
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.dividends.helpers import format_brl, format_date, format_int
 
 
@@ -59,29 +61,6 @@ _DISTRIBUTION_BUCKETS = [
 #   JCP       = amber #f59e0b
 _COLOR_DIVIDENDO = "#0d9488"
 _COLOR_JCP = "#f59e0b"
-
-
-def build_kpi_card(label: str, value, subtitle: str = "") -> dict:
-    """Build a KPI card dict for the top-level kpis list.
-
-    Args:
-        label:    KPI label (e.g. "Total de dividendos").
-        value:    Pre-formatted display value (string) OR raw number
-                  (will be formatted as PT-BR Real).
-        subtitle: Optional sub-text.
-    """
-    if isinstance(value, str):
-        value_str = value
-        raw = None
-    else:
-        value_str = format_brl(value)
-        raw = value
-    return {
-        "label":    label,
-        "value":    value_str,
-        "raw":      raw,
-        "subtitle": subtitle,
-    }
 
 
 def build_dividends_table(title: str, dividends: list[dict],
@@ -254,12 +233,6 @@ def build_distribution_chart(title: str, dividends: list[dict],
             },
         },
     }
-
-
-def build_error_section(title: str, error: str) -> dict:
-    """Build an error section (used when a sub-query fails gracefully)."""
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}
 
 
 # Helper: expose format_int so the dashboard mode can format count KPIs.

@@ -36,6 +36,8 @@ Juros-specific differences vs inflation/report.py:
 
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.juros.helpers import (
     format_pct, _format_mes_ano, _heat_color, build_observation_rows,
 )
@@ -54,25 +56,6 @@ INDEX_COLORS_MEDIA_ANO = {
     "meta-selic": "#93c5fd",  # blue-300
     "cdi":        "#fcd34d",  # amber-300
 }
-
-
-def build_kpi_card(label: str, value, subtitle: str = "") -> dict:
-    """Build a KPI card dict for the top-level kpis list.
-
-    The dashboard template renders k.label + k.value (the other fields
-    are kept for debugging / future use but are ignored by the template).
-
-    Args:
-        label:    KPI label (e.g. "Selic (mes)").
-        value:    Float value (will be formatted as PT-BR percentage).
-        subtitle: Optional sub-text (e.g. ref_date).
-    """
-    return {
-        "label":    label,
-        "value":    format_pct(value),
-        "raw":      value,
-        "subtitle": subtitle,
-    }
 
 
 def build_chart_section(title: str, observations: list[dict],
@@ -338,9 +321,3 @@ def build_matrix_table_section(title: str, matrix_result: dict,
 def build_text_section(title: str, body: str) -> dict:
     """Build a plain text section."""
     return {"type": "text", "title": title, "body": body}
-
-
-def build_error_section(title: str, error: str) -> dict:
-    """Build an error section (used when a sub-query fails gracefully)."""
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}

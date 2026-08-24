@@ -2,7 +2,7 @@
 
 > Canonical map of the MCP Agent Stack repo. This is the reference for "where does X live?" — the README is a summary, this is the full layout.
 
-Last updated: 2026-09-15 (Phase 3: ddm/_base/ extraction, skills/_base/ package split, dashboard.html JS partials)
+Last updated: 2026-09-15 (Phase 3: ddm/_base/ extraction, skills/_base/ package split, dashboard.html JS partials; Phase 4 C1: data_sources/_base/ + skills/_base/kpi.py + skills/_base/error.py)
 
 ---
 
@@ -188,6 +188,10 @@ data_sources/
 │                              # → memory_db/cache/engine_cache.db
 │                              # 3-layer: in-memory (ContextVar) → DB cache → real engine fn
 │                              # Per-company invalidation via fingerprint (MAX(versao)+MAX(date))
+├── _base/                     # [Phase 4 C1] Cross-domain SQLite catalog helpers
+│   ├── __init__.py            #   Re-exports data_dir / db_path / connect
+│   └── catalog.py             #   data_dir(domain) / db_path(domain, filename) /
+│                              #   connect(path, source_name, read_only) — shared mode=ro pattern
 ├── cvm/                       # Brazilian SEC data
 │   ├── __init__.py            # Domain manifest + route
 │   ├── _db.py                 # Shared: paths, cnpj_digits(), parse_escala(), connect_*
@@ -258,7 +262,10 @@ skills/
 │   ├── route.py               #   make_route + _route_with_sync_guard + _dispatch + _SYNC_CHECKED
 │   ├── html_gen.py            #   _auto_generate_html (dashboard HTML writer)
 │   ├── engine_cache.py        #   _ENGINE_CACHE + @engine_cached + engine_cache_scope (3-layer)
-│   └── sync_guard.py          #   SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+│   ├── sync_guard.py          #   SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+│   ├── kpi.py                 #   [Phase 4 C1] build_kpi_card — shared KPI card dict shape
+│   │                          #   (label/value/raw/subtitle/unit + format_fn/formatted)
+│   └── error.py               #   [Phase 4 C1] build_error_section — shared error text section
 ├── _freshness.py              # Cross-domain freshness dict (CVM + B3 + BCB + DDM) — stays separate
 ├── _colors/                   # Shared color palettes (price 16-range, dpa dividend bands)
 │   ├── __init__.py
@@ -423,4 +430,4 @@ tests/
 
 ---
 
-*Last updated: 2026-09-15 (Phase 3 doc sweep — DDM `_base/` extraction + `skills/_base/` package split + `templates/js/` partials). This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — DDM `_base/` extraction + `skills/_base/` package split + `templates/js/` partials; Phase 4 C1 — `data_sources/_base/catalog.py` + `skills/_base/kpi.py` + `skills/_base/error.py` extractions). This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*

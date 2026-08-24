@@ -23,6 +23,13 @@ data_sources/
 │                                  # → memory_db/cache/engine_cache.db
 │                                  # Cross-skill caching with per-company invalidation
 │
+├── _base/                         # [Phase 4 C1] Cross-domain SQLite catalog helpers
+│   ├── __init__.py                #   Re-exports data_dir / db_path / connect
+│   └── catalog.py                 #   data_dir(domain) / db_path(domain, filename) /
+│                                  #   connect(path, source_name, read_only=True) — shared
+│                                  #   mode=ro pattern (cross-domain; DDM-specific helpers
+│                                  #   still live in ddm/_base/catalog_base.py for now).
+│
 ├── cvm/                           # CVM domain
 │   ├── __init__.py                # Domain hub
 │   ├── _db.py                     # Shared: paths, CNPJ, parse_escala, connect helpers
@@ -190,4 +197,4 @@ If the sub-domain doesn't fit under `cvm/`, `b3/`, or `bcb/`:
 
 ---
 
-*Last updated: 2026-09-15 (Phase 3 doc sweep — added DDM domain row + `ddm/_base/` shared infrastructure; updated `skills/_base.py` → `skills/_base/sync_guard.py` for `_trigger_sync.sync_map` references).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — added DDM domain row + `ddm/_base/` shared infrastructure; updated `skills/_base.py` → `skills/_base/sync_guard.py` for `_trigger_sync.sync_map` references; Phase 4 C1 — added `data_sources/_base/catalog.py` cross-domain SQLite helpers).*

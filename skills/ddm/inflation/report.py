@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.inflation.helpers import (
     format_pct, build_observation_rows, _format_mes_ano, _heat_color,
 )
@@ -27,15 +29,6 @@ INDEX_COLORS_ACUM_ANO = {
     "ipca":  "#fcd34d",  # amber-300
     "inpc":  "#d8b4fe",  # purple-300
 }
-
-
-def build_kpi_card(label: str, value, subtitle: str = "") -> dict:
-    return {
-        "label":    label,
-        "value":    format_pct(value),
-        "raw":      value,
-        "subtitle": subtitle,
-    }
 
 
 def build_chart_section(title: str, observations: list[dict],
@@ -269,8 +262,3 @@ def build_matrix_table_section(title: str, matrix_result: dict,
 
 def build_text_section(title: str, body: str) -> dict:
     return {"type": "text", "title": title, "body": body}
-
-
-def build_error_section(title: str, error: str) -> dict:
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}

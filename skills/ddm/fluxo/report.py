@@ -41,6 +41,8 @@ Section titles don't repeat the investor (already in tab name).
 """
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.fluxo.helpers import (
     format_brl, format_date,
 )
@@ -71,33 +73,6 @@ _NEGATIVE_COLOR = "#ef4444"  # red-500
 # [v4] Color for line segments that CROSS zero (pos→neg or neg→pos).
 # Yellow-500: clearly distinct from green/red and from the amber used for
 # Pessoa fisica bars (#f59e0b).
-
-
-def build_kpi_card(label: str, value, subtitle: str = "",
-                   formatted: str = "") -> dict:
-    """Build a KPI card.
-
-    Args:
-        label:     KPI label (e.g. "Ultima data").
-        value:     Raw value (number / string).
-        subtitle:  Optional subtitle / context.
-        formatted: Pre-formatted display value (overrides format_brl).
-                   Useful when value is already a display string like
-                   "R$ 1.582,35 mi" or "19/08/2026".
-    """
-    if formatted:
-        display = formatted
-    elif isinstance(value, (int, float)):
-        display = format_brl(value)
-    else:
-        display = str(value) if value is not None else "-"
-
-    return {
-        "label":    label,
-        "value":    display,
-        "raw":      value,
-        "subtitle": subtitle,
-    }
 
 
 def _value_cell(value) -> dict:
@@ -578,8 +553,3 @@ def build_investor_table(title: str, observations: list[dict],
         "sort_types":   sort_types,
         "negative_red": True,
     }
-
-
-def build_error_section(title: str, error: str) -> dict:
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}

@@ -104,6 +104,8 @@ skill only needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
 | `_cvm_has_new_data(source, year)` | `sync_guard.py` | HEAD check before downloading (CVM only) | v1.14 |
 | `_cvm_has_new_data_cached(source, year)` | `sync_guard.py` | TTL-cached HEAD check (1h) | v1.14 |
 | `_trigger_sync(source, company, ...)` | `sync_guard.py` | Maps source name to sync fn with right args | v1.14 |
+| `build_kpi_card(label, value, *, subtitle, unit, formatted, format_fn)` | `kpi.py` | Shared KPI card dict shape (`{label, value, raw, subtitle, unit}`); used by 7 DDM skills (Phase 4 C1) | v1.0 |
+| `build_error_section(title, error)` | `error.py` | Shared error text section (`{type:"text", title, body:"Erro ao consultar: ..."}`); used by 7 DDM skills (Phase 4 C1) | v1.0 |
 
 ### Architecture
 
@@ -115,7 +117,9 @@ skills/
 │   ├── route.py                      # make_route + _route_with_sync_guard + _dispatch + _SYNC_CHECKED
 │   ├── html_gen.py                   # _auto_generate_html (dashboard HTML writer)
 │   ├── engine_cache.py               # _ENGINE_CACHE + engine_cached + engine_cache_scope
-│   └── sync_guard.py                 # SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+│   ├── sync_guard.py                 # SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+│   ├── kpi.py                        # [Phase 4 C1] build_kpi_card — shared KPI card dict shape
+│   └── error.py                      # [Phase 4 C1] build_error_section — shared error text section
 ├── _freshness.py                     # Cross-domain freshness dict (CVM + B3 + BCB + DDM) — stays separate
 ├── dispatcher.py                     # Auto-discovers skill domains
 ├── cvm/

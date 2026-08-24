@@ -22,6 +22,7 @@ from skills.ddm.inflation.report import (
     build_matrix_table_section, build_overlay_chart_section,
     build_error_section,
 )
+from skills.ddm.inflation.helpers import format_pct
 from data_sources.ddm.inflation.query_engine import (
     index_history, last_value, monthly_matrix,
 )
@@ -57,11 +58,14 @@ def _build_index_tab(slug: str, months: int = 0) -> dict:
     if lv.get("status") == "ok":
         kpis = [
             build_kpi_card(f"{name} (mes)", lv.get("month_value"),
-                           subtitle=f"ref: {lv.get('ref_date', '')}"),
+                           subtitle=f"ref: {lv.get('ref_date', '')}",
+                           format_fn=format_pct),
             build_kpi_card(f"{name} (ano)", lv.get("year_acumulado"),
-                           subtitle="acumulado no ano"),
+                           subtitle="acumulado no ano",
+                           format_fn=format_pct),
             build_kpi_card(f"{name} (12m)", lv.get("acumulado_12m"),
-                           subtitle="acumulado 12 meses"),
+                           subtitle="acumulado 12 meses",
+                           format_fn=format_pct),
         ]
 
     # Subtab 1: Histórico (chart + table)

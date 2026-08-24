@@ -33,6 +33,7 @@ from skills.ddm.poupanca.report import (
     build_kpi_card, build_chart_section, build_table_section,
     build_matrix_table_section, build_error_section,
 )
+from skills.ddm.poupanca.helpers import format_pct
 from data_sources.ddm.poupanca.query_engine import (
     poupanca_history, last_value, monthly_matrix,
 )
@@ -72,16 +73,19 @@ def _build_historico_subtab(slug: str, name: str,
                 f"{name} (mes)",
                 lv.get("month_value"),
                 subtitle=f"ref: {lv.get('ref_date', '')}",
+                format_fn=format_pct,
             ),
             build_kpi_card(
                 f"{name} (acumulado ano)",
                 lv.get("acumulado_no_ano"),
                 subtitle="acumulado no ano",
+                format_fn=format_pct,
             ),
             build_kpi_card(
                 f"{name} (acumulado 12m)",
                 lv.get("acumulado_12m"),
                 subtitle="acumulado 12 meses",
+                format_fn=format_pct,
             ),
         ]
     else:

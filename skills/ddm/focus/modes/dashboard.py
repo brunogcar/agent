@@ -29,7 +29,7 @@ from skills.ddm.focus.report import (
     build_kpi_card, build_year_table, build_indicator_table,
     build_indicator_chart, build_error_section,
 )
-from skills.ddm.focus.helpers import format_value
+from skills.ddm.focus.helpers import format_value, format_int
 from data_sources.ddm.focus.query_engine import all_data, summary
 
 
@@ -201,16 +201,19 @@ def dashboard() -> dict:
             "Anos cobertos",
             summ.get("year_count", 0),
             subtitle=", ".join(str(y) for y in summ.get("years", [])),
+            format_fn=format_int,
         ))
         kpis.append(build_kpi_card(
             "Indicadores",
             summ.get("indicator_count", 0),
             subtitle="Indicadores por ano",
+            format_fn=format_int,
         ))
         kpis.append(build_kpi_card(
             "Total de observacoes",
             summ.get("row_count", 0),
             subtitle=f"Ultima sincronizacao: {synced_at}",
+            format_fn=format_int,
         ))
 
     # Determine years from the data (default to 2026-2029 if empty).

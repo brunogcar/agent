@@ -170,11 +170,28 @@ class BaseDDMSyncEngine:
                 # existing rows before re-inserting. This removes rows that
                 # DDM dropped from the page (INSERT OR REPLACE only touches
                 # rows in the new payload, leaving stale rows behind).
+                #
+                # [v2 fix B7] Wrap DELETE + INSERT in an explicit BEGIN
+                # transaction so a crash between the two doesn't leave the
+                # table empty. Without BEGIN, the DELETE may auto-commit
+                # (depending on the sqlite3 module's isolation level),
+                # losing data if the INSERT fails. BEGIN defers all writes
+                # until commit() -- a failure rolls back to pre-DELETE.
+                conn.execute("BEGIN")
                 conn.execute(f"DELETE FROM {table_name}")
-            rows = [row_mapper(obs, now) for obs in observations]
-            conn.executemany(insert_sql, rows)
-            cls._record_sync_state(conn, slug, last_date, len(observations), now)
-            conn.commit()
+                try:
+                    rows = [row_mapper(obs, now) for obs in observations]
+                    conn.executemany(insert_sql, rows)
+                    cls._record_sync_state(conn, slug, last_date, len(observations), now)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+            else:
+                rows = [row_mapper(obs, now) for obs in observations]
+                conn.executemany(insert_sql, rows)
+                cls._record_sync_state(conn, slug, last_date, len(observations), now)
+                conn.commit()
         finally:
             conn.close()
 

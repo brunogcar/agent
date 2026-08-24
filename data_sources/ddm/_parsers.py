@@ -23,6 +23,7 @@ Functions:
 """
 from __future__ import annotations
 
+import calendar
 import re
 
 from core.br_validator import parse_brl
@@ -67,6 +68,11 @@ def parse_br_number(value) -> float | None:
     Note: for percentage strings ("5,151%"), use parse_br_percentage
     instead — parse_brl divides by 100, which is usually NOT what DDM
     callers want (they want the raw number 5.151, not 0.05151).
+
+    WARNING: This function assumes PT-BR format. A US-format number
+    like "1.5" (dot decimal) will be misinterpreted as "15" (dot =
+    thousands separator stripped). If you have mixed-format input,
+    detect the format before calling this.
     """
     if value is None:
         return None
@@ -149,8 +155,15 @@ def parse_br_date_iso(value) -> str:
     m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
     if m:
         d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        if 1 <= d <= 31 and 1 <= mo <= 12 and 1900 <= y <= 2100:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
+        # [v2 fix B20] Use calendar.monthrange to validate the day
+        # against the actual month length (handles leap years: 29/02/2023
+        # is invalid because 2023 is not a leap year, but 29/02/2024 is
+        # valid). The old check `1 <= d <= 31` accepted impossible dates
+        # like 31/04/2023 (April has 30 days) and 29/02/2023.
+        if 1 <= mo <= 12 and 1900 <= y <= 2100:
+            max_day = calendar.monthrange(y, mo)[1]
+            if 1 <= d <= max_day:
+                return f"{y:04d}-{mo:02d}-{d:02d}"
         return ""
     # Try ISO YYYY-MM-DD.
     try:

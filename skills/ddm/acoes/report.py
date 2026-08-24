@@ -18,35 +18,11 @@ and renders <th onclick="sortTable(this, N)" data-sort-type="number|text">
 """
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.acoes.helpers import (
     format_brl, format_int, format_pct,
 )
-
-
-def build_kpi_card(label: str, value, subtitle: str = "",
-                   formatted: str = "") -> dict:
-    """Build a KPI card.
-
-    Args:
-        label:     KPI label (e.g. "Total de Acoes").
-        value:     Raw value (number / string).
-        subtitle:  Optional subtitle / context.
-        formatted: Pre-formatted display value (overrides format_value).
-                   Useful when value is already a string like "PETR4".
-    """
-    if formatted:
-        display = formatted
-    elif isinstance(value, (int, float)):
-        display = format_int(value)
-    else:
-        display = str(value) if value is not None else "-"
-
-    return {
-        "label":    label,
-        "value":    display,
-        "raw":      value,
-        "subtitle": subtitle,
-    }
 
 
 def _cell(text: str, data_value: str = "", bg: str = "", color_override: str = "") -> dict:
@@ -200,7 +176,3 @@ def build_distribution_chart(title: str, prices: list[float | None],
         },
     }
 
-
-def build_error_section(title: str, error: str) -> dict:
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}

@@ -3,10 +3,24 @@ from __future__ import annotations
 
 
 def format_value(v) -> str:
-    """Display value as-is (already formatted by source)."""
+    """Display value as-is (already formatted by source).
+
+    [v5.1 fix] DDM Focus reports USD values in millions of USD (e.g.
+    "US$ 77,200" = $77.2 billion). Without a unit suffix, "US$ 77,200"
+    looks like $77 thousand. Append " mi" to US$ values for context.
+    R$ values are already in millions (the DDM convention) and don't
+    need a suffix (the "mi" is implied by the R$ context).
+    """
     if v is None:
         return "-"
-    return str(v)
+    s = str(v)
+    # US$ values: append " mi" (millions of USD) for context.
+    # DDM Focus reports: Investimento direto, Balança comercial,
+    # Conta corrente — all in USD millions.
+    if s.startswith("US$") or "US$" in s:
+        if " mi" not in s and " bi" not in s:
+            s = s.rstrip() + " mi"
+    return s
 
 
 def format_int(v) -> str:
@@ -40,47 +54,50 @@ def comparison_color(comp: str) -> str:
 def parse_numeric(value) -> float | None:
     """Parse a PT-BR formatted value to a float (for Chart.js only).
 
-    [v4] Fixed: currency values use comma as THOUSANDS separator,
-    percentage values use comma as DECIMAL separator.
+    [v5 fix B19] Replaced the custom currency/percent parser with the
+    shared data_sources.ddm._parsers.parse_br_number. The old parser
+    had a bug: for "R$ 1.234,56" it stripped both separators -> 123456.0
+    (should be 1234.56). The shared parser delegates to
+    core.br_validator.parse_brl which handles R$ prefix + PT-BR
+    thousands (.) and decimal (,) correctly.
+
+    For percentage strings ("5,151%"), strips the % before calling
+    parse_br_number (focus wants 5.151, not 0.05151 -- parse_brl would
+    divide by 100).
+
+    For US$ prefix strings ("US$ -60,000"), the focus page uses US-style
+    formatting (comma = thousands, dot = decimal) -- NOT PT-BR. We strip
+    the US$ prefix and the commas, then parse as a regular float.
+    (parse_brl would misinterpret "76,200" as 76.2 via PT-BR decimal
+    comma, but for US$ the value is 76200 million USD -- trade balance.)
 
     Examples:
-      - "5,151%"   → 5.151    (percentage: comma = decimal)
-      - "14,000%"   → 14.0     (percentage: comma = decimal)
-      - "R$ 5,200"  → 5200.0   (currency: comma = thousands, remove)
-      - "R$ 5,278"  → 5278.0   (currency: comma = thousands, remove)
-      - "US$ -60,000" → -60000.0 (currency: comma = thousands, remove)
-      - "US$ 76,200"  → 76200.0  (currency: comma = thousands, remove)
-      - "149"       → 149.0    (plain number)
+      - "5,151%"      -> 5.151
+      - "R$ 1.234,56" -> 1234.56  (was 123456.0 before fix)
+      - "R$ 5,200"    -> 5.2       (cambio: 5.2 R$/USD)
+      - "US$ -60,000" -> -60000.0  (US-style: comma = thousands)
+      - "US$ 76,200"  -> 76200.0
+      - "149"         -> 149.0
     """
     if value is None:
         return None
     if isinstance(value, (int, float)):
         return float(value)
     s = str(value).strip()
-    if not s or s == "--" or s == "-":
+    if not s or s in ("--", "-"):
         return None
-
-    has_percent = "%" in s
-    is_currency = "R$" in s or "US$" in s
-
-    # Strip prefixes/suffixes
-    s = s.replace("R$", "").replace("US$", "").replace("%", "").strip()
-    if not s:
-        return None
-
-    if is_currency:
-        # Currency: comma = thousands separator → remove it
-        # Also remove dots (thousands) just in case
-        s = s.replace(".", "").replace(",", "")
-    elif has_percent:
-        # Percentage: comma = decimal separator → replace with dot
-        # Remove dots (thousands) just in case
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        # Plain number: try percentage convention first (comma = decimal)
-        s = s.replace(".", "").replace(",", ".")
-
-    try:
-        return float(s)
-    except (ValueError, TypeError):
-        return None
+    # Strip % suffix -- focus wants the raw number, not the decimal form.
+    if "%" in s:
+        s = s.replace("%", "").strip()
+    # US$ values use US-style formatting (comma = thousands).
+    # Strip prefix + commas, then parse as float (handles negative sign).
+    if "US$" in s:
+        s = s.replace("US$", "").strip()
+        s = s.replace(",", "")
+        try:
+            return float(s) if s else None
+        except (ValueError, TypeError):
+            return None
+    # R$ / plain PT-BR values: delegate to the shared parser.
+    from data_sources.ddm._parsers import parse_br_number
+    return parse_br_number(s)

@@ -28,6 +28,8 @@ Section titles don't repeat the indicator/year (already in tab name).
 """
 from __future__ import annotations
 
+from skills._base.kpi import build_kpi_card
+from skills._base.error import build_error_section
 from skills.ddm.focus.helpers import (
     format_value, format_int, comparison_symbol, comparison_color,
     parse_numeric,
@@ -49,32 +51,6 @@ _WINDOW_LABELS = {
     "one_week_ago":   "1 sem",
     "today":          "Hoje",
 }
-
-
-def build_kpi_card(label: str, value, subtitle: str = "",
-                   formatted: str = "") -> dict:
-    """Build a KPI card.
-
-    Args:
-        label:     KPI label (e.g. "IPCA 2026").
-        value:     Raw value (number / string).
-        subtitle:  Optional subtitle / context.
-        formatted: Pre-formatted display value (overrides format_value).
-                   Useful when value is already a string like "5,151%".
-    """
-    if formatted:
-        display = formatted
-    elif isinstance(value, (int, float)):
-        display = format_int(value)
-    else:
-        display = format_value(value)
-
-    return {
-        "label":    label,
-        "value":    display,
-        "raw":      value,
-        "subtitle": subtitle,
-    }
 
 
 def _value_cell(value) -> str:
@@ -312,7 +288,3 @@ def build_indicator_chart(title: str, years_data: list[dict],
         },
     }
 
-
-def build_error_section(title: str, error: str) -> dict:
-    return {"type": "text", "title": title,
-            "body": f"Erro ao consultar: {error}"}
