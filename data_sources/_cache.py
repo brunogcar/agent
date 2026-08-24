@@ -88,34 +88,16 @@ from typing import Any
 def cache_data_dir() -> Path:
     """Return the cache database directory (creates it if missing).
 
-    Follows the same pattern as data_sources/cvm/_db.py:cvm_db_path(),
-    data_sources/b3/cotahist/catalog.py:b3_data_dir(), etc.
-    Uses cfg.memory_root / "cache".
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("cache").
+    Previously mirrored the cvm_db_path() 5-level walk-up fallback (dead
+    code — cfg.memory_root is always set in production via MEMORY_ROOT).
+    The cross-domain _base.data_dir gives us the canonical resolution chain
+    (cfg.memory_root first, cwd/memory_db fallback) for free, so we drop
+    the local copy. tests/data_sources/test_cache_smoke.py monkeypatches
+    this module attribute directly — the name + signature stay.
     """
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-
-    if memory_root:
-        d = Path(memory_root) / "cache"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    # Fallback: walk up from cwd
-    p = Path.cwd()
-    for _ in range(5):
-        candidate = p / "memory_db" / "cache"
-        if candidate.exists():
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        p = p.parent
-
-    # Last resort: create in cwd
-    d = Path.cwd() / "memory_db" / "cache"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from data_sources._base.catalog import data_dir
+    return data_dir("cache")
 
 
 def db_path() -> Path:

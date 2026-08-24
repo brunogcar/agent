@@ -7,6 +7,13 @@ Provides:
   - Schema creation (empresas + contas + sync_state tables)
 
 Used by: dfp/, itr/, and future sub-domains (fre, ipe).
+
+[Phase 4 C4] The path/connect helpers now delegate to
+``data_sources._base.catalog`` (the cross-domain SQLite catalog layer).
+Resolution chain unified with DDM / BCB / B3: ``cfg.memory_root / "cvm"``
+first, ``cwd/memory_db/cvm`` fallback. The legacy 5-level walk-up in
+``cvm_db_path`` is dropped (dead code — ``cfg.memory_root`` is always set
+in production via the ``MEMORY_ROOT`` env var).
 """
 
 from __future__ import annotations
@@ -47,26 +54,15 @@ def cvm_db_path() -> Path:
     """Return the CVM database directory (base path for all CVM .db files).
 
     Uses cfg.memory_root / "cvm" (co-located with ChromaDB + other data).
-    Falls back to walking up from cwd to find a directory with "cvm" in it.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("cvm").
+    Previously had a 5-level walk-up fallback that was dead code in
+    practice (cfg.memory_root is always set via MEMORY_ROOT env var, which
+    defaults to <agent_root>/memory_db). Dropped in favor of the unified
+    _base resolution chain (cfg.memory_root first, cwd/memory_db fallback).
     """
-    memory_root = getattr(cfg, "memory_root", None)
-    if memory_root:
-        d = Path(memory_root) / "cvm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    # Fallback: walk up from cwd
-    p = Path.cwd()
-    for _ in range(5):
-        candidate = p / "memory_db" / "cvm"
-        if candidate.exists():
-            return candidate
-        p = p.parent
-
-    # Last resort: create in cwd
-    d = Path.cwd() / "memory_db" / "cvm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from data_sources._base.catalog import data_dir
+    return data_dir("cvm")
 
 
 def dfp_db_path() -> Path:
@@ -115,18 +111,12 @@ def connect_fca(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message preserved exactly by passing source_name="FCA".
     """
-    path = fca_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"FCA database not found at {path}. Run sync first.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(fca_db_path(), "FCA", read_only)
 
 
 
@@ -142,18 +132,11 @@ def connect_vlmo(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect.
     """
-    path = vlmo_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"VLMO database not found at {path}. Run sync first.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(vlmo_db_path(), "VLMO", read_only)
 
 
 def cgvn_db_path() -> Path:
@@ -167,18 +150,13 @@ def connect_cgvn(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect.
     """
-    path = cgvn_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"CGVN database not found at {path}. Run sync first.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(cgvn_db_path(), "CGVN", read_only)
+
+
 def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
     """Open a connection to the B3-CVM bridge database.
 
@@ -188,22 +166,22 @@ def connect_bridge(read_only: bool = True) -> sqlite3.Connection:
 
     The schema (ticker_map + sync_log) is created by the bridge sub-domain's
     catalog.ensure_schema() during sync. This helper just opens the connection.
+
+    [Phase 4 C4] The SQLite open part delegates to
+    data_sources._base.catalog.connect, BUT the custom FileNotFoundError
+    message is preserved verbatim ("Run data_source(domain='cvm',
+    sub_domain='bridge', mode='sync') first.") — the standard _base
+    "Run sync first." suffix would be misleading for the bridge, which has
+    its own dedicated sync entry point.
     """
     path = bridge_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"Bridge database not found at {path}. "
-                f"Run data_source(domain='cvm', sub_domain='bridge', mode='sync') first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
+    if not path.exists() and read_only:
+        raise FileNotFoundError(
+            f"Bridge database not found at {path}. "
+            f"Run data_source(domain='cvm', sub_domain='bridge', mode='sync') first."
         )
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(path, "Bridge", read_only)
 
 
 # ── Connection helpers ────────────────────────────────────────────────────────
@@ -214,22 +192,21 @@ def connect_dfp(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
-    """
-    path = dfp_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"DFP database not found at {path}. Run sync first.")
-        # Create the DB + schema for write mode
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        _ensure_schema(conn)
-        return conn
 
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    [Phase 4 C4] SQLite open part delegates to
+    data_sources._base.catalog.connect. The DFP-specific
+    `_ensure_schema(conn)` call (creates empresas + contas + sync_state
+    tables) is preserved via an explicit ``is_new`` check — schema is only
+    created on first-time DB creation in write mode, matching the
+    pre-refactor behavior exactly (avoids 5ms of CREATE TABLE IF NOT EXISTS
+    overhead on every write-mode connect).
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    path = dfp_db_path()
+    is_new = not path.exists() and not read_only
+    conn = _base_connect(path, "DFP", read_only)
+    if is_new:
+        _ensure_schema(conn)
     return conn
 
 
@@ -239,21 +216,19 @@ def connect_itr(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
-    """
-    path = itr_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"ITR database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        _ensure_schema(conn)
-        return conn
 
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+    [Phase 4 C4] SQLite open part delegates to
+    data_sources._base.catalog.connect. The ITR-specific
+    `_ensure_schema(conn)` call is preserved via an explicit ``is_new``
+    check — same pattern as connect_dfp (schema only on first-time DB
+    creation in write mode).
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    path = itr_db_path()
+    is_new = not path.exists() and not read_only
+    conn = _base_connect(path, "ITR", read_only)
+    if is_new:
+        _ensure_schema(conn)
     return conn
 
 
@@ -263,21 +238,12 @@ def connect_fre(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
-    """
-    path = fre_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"FRE database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        return conn  # schema created by sync_engine
 
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Schema
+    is created by sync_engine (not by connect) — same as pre-refactor.
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(fre_db_path(), "FRE", read_only)
 
 
 def connect_ipe(read_only: bool = True) -> sqlite3.Connection:
@@ -286,21 +252,12 @@ def connect_ipe(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
-    """
-    path = ipe_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"IPE database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        return conn  # schema created by sync_engine
 
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Schema
+    is created by sync_engine (not by connect) — same as pre-refactor.
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(ipe_db_path(), "IPE", read_only)
 
 
 def connect_cad(read_only: bool = True) -> sqlite3.Connection:
@@ -309,21 +266,12 @@ def connect_cad(read_only: bool = True) -> sqlite3.Connection:
     Args:
         read_only: If True, opens in read-only mode (for queries).
                    If False, opens in read-write mode (for sync).
-    """
-    path = cad_db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"CAD database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        return conn  # schema created by sync_engine
 
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Schema
+    is created by sync_engine (not by connect) — same as pre-refactor.
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(cad_db_path(), "CAD", read_only)
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────

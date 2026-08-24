@@ -6,9 +6,13 @@ poupanca, acoes, dividends, fluxo, focus):
   - API_BASE constant (https://www.dadosdemercado.com.br).
   - ddm_data_dir() -- the memory_db/ddm/ base folder (creates it if missing).
     Byte-for-byte identical in all 7 catalogs before extraction.
+    [Phase 4 C4] Now a 1-line wrapper around data_sources._base.catalog.data_dir("ddm").
   - connect(db_filename, source_name, read_only) -- open a SQLite connection.
     Identical 21-line body in all 7 catalogs before extraction; only the
     filename + the FileNotFoundError message string differed.
+    [Phase 4 C4] Now delegates to data_sources._base.catalog.connect after
+    resolving the path; the "DDM " prefix on the error message is preserved
+    by passing f"DDM {source_name}" as the source_name to _base.connect.
   - ensure_schema(conn, schema_sql, catalog, catalog_table) -- run the
     CREATE TABLE script, optionally populate a `<source>_catalog` metadata
     table from a CATALOG dict, then commit.
@@ -40,23 +44,14 @@ def ddm_data_dir():
     poupanca.db, focus.db, fluxo.db, and dividends.db all sit side-by-side
     in memory_db/ddm/.
 
-    Resolution order:
-      1. core.config.cfg.memory_root / "ddm" (when set, mirrors bcb/sgs).
-      2. cwd / "memory_db" / "ddm" (fallback).
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("ddm") —
+    the canonical resolution chain (cfg.memory_root first, then
+    cwd/memory_db/ fallback). The previous per-domain copy is replaced by
+    this 1-line wrapper so the resolution is unified across DDM / BCB / B3 /
+    CVM.
     """
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "ddm"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "ddm"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    from data_sources._base.catalog import data_dir
+    return data_dir("ddm")
 
 
 def connect(db_filename: str, source_name: str, read_only: bool = True):
@@ -69,23 +64,15 @@ def connect(db_filename: str, source_name: str, read_only: bool = True):
                    False opens (or creates) the DB for writes.
 
     Returns a sqlite3.Connection with row_factory = sqlite3.Row.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect after
+    resolving <db_filename> to a full path. The error message retains the
+    "DDM " prefix (matches the pre-refactor message format) by passing
+    f"DDM {source_name}" as the source_name to _base.connect.
     """
-    import sqlite3
+    from data_sources._base.catalog import connect as _base_connect
     path = ddm_data_dir() / db_filename
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"DDM {source_name} database not found at {path}. "
-                f"Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _base_connect(path, f"DDM {source_name}", read_only)
 
 
 def ensure_schema(

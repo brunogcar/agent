@@ -126,17 +126,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
 # ── Path + connection ────────────────────────────────────────────────────────
 
 def b3_data_dir():
-    """Return the B3 data directory."""
-    from core.config import cfg
-    from pathlib import Path
-    memory_root = getattr(cfg, "memory_root", None)
-    if memory_root:
-        d = Path(memory_root) / "b3"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "b3"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return the B3 data directory.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("b3").
+    Byte-for-byte identical to b3/brapi/catalog.py:b3_data_dir and
+    b3/api/catalog.py:b3_data_dir before this commit (now all 3 delegate
+    to _base).
+    """
+    from data_sources._base.catalog import data_dir
+    return data_dir("b3")
 
 
 def db_path():
@@ -145,22 +143,13 @@ def db_path():
 
 
 def connect(read_only: bool = True):
-    """Open a connection to cotahist.db."""
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"COTAHIST database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open a connection to cotahist.db.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message preserved exactly by passing source_name="COTAHIST".
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(db_path(), "COTAHIST", read_only)
 
 
 def ensure_schema(conn, recreate: bool = False):

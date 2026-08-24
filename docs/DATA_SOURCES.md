@@ -27,8 +27,10 @@ data_sources/
 │   ├── __init__.py                #   Re-exports data_dir / db_path / connect
 │   └── catalog.py                 #   data_dir(domain) / db_path(domain, filename) /
 │                                  #   connect(path, source_name, read_only=True) — shared
-│                                  #   mode=ro pattern (cross-domain; DDM-specific helpers
-│                                  #   still live in ddm/_base/catalog_base.py for now).
+│                                  #   mode=ro pattern. [Phase 4 C4] Adopted by all 4
+│                                  #   domains (DDM/BCB/B3/CVM) + _cache.py — each domain's
+│                                  #   *_data_dir()/connect_*() are now 1-line wrappers
+│                                  #   delegating here.
 │
 ├── cvm/                           # CVM domain
 │   ├── __init__.py                # Domain hub
@@ -197,4 +199,4 @@ If the sub-domain doesn't fit under `cvm/`, `b3/`, or `bcb/`:
 
 ---
 
-*Last updated: 2026-09-15 (Phase 3 doc sweep — added DDM domain row + `ddm/_base/` shared infrastructure; updated `skills/_base.py` → `skills/_base/sync_guard.py` for `_trigger_sync.sync_map` references; Phase 4 C1 — added `data_sources/_base/catalog.py` cross-domain SQLite helpers).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — added DDM domain row + `ddm/_base/` shared infrastructure; updated `skills/_base.py` → `skills/_base/sync_guard.py` for `_trigger_sync.sync_map` references; Phase 4 C1 — added `data_sources/_base/catalog.py` cross-domain SQLite helpers; Phase 4 C4 — adopted by all 4 data_source domains + `_cache.py`, dropped the never-set `MEMORY_DB_ROOT` env var in favor of `cfg.memory_root`).*

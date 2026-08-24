@@ -86,18 +86,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 
 def _db_dir() -> Path:
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-        if memory_root:
-            d = Path(memory_root) / "b3"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    except Exception:
-        pass
-    d = Path.cwd() / "memory_db" / "b3"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return the B3 data directory (creates it if missing).
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("b3").
+    Kept under the private ``_db_dir`` name (not renamed to ``b3_data_dir``)
+    because the module-level db_path/connect callers stay unchanged. No test
+    mocks ``_db_dir`` directly.
+    """
+    from data_sources._base.catalog import data_dir
+    return data_dir("b3")
 
 
 def db_path() -> Path:
@@ -105,17 +102,13 @@ def db_path() -> Path:
 
 
 def connect(read_only: bool = True) -> sqlite3.Connection:
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"Index database not found at {path}. Run sync first.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if read_only:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open a connection to index.db.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message preserved exactly by passing source_name="Index".
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(db_path(), "Index", read_only)
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

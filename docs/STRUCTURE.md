@@ -191,7 +191,10 @@ data_sources/
 ├── _base/                     # [Phase 4 C1] Cross-domain SQLite catalog helpers
 │   ├── __init__.py            #   Re-exports data_dir / db_path / connect
 │   └── catalog.py             #   data_dir(domain) / db_path(domain, filename) /
-│                              #   connect(path, source_name, read_only) — shared mode=ro pattern
+│                              #   connect(path, source_name, read_only) — shared
+│                              #   mode=ro pattern. [Phase 4 C4] Adopted by all 4
+│                              #   domains (DDM/BCB/B3/CVM) + _cache.py — each domain's
+│                              #   *_data_dir()/connect_*() are now 1-line wrappers.
 ├── cvm/                       # Brazilian SEC data
 │   ├── __init__.py            # Domain manifest + route
 │   ├── _db.py                 # Shared: paths, cnpj_digits(), parse_escala(), connect_*
@@ -430,4 +433,4 @@ tests/
 
 ---
 
-*Last updated: 2026-09-15 (Phase 3 doc sweep — DDM `_base/` extraction + `skills/_base/` package split + `templates/js/` partials; Phase 4 C1 — `data_sources/_base/catalog.py` + `skills/_base/kpi.py` + `skills/_base/error.py` extractions). This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*
+*Last updated: 2026-09-15 (Phase 3 doc sweep — DDM `_base/` extraction + `skills/_base/` package split + `templates/js/` partials; Phase 4 C1 — `data_sources/_base/catalog.py` + `skills/_base/kpi.py` + `skills/_base/error.py` extractions; Phase 4 C4 — `data_sources/_base/catalog.py` adopted by all 4 data_source domains + `_cache.py`). This document is updated when the repo structure changes (new tools/workflows/subsystems, pattern changes, naming convention updates). For the project overview, see [README.md](../README.md).*

@@ -63,18 +63,15 @@ B3_TABLES = {
 # ── DB path ──────────────────────────────────────────────────────────────────
 
 def b3_data_dir():
-    """Return the B3 data directory."""
-    from core.config import cfg
-    memory_root = getattr(cfg, "memory_root", None)
-    if memory_root:
-        from pathlib import Path
-        d = Path(memory_root) / "b3"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    from pathlib import Path
-    d = Path.cwd() / "memory_db" / "b3"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return the B3 data directory.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("b3").
+    Byte-for-byte identical to b3/cotahist/catalog.py:b3_data_dir and
+    b3/brapi/catalog.py:b3_data_dir before this commit (now all 3 delegate
+    to _base).
+    """
+    from data_sources._base.catalog import data_dir
+    return data_dir("b3")
 
 
 def db_path(table_name: str):
@@ -83,20 +80,13 @@ def db_path(table_name: str):
 
 
 def connect(table_name: str, read_only: bool = True):
-    """Open a SQLite connection for a B3 table."""
-    import sqlite3
-    path = db_path(table_name)
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"B3 database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-    else:
-        if read_only:
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        else:
-            conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open a SQLite connection for a B3 table.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message uses source_name="B3" (matches the pre-refactor message).
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(db_path(table_name), "B3", read_only)
 
 
 def ensure_schema(conn, table_name: str, columns: list[str]):

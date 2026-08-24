@@ -106,20 +106,14 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 
 def bcb_data_dir():
-    """Return the BCB data directory (creates it if missing)."""
-    from pathlib import Path
-    try:
-        from core.config import cfg
-        memory_root = getattr(cfg, "memory_root", None)
-    except Exception:
-        memory_root = None
-    if memory_root:
-        d = Path(memory_root) / "bcb"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-    d = Path.cwd() / "memory_db" / "bcb"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return the BCB data directory (creates it if missing).
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("bcb").
+    Byte-for-byte identical to bcb/sgs/catalog.py:bcb_data_dir (was a 16-line
+    copy in both files before this commit; now both delegate to _base).
+    """
+    from data_sources._base.catalog import data_dir
+    return data_dir("bcb")
 
 
 def db_path():
@@ -132,22 +126,12 @@ def connect(read_only: bool = True):
 
     read_only=True uses the SQLite URI mode=ro (fails if DB missing).
     read_only=False opens (or creates) the DB for writes.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message preserved exactly by passing source_name="Focus".
     """
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(
-                f"Focus database not found at {path}. Run sync first."
-            )
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(
-            f"file:{path}?mode=ro" if read_only else str(path),
-            uri=read_only,
-        )
-    conn.row_factory = sqlite3.Row
-    return conn
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(db_path(), "Focus", read_only)
 
 
 def ensure_schema(conn):

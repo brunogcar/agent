@@ -8,8 +8,12 @@ across 4 domains (7+ copies of the same 18-line connect() function).
 genuinely cross-domain concern (SQLite connection plumbing). Sync/fetcher
 patterns stay domain-specific (DDM scrapes HTML, CVM downloads ZIPs, etc.).
 
+[Phase 4 C4] Adopted by all 4 domains (DDM, BCB, B3, CVM). The per-domain
+`*_data_dir()` / `*_db_path()` / `connect_*()` helpers are now thin
+wrappers that delegate to `data_dir(domain)` / `connect(...)` here.
+
 Functions:
-  - data_dir(domain)     -> Path  (memory_db/<domain>/ with fallback)
+  - data_dir(domain)     -> Path  (memory_db/<domain>/ via cfg.memory_root)
   - db_path(domain, filename) -> Path
   - connect(path, source_name, read_only=True) -> sqlite3.Connection
 """
@@ -22,16 +26,34 @@ from pathlib import Path
 def data_dir(domain: str) -> Path:
     """Return the data directory for a domain.
 
-    Resolves to memory_db/<domain>/ (or MEMORY_DB_ROOT env var override).
-    Creates the directory if it doesn't exist (for write paths).
+    Resolution order:
+      1. ``core.config.cfg.memory_root / <domain>`` (canonical — always set
+         in production via ``MEMORY_ROOT`` env var, defaults to
+         ``<agent_root>/memory_db``).
+      2. ``cwd / "memory_db" / <domain>`` (fallback when ``core.config``
+         can't be imported — e.g. standalone scripts without the agent
+         package on sys.path).
+
+    Creates the directory if it doesn't exist (idempotent — safe to call on
+    every read or write path).
+
+    [Phase 4 C4 bugfix] Previously this consulted a ``MEMORY_DB_ROOT`` env
+    var that was never set anywhere in the repo — meaning tests that
+    patched ``cfg.memory_root = tmp_path`` were silently ignored by this
+    function. Now it consults ``cfg.memory_root`` (the same source every
+    domain already uses), so the resolution chain is unified across DDM /
+    BCB / B3 / CVM.
     """
-    import os
-    root = os.environ.get("MEMORY_DB_ROOT", "")
-    if root:
-        base = Path(root)
-    else:
-        base = Path.cwd() / "memory_db"
-    d = base / domain
+    try:
+        from core.config import cfg
+        memory_root = getattr(cfg, "memory_root", None)
+    except Exception:
+        memory_root = None
+    if memory_root:
+        d = Path(memory_root) / domain
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    d = Path.cwd() / "memory_db" / domain
     d.mkdir(parents=True, exist_ok=True)
     return d
 

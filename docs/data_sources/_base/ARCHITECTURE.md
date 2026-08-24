@@ -27,14 +27,29 @@ HTML, CVM downloads ZIPs, B3 calls brapi.dev, BCB queries the SGS API.
 
 ### `data_dir(domain: str) -> Path`
 
-Returns `memory_db/<domain>/` (or `$MEMORY_DB_ROOT/<domain>/` if the env
-var is set). Creates the directory if missing (idempotent — safe to call on
-every read or write path).
+Returns `memory_db/<domain>/` (via `cfg.memory_root`, which reads the
+`MEMORY_ROOT` env var — defaults to `<agent_root>/memory_db`). Creates the
+directory if missing (idempotent — safe to call on every read or write path).
+
+Resolution chain (unified across all 4 domains as of Phase 4 C4):
+
+1. `core.config.cfg.memory_root / <domain>` — canonical, always set in
+   production (the `MEMORY_ROOT` env var defaults to
+   `<agent_root>/memory_db` via `core/config_backend/paths.py:38`).
+2. `cwd / "memory_db" / <domain>` — fallback for standalone scripts that
+   can't import `core.config` (rare; mostly hypothetical).
 
 ```python
 from data_sources._base import data_dir
 p = data_dir("cvm")    # → memory_db/cvm/
 ```
+
+> **[Phase 4 C4 bugfix]** Previously `data_dir()` consulted a
+> `MEMORY_DB_ROOT` env var that was never set anywhere in the repo —
+> meaning tests that patched `cfg.memory_root = tmp_path` (the standard
+> test pattern) were silently ignored by `_base.data_dir()`. Now it
+> consults `cfg.memory_root` (the same source every domain already uses),
+> so the resolution chain is unified across DDM / BCB / B3 / CVM / cache.
 
 ### `db_path(domain: str, filename: str) -> Path`
 
@@ -64,11 +79,48 @@ conn = connect(p, "sgs", read_only=False)  # → write mode (creates if missing)
 
 ## Migration status
 
-This package is **newly created** in Phase 4 C1. The existing domain-specific
-catalog helpers (e.g. `data_sources/ddm/_base/catalog_base.py`) are NOT yet
-refactored to use it — that's a separate follow-up commit. The intent is that
-future new domains (or major refactors of existing ones) will import from
-`data_sources._base` instead of re-defining the same `connect()` body.
+**[Phase 4 C4]** Adopted by all 4 data_source domains (DDM, BCB, B3, CVM) +
+the cross-domain engine cache (`data_sources/_cache.py`). Each domain's
+`*_data_dir()` / `*_db_path()` / `connect_*()` helpers are now thin
+1-line wrappers that delegate to `_base.data_dir(<domain>)` /
+`_base.connect(<path>, <source_name>, read_only)`.
+
+| Domain | Files migrated | Wrapper functions |
+|--------|----------------|--------------------|
+| DDM    | `ddm/_base/catalog_base.py`                          | `ddm_data_dir`, `connect` (the `BaseDDMCatalog` classmethods delegate transitively) |
+| BCB    | `bcb/sgs/catalog.py`, `bcb/focus/catalog.py`         | `bcb_data_dir`, `db_path`, `connect` (each file) |
+| B3     | `b3/{cotahist,brapi,api,index,dividends}/catalog.py` | `b3_data_dir` / `_db_dir`, `db_path`, `connect` (each file; `dividends` inlines path resolution, `index` keeps private `_db_dir`) |
+| CVM    | `cvm/_db.py`                                          | `cvm_db_path`, 8 `<src>_db_path`, 9 `connect_<src>` |
+| cache  | `data_sources/_cache.py`                              | `cache_data_dir` |
+
+**Wrapper invariants preserved:**
+- Every public name (`connect_dfp`, `bcb_data_dir`, etc.) stays as a
+  module-level callable — 93+ mock sites across 30+ test files use
+  `monkeypatch.setattr("data_sources.cvm._db.connect_dfp", ...)` (dotted
+  string path). All still work.
+- Error messages are byte-for-byte identical to pre-refactor (each wrapper
+  passes the right `source_name` to `_base.connect`, e.g. `"SGS"` /
+  `"Focus"` / `"COTAHIST"` / `"DFP"` / `"B3 dividends"`).
+- `connect_dfp` + `connect_itr` preserve the `_ensure_schema(conn)` call
+  on first-time DB creation (via an explicit `is_new` check) — the
+  empresas + contas + sync_state tables are created exactly when the DB
+  file is missing AND we're opening in write mode.
+- `connect_bridge` keeps its custom error message
+  (`"Run data_source(domain='cvm', sub_domain='bridge', mode='sync') first."`)
+  — the standard _base `"Run sync first."` suffix would be misleading for
+  the bridge, which has its own dedicated sync entry point. The SQLite
+  open part still delegates to `_base.connect`.
+- The `b3/dividends/catalog.py:db_path()` had a latent bug (fell back to
+  `Path.cwd() / "b3"` instead of `Path.cwd() / "memory_db" / "b3"` when
+  `cfg.memory_root` was missing). Migration to `_base.data_dir("b3")`
+  fixes this — consistent fallback matching cotahist/brapi/api/index. No
+  test caught it because tests always set `cfg.memory_root`.
+- The `cvm_db_path()` 5-level walk-up fallback (dead code —
+  `cfg.memory_root` is always set in production) is dropped.
+
+**Loc delta:** ~-110 LOC across the 10 source files (smaller than the
+investigation's -276 estimate because each wrapper retains an expanded
+docstring annotating the migration + the bugfixes).
 
 ## See also
 
@@ -80,4 +132,4 @@ future new domains (or major refactors of existing ones) will import from
 
 ---
 
-*Last updated: 2026-09-15 (Phase 4 C1 — initial creation).*
+*Last updated: 2026-09-15 (Phase 4 C1 — initial creation; Phase 4 C4 — adopted by all 4 domains + cache; `MEMORY_DB_ROOT` env var dropped in favor of `cfg.memory_root`).*

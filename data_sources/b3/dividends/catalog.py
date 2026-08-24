@@ -91,24 +91,28 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 def db_path():
-    from core.config import cfg
-    from pathlib import Path
-    d = Path(getattr(cfg, "memory_root", Path.cwd())) / "b3"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "dividends.db"
+    """Return the path to dividends.db.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("b3").
+    [Bugfix] Previously inlined a path resolution that fell back to
+    ``Path.cwd() / "b3"`` (NOT ``Path.cwd() / "memory_db" / "b3"`` like
+    every other B3 catalog) when ``cfg.memory_root`` was missing. The
+    migration to _base.data_dir("b3") unifies the fallback to
+    ``cwd/memory_db/b3`` — matching cotahist/brapi/api/index. No test
+    caught the old bug because every test sets ``cfg.memory_root``.
+    """
+    from data_sources._base.catalog import data_dir
+    return data_dir("b3") / "dividends.db"
+
 
 def connect(read_only=True):
-    import sqlite3
-    path = db_path()
-    if not path.exists():
-        if read_only:
-            raise FileNotFoundError(f"B3 dividends database not found at {path}. Run sync first.")
-        conn = sqlite3.connect(str(path))
-    else:
-        conn = sqlite3.connect(f"file:{path}?mode=ro" if read_only else str(path),
-                               uri=read_only)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open a connection to dividends.db.
+
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
+    message preserved exactly by passing source_name="B3 dividends".
+    """
+    from data_sources._base.catalog import connect as _base_connect
+    return _base_connect(db_path(), "B3 dividends", read_only)
 
 def ensure_schema(conn):
     conn.executescript(SCHEMA_SQL)
