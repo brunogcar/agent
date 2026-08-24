@@ -160,7 +160,7 @@ Tests bypass via `CVM_SKIP_SYNC=1` or `skip_sync=True` per-call.
 | File                              | Purpose                                                |
 | --------------------------------- | ------------------------------------------------------ |
 | `__init__.py`                     | MANIFEST + `route()` + `REQUIRED_SOURCES=["ddm-fluxo"]`. |
-| `_registry.py`                    | `MODES` + `register_mode` (with standalone fallback).  |
+| `_registry.py`                    | `MODES` + `register_mode` (thin delegate to `skills._base`; Phase 4 C3 removed the pre-merge standalone fallback).  |
 | `helpers.py`                      | `format_brl` (PT-BR with "mi" suffix), `format_int`    |
 |                                   | (PT-BR thousands), `format_pct`, `format_date`         |
 |                                   | (YYYY-MM-DD → DD/MM/YYYY), `format_value`.             |

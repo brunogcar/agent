@@ -103,7 +103,7 @@ skill only needs ~3 lines in `_registry.py` + ~20 lines in `__init__.py`.
 | `_source_last_sync(source)` | `sync_guard.py` | Reads last-sync ISO timestamp from skills/_freshness.py | v1.14 |
 | `_cvm_has_new_data(source, year)` | `sync_guard.py` | HEAD check before downloading (CVM only) | v1.14 |
 | `_cvm_has_new_data_cached(source, year)` | `sync_guard.py` | TTL-cached HEAD check (1h) | v1.14 |
-| `_trigger_sync(source, company, ...)` | `sync_guard.py` | Maps source name to sync fn with right args | v1.14 |
+| `_trigger_sync(source, company, ...)` | `sync_guard.py` | Dispatches via `_SYNC_REGISTRY` (built once at import time; `register_sync_source()` extends it at runtime) | v1.14 / C3 |
 | `build_kpi_card(label, value, *, subtitle, unit, formatted, format_fn)` | `kpi.py` | Shared KPI card dict shape (`{label, value, raw, subtitle, unit}`); used by 7 DDM skills (Phase 4 C1) | v1.0 |
 | `build_error_section(title, error)` | `error.py` | Shared error text section (`{type:"text", title, body:"Erro ao consultar: ..."}`); used by 7 DDM skills (Phase 4 C1) | v1.0 |
 
@@ -117,7 +117,7 @@ skills/
 │   ├── route.py                      # make_route + _route_with_sync_guard + _dispatch + _SYNC_CHECKED
 │   ├── html_gen.py                   # _auto_generate_html (dashboard HTML writer)
 │   ├── engine_cache.py               # _ENGINE_CACHE + engine_cached + engine_cache_scope
-│   ├── sync_guard.py                 # SYNC_FRESHNESS_HOURS + ensure_fresh + _trigger_sync + HEAD checks
+│   ├── sync_guard.py                 # SYNC_FRESHNESS_HOURS + _SYNC_REGISTRY + register_sync_source + ensure_fresh + _trigger_sync + HEAD checks
 │   ├── kpi.py                        # [Phase 4 C1] build_kpi_card — shared KPI card dict shape
 │   └── error.py                      # [Phase 4 C1] build_error_section — shared error text section
 ├── _freshness.py                     # Cross-domain freshness dict (CVM + B3 + BCB + DDM) — stays separate
@@ -320,10 +320,10 @@ it force-syncs them BEFORE running the skill.
 - `route(..., skip_sync=True)` per-call kwarg
 
 **BCB macro skill note:** `required_sources=["sgs"]` is wired, and
-`skills/_base/sync_guard.py`'s `_trigger_sync.sync_map` now includes the `sgs` entry (v1.2
-docs — the wiring shipped in an earlier commit but was undocumented). The
-sync guard triggers `sync_all(force=True)` when SGS is stale (>24h or
-missing).
+`skills/_base/sync_guard.py`'s `_SYNC_REGISTRY` includes the `sgs` entry (Phase 4 C3:
+extracted from the in-function `sync_map` literal to module level + exposed
+`register_sync_source()` as a public extension point). The sync guard triggers
+`sync_all(force=True)` when SGS is stale (>24h or missing).
 
 ---
 
@@ -477,7 +477,7 @@ See [CVM Skills Overview](skills/CVM.md) for the CVM landing page,
 - **Sync Guard**: ✅ = `route()` calls `ensure_fresh()` to force-sync stale
   data sources before dispatch. `N/A (web)` for investsite (live web scraping,
   no local DB). `P2` for BCB macro — `required_sources=["sgs"]` is wired but
-  `sync_map` doesn't know "sgs" yet. ❌ = sync guard not yet wired.
+  `_SYNC_REGISTRY` doesn't know "sgs" yet. ❌ = sync guard not yet wired.
 
 ### Architecture
 

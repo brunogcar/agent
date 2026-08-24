@@ -133,7 +133,7 @@ Tests bypass via `CVM_SKIP_SYNC=1` or `skip_sync=True` per-call.
 | File                              | Purpose                                                |
 | --------------------------------- | ------------------------------------------------------ |
 | `__init__.py`                     | MANIFEST + `route()` + `REQUIRED_SOURCES`.             |
-| `_registry.py`                    | `MODES` + `register_mode` (with standalone fallback).  |
+| `_registry.py`                    | `MODES` + `register_mode` (thin delegate to `skills._base`; Phase 4 C3 removed the pre-merge standalone fallback).  |
 | `helpers.py`                      | `format_value`, `format_pct`, `compute_stats`,         |
 |                                   | `_format_mes_ano`, `_heat_color` (returns dict,        |
 |                                   | NOT string), `build_observation_rows`.                 |

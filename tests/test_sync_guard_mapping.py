@@ -24,12 +24,20 @@ def _get_sync_map_keys() -> set[str]:
     """
     # [Phase 3 C2] skills/_base.py was split into a package — the sync_map
     # now lives in skills/_base/sync_guard.py (was skills/_base.py before).
+    # [Phase 4 C3] The dict was extracted to module level as _SYNC_REGISTRY.
+    # The literal still lives in the same source file, so the regex still
+    # works. Also fixed the character class to include underscores so
+    # `b3_dividends` is no longer silently skipped (was a latent bug —
+    # b3_dividends was the only key with an underscore + no DDM skill
+    # declares it in REQUIRED_SOURCES, so test_sync_map_has_all_required_sources
+    # passed by accident).
     base_path = Path(__file__).resolve().parents[1] / "skills" / "_base" / "sync_guard.py"
     content = base_path.read_text(encoding="utf-8")
 
     # Find all sync_map keys: lines like  "ddm-fluxo":  ("data_sources...
+    # Character class [a-z0-9_-] now includes underscores (b3_dividends).
     import re
-    keys = re.findall(r'^\s*"([a-z][a-z0-9-]*)":\s*\(', content, re.MULTILINE)
+    keys = re.findall(r'^\s*"([a-z][a-z0-9_-]*)":\s*\(', content, re.MULTILINE)
     return set(keys)
 
 

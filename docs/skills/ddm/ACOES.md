@@ -147,7 +147,7 @@ The palette is shared with any future skill that displays stock prices.
 | File                              | Purpose                                                |
 | --------------------------------- | ------------------------------------------------------ |
 | `__init__.py`                     | MANIFEST + `route()` + `REQUIRED_SOURCES=["ddm-acoes"]`. |
-| `_registry.py`                    | `MODES` + `register_mode` (with standalone fallback).  |
+| `_registry.py`                    | `MODES` + `register_mode` (thin delegate to `skills._base`; Phase 4 C3 removed the pre-merge standalone fallback).  |
 | `helpers.py`                      | `format_brl`, `format_int` (PT-BR thousands),          |
 |                                   | `format_pct` (signed PT-BR %), `format_value`,          |
 |                                   | `_format_mes_ano`.                                     |

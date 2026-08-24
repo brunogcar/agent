@@ -140,7 +140,7 @@ Tests bypass via `CVM_SKIP_SYNC=1` or `skip_sync=True` per-call.
 | File                              | Purpose                                                |
 | --------------------------------- | ------------------------------------------------------ |
 | `__init__.py`                     | MANIFEST + `route()` + `REQUIRED_SOURCES=["ddm-focus"]`. |
-| `_registry.py`                    | `MODES` + `register_mode` (with standalone fallback).  |
+| `_registry.py`                    | `MODES` + `register_mode` (thin delegate to `skills._base`; Phase 4 C3 removed the pre-merge standalone fallback).  |
 | `helpers.py`                      | `format_value` (verbatim), `format_int` (PT-BR         |
 |                                   | thousands), `comparison_symbol`, `comparison_color`,   |
 |                                   | `parse_numeric` (PT-BR string -> float for charts).    |

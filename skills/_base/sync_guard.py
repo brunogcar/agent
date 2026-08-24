@@ -24,12 +24,16 @@ Provides:
   - SYNC_FRESHNESS_HOURS (constant)
   - _BRIDGE_SYNCED_TICKERS, _bridge_lock (session-level bridge dedup)
   - _HEAD_CACHE, _HEAD_TTL (HEAD-check result cache, 1h TTL)
+  - _SYNC_REGISTRY + register_sync_source() — module-level source→sync-fn map
+    (Phase 4 C3: extracted from the in-function sync_map literal so the
+    dispatch table is built once at import time + can be extended by
+    external callers via register_sync_source()).
   - _source_last_sync(source) — ISO timestamp string
   - _parse_sync_ts(ts) — datetime parser
   - _source_is_stale(source, max_age_hours) — bool
   - _cvm_has_new_data(source, year) — HEAD check
   - _cvm_has_new_data_cached(source, year) — TTL-cached HEAD check
-  - _trigger_sync(source, company, trace_id) — sync_map dispatch
+  - _trigger_sync(source, company, trace_id) — _SYNC_REGISTRY dispatch
   - ensure_fresh(sources, company, skip_sync, trace_id) — main entry
 
 Part of the skills/_base/ package split (was originally in skills/_base.py).
@@ -40,6 +44,7 @@ import importlib
 import os
 import threading
 from datetime import datetime, timedelta
+from typing import Callable
 
 
 # [Tier 0 #3] Session-level bridge sync dedup — tracks which tickers have been
@@ -57,6 +62,180 @@ _HEAD_TTL = 3600  # 1 hour
 # Freshness window (hours). A source is "stale" if its last sync is older
 # than this, or if it has no sync_state entry at all.
 SYNC_FRESHNESS_HOURS = 24
+
+
+# [Phase 4 C3] Module-level sync-source registry. Was an inline dict literal
+# inside _trigger_sync() (rebuilt on every call). Now built once at import
+# time + exposed for runtime extension via register_sync_source().
+#
+# Tuple shape: (module_path, fn_name, kwargs_fn) where kwargs_fn takes 4 args
+#   (current_year, prev_year, company, trace_id) and returns the kwargs dict
+#   to splat into the sync function. The 4-arg signature is required because
+#   the lambdas live at module scope (they can't close over _trigger_sync's
+#   locals like the old in-function literal did).
+#
+# Kept as a dict literal (NOT populated via register_sync_source() calls)
+# intentionally — tests/test_sync_guard_mapping.py greps the source file
+# text for `"source_key": (` lines. Per-source register_sync_source() calls
+# would break that test (Option B in the investigation, rejected).
+# register_sync_source() is provided as a public extension point for
+# out-of-tree / plugin sources.
+KwargsFn = Callable[[int, int, "str | None", str], dict]
+_SYNC_REGISTRY: dict[str, tuple[str, str, KwargsFn]] = {
+    "dfp":          ("data_sources.cvm.dfp.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"years": [cy, py], "force": True, "trace_id": ti, "verbose": False}),
+    "itr":          ("data_sources.cvm.itr.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"years": [cy, py], "force": True, "trace_id": ti, "verbose": False}),
+    "fre":          ("data_sources.cvm.fre.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"years": [cy, py], "force": True, "trace_id": ti, "verbose": False}),
+    "ipe":          ("data_sources.cvm.ipe.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"years": [cy, py], "force": True, "trace_id": ti, "verbose": False}),
+    "fca":          ("data_sources.cvm.fca.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"year": cy, "force": True}),
+    "cad":          ("data_sources.cvm.cad.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"force": True, "trace_id": ti, "verbose": False}),
+    "vlmo":         ("data_sources.cvm.vlmo.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"year": cy, "force": True}),
+    "cgvn":         ("data_sources.cvm.cgvn.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"year": cy, "force": True}),
+    "bridge":       ("data_sources.cvm.bridge.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"ticker": co or "", "force": False, "trace_id": ti}),
+    "cotahist":     ("data_sources.b3.cotahist.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"year": cy, "force": True, "trace_id": ti}),
+    "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
+                     lambda cy, py, co, ti: {"force": True, "trace_id": ti}),
+    "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [new commit] BCB SGS sync — REQUIRED_SOURCES in historical includes "sgs"
+    # but sync_map had no entry, so every dashboard run failed the sgs sync
+    # silently with "unknown source 'sgs'". This meant Selic/CDI/IPCA data
+    # could go stale indefinitely. sync_all(force=True) re-fetches all series
+    # (force=True so the guard's staleness check doesn't no-op the refresh).
+    "sgs":          ("data_sources.bcb.sgs.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1.4] BCB Focus sync — REQUIRED_SOURCES in macro includes "focus"
+    # (added in macro v1.4 alongside the Expectativas Focus tab). Mirrors
+    # the sgs entry: sync_all(force=True) re-fetches all 4 indicators
+    # (IPCA, Selic, PIB, Cambio) from the Olinda OData API.
+    "focus":        ("data_sources.bcb.focus.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
+    # includes "ddm-inflation". Mirrors the sgs + focus entries:
+    # sync_all(force=True) re-fetches all 3 indices (IGP-M, IPCA, INPC)
+    # from the HTML scraper.
+    # [v2 fix B3] Key renamed from "ddm" to "ddm-inflation" to match
+    # the skill's REQUIRED_SOURCES (was reverted in 32e5ab9, causing
+    # _trigger_sync("ddm-inflation") to fail with "unknown source").
+    "ddm-inflation": ("data_sources.ddm.inflation.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
+    # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)
+    # re-fetches all 3 juros indices from the HTML scraper + derives the
+    # historical series (month_value, media_no_ano, media_12m) from the
+    # monthly matrix. Skills may explicitly request this via
+    # _trigger_sync("ddm-juros") or list it in REQUIRED_SOURCES.
+    "ddm-juros":    ("data_sources.ddm.juros.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Poupanca sync - separate sync_map entry for the poupanca
+    # subdomain (Poupanca - Brazilian savings account). Mirrors the
+    # ddm + ddm-juros entries: sync_all(force=True) re-fetches the
+    # poupanca page from the HTML scraper + derives the historical
+    # series (month_value, acumulado_no_ano, acumulado_12m) from the
+    # monthly matrix using SUM (NOT AVERAGE like juros - poupanca
+    # monthly yield is a percentage return, so summing produces the
+    # cumulative return). Skills may explicitly request this via
+    # _trigger_sync("ddm-poupanca") or list it in REQUIRED_SOURCES.
+    "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Acoes sync - separate sync_map entry for the acoes
+    # subdomain (B3 tradable stocks). Mirrors the ddm + ddm-juros +
+    # ddm-poupanca entries: sync_all(force=True) re-fetches the single
+    # /acoes page from the HTML scraper + parses the stocks table
+    # (~380 rows of Ticker | Nome | Negocios | Ultima (R$) | Variacao).
+    # Skills may explicitly request this via _trigger_sync("ddm-acoes")
+    # or list it in REQUIRED_SOURCES. The acoes dashboard declares
+    # REQUIRED_SOURCES=["ddm-acoes"] so the sync guard auto-refreshes
+    # acoes.db before each dashboard run.
+    "ddm-acoes":    ("data_sources.ddm.acoes.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Focus sync - separate sync_map entry for the focus
+    # subdomain (Boletim Focus market expectations survey). Mirrors
+    # the ddm + ddm-juros + ddm-poupanca + ddm-acoes entries:
+    # sync_all(force=True) re-fetches the single /boletim-focus page
+    # (CloudFront-protected - fetcher sends full Chrome 127 browser
+    # headers) + parses the 4 yearly tables (2026-2029) of 12
+    # indicators each. Skills may explicitly request this via
+    # _trigger_sync("ddm-focus") or list it in REQUIRED_SOURCES. The
+    # focus dashboard declares REQUIRED_SOURCES=["ddm-focus"] so the
+    # sync guard auto-refreshes focus.db before each dashboard run.
+    "ddm-focus":    ("data_sources.ddm.focus.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v1] DDM Fluxo sync - separate sync_map entry for the fluxo
+    # subdomain (B3 investment flow by investor type). Mirrors the
+    # ddm + ddm-juros + ddm-poupanca + ddm-acoes + ddm-focus entries:
+    # sync_all(force=True) re-fetches the single /fluxo page
+    # (CloudFront-protected - fetcher sends full Chrome 127 browser
+    # headers) + parses the 1 table (~247 daily rows: Data |
+    # Estrangeiro | Institucional | Pessoa fisica | Inst. Financeira
+    # | Outros). Values are parsed from PT-BR format ("1.582,35 mi")
+    # to REAL (millions R$) at the fetcher boundary. Skills may
+    # explicitly request this via _trigger_sync("ddm-fluxo") or list
+    # it in REQUIRED_SOURCES. The fluxo dashboard declares
+    # REQUIRED_SOURCES=["ddm-fluxo"] so the sync guard auto-refreshes
+    # fluxo.db before each dashboard run.
+    "ddm-fluxo":     ("data_sources.ddm.fluxo.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+    # [v2 fix B2] DDM Dividends sync - was silently removed from sync_map
+    # during the 30fa822 rebase (focus commit). The dividends skill
+    # declares REQUIRED_SOURCES=["ddm-dividends"], so without this
+    # entry, _trigger_sync("ddm-dividends") returned "unknown source".
+    "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",
+                     lambda cy, py, co, ti: {"force": True}),
+}
+
+
+def register_sync_source(
+    source: str,
+    module_path: str,
+    fn_name: str,
+    kwargs_fn: KwargsFn | None = None,
+) -> None:
+    """Register a data source for sync-guard dispatch.
+
+    Idempotent — re-registration overwrites the previous entry.
+
+    Args:
+        source:      The dispatch key (e.g. "ddm-fluxo", "dfp", "sgs").
+                     Must match the strings skills declare in their
+                     REQUIRED_SOURCES list.
+        module_path: Dotted Python path to the sync_engine module
+                     (e.g. "data_sources.ddm.fluxo.sync_engine"). Imported
+                     lazily via importlib.import_module() only when the
+                     source is dispatched — registering a source does NOT
+                     import its module.
+        fn_name:     Attribute name to call on the module (e.g. "sync_all",
+                     "sync", "sync_tickers").
+        kwargs_fn:   Callable taking (current_year, prev_year, company,
+                     trace_id) and returning the kwargs dict to splat into
+                     the sync function. The 4-arg signature mirrors what
+                     the builtin entries need (CVM sources use
+                     current_year/prev_year/trace_id; bridge uses company).
+                     Defaults to ``lambda *a: {"force": True}`` for sources
+                     that take only ``force=True``.
+
+    Example::
+
+        from skills._base.sync_guard import register_sync_source
+        register_sync_source(
+            "b3-index", "data_sources.b3.index.sync_engine", "sync_all",
+            lambda cy, py, co, ti: {"force": True},
+        )
+    """
+    _SYNC_REGISTRY[source] = (
+        module_path,
+        fn_name,
+        kwargs_fn or (lambda cy, py, co, ti: {"force": True}),
+    )
 
 
 def _source_last_sync(source: str) -> str:
@@ -209,8 +388,14 @@ def _cvm_has_new_data_cached(source: str, year: int) -> bool:
 def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -> dict:
     """Trigger force-sync for a single data source. Returns sync result dict.
 
+    Looks up `source` in the module-level `_SYNC_REGISTRY` (built once at
+    import time, optionally extended via `register_sync_source()`), then
+    imports the sync_engine module lazily + calls the registered function
+    with the kwargs returned by the entry's `kwargs_fn(current_year,
+    prev_year, company, trace_id)`.
+
     Maps source names to their sync functions with the right args:
-      - DFP/ITR/FRE/IPE: sync(years=[current_year], force=True)
+      - DFP/ITR/FRE/IPE: sync(years=[current_year, prev_year], force=True)
       - FCA:             sync(year=current_year, force=True)
       - CAD:             sync(force=True)
       - VLMO/CGVN:       sync(year=current_year, force=True)
@@ -219,7 +404,8 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
       - brapi:           sync_tickers(force=True)
 
     Args:
-        source: One of the source names above.
+        source: One of the source names above (or any key registered via
+                register_sync_source()).
         company: Ticker (for bridge sync). None for other sources.
         trace_id: Tracer ID for logging.
     """
@@ -234,132 +420,19 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
     # financial-statement sources (dfp/itr/fre/ipe).
     prev_year = current_year - 1
 
-    # (module_path, fn_name, kwargs_fn) — kwargs_fn builds the kwargs dict
-    # [v1.2] verbose=False for auto-syncs — ensure_fresh() runs during normal
-    # skill use, so we don't want sync progress spam in stderr. Users who run
-    # sync manually (python -c "from ... import sync; sync(...)") get verbose=True
-    # by default.
-    sync_map = {
-        "dfp":          ("data_sources.cvm.dfp.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
-        "itr":          ("data_sources.cvm.itr.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
-        "fre":          ("data_sources.cvm.fre.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
-        "ipe":          ("data_sources.cvm.ipe.sync_engine", "sync",
-                         lambda: {"years": [current_year, prev_year], "force": True, "trace_id": trace_id, "verbose": False}),
-        "fca":          ("data_sources.cvm.fca.sync_engine", "sync",
-                         lambda: {"year": current_year, "force": True}),
-        "cad":          ("data_sources.cvm.cad.sync_engine", "sync",
-                         lambda: {"force": True, "trace_id": trace_id, "verbose": False}),
-        "vlmo":         ("data_sources.cvm.vlmo.sync_engine", "sync",
-                         lambda: {"year": current_year, "force": True}),
-        "cgvn":         ("data_sources.cvm.cgvn.sync_engine", "sync",
-                         lambda: {"year": current_year, "force": True}),
-        "bridge":       ("data_sources.cvm.bridge.sync_engine", "sync",
-                         lambda: {"ticker": company or "", "force": False, "trace_id": trace_id}),
-        "cotahist":     ("data_sources.b3.cotahist.sync_engine", "sync",
-                         lambda: {"year": current_year, "force": True, "trace_id": trace_id}),
-        "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
-                         lambda: {"force": True, "trace_id": trace_id}),
-        "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",
-                         lambda: {"force": True}),
-        # [new commit] BCB SGS sync — REQUIRED_SOURCES in historical includes "sgs"
-        # but sync_map had no entry, so every dashboard run failed the sgs sync
-        # silently with "unknown source 'sgs'". This meant Selic/CDI/IPCA data
-        # could go stale indefinitely. sync_all(force=True) re-fetches all series
-        # (force=True so the guard's staleness check doesn't no-op the refresh).
-        "sgs":          ("data_sources.bcb.sgs.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1.4] BCB Focus sync — REQUIRED_SOURCES in macro includes "focus"
-        # (added in macro v1.4 alongside the Expectativas Focus tab). Mirrors
-        # the sgs entry: sync_all(force=True) re-fetches all 4 indicators
-        # (IPCA, Selic, PIB, Cambio) from the Olinda OData API.
-        "focus":        ("data_sources.bcb.focus.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Inflation sync - REQUIRED_SOURCES in skills/ddm/inflation
-        # includes "ddm-inflation". Mirrors the sgs + focus entries:
-        # sync_all(force=True) re-fetches all 3 indices (IGP-M, IPCA, INPC)
-        # from the HTML scraper.
-        # [v2 fix B3] Key renamed from "ddm" to "ddm-inflation" to match
-        # the skill's REQUIRED_SOURCES (was reverted in 32e5ab9, causing
-        # _trigger_sync("ddm-inflation") to fail with "unknown source").
-        "ddm-inflation": ("data_sources.ddm.inflation.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Juros sync - separate sync_map entry for the juros subdomain
-        # (Selic, Meta Selic, CDI). Mirrors the ddm entry: sync_all(force=True)
-        # re-fetches all 3 juros indices from the HTML scraper + derives the
-        # historical series (month_value, media_no_ano, media_12m) from the
-        # monthly matrix. Skills may explicitly request this via
-        # _trigger_sync("ddm-juros") or list it in REQUIRED_SOURCES.
-        "ddm-juros":    ("data_sources.ddm.juros.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Poupanca sync - separate sync_map entry for the poupanca
-        # subdomain (Poupanca - Brazilian savings account). Mirrors the
-        # ddm + ddm-juros entries: sync_all(force=True) re-fetches the
-        # poupanca page from the HTML scraper + derives the historical
-        # series (month_value, acumulado_no_ano, acumulado_12m) from the
-        # monthly matrix using SUM (NOT AVERAGE like juros - poupanca
-        # monthly yield is a percentage return, so summing produces the
-        # cumulative return). Skills may explicitly request this via
-        # _trigger_sync("ddm-poupanca") or list it in REQUIRED_SOURCES.
-        "ddm-poupanca": ("data_sources.ddm.poupanca.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Acoes sync - separate sync_map entry for the acoes
-        # subdomain (B3 tradable stocks). Mirrors the ddm + ddm-juros +
-        # ddm-poupanca entries: sync_all(force=True) re-fetches the single
-        # /acoes page from the HTML scraper + parses the stocks table
-        # (~380 rows of Ticker | Nome | Negocios | Ultima (R$) | Variacao).
-        # Skills may explicitly request this via _trigger_sync("ddm-acoes")
-        # or list it in REQUIRED_SOURCES. The acoes dashboard declares
-        # REQUIRED_SOURCES=["ddm-acoes"] so the sync guard auto-refreshes
-        # acoes.db before each dashboard run.
-        "ddm-acoes":    ("data_sources.ddm.acoes.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Focus sync - separate sync_map entry for the focus
-        # subdomain (Boletim Focus market expectations survey). Mirrors
-        # the ddm + ddm-juros + ddm-poupanca + ddm-acoes entries:
-        # sync_all(force=True) re-fetches the single /boletim-focus page
-        # (CloudFront-protected - fetcher sends full Chrome 127 browser
-        # headers) + parses the 4 yearly tables (2026-2029) of 12
-        # indicators each. Skills may explicitly request this via
-        # _trigger_sync("ddm-focus") or list it in REQUIRED_SOURCES. The
-        # focus dashboard declares REQUIRED_SOURCES=["ddm-focus"] so the
-        # sync guard auto-refreshes focus.db before each dashboard run.
-        "ddm-focus":    ("data_sources.ddm.focus.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v1] DDM Fluxo sync - separate sync_map entry for the fluxo
-        # subdomain (B3 investment flow by investor type). Mirrors the
-        # ddm + ddm-juros + ddm-poupanca + ddm-acoes + ddm-focus entries:
-        # sync_all(force=True) re-fetches the single /fluxo page
-        # (CloudFront-protected - fetcher sends full Chrome 127 browser
-        # headers) + parses the 1 table (~247 daily rows: Data |
-        # Estrangeiro | Institucional | Pessoa fisica | Inst. Financeira
-        # | Outros). Values are parsed from PT-BR format ("1.582,35 mi")
-        # to REAL (millions R$) at the fetcher boundary. Skills may
-        # explicitly request this via _trigger_sync("ddm-fluxo") or list
-        # it in REQUIRED_SOURCES. The fluxo dashboard declares
-        # REQUIRED_SOURCES=["ddm-fluxo"] so the sync guard auto-refreshes
-        # fluxo.db before each dashboard run.
-        "ddm-fluxo":     ("data_sources.ddm.fluxo.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-        # [v2 fix B2] DDM Dividends sync - was silently removed from sync_map
-        # during the 30fa822 rebase (focus commit). The dividends skill
-        # declares REQUIRED_SOURCES=["ddm-dividends"], so without this
-        # entry, _trigger_sync("ddm-dividends") returned "unknown source".
-        "ddm-dividends": ("data_sources.ddm.dividends.sync_engine", "sync_all",
-                         lambda: {"force": True}),
-    }
-
-    if source not in sync_map:
+    # [Phase 4 C3] The dispatch table is now the module-level _SYNC_REGISTRY
+    # (was an inline dict literal rebuilt on every call). The lambdas take
+    # (current_year, prev_year, company, trace_id) explicitly because they
+    # can no longer close over this function's locals.
+    if source not in _SYNC_REGISTRY:
         return {"status": "error", "source": source,
                 "error": f"unknown source '{source}' (no sync function mapped)"}
 
-    module_path, fn_name, kwargs_fn = sync_map[source]
+    module_path, fn_name, kwargs_fn = _SYNC_REGISTRY[source]
     try:
         mod = importlib.import_module(module_path)
         sync_fn = getattr(mod, fn_name)
-        kwargs = kwargs_fn()
+        kwargs = kwargs_fn(current_year, prev_year, company, trace_id)
         print(f"  [sync] Force-syncing {source} (kwargs: {kwargs})...", flush=True)
         result = sync_fn(**kwargs)
         print(f"  [sync] {source} done.", flush=True)
