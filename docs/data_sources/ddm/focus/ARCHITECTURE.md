@@ -18,7 +18,7 @@ data_sources/ddm/focus/
 │                        #   headers for CloudFront), parse_focus_tables,
 │                        #   _parse_int, _normalize_comparison,
 │                        #   _find_year_for_table, _strip_html
-├── sync_engine.py       # sync_all(force), sync_index(slug, force)
+├── sync_engine.py       # sync_all(force) [sync_index is a mode alias → sync_all]
 ├── query_engine.py      # focus_by_year, focus_by_indicator, last_value,
 │                        #   search, summary, all_data
 └── status_reporter.py   # status()

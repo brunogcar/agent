@@ -138,7 +138,7 @@ MANIFEST = {
 # mode -> (module_path, function_name) lazy-import map.
 _MODE_MAP = {
     "sync_all":   ("data_sources.ddm.fluxo.sync_engine",     "sync_all"),
-    "sync_index": ("data_sources.ddm.fluxo.sync_engine",     "sync_index"),
+    "sync_index": ("data_sources.ddm.fluxo.sync_engine",     "sync_all"),
     "fluxo_data": ("data_sources.ddm.fluxo.query_engine",    "fluxo_data"),
     "last":       ("data_sources.ddm.fluxo.query_engine",    "last_value"),
     "search":     ("data_sources.ddm.fluxo.query_engine",    "search"),

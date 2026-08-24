@@ -15,7 +15,7 @@ data_sources/ddm/dividends/
 │                        #   ensure_schema
 ├── fetcher.py           # fetch_dividends_page, parse_dividends_table,
 │                        #   _parse_br_number, _parse_br_date, _extract_ticker
-├── sync_engine.py       # sync_all(force), sync_index(slug, force)
+├── sync_engine.py       # sync_all(force) [sync_index is a mode alias → sync_all]
 ├── query_engine.py      # dividends_list, last_value, search, ticker_history,
 │                        #   summary
 └── status_reporter.py   # status()

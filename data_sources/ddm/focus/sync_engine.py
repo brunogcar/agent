@@ -33,12 +33,10 @@ from data_sources.ddm.focus.catalog import (
 )
 from data_sources.ddm.focus.fetcher import fetch_focus_page, parse_focus_tables
 
-
 class _SyncEngine(BaseDDMSyncEngine):
     """Focus-specific sync engine config (SOURCE_NAME for log prefix)."""
 
     SOURCE_NAME = "focus"
-
 
 _INSERT_SQL = (
     "INSERT OR REPLACE INTO focus_observations "
@@ -46,7 +44,6 @@ _INSERT_SQL = (
     " comparison, respondents, ref_date, synced_at) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
-
 
 def _row_mapper(obs: dict, now: str) -> tuple:
     """ref_date = today's date (focus does not expose a publication date).
@@ -62,11 +59,9 @@ def _row_mapper(obs: dict, now: str) -> tuple:
         obs.get("respondents"), ref_date, now,
     )
 
-
 def _compute_last_date(observations: list[dict]) -> str:
     """last_date = today's date (the ref_date of THIS sync)."""
     return _SyncEngine._today_date()
-
 
 def _result_extras(observations: list[dict], last_date: str, now: str) -> dict:
     """Extra keys to merge into the sync_all() result dict.
@@ -75,7 +70,6 @@ def _result_extras(observations: list[dict], last_date: str, now: str) -> dict:
     so callers can show the bulletin's reference week in the dashboard.
     """
     return {"ref_date": last_date}
-
 
 def sync_all(force: bool = False) -> dict:
     """Sync the /boletim-focus page into focus.db.
@@ -112,19 +106,3 @@ def sync_all(force: bool = False) -> dict:
         force=force,
     )
 
-
-def sync_index(slug: str = "focus", force: bool = False) -> dict:
-    """Alias for sync_all (parity with the other DDM sub-domains).
-
-    The focus page is single-page (not per-index), so `slug` is ignored
-    (only 'focus' is supported). Kept for API symmetry with inflation /
-    juros / poupanca / acoes which have a real per-index sync.
-
-    Args:
-        slug:  Ignored (kept for API parity). Defaults to 'focus'.
-        force: Re-fetch even if recently synced.
-
-    Returns:
-        Same shape as sync_all().
-    """
-    return sync_all(force=force)

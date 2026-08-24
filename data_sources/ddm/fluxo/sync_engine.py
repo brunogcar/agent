@@ -39,12 +39,10 @@ from data_sources.ddm.fluxo.catalog import (
 )
 from data_sources.ddm.fluxo.fetcher import fetch_fluxo_page, parse_fluxo_table
 
-
 class _SyncEngine(BaseDDMSyncEngine):
     """Fluxo-specific sync engine config (SOURCE_NAME for log prefix)."""
 
     SOURCE_NAME = "fluxo"
-
 
 _INSERT_SQL = (
     "INSERT OR REPLACE INTO fluxo_observations "
@@ -53,14 +51,12 @@ _INSERT_SQL = (
     "VALUES (?, ?, ?, ?, ?, ?, ?)"
 )
 
-
 def _row_mapper(obs: dict, now: str) -> tuple:
     return (
         obs["ref_date"], obs.get("estrangeiro"), obs.get("institucional"),
         obs.get("pessoa_fisica"), obs.get("inst_financeira"),
         obs.get("outros"), now,
     )
-
 
 def _compute_last_date(observations: list[dict]) -> str:
     """last_date = the most recent ref_date in the synced observations.
@@ -76,7 +72,6 @@ def _compute_last_date(observations: list[dict]) -> str:
         default="",
     )
 
-
 def _result_extras(observations: list[dict], last_date: str, now: str) -> dict:
     """Extra keys to merge into the sync_all() result dict.
 
@@ -85,7 +80,6 @@ def _result_extras(observations: list[dict], last_date: str, now: str) -> dict:
     extra DB query.
     """
     return {"last_date": last_date}
-
 
 def sync_all(force: bool = False) -> dict:
     """Sync the /fluxo page into fluxo.db.
@@ -124,19 +118,3 @@ def sync_all(force: bool = False) -> dict:
         force=force,
     )
 
-
-def sync_index(slug: str = "fluxo", force: bool = False) -> dict:
-    """Alias for sync_all (parity with the other DDM sub-domains).
-
-    The fluxo page is single-page (not per-index), so `slug` is ignored
-    (only 'fluxo' is supported). Kept for API symmetry with inflation /
-    juros / poupanca / acoes / focus which have a real per-index sync.
-
-    Args:
-        slug:  Ignored (kept for API parity). Defaults to 'fluxo'.
-        force: Re-fetch even if recently synced.
-
-    Returns:
-        Same shape as sync_all().
-    """
-    return sync_all(force=force)

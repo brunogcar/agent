@@ -17,7 +17,7 @@ data_sources/ddm/acoes/
 ├── fetcher.py           # fetch_acoes_page, parse_stocks_table,
 │                        #   _parse_br_number, _parse_br_int,
 │                        #   _parse_variation
-├── sync_engine.py       # sync_all(force), sync_index(slug, force)
+├── sync_engine.py       # sync_all(force) [sync_index is a mode alias → sync_all]
 ├── query_engine.py      # stocks_list, stocks (alias), last_value,
 │                        #   search, summary
 └── status_reporter.py   # status()

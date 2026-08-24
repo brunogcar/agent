@@ -16,7 +16,7 @@ data_sources/ddm/fluxo/
 ├── fetcher.py           # fetch_fluxo_page (full Chrome 127 browser
 │                        #   headers for CloudFront), parse_fluxo_table,
 │                        #   _parse_br_number, _parse_br_date, _strip_html
-├── sync_engine.py       # sync_all(force), sync_index(slug, force)
+├── sync_engine.py       # sync_all(force) [sync_index is a mode alias → sync_all]
 ├── query_engine.py      # fluxo_data, fluxo_by_investor, last_value,
 │                        #   by_date, search, summary, monthly_cumulative,
 │                        #   annual_cumulative

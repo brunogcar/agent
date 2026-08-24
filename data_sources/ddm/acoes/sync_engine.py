@@ -26,19 +26,16 @@ from data_sources.ddm.acoes.catalog import (
 )
 from data_sources.ddm.acoes.fetcher import fetch_acoes_page, parse_stocks_table
 
-
 class _SyncEngine(BaseDDMSyncEngine):
     """Acoes-specific sync engine config (SOURCE_NAME for log prefix)."""
 
     SOURCE_NAME = "acoes"
-
 
 _INSERT_SQL = (
     "INSERT OR REPLACE INTO stocks "
     "(ticker, name, negocios, last_price, variation, synced_at, ref_date) "
     "VALUES (?, ?, ?, ?, ?, ?, ?)"
 )
-
 
 def _row_mapper(stock: dict, now: str) -> tuple:
     """Map a parsed stock dict to the INSERT SQL tuple shape.
@@ -52,7 +49,6 @@ def _row_mapper(stock: dict, now: str) -> tuple:
         stock.get("last_price"), stock.get("variation"), now, ref_date,
     )
 
-
 def _compute_last_date(observations: list[dict]) -> str:
     """last_date = today's date (the scrape date).
 
@@ -60,7 +56,6 @@ def _compute_last_date(observations: list[dict]) -> str:
     the day the snapshot was scraped.
     """
     return _SyncEngine._today_date()
-
 
 def sync_all(force: bool = False) -> dict:
     """Sync the /acoes page into acoes.db.
@@ -89,19 +84,3 @@ def sync_all(force: bool = False) -> dict:
         force=force,
     )
 
-
-def sync_index(slug: str = "acoes", force: bool = False) -> dict:
-    """Alias for sync_all (parity with the other DDM sub-domains).
-
-    The acoes page is single-page (not per-index), so `slug` is ignored
-    (only 'acoes' is supported). Kept for API symmetry with inflation /
-    juros / poupanca which have a real per-index sync.
-
-    Args:
-        slug:  Ignored (kept for API parity). Defaults to 'acoes'.
-        force: Re-fetch even if recently synced.
-
-    Returns:
-        Same shape as sync_all().
-    """
-    return sync_all(force=force)

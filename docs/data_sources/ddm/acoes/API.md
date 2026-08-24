@@ -38,6 +38,8 @@ REPLACE all rows. Idempotent via PK on `ticker`.
 ### `sync_index`
 
 Alias for `sync_all` (kept for parity with the other DDM sub-domains;
+
+> **[Phase 4 C2]** The `sync_index` function was deleted from `sync_engine.py`. The `sync_index` mode is now a route-level alias that dispatches directly to `sync_all` (mode-folding in `_MODE_MAP`). The `slug` parameter is silently ignored.
 the acoes page is single-page, not per-index).
 
 - **Params**: `slug` (str, optional — only `acoes` is supported, ignored),

@@ -24,12 +24,10 @@ from data_sources.ddm.dividends.fetcher import (
     fetch_dividends_page, parse_dividends_table,
 )
 
-
 class _SyncEngine(BaseDDMSyncEngine):
     """Dividends-specific sync engine config (SOURCE_NAME for log prefix)."""
 
     SOURCE_NAME = "dividends"
-
 
 _INSERT_SQL = (
     "INSERT OR REPLACE INTO dividends "
@@ -37,20 +35,17 @@ _INSERT_SQL = (
     "VALUES (?, ?, ?, ?, ?, ?, ?)"
 )
 
-
 def _row_mapper(row: dict, now: str) -> tuple:
     return (
         row["ticker"], row.get("tipo"), row.get("value"),
         row.get("record_date"), row.get("ex_date"), row.get("payment_date"), now,
     )
 
-
 def _compute_last_date(rows: list[dict]) -> str:
     """last_date = latest record_date (string comparison works for YYYY-MM-DD)."""
     if not rows:
         return ""
     return max((r.get("record_date") or "") for r in rows)
-
 
 def sync_all(force: bool = False) -> dict:
     """Sync the entire dividend agenda page into dividends.db.
@@ -79,23 +74,3 @@ def sync_all(force: bool = False) -> dict:
         force=force,
     )
 
-
-def sync_index(slug: str = "dividends", force: bool = False) -> dict:
-    """Sync one "index" (the dividends page is a single page; slug must be
-    'dividends'). Alias for sync_all.
-
-    Args:
-        slug:  Must be 'dividends' (kept for parity with the ddm/juros +
-               ddm/poupanca + ddm/inflation sync_index signature).
-        force: Re-fetch even if recently synced.
-
-    Returns:
-        {"status": "ok", "slug": "dividends", "rows": <int>, "synced_at": <iso>}
-    """
-    if slug and slug != "dividends":
-        return {"status": "error", "slug": slug,
-                "error": f"Unknown slug '{slug}' (only 'dividends' is supported)"}
-    out = sync_all(force=force)
-    if out.get("status") == "ok":
-        out["slug"] = "dividends"
-    return out

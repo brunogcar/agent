@@ -152,7 +152,7 @@ MANIFEST = {
 # mode -> (module_path, function_name) lazy-import map.
 _MODE_MAP = {
     "sync_all":   ("data_sources.ddm.acoes.sync_engine",     "sync_all"),
-    "sync_index": ("data_sources.ddm.acoes.sync_engine",     "sync_index"),
+    "sync_index": ("data_sources.ddm.acoes.sync_engine",     "sync_all"),
     "stocks":     ("data_sources.ddm.acoes.query_engine",    "stocks_list"),
     "last":       ("data_sources.ddm.acoes.query_engine",    "last_value"),
     "search":     ("data_sources.ddm.acoes.query_engine",    "search"),
