@@ -1,27 +1,49 @@
 """data_sources/b3/api/catalog.py -- Schema constants for B3 API sub-domain.
 
-B3 migrated to a paginated JSON API (the old 3-step CSV download flow is broken).
-The new API returns JSON with column metadata + values, 20 rows per page.
+[v2.0] B3's paginated JSON API (20 rows/page, 2,283 pages for derivatives)
+was fundamentally limited: 4 columns only, 22-minute sync time, server-side
+throttling, and 504 timeouts on ~40% of pages. Replaced with the 2-step
+CSV bulk download API:
 
-API: https://arquivos.b3.com.br/tabelas/table/{tableName}/{date}/{page}
-  → {"name", "friendlyName", "columns": [...], "values": [[...], ...], "pageCount": N}
+  Step 1: GET /api/download/requestname?fileName={tableName}&date={date}
+    → {"token": "...", "file": {"name": "...", "extension": ".csv"}}
 
-Tables (matching SPA URLs):
-  InstrumentsConsolidated          → instruments (tickers, ISIN, company names, segment)
-  TradeInformationConsolidated     → trades (daily prices, volume, VWAP)
-  TradeInformationConsolidatedAfterHours → after_hours
-  DerivativesOpenPosition          → derivatives
+  Step 2: GET /api/download/?token={token}
+    → Full CSV file (semicolon-separated, ALL columns, ALL rows)
+
+This reduces sync time from ~1,331s (22 min) to ~1-3s per table and
+returns the full column set (17-52 columns vs the JSON API's 4).
+
+API base: https://arquivos.b3.com.br
+
+Tables:
+  InstrumentsConsolidated          → instruments (52 cols, ~169K rows)
+  TradeInformationConsolidated     → trades (15 cols, ~162K rows)
+  TradeInformationConsolidatedAfterHours → after_hours (15 cols, ~630 rows)
+  DerivativesOpenPosition          → derivatives (17 cols, ~46K rows)
+
+CSV format: semicolon-separated (;), ISO-8859-1 encoding.
+3 of 4 tables have a "Status do Arquivo: Final" line before the header
+(derivatives does NOT — its first line IS the header).
 
 Storage: memory_db/b3/{table}.db
-Encoding: JSON (API returns JSON, not CSV — no encoding issues)
+
+FUTURE: B3 announced that the public data pages (cotações, dados públicos)
+were decommissioned on 2026-03-31 and migrated to the BDI portal
+(https://arquivos.b3.com.br/bdi/tabelas). The "Quadro Analítico das
+Posições em Aberto" (analytical open positions table) is expected on BDI
+from 2026-06-30. If the /api/download endpoint is decommissioned, the
+BDI portal should be investigated as the replacement. See ChatGPT's
+research from the 2026-08-24 code review.
 """
 
 from __future__ import annotations
 
 # ── API base ─────────────────────────────────────────────────────────────────
 
-API_BASE = "https://arquivos.b3.com.br/tabelas/table"
-PAGE_SIZE = 20  # B3 API returns 20 rows per page
+API_BASE = "https://arquivos.b3.com.br"
+DOWNLOAD_TOKEN_URL = f"{API_BASE}/api/download/requestname"
+DOWNLOAD_CSV_URL = f"{API_BASE}/api/download/"
 
 # ── Table registry ───────────────────────────────────────────────────────────
 
@@ -39,7 +61,7 @@ B3_TABLES = {
         "db_file":    "trades.db",
         "table":      "trades",
         "pk":         None,  # composite: TckrSymb + RptDt
-        "description": "Daily regular session trade stats: prices, volume, oscillation per ticker",
+        "description": "Daily regular session trade stats: prices, volume, VWAP per ticker",
         "indexes":    ["TckrSymb", "ISIN", "RptDt"],
     },
     "after_hours": {
@@ -66,9 +88,6 @@ def b3_data_dir():
     """Return the B3 data directory.
 
     [Phase 4 C4] Delegates to data_sources._base.catalog.data_dir("b3").
-    Byte-for-byte identical to b3/cotahist/catalog.py:b3_data_dir and
-    b3/brapi/catalog.py:b3_data_dir before this commit (now all 3 delegate
-    to _base).
     """
     from data_sources._base.catalog import data_dir
     return data_dir("b3")
@@ -82,21 +101,46 @@ def db_path(table_name: str):
 def connect(table_name: str, read_only: bool = True):
     """Open a SQLite connection for a B3 table.
 
-    [Phase 4 C4] Delegates to data_sources._base.catalog.connect. Error
-    message uses source_name="B3" (matches the pre-refactor message).
+    [Phase 4 C4] Delegates to data_sources._base.catalog.connect.
     """
     from data_sources._base.catalog import connect as _base_connect
     return _base_connect(db_path(table_name), "B3", read_only)
 
 
 def ensure_schema(conn, table_name: str, columns: list[str]):
-    """Create table if it doesn't exist, using the columns from the API response.
+    """Create table if it doesn't exist, or add missing columns via ALTER TABLE.
 
-    B3 API returns column metadata dynamically, so we create the table
-    on first sync based on what the API tells us. All columns are TEXT
-    (B3 sends everything as strings in JSON values).
+    [v2.0] Columns now come from the CSV header (17-52 columns) instead of
+    the JSON API response (4 columns). All columns are TEXT (B3 sends
+    everything as strings in the CSV).
+
+    [v2.1 fix] If the table already exists with the old 4-column JSON API
+    schema, ALTER TABLE ADD COLUMN is used to add the missing columns
+    instead of failing with "no such column". This handles the migration
+    from the old paginated JSON API to the new CSV bulk download.
     """
     table = B3_TABLES[table_name]["table"]
+
+    # Check if the table already exists
+    existing_cols = [
+        r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    ]
+
+    if existing_cols:
+        # Table exists — check for missing columns and add them via ALTER TABLE.
+        # SQLite ALTER TABLE ADD COLUMN can only add one column at a time,
+        # and can't add columns that already exist.
+        for col in columns:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                _progress_msg(f"[b3_sync] Added column '{col}' to {table} (schema migration)")
+        # Also ensure _ingested_at exists
+        if "_ingested_at" not in existing_cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN _ingested_at TEXT")
+        conn.commit()
+        return
+
+    # Table doesn't exist — create it fresh with all columns.
     col_defs = ",\n    ".join(f"{c} TEXT" for c in columns)
     col_defs += ",\n    _ingested_at TEXT"
 
@@ -118,8 +162,15 @@ def ensure_schema(conn, table_name: str, columns: list[str]):
         synced_at   TEXT,
         row_count   INTEGER DEFAULT 0,
         page_count  INTEGER DEFAULT 0,
+        last_page   INTEGER DEFAULT 0,
         PRIMARY KEY (table_name, date)
     );
     """
     conn.executescript(sql)
     conn.commit()
+
+
+def _progress_msg(msg: str) -> None:
+    """Print a progress message to stderr (used by ensure_schema for migration)."""
+    import sys
+    print(msg, file=sys.stderr, flush=True)

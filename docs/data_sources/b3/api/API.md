@@ -5,12 +5,15 @@
 ## Modes
 
 ### `mode="sync"`
-Download B3 data via JSON API and store to SQLite.
+Download B3 data via CSV bulk download API and store to SQLite.
+
+[v2.0] Replaced the paginated JSON API (2,283 requests, 4 columns, 22 min)
+with a 2-step CSV bulk download (1 request, 15-52 columns, ~1-10s).
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `table` | `str` | `"instruments"` | instruments, trades, after_hours, derivatives |
-| `date_str` | `str` | today | YYYY-MM-DD |
+| `table` | `str` | `"instruments"` | instruments (52 cols), trades (15), after_hours (15), derivatives (17) |
+| `date_str` | `str` | today | YYYY-MM-DD (falls back up to 7 days if no data) |
 | `force` | `bool` | `false` | Re-download even if already synced |
 
 ### `mode="status"`
@@ -54,4 +57,4 @@ data_source(domain="b3", sub_domain="api", mode="search_company", params='{"name
 
 ---
 
-*Last updated: 2026-07-23 (v1.0).*
+*Last updated: 2026-08-24 (v2.0 — CSV bulk download).*

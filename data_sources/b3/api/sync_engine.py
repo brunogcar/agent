@@ -1,22 +1,45 @@
-"""data_sources/b3/api/sync_engine.py -- Sync B3 data via paginated JSON API.
+"""data_sources/b3/api/sync_engine.py -- Sync B3 data via CSV bulk download.
 
-B3 migrated from the old 3-step CSV download to a paginated JSON API.
-20 rows per page, no authentication needed.
+[v2.0] COMPLETE REWRITE — replaced the paginated JSON API (2,283 requests,
+20 rows/page, 4 columns, 22-minute sync with server-side throttling) with
+a 2-step CSV bulk download (1 request, ALL rows, ALL columns, ~1-3s).
 
-[v1.0.4] Batch commit + resume: Commits every BATCH_SIZE pages (10K rows)
-so a cancelled sync keeps what's been fetched. On restart, resumes from
-the last committed page. Uses ThreadPoolExecutor(10 workers) for speed.
+The 2-step flow:
+  Step 1: GET /api/download/requestname?fileName={table}&date={date}
+    → JSON: {"token": "...", "file": {"name": "...", "extension": ".csv"}}
 
-API: GET /tabelas/table/{tableName}/{date}/{page}
-  -> {"name", "columns": [...], "values": [[...], ...], "pageCount": N}
+  Step 2: GET /api/download/?token={token}
+    → Full CSV file (semicolon-separated, 17-52 columns, 633-169K rows)
+
+CRITICAL: The download URL is /api/download/ (with trailing slash). Without
+the trailing slash, B3 returns an HTML consent page instead of the CSV.
+
+CSV format:
+  - Semicolon-separated (;)
+  - ISO-8859-1 encoding (has Portuguese accents)
+  - 3 of 4 tables have a "Status do Arquivo: Final" line before the header
+    (derivatives does NOT — its first line IS the header)
+  - No quoting/escaping needed (B3 doesn't embed semicolons in values)
+
+Performance comparison (derivatives, 2026-08-21):
+  Old (JSON pagination): 2,283 requests, 13,980 rows, 4 columns, 1,331s
+  New (CSV bulk):        1 request,     45,653 rows, 17 columns, 0.9s
+  Speedup:               1,477x faster, 3.3x more rows, 4.25x more columns
+
+FUTURE: B3 announced the BDI portal (https://arquivos.b3.com.br/bdi/tabelas)
+as the replacement for the public data pages, with the "Quadro Analítico das
+Posições em Aberto" expected from 2026-06-30. If the /api/download endpoint
+is decommissioned, investigate the BDI portal as the replacement.
+(Discovered by ChatGPT during the 2026-08-24 code review.)
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import sqlite3
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,11 +47,25 @@ import httpx
 
 from core.tracer import tracer
 from data_sources.b3.api.catalog import (
-    API_BASE, PAGE_SIZE, B3_TABLES, db_path, connect, ensure_schema,
+    DOWNLOAD_TOKEN_URL, DOWNLOAD_CSV_URL,
+    B3_TABLES, db_path, connect, ensure_schema,
 )
 
-MAX_WORKERS = 30  # [v1.0.5] 10→30 — I/O bound, CPU at 0%, more workers = faster
-BATCH_SIZE = 100  # [v1.0.5] 500→100 — commit more frequently for better resume
+# Browser-like headers (B3's WAF rejects bare bot UAs with HTTP 400).
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/127.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/html, */*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Origin": "https://arquivos.b3.com.br",
+    "Referer": "https://arquivos.b3.com.br/",
+}
+
+# CSV encoding: B3 uses ISO-8859-1 (Latin-1) for Portuguese accents.
+_CSV_ENCODING = "iso-8859-1"
 
 
 def _progress(msg: str) -> None:
@@ -42,16 +79,16 @@ def sync(
     force: bool = False,
     trace_id: str = "",
 ) -> dict:
-    """Download B3 data via concurrent paginated JSON API with batch commit + resume.
+    """Download B3 data via the CSV bulk download API.
 
     Args:
         table: instruments, trades, after_hours, derivatives. Default: instruments.
-        date_str: YYYY-MM-DD. Default: today.
-        force: Re-download from page 1 (ignores partial sync state).
+        date_str: YYYY-MM-DD. Default: today (falls back up to 7 days).
+        force: Re-download even if sync_state says complete.
         trace_id: Tracer ID.
 
     Returns:
-        Dict with sync status, row count, page count, elapsed time.
+        Dict with sync status, row count, column count, elapsed time.
     """
     tid = trace_id or ""
 
@@ -72,159 +109,126 @@ def sync(
     try:
         _ensure_sync_state_table(conn)
 
-        # ── Resume check: do we have a partial sync for this date? ─────────
-        resume_from = 1
+        # ── Resume check: is this date already synced? ────────────────────
         if not force:
-            partial = conn.execute(
+            existing = conn.execute(
                 "SELECT * FROM sync_state WHERE table_name=? AND date=?",
                 (table, date_str),
             ).fetchone()
-            if partial:
-                # [v1.0.4 fix] Check if sync is COMPLETE (last_page == page_count)
-                # vs PARTIAL (last_page < page_count). The old check used
-                # row_count > 0 which treated any partial sync as complete.
-                last_page = partial["last_page"] or 0
-                total_pages = partial["page_count"] or 0
-                if last_page > 0 and total_pages > 0 and last_page >= total_pages:
-                    # Complete sync — skip
-                    return {
-                        "status": "skipped",
-                        "table": table, "date": date_str,
-                        "rows": partial["row_count"],
-                        "pages": partial["page_count"],
-                        "synced_at": partial["synced_at"],
-                    }
-                # Partial: resume from last_page + 1
-                resume_from = last_page + 1
-                if resume_from > 1:
-                    _progress(f"[b3_sync] Resuming from page {resume_from:,} (partial sync: {last_page:,}/{total_pages:,} pages, {partial['row_count']:,} rows)")
+            if existing and existing["row_count"] > 0:
+                _progress(f"[b3_sync] {table} for {date_str} already synced ({existing['row_count']:,} rows) — skipping (use force=True to re-download)")
+                return {
+                    "status": "skipped",
+                    "table": table, "date": date_str,
+                    "rows": existing["row_count"],
+                    "synced_at": existing["synced_at"],
+                }
 
-        # ── Fetch page 1 to get column metadata + pageCount ─────────────────
-        # [v1.0.4] Skip page 1 fetch on resume — we already have columns from the schema
-        if resume_from > 1:
-            # Resuming: get columns from existing table schema
-            col_rows = conn.execute(f"PRAGMA table_info({B3_TABLES[table]['table']})").fetchall()
-            columns = [r["name"] for r in col_rows if r["name"] != "_ingested_at"]
-            page_count = total_pages  # from partial sync_state
-            page1 = None  # don't re-process page 1
-        else:
-            page1 = _fetch_page(api_name, date_str, 1)
-            # [v1.0.5] Check for no data — page1 may be None OR have pageCount=0.
-            # B3 publishes trade data with a delay — today's data is usually
-            # not available until the next business day. Try up to 7 days back.
-            if not page1 or page1.get("pageCount", 0) == 0:
-                if not _user_specified_date:
-                    for days_back in range(1, 8):
-                        try_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-                        _progress(f"[b3_sync] No data for {date_str}, trying {try_date}")
-                        date_str = try_date
-                        page1 = _fetch_page(api_name, date_str, 1)
-                        if page1 and page1.get("pageCount", 0) > 0:
-                            break
-                if not page1 or page1.get("pageCount", 0) == 0:
-                    return {"status": "no_data", "table": table, "date": date_str,
-                            "error": f"No data from B3 API for any date tried (today + 7 days back). "
-                                     f"Market may be closed or API is down."}
+        # ── Step 1: Get the download token ────────────────────────────────
+        # B3 publishes trade data with a delay — today's data is usually
+        # not available until the next business day. Try up to 7 days back.
+        token = None
+        actual_date = date_str
 
-            columns = [c["name"] for c in page1.get("columns", [])]
-            if not columns:
-                return {"status": "error", "table": table, "date": date_str,
-                        "error": "No columns in B3 API response"}
+        while True:
+            token = _get_download_token(api_name, actual_date)
+            if token:
+                break
 
-            page_count = page1.get("pageCount", 0)
+            if _user_specified_date:
+                # User specified a date — don't fall back.
+                return {"status": "no_data", "table": table, "date": actual_date,
+                        "error": f"B3 API returned no data for {actual_date}. "
+                                 f"Market may be closed or data not yet published."}
 
-            if page_count == 0:
+            # Try yesterday, etc.
+            dt = datetime.strptime(actual_date, "%Y-%m-%d") - timedelta(days=1)
+            actual_date = dt.strftime("%Y-%m-%d")
+            _progress(f"[b3_sync] No data for {date_str}, trying {actual_date}")
+            if actual_date < (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"):
                 return {"status": "no_data", "table": table, "date": date_str,
-                        "error": f"B3 API returned 0 pages for {date_str}."}
+                        "error": "No data from B3 API for any date tried (today + 7 days back)."}
 
+        # ── Step 2: Download the CSV ───────────────────────────────────────
+        _progress(f"[b3_sync] Downloading CSV for {actual_date}...")
+        t0 = time.time()
+        csv_text = _download_csv(token)
+        elapsed_download = time.time() - t0
+
+        if not csv_text:
+            return {"status": "error", "table": table, "date": actual_date,
+                    "error": "CSV download returned empty response."}
+
+        # ── Parse the CSV ──────────────────────────────────────────────────
+        columns, rows = _parse_csv(csv_text)
+
+        if not columns:
+            return {"status": "error", "table": table, "date": actual_date,
+                    "error": "CSV has no column header."}
+
+        _progress(f"[b3_sync] CSV parsed: {len(rows):,} rows, {len(columns)} columns ({elapsed_download:.1f}s download)")
+
+        # ── Create/update schema + insert all rows ────────────────────────
+        # [v2 fix] ensure_schema now handles schema migration (adds missing
+        # columns via ALTER TABLE ADD COLUMN). This fixes the "no such column"
+        # error when upgrading from the old 4-column JSON API schema.
         ensure_schema(conn, table, columns)
         db_table = B3_TABLES[table]["table"]
+
+        # Delete old data for this date (full refresh).
+        # [v2 fix] Commit the DELETE before the INSERT to avoid "cannot start
+        # a transaction within a transaction" — sqlite3 Python opens an
+        # implicit transaction on the DELETE, and conn.execute("BEGIN")
+        # would conflict with it. Instead, just do DELETE + INSERT + COMMIT.
         date_col = "RptDt" if "RptDt" in columns else columns[0]
+        conn.execute(f"DELETE FROM {db_table} WHERE {date_col} LIKE ?", (f"%{actual_date}%",))
+        conn.commit()  # close the DELETE transaction
+
+        # Bulk insert in a single transaction.
         col_str = ", ".join(columns) + ", _ingested_at"
         placeholders = ", ".join(["?"] * (len(columns) + 1))
         insert_sql = f"INSERT INTO {db_table} ({col_str}) VALUES ({placeholders})"
 
-        # ── If starting fresh (page 1), delete old data + store page 1 ──────
-        total_rows = 0
-        if resume_from > 1:
-            # Resuming: keep existing rows, start counting from partial count
-            total_rows = partial["row_count"]
-        elif page1:
-            # Fresh start: delete old data, store page 1 values
-            conn.execute(f"DELETE FROM {db_table} WHERE {date_col} LIKE ?", (f"%{date_str}%",))
-            conn.commit()
-            page1_values = page1.get("values", [])
-            total_rows += _insert_rows(conn, insert_sql, columns, page1_values)
-            _save_partial_state(conn, table, date_str, total_rows, page_count, 1)
-
-        _progress(f"[b3_sync] {table}: {page_count:,} pages total, starting from page {resume_from:,}. Fetching with {MAX_WORKERS} workers...")
-
-        # ── Fetch remaining pages in batches (concurrent + commit) ──────────
-        t0 = time.time()
-        pages_done = resume_from - 1  # already done before resume
-
-        while resume_from <= page_count:
-            # Calculate batch range
-            batch_end = min(resume_from + BATCH_SIZE - 1, page_count)
-            batch_pages = list(range(resume_from, batch_end + 1))
-
-            # Fetch batch concurrently
-            batch_results: dict[int, list] = {}
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-                future_to_page = {
-                    pool.submit(_fetch_page, api_name, date_str, p): p
-                    for p in batch_pages
-                }
-                for future in as_completed(future_to_page):
-                    p = future_to_page[future]
-                    try:
-                        data = future.result()
-                        if data and data.get("values"):
-                            batch_results[p] = data["values"]
-                    except Exception:
-                        batch_results[p] = []
-
-            # Insert batch in page order
-            batch_rows = 0
-            for p in sorted(batch_results.keys()):
-                batch_rows += _insert_rows(conn, insert_sql, columns, batch_results[p])
-
-            total_rows += batch_rows
-            pages_done += len(batch_pages)
-
-            # Commit batch + save partial state
-            conn.commit()
-            _save_partial_state(conn, table, date_str, total_rows, page_count, batch_end)
-
-            # Progress
-            elapsed = time.time() - t0
-            rate = pages_done / elapsed if elapsed > 0 else 0
-            eta = (page_count - pages_done) / rate if rate > 0 else 0
-            _progress(f"[b3_sync] {pages_done:,}/{page_count:,} pages ({total_rows:,} rows) — {rate:.1f} p/s, ETA {eta:.0f}s — committed")
-
-            resume_from = batch_end + 1
-
-        elapsed_total = time.time() - t0
-        _progress(f"[b3_sync] Done: {total_rows:,} rows in {elapsed_total:.0f}s")
-
-        # ── Mark sync as complete ───────────────────────────────────────────
         now = datetime.now().isoformat()
+        n_cols = len(columns)
+        batch = []
+        for row in rows:
+            # Pad/truncate to match column count
+            vals = list(row) + [""] * (n_cols - len(row))
+            vals = vals[:n_cols] + [now]
+            batch.append(tuple(vals))
+
+        t_insert = time.time()
+        conn.executemany(insert_sql, batch)
+        conn.commit()
+        elapsed_insert = time.time() - t_insert
+
+        total_rows = len(batch)
+
+        # ── Record sync state ──────────────────────────────────────────────
+        synced_at = datetime.now().isoformat()
         conn.execute(
-            "INSERT OR REPLACE INTO sync_state (table_name, date, synced_at, row_count, page_count, last_page) "
+            "INSERT OR REPLACE INTO sync_state "
+            "(table_name, date, synced_at, row_count, page_count, last_page) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (table, date_str, now, total_rows, page_count, page_count),
+            (table, actual_date, synced_at, total_rows, 1, 1),
         )
         conn.commit()
+
+        elapsed_total = time.time() - t0
+        _progress(f"[b3_sync] Done: {total_rows:,} rows in {elapsed_total:.1f}s "
+                  f"(download {elapsed_download:.1f}s + insert {elapsed_insert:.1f}s)")
 
         return {
             "status": "ok",
             "table": table,
-            "date": date_str,
+            "date": actual_date,
             "rows": total_rows,
-            "pages": page_count,
             "columns": len(columns),
-            "synced_at": now,
+            "synced_at": synced_at,
             "elapsed_s": round(elapsed_total, 1),
+            "download_s": round(elapsed_download, 1),
+            "insert_s": round(elapsed_insert, 1),
         }
 
     except Exception as e:
@@ -250,40 +254,89 @@ def _ensure_sync_state_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _save_partial_state(conn, table, date_str, row_count, page_count, last_page):
-    """Save partial sync state so a cancelled sync can resume."""
-    conn.execute(
-        "INSERT OR REPLACE INTO sync_state (table_name, date, synced_at, row_count, page_count, last_page) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (table, date_str, datetime.now().isoformat(), row_count, page_count, last_page),
-    )
-    conn.commit()
+def _get_download_token(api_name: str, date_str: str) -> str | None:
+    """Step 1: Request a download token from B3.
 
+    Returns the token string, or None if B3 has no data for this date
+    (HTTP 400 = no data, HTTP 200 + empty token = not yet published).
 
-def _insert_rows(conn, insert_sql, columns, values) -> int:
-    """Insert a batch of rows. Returns count inserted."""
-    if not values:
-        return 0
-    now = datetime.now().isoformat()
-    batch = []
-    for row in values:
-        vals = list(row) + [""] * (len(columns) - len(row))
-        vals = vals[:len(columns)] + [now]
-        batch.append(tuple(vals))
-    conn.executemany(insert_sql, batch)
-    return len(batch)
-
-
-def _fetch_page(api_name: str, date_str: str, page: int) -> dict | None:
-    """Fetch a single page from the B3 JSON API (thread-safe via httpx)."""
-    url = f"{API_BASE}/{api_name}/{date_str}/{page}"
+    The token is valid for a limited time (~5 minutes). Use it immediately.
+    """
     try:
-        resp = httpx.get(url, timeout=30, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-        })
-        if resp.status_code == 200:
-            return resp.json()
-        return None
+        resp = httpx.get(
+            DOWNLOAD_TOKEN_URL,
+            params={"fileName": api_name, "date": date_str},
+            headers=_HEADERS,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        token = data.get("token", "")
+        if not token:
+            return None
+        return token
     except Exception:
         return None
+
+
+def _download_csv(token: str) -> str:
+    """Step 2: Download the CSV file using the token.
+
+    CRITICAL: The URL is /api/download/ (with trailing slash). Without it,
+    B3 returns an HTML consent page instead of the CSV.
+
+    Returns the CSV text (ISO-8859-1 decoded), or empty string on error.
+    """
+    try:
+        resp = httpx.get(
+            DOWNLOAD_CSV_URL,
+            params={"token": token},
+            headers=_HEADERS,
+            timeout=300,  # 5 min for large files (instruments is ~37 MB)
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return ""
+        # B3 CSVs use ISO-8859-1 encoding (Portuguese accents).
+        return resp.content.decode(_CSV_ENCODING)
+    except Exception:
+        return ""
+
+
+def _parse_csv(csv_text: str) -> tuple[list[str], list[list[str]]]:
+    """Parse the B3 CSV into (columns, rows).
+
+    Handles the "Status do Arquivo: Final" line that 3 of 4 tables have
+    before the actual header. Derivatives does NOT have this line.
+
+    Returns:
+        (column_names, data_rows) where each row is a list of strings.
+    """
+    lines = csv_text.strip().split("\n")
+    if not lines:
+        return [], []
+
+    # Detect if line 0 is the "Status do Arquivo" line or the header.
+    # The status line has 1 column (no semicolons); the header has many.
+    line0_cols = lines[0].split(";")
+    if len(line0_cols) == 1 or "Status do Arquivo" in lines[0]:
+        # Skip the status line; header is line 1.
+        header_idx = 1
+    else:
+        header_idx = 0
+
+    if header_idx >= len(lines):
+        return [], []
+
+    columns = [c.strip() for c in lines[header_idx].split(";")]
+    data_lines = lines[header_idx + 1:]
+
+    # Parse data rows (split by semicolon — B3 doesn't quote/escape values).
+    rows = []
+    for line in data_lines:
+        if not line.strip():
+            continue
+        rows.append(line.split(";"))
+
+    return columns, rows
