@@ -195,8 +195,14 @@ def _load_instruments_index() -> dict[str, dict] | None:
     """Load the instruments.db into a TckrSymb -> metadata dict.
 
     Returns None if instruments.db doesn't exist (graceful degradation).
-    Only the columns relevant to options are loaded: ExrcPric, XprtnDt,
-    OptnStyle, OptnTp, CrpnNm, UndrlygTckrSymb1.
+    Loads the columns relevant to options AND forward contracts:
+    ExrcPric, XprtnDt, OptnStyle, OptnTp, CrpnNm, UndrlygTckrSymb1
+    (options) + ISIN, SctyCtgyNm, SpcfctnCd (forward contracts).
+
+    [v2.1] Extended to also load ISIN, SctyCtgyNm, SpcfctnCd so the same
+    index serves both open_positions() (options) and forward_positions()
+    (forward contracts). Loading 10 string columns vs 7 over ~169K rows
+    is a negligible cost (a few extra MB of dict memory).
     """
     try:
         conn = connect("instruments", read_only=True)
@@ -209,7 +215,9 @@ def _load_instruments_index() -> dict[str, dict] | None:
         col_rows = conn.execute("PRAGMA table_info(instruments)").fetchall()
         all_cols = {r["name"] for r in col_rows if r["name"] != "_ingested_at"}
         wanted = ["TckrSymb", "ExrcPric", "XprtnDt", "OptnStyle",
-                  "OptnTp", "CrpnNm", "UndrlygTckrSymb1"]
+                  "OptnTp", "CrpnNm", "UndrlygTckrSymb1",
+                  # [v2.1] forward-contract enrichment columns:
+                  "ISIN", "SctyCtgyNm", "SpcfctnCd"]
         select_cols = [c for c in wanted if c in all_cols]
         if "TckrSymb" not in select_cols:
             return None  # Can't index without the primary key
@@ -501,6 +509,160 @@ def lookup_option_positions(ticker: str = "") -> dict:
             "holders":   _to_int(row["BrrwrQty"])       if "BrrwrQty"       in row.keys() else 0,
             "writers":   _to_int(row["LndrQty"])        if "LndrQty"        in row.keys() else 0,
             "forward":   _to_float(row["FwdPric"])      if "FwdPric"        in row.keys() else None,
+        }
+    finally:
+        conn.close()
+
+
+# ── [v2.1] Forward Positions (EQUITY FORWARD) ───────────────────────────────
+#
+# B3 routes stock term contracts (BDI 26) to the BTC (Balcão Organizado) —
+# the COTAHIST table has 0 rows for stock term in 17 years of history. The
+# new b3.api derivatives.db (DerivativesOpenPosition CSV bulk download)
+# DOES have EQUITY FORWARD entries (one per stock with an open forward
+# position): ticker "PETR4T" is the forward contract for PETR4, with
+# OpnIntrst (open interest in contracts), CurQty (total contracted quantity
+# in shares), and FwdPric (aggregate forward price in R$, PT-BR format).
+#
+# The forward_price_per_share = FwdPric / CurQty gives the average agreed
+# forward price per share. This is the closest thing to a "term price" for
+# stocks — the term skill uses it as the fallback when COTAHIST has no data.
+#
+# Joined with instruments.db (SctyCtgyNm, ISIN, SpcfctnCd, CrpnNm) for the
+# contract snapshot. Graceful degradation: if instruments.db is missing,
+# returns derivatives data with company="" etc. (instruments_ok=False).
+
+def forward_positions(ticker: str = "") -> dict:
+    """Get the EQUITY FORWARD open position for a stock ticker.
+
+    Constructs the forward ticker (`{TICKER}T` — e.g. PETR4 → PETR4T) and
+    queries derivatives.db WHERE SgmtNm = 'EQUITY FORWARD' (also accepts
+    the bare 'FORWARD' segment name used in some B3 CSV snapshots). Joins
+    instruments.db on TckrSymb for company name, ISIN, security category,
+    and specification.
+
+    Used by the term skill as a fallback when COTAHIST has no term data
+    (which is always for stocks — B3 routes stock term to BTC). Shows the
+    forward contract snapshot (open interest, total quantity, forward
+    price per share) instead of the "Sem dados" fallback.
+
+    Args:
+        ticker: Stock ticker (e.g. "PETR4", "VALE3"). Required.
+                Trailing digits are NOT stripped — PETR4T ≠ PETR3T.
+                If the ticker already ends in "T" (e.g. "PETR4T"), it is
+                used as-is.
+
+    Returns:
+        {"status": "ok",
+         "ticker": "PETR4T", "underlying": "PETR4", "refdate": "2026-08-21",
+         "company": "PETROLEO BRASILEIRO S.A. PETROBRAS",
+         "isin": "BRPETRTNP008",
+         "security_category": "COMMON EQUITIES FORWARD",
+         "specification": "PN      N2",
+         "open_interest": 1196,
+         "total_quantity": 1358721,
+         "forward_price_aggregate": 58828062.67,
+         "forward_price_per_share": 43.32,
+         "instruments_ok": True}
+
+    Graceful degradation:
+        - If derivatives.db doesn't exist → {"status": "not_synced", ...}
+        - If instruments.db doesn't exist → returns derivatives data with
+          company="", isin="", security_category="", specification="",
+          instruments_ok=False.
+        - If the forward ticker isn't in derivatives.db → {"status": "not_found", ...}
+        - If FwdPric or CurQty is missing/zero → forward_price_per_share=None.
+    """
+    if not ticker:
+        return {"status": "error", "error": "ticker is required"}
+
+    t = (ticker or "").strip().upper()
+    if not t:
+        return {"status": "error", "error": "ticker is required"}
+
+    # Construct the forward ticker: append "T" (PETR4 -> PETR4T).
+    # If the input already ends in "T" (e.g. user passed "PETR4T"), use as-is.
+    fwd_ticker = t if t.endswith("T") else t + "T"
+    underlying = t[:-1] if t.endswith("T") else t
+
+    # ── Connect to derivatives.db ────────────────────────────────────────
+    try:
+        conn = connect("derivatives", read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+    except Exception as e:
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+    try:
+        col_rows = conn.execute("PRAGMA table_info(derivatives)").fetchall()
+        all_cols = {r["name"] for r in col_rows if r["name"] != "_ingested_at"}
+        if "TckrSymb" not in all_cols:
+            return {"status": "error",
+                    "error": "derivatives table has no TckrSymb column (sync may be partial)"}
+
+        # Build SELECT for the columns we care about (skip missing ones).
+        wanted = ["TckrSymb", "SgmtNm", "OpnIntrst", "CurQty", "FwdPric", "RptDt"]
+        select_cols = [c for c in wanted if c in all_cols]
+        select_str = ", ".join(select_cols)
+
+        # Filter: TckrSymb = ? AND SgmtNm matches FORWARD.
+        # Accept both 'EQUITY FORWARD' (the documented B3 segment name) and
+        # the bare 'FORWARD' that appears in some B3 CSV snapshots.
+        row = conn.execute(
+            f"SELECT {select_str} FROM derivatives "
+            f"WHERE TckrSymb = ? "
+            f"AND (SgmtNm = 'EQUITY FORWARD' OR SgmtNm = 'FORWARD') "
+            f"LIMIT 1",
+            (fwd_ticker,),
+        ).fetchone()
+
+        if not row:
+            return {"status": "not_found", "ticker": fwd_ticker,
+                    "underlying": underlying,
+                    "error": f"no EQUITY FORWARD position for {fwd_ticker}"}
+
+        # ── Parse derivatives fields ─────────────────────────────────────
+        refdate = ""
+        if "RptDt" in row.keys() and row["RptDt"]:
+            refdate = (row["RptDt"] or "").strip()
+
+        open_interest = _to_int(row["OpnIntrst"]) if "OpnIntrst" in row.keys() else 0
+        total_quantity = _to_int(row["CurQty"])    if "CurQty"    in row.keys() else 0
+        fwd_agg = _to_float(row["FwdPric"])        if "FwdPric"   in row.keys() else None
+
+        # Forward price per share = aggregate / total quantity (R$ per share).
+        fwd_per_share: float | None = None
+        if fwd_agg is not None and total_quantity > 0:
+            fwd_per_share = round(fwd_agg / total_quantity, 2)
+
+        # ── Join with instruments.db for company name, ISIN, etc. ────────
+        instr_index = _load_instruments_index()
+        company = ""
+        isin = ""
+        scty_ctgy = ""
+        spec = ""
+        if instr_index is not None:
+            instr = instr_index.get(fwd_ticker)
+            if instr:
+                company = (instr.get("CrpnNm") or "").strip()
+                isin = (instr.get("ISIN") or "").strip()
+                scty_ctgy = (instr.get("SctyCtgyNm") or "").strip()
+                spec = (instr.get("SpcfctnCd") or "").strip()
+
+        return {
+            "status":                     "ok",
+            "ticker":                     fwd_ticker,
+            "underlying":                 underlying,
+            "refdate":                    refdate,
+            "company":                    company,
+            "isin":                       isin,
+            "security_category":          scty_ctgy,
+            "specification":              spec,
+            "open_interest":              open_interest,
+            "total_quantity":             total_quantity,
+            "forward_price_aggregate":    fwd_agg,
+            "forward_price_per_share":    fwd_per_share,
+            "instruments_ok":             instr_index is not None,
         }
     finally:
         conn.close()

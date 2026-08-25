@@ -10,6 +10,16 @@ a future date at a fixed price. The `close` field = the agreed future price
 (term price), NOT the spot price. The ticker IS the share-class ticker
 (PETR4 ≠ PETR3) -- it is NOT stripped.
 
+[v2] Forward-data enrichment: when COTAHIST has no term data for a stock
+(which is always -- B3 routes stock term to the BTC, Balcão Organizado),
+the dashboard falls back to the EQUITY FORWARD snapshot from the new
+b3.api derivatives.db (DerivativesOpenPosition CSV bulk download). The
+forward ticker is `{TICKER}T` (PETR4 → PETR4T) with OpnIntrst (open
+interest), CurQty (total contracted quantity), and FwdPric (aggregate
+forward price). forward_price_per_share = FwdPric / CurQty. Joined with
+instruments.db for company name, ISIN, security category. This adds
+"b3-api-derivatives" + "b3-api-instruments" to REQUIRED_SOURCES.
+
 Skill structure mirrors skills/b3/options:
   - _registry.py        : MODES + register_mode via skills._base.make_registry()
   - helpers.py          : format_value, format_brl, format_int
@@ -38,7 +48,11 @@ auto_discover_modes(__name__)
 # Same DB as cotahist (the cotahist_derivatives table lives in cotahist.db).
 # The sync guard triggers cotahist sync if stale -- derivatives ride on the
 # same DB so no separate source is declared.
-REQUIRED_SOURCES = ["cotahist"]
+#
+# [v2] b3-api-derivatives + b3-api-instruments are required for the forward
+# data fallback (EQUITY FORWARD snapshot from the new b3.api CSV bulk
+# download). Used when COTAHIST has no term data for a stock ticker.
+REQUIRED_SOURCES = ["cotahist", "b3-api-derivatives", "b3-api-instruments"]
 
 MANIFEST = {
     "sub_domain":  "term",
@@ -46,9 +60,10 @@ MANIFEST = {
         "B3 term (a termo) contracts dashboard. "
         "dashboard: 3-tab (Contratos Ativos + Spread Termo vs Spot + "
         "Volume Histórico). "
-        "Source: cotahist.db (cotahist_derivatives table)."
+        "Source: cotahist.db (cotahist_derivatives table) + b3.api "
+        "derivatives.db (EQUITY FORWARD fallback for stocks)."
     ),
-    "source":  "data_sources.b3.cotahist.derivatives_query (shared cotahist.db)",
+    "source":  "data_sources.b3.cotahist.derivatives_query + data_sources.b3.api.query_engine.forward_positions",
     "storage": "read-only — no own database",
     "modes": build_manifest_modes(MODES),
     "required_sources": REQUIRED_SOURCES,

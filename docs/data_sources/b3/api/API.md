@@ -117,6 +117,48 @@ Descoberta columns without a full `open_positions()` call.
 Returns `{status: "ok", ticker, oi, var_oi, covered, blocked, uncovered,
 total, holders, writers, forward}` or `{status: "not_found"}`.
 
+### `mode="forward_positions"` (v2.1)
+Get the EQUITY FORWARD open position for a stock ticker. Constructs the
+forward ticker (`{TICKER}T` — e.g. `PETR4` → `PETR4T`) and queries
+`derivatives.db` `WHERE SgmtNm = 'EQUITY FORWARD'`, then joins
+`instruments.db` on `TckrSymb` for company name, ISIN, security category,
+and specification. Used by the term skill as the stock-term fallback when
+COTAHIST has no term data (which is always — B3 routes stock term to BTC).
+
+Computes `forward_price_per_share = FwdPric / CurQty` (the average agreed
+forward price per share — the closest thing to a "term price" for stocks).
+
+Graceful degradation:
+- If `derivatives.db` is missing → `{status: "not_synced"}`.
+- If `instruments.db` is missing → returns derivatives data with
+  `company=""`, `isin=""`, `security_category=""`, `specification=""`,
+  `instruments_ok=false`.
+- If the forward ticker isn't in `derivatives.db` → `{status: "not_found"}`.
+- If `FwdPric` or `CurQty` is missing/zero → `forward_price_per_share=null`.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `ticker` | `str` | (required) | Stock ticker (e.g. `PETR4`, `VALE3`). Trailing digits are NOT stripped (`PETR4T` ≠ `PETR3T`). If the ticker already ends in `T`, it is used as-is. |
+
+Returns:
+```python
+{
+  "status": "ok",
+  "ticker": "PETR4T",
+  "underlying": "PETR4",
+  "refdate": "2026-08-21",
+  "company": "PETROLEO BRASILEIRO S.A. PETROBRAS",
+  "isin": "BRPETRTNP008",
+  "security_category": "COMMON EQUITIES FORWARD",
+  "specification": "PN      N2",
+  "open_interest": 1196,
+  "total_quantity": 1358721,
+  "forward_price_aggregate": 58828062.67,
+  "forward_price_per_share": 43.32,
+  "instruments_ok": true
+}
+```
+
 ## Tool Invocation
 
 ```python
@@ -128,8 +170,10 @@ data_source(domain="b3", sub_domain="api", mode="search_company", params='{"name
 # [v2.0] Open positions queries:
 data_source(domain="b3", sub_domain="api", mode="open_positions", params='{"underlying":"PETR4"}')
 data_source(domain="b3", sub_domain="api", mode="lookup_option_positions", params='{"ticker":"PETRG36"}')
+# [v2.1] Forward positions query (term skill fallback):
+data_source(domain="b3", sub_domain="api", mode="forward_positions", params='{"ticker":"PETR4"}')
 ```
 
 ---
 
-*Last updated: 2026-08-24 (v2.1 — hardening: CSV parser + retry + partial data skip + column validation).*
+*Last updated: 2026-08-25 (v2.1 — forward_positions() mode for the term skill's stock-term fallback).*

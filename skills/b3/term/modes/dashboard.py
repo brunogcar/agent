@@ -6,6 +6,22 @@ in 17 years of COTAHIST; B3 routes stock term to BTC) show:
   - Spread Termo vs Spot: info box + spot price chart (90 days)
   - Volume Historico: info box only (no chart -- term volume doesn't exist)
 
+[v6] Forward-data enrichment. The stock fallback now queries the new
+b3.api derivatives.db (DerivativesOpenPosition CSV bulk download) for the
+EQUITY FORWARD contract snapshot (ticker = `{TICKER}T`, e.g. PETR4T).
+The dashboard shows:
+  - Contratos Ativos: forward contract snapshot KPI table (ticker, company,
+    ISIN, security category, forward price per share, open interest, total
+    quantity, aggregate value) + the spot price snapshot (last 5 closes,
+    still useful as the spot reference for spread calc) + a forward-vs-spot
+    spread row when spot is available.
+  - Spread Termo vs Spot: a 1-row comparison table (forward price vs spot
+    price + spread) + the spot price chart (90 days, still useful as
+    reference).
+  - Volume Historico: open position details table (OI, total quantity,
+    forward price) + an info text explaining this is a daily snapshot
+    (not historical volume -- the BTC doesn't publish daily term volume).
+
 No options data (exercise volume) is shown -- that belongs in the options
 skill, not the term skill. Spot price IS shown because it's the underlying
 reference for term contracts (spread = term - spot).
@@ -29,6 +45,7 @@ from data_sources.b3.cotahist.derivatives_query import (
     term_chain, term_history,
 )
 from data_sources.b3.cotahist.query_engine import query as _spot_query
+from data_sources.b3.api.query_engine import forward_positions as _forward_positions
 
 
 # -- Accent colors -----------------------------------------------------------
@@ -36,6 +53,31 @@ _COLOR_TERM   = "#3b82f6"   # blue   -- term price
 _COLOR_SPOT   = "#0d9488"   # teal   -- spot price
 _COLOR_VOLUME = "#f59e0b"   # orange -- volume bars
 _COLOR_SPREAD = "#9ca3af"   # gray   -- spread line (right axis)
+_COLOR_FWD    = "#8b5cf6"   # purple -- forward price (stock fallback)
+
+
+def _format_signed_brl(v) -> str:
+    """Format a value as signed BRL: +R$ 1,53 or -R$ 1,53 (PT-BR)."""
+    if v is None:
+        return "-"
+    try:
+        f = float(v)
+    except (ValueError, TypeError):
+        return str(v)
+    sign = "+" if f >= 0 else "-"
+    return f"{sign}R$ {abs(f):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _format_signed_pct(v) -> str:
+    """Format a value as signed percentage: +3,66% or -3,66% (PT-BR)."""
+    if v is None:
+        return "-"
+    try:
+        f = float(v)
+    except (ValueError, TypeError):
+        return str(v)
+    sign = "+" if f >= 0 else "-"
+    return f"{sign}{abs(f):,.2f}%".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 # -- Context text section (term contract background -- always shown) ---------
@@ -52,11 +94,21 @@ BDI codes: 26 (acao) e 74 (indice) -> derivative_type = "TERM"
 DADOS DISPONIVEIS NO COTAHIST:
 - BDI 74 (indice): IBOV futures -- 134K+ rows, dados completos desde 2010
 - BDI 26 (acao):   0 rows no COTAHIST (17 anos de historico). A B3 ruteia
-  contratos a termo de acoes para o BTC (Balcao Organizado). Para acoes,
-  o dashboard mostra o preco spot (referencia para o calculo do termo)
-  como fallback. Para ver dados de termo de indice, use ticker="IBOV".
+  contratos a termo de acoes para o BTC (Balcao Organizado).
 
-CAMPOS:
+DADOS DE FORWARD (b3.api derivatives.db):
+- Para acoes sem dados de termo no COTAHIST, o dashboard mostra o snapshot
+  do contrato EQUITY FORWARD (ticker = {TICKER}T, ex: PETR4T) da tabela
+  DerivativesOpenPosition da B3. Campos:
+    * OpnIntrst = interesse aberto (contratos ainda em aberto)
+    * CurQty    = quantidade total contratada (em acoes)
+    * FwdPric   = preco forward agregado (R$)
+    * forward_price_per_share = FwdPric / CurQty
+  Join com instruments.db traz Empresa, ISIN, Categoria, Especificacao.
+  ATENCAO: e um snapshot diario (nao historico) -- o BTC nao publica
+  volume diario de termo.
+
+CAMPOS (COTAHIST, BDI 74):
 - close = preco do termo (preco futuro acordado), NAO o spot
 - maturity = data de liquidacao
 - volume = volume financeiro (R$)
@@ -185,20 +237,77 @@ def _build_contracts_tab(ticker: str) -> list[dict]:
         return sections
 
     # -- Fallback: no term data (stock ticker) --
-    sections.append(build_text_section(
-        "Sem dados de termo para esta acao",
-        (
-            f"Nenhum contrato a termo encontrado para {ticker} no COTAHIST.\n\n"
-            f"Motivo: contratos a termo de acoes (BDI 26) nao sao negociados no "
-            f"mercado a vista -- a B3 os ruteia para o BTC (Balcao Organizado). "
-            f"O COTAHIST so tem termo de indices (BDI 74 = IBOV futures, 134K+ rows).\n\n"
-            f"Para ver dados de termo de indice, use: ticker='IBOV'\n\n"
-            f"Como fallback, mostramos abaixo o preco spot recente de {ticker} "
-            f"(preco spot e a referencia para o calculo do termo: spread = termo - spot)."
-        ),
-    ))
+    # [v6] Forward-data enrichment: query b3.api derivatives.db for the
+    # EQUITY FORWARD contract snapshot (ticker = {TICKER}T). If found,
+    # show the forward contract KPI table + spot price snapshot + spread.
+    fwd = _safe_query(_forward_positions, ticker=ticker)
+    fwd_ok = fwd.get("status") == "ok"
 
+    if fwd_ok:
+        sections.append(build_text_section(
+            f"Sem dados de termo no COTAHIST -- usando forward ({fwd.get('ticker', ticker)})",
+            (
+                f"Nenhum contrato a termo (BDI 26) para {ticker} no COTAHIST -- "
+                f"a B3 ruteia termo de acoes para o BTC (Balcao Organizado).\n\n"
+                f"Como fallback, exibimos abaixo o snapshot do contrato EQUITY FORWARD "
+                f"({fwd.get('ticker', ticker)}) da tabela DerivativesOpenPosition da B3 "
+                f"(b3.api derivatives.db). O forward e o equivalente funcional do termo "
+                f"para acoes: acordo bilateral de compra/venda a preco fixo em data futura.\n\n"
+                f"Snapshot de {fwd.get('refdate', '-')}. "
+                f"Atencao: e um snapshot diario (nao historico) -- o BTC nao publica "
+                f"volume diario de termo. Para historico, use ticker='IBOV' (indice)."
+            ),
+        ))
+
+        # Forward contract snapshot KPI table (2 cols: Campo, Valor).
+        fwd_rows: list[list] = [
+            ["Contrato",                      fwd.get("ticker", "")],
+            ["Empresa",                       fwd.get("company", "") or "-"],
+            ["ISIN",                          fwd.get("isin", "") or "-"],
+            ["Categoria",                     fwd.get("security_category", "") or "-"],
+            ["Especificacao",                 fwd.get("specification", "") or "-"],
+            ["Preco Forward (poracao)",       format_brl(fwd.get("forward_price_per_share"))],
+            ["Interesse Aberto",              f"{format_int(fwd.get('open_interest'))} contratos"],
+            ["Quantidade Total",              f"{format_int(fwd.get('total_quantity'))} acoes"],
+            ["Valor Total (FwdPric)",         format_brl(fwd.get("forward_price_aggregate"))],
+        ]
+        sections.append(build_table_section(
+            f"Snapshot Forward -- {fwd.get('ticker', ticker)}",
+            fwd_rows,
+            ["Campo", "Valor"],
+            description=(
+                f"Snapshot diario do contrato EQUITY FORWARD {fwd.get('ticker', ticker)} "
+                f"(underlying: {ticker}). "
+                f"Preco Forward poracao = FwdPric (agregado) / CurQty (qtde total). "
+                f"Interesse Aberto = contratos ainda em aberto. "
+                f"Fonte: b3.api derivatives.db (DerivativesOpenPosition CSV bulk download) "
+                f"+ instruments.db (join por TckrSymb)."
+            ),
+        ))
+    else:
+        # Forward data not available (derivatives.db not synced, or no
+        # EQUITY FORWARD entry for this ticker). Show the legacy info box.
+        sections.append(build_text_section(
+            "Sem dados de termo para esta acao",
+            (
+                f"Nenhum contrato a termo encontrado para {ticker} no COTAHIST "
+                f"(BDI 26 = 0 rows; a B3 ruteia termo de acoes para o BTC).\n\n"
+                f"Tentamos tambem o snapshot EQUITY FORWARD ({ticker}T) no "
+                f"b3.api derivatives.db -- status: {fwd.get('status', 'unknown')}. "
+                f"Execute o sync da b3.api (derivatives + instruments) para habilitar "
+                f"o fallback de forward: "
+                f'data_source(domain="b3", sub_domain="api", mode="sync", '
+                f'params=\'{{"table":"derivatives"}}\')\n\n'
+                f"Como fallback, mostramos abaixo o preco spot recente de {ticker} "
+                f"(preco spot e a referencia para o calculo do termo: spread = termo - spot)."
+            ),
+        ))
+
+    # Spot price snapshot (last 5 closes) -- always useful context (the
+    # spot is the underlying reference for the spread calc).
     spot_rows = _spot_history(ticker, days=10)
+    spot_close = spot_rows[-1]["close"] if spot_rows else None
+
     if spot_rows:
         last5 = spot_rows[-5:]
         last5.reverse()  # most recent first
@@ -213,9 +322,36 @@ def _build_contracts_tab(ticker: str) -> list[dict]:
             description=(
                 f"Ultimos {len(last5)} pregoes de {ticker} no mercado a vista. "
                 "Dados do cotahist (tabela de acoes). "
-                "Fallback exibido porque nao ha dados de termo para esta acao."
+                "Preco spot e a referencia para o calculo do spread forward."
             ),
         ))
+
+        # Forward-vs-spot spread row (only if both forward + spot available).
+        if fwd_ok:
+            fwd_per_share = fwd.get("forward_price_per_share")
+            if fwd_per_share is not None and spot_close is not None:
+                try:
+                    spread = round(float(fwd_per_share) - float(spot_close), 4)
+                    spread_pct = (spread / float(spot_close) * 100.0) if float(spot_close) else None
+                except (ValueError, TypeError):
+                    spread = None
+                    spread_pct = None
+                if spread is not None:
+                    sections.append(build_table_section(
+                        f"Spread Forward vs Spot -- {ticker}",
+                        [[
+                            format_brl(fwd_per_share),
+                            format_brl(spot_close),
+                            _format_signed_brl(spread),
+                            _format_signed_pct(spread_pct) if spread_pct is not None else "-",
+                        ]],
+                        ["Preco Forward (poracao)", "Spot (ultimo close)", "Spread (R$)", "Spread (%)"],
+                        description=(
+                            f"Spread = Preco Forward - Preco Spot. "
+                            f"Positivo = mercado em agio (contango); negativo = desagio (backwardation). "
+                            f"Spot = ultimo close de {ticker}; Forward = FwdPric/CurQty de {fwd.get('ticker', ticker)}."
+                        ),
+                    ))
     else:
         sections.append(build_error_section(
             "Preco Spot Recente",
@@ -383,16 +519,82 @@ def _build_spread_tab(ticker: str, days: int = 90) -> list[dict]:
         return sections
 
     # -- Fallback: no term data (stock ticker) --
-    sections.append(build_text_section(
-        "Sem dados de termo -- mostrando preco spot",
-        (
-            f"Nenhum historico de termo para {ticker} (BDI 26 = 0 rows no COTAHIST). "
-            f"Como fallback, exibimos o preco spot de {ticker} nos ultimos {days} pregoes. "
-            f"Preco spot e a referencia para o calculo do termo (spread = termo - spot)."
-        ),
-    ))
+    # [v6] Forward-data enrichment: show a forward-vs-spot comparison table
+    # (1 row, today's snapshot) before the spot price chart (still useful
+    # as reference for the 90-day window).
+    fwd = _safe_query(_forward_positions, ticker=ticker)
+    fwd_ok = fwd.get("status") == "ok"
 
     spot_rows = _spot_history(ticker, days=days)
+    spot_close = spot_rows[-1]["close"] if spot_rows else None
+
+    if fwd_ok:
+        sections.append(build_text_section(
+            "Sem historico de termo -- comparando Forward vs Spot",
+            (
+                f"Sem historico de termo para {ticker} (BDI 26 = 0 rows no COTAHIST; "
+                f"B3 ruteia para o BTC). Como fallback, comparamos o Preco Forward "
+                f"({fwd.get('ticker', ticker)}, snapshot diario do b3.api derivatives.db) "
+                f"com o Preco Spot (ultimo close do cotahist). "
+                f"Abaixo, o grafico do preco spot nos ultimos {days} pregoes como referencia."
+            ),
+        ))
+
+        # 1-row comparison table: Forward vs Spot + Spread.
+        fwd_per_share = fwd.get("forward_price_per_share")
+        if fwd_per_share is not None and spot_close is not None:
+            try:
+                spread = round(float(fwd_per_share) - float(spot_close), 4)
+                spread_pct = (spread / float(spot_close) * 100.0) if float(spot_close) else None
+            except (ValueError, TypeError):
+                spread = None
+                spread_pct = None
+
+            sections.append(build_table_section(
+                f"Forward vs Spot (snapshot) -- {ticker}",
+                [[
+                    fwd.get("refdate", "-"),
+                    format_brl(fwd_per_share),
+                    format_brl(spot_close),
+                    _format_signed_brl(spread) if spread is not None else "-",
+                    _format_signed_pct(spread_pct) if spread_pct is not None else "-",
+                ]],
+                ["Data (forward)", "Preco Forward (poracao)", "Spot (ultimo close)", "Spread (R$)", "Spread (%)"],
+                description=(
+                    f"Snapshot diario: Forward {fwd.get('ticker', ticker)} (b3.api) vs "
+                    f"Spot {ticker} (cotahist, ultimo close). "
+                    f"Spread = Forward - Spot. Positivo = agio (contango); negativo = desagio (backwardation)."
+                ),
+            ))
+        else:
+            # Forward price per share not available -- show what we have.
+            sections.append(build_table_section(
+                f"Forward Snapshot -- {ticker}",
+                [
+                    ["Contrato",                  fwd.get("ticker", "")],
+                    ["Preco Forward (poracao)",   format_brl(fwd_per_share)],
+                    ["Interesse Aberto",          f"{format_int(fwd.get('open_interest'))} contratos"],
+                    ["Quantidade Total",          f"{format_int(fwd.get('total_quantity'))} acoes"],
+                ],
+                ["Campo", "Valor"],
+                description=(
+                    f"Snapshot do contrato EQUITY FORWARD {fwd.get('ticker', ticker)}. "
+                    f"Preco forward poracao indisponivel (FwdPric ou CurQty ausente) -- "
+                    f"nao foi possivel calcular o spread vs spot."
+                ),
+            ))
+    else:
+        sections.append(build_text_section(
+            "Sem dados de termo -- mostrando preco spot",
+            (
+                f"Nenhum historico de termo para {ticker} (BDI 26 = 0 rows no COTAHIST). "
+                f"Tentamos tambem o snapshot EQUITY FORWARD ({ticker}T) no b3.api "
+                f"derivatives.db -- status: {fwd.get('status', 'unknown')}. "
+                f"Como fallback, exibimos o preco spot de {ticker} nos ultimos {days} pregoes. "
+                f"Preco spot e a referencia para o calculo do termo (spread = termo - spot)."
+            ),
+        ))
+
     if not spot_rows:
         sections.append(build_error_section(
             "Preco Spot",
@@ -433,7 +635,7 @@ def _build_spread_tab(ticker: str, days: int = 90) -> list[dict]:
                 },
             },
             "plugins": {
-                "title": {"display": True, "text": f"Preco Spot -- {ticker} (fallback)"},
+                "title": {"display": True, "text": f"Preco Spot -- {ticker} (referencia)"},
                 "legend": {"display": True, "position": "top"},
             },
         },
@@ -444,7 +646,8 @@ def _build_spread_tab(ticker: str, days: int = 90) -> list[dict]:
         "title": f"Preco Spot -- {ticker}",
         "description": (
             f"Preco spot (close) de {ticker} nos ultimos {len(spot_rows)} pregoes. "
-            "Fallback exibido porque nao ha dados de termo para esta acao."
+            "Exibido como referencia para o calculo do spread forward (snapshot diario "
+            "do b3.api nao tem historico de termo)."
         ),
         "chart_data": chart_data,
         "price_range_selector": True,
@@ -536,16 +739,65 @@ def _build_volume_tab(ticker: str, days: int = 90) -> list[dict]:
         return sections
 
     # -- Fallback: no term data (stock ticker) --
-    # Info box only -- no chart (term volume doesn't exist for stocks).
-    sections.append(build_text_section(
-        "Sem dados de volume de termo",
-        (
-            f"Nenhum volume de termo para {ticker} (BDI 26 = 0 rows no COTAHIST). "
-            f"Contratos a termo de acoes sao negociados no BTC (Balcao Organizado), "
-            f"nao no mercado a vista -- o COTAHIST nao registra esse volume.\n\n"
-            f"Para ver volume de termo de indice, use: ticker='IBOV'"
-        ),
-    ))
+    # [v6] Forward-data enrichment: show the open position details (OI,
+    # total quantity, forward price) from b3.api derivatives.db. The BTC
+    # doesn't publish daily term volume, so we show the daily snapshot of
+    # the open forward contract position instead.
+    fwd = _safe_query(_forward_positions, ticker=ticker)
+    fwd_ok = fwd.get("status") == "ok"
+
+    if fwd_ok:
+        sections.append(build_text_section(
+            "Sem historico de volume -- mostrando snapshot diario do forward",
+            (
+                f"Nenhum volume de termo para {ticker} (BDI 26 = 0 rows no COTAHIST; "
+                f"a B3 ruteia termo de acoes para o BTC, que nao publica volume diario).\n\n"
+                f"Como alternativa, exibimos abaixo o snapshot diario da posicao em aberto "
+                f"do contrato EQUITY FORWARD ({fwd.get('ticker', ticker)}) da tabela "
+                f"DerivativesOpenPosition da B3 (b3.api derivatives.db). "
+                f"E um snapshot de hoje (nao historico) -- mostra o estoque de contratos "
+                f"em aberto, nao o fluxo diario.\n\n"
+                f"Para historico de volume de termo, use ticker='IBOV' (indice, BDI 74)."
+            ),
+        ))
+
+        # Open position details table (1 row: today's snapshot).
+        pos_rows: list[list] = [[
+            fwd.get("refdate", "-"),
+            fwd.get("ticker", ""),
+            format_int(fwd.get("open_interest")),
+            format_int(fwd.get("total_quantity")),
+            format_brl(fwd.get("forward_price_aggregate")),
+            format_brl(fwd.get("forward_price_per_share")),
+        ]]
+        sections.append(build_table_section(
+            f"Posicao em Aberto (Forward) -- {fwd.get('ticker', ticker)}",
+            pos_rows,
+            ["Data", "Contrato", "Interesse Aberto", "Qtde Total (acoes)", "Valor Total (R$)", "Preco Forward/acao"],
+            description=(
+                f"Snapshot diario da posicao em aberto do contrato EQUITY FORWARD "
+                f"{fwd.get('ticker', ticker)} (underlying: {ticker}). "
+                f"Interesse Aberto = contratos ainda em aberto (OpnIntrst). "
+                f"Qtde Total = acoes contratadas (CurQty). "
+                f"Valor Total = preco forward agregado (FwdPric). "
+                f"Preco Forward/acao = FwdPric / CurQty. "
+                f"Fonte: b3.api derivatives.db."
+            ),
+        ))
+    else:
+        sections.append(build_text_section(
+            "Sem dados de volume de termo",
+            (
+                f"Nenhum volume de termo para {ticker} (BDI 26 = 0 rows no COTAHIST). "
+                f"Contratos a termo de acoes sao negociados no BTC (Balcao Organizado), "
+                f"nao no mercado a vista -- o COTAHIST nao registra esse volume.\n\n"
+                f"Tentamos tambem o snapshot EQUITY FORWARD ({ticker}T) no b3.api "
+                f"derivatives.db -- status: {fwd.get('status', 'unknown')}. "
+                f"Execute o sync da b3.api (derivatives + instruments) para habilitar "
+                f"o fallback de posicao em aberto.\n\n"
+                f"Para ver volume de termo de indice, use: ticker='IBOV'"
+            ),
+        ))
     return sections
 
 
@@ -557,15 +809,20 @@ def _build_volume_tab(ticker: str, days: int = 90) -> list[dict]:
         "Contratos Ativos (active term contracts table), "
         "Spread Termo vs Spot (daily term price vs spot price + spread), "
         "Volume Historico (daily term volume bar chart). "
-        "[v5] Stock tickers without term data (BDI 26 = 0 rows) show spot price "
-        "fallback (term-relevant reference). Index tickers (IBOV) show full term "
-        "data (134K+ rows). Source: cotahist.db (cotahist_derivatives table)."
+        "[v6] Stock tickers without term data (BDI 26 = 0 rows) show the "
+        "EQUITY FORWARD contract snapshot from b3.api derivatives.db "
+        "(ticker = {TICKER}T, e.g. PETR4T) as the term-equivalent fallback, "
+        "with forward price per share + spot price + spread. Index tickers "
+        "(IBOV) show full term data (134K+ rows). "
+        "Sources: cotahist.db (cotahist_derivatives) + b3.api derivatives.db "
+        "(EQUITY FORWARD fallback) + instruments.db (company/ISIN join)."
     ),
     params={
         "ticker": (
             "str. Stock ticker (e.g. PETR4) or index (e.g. IBOV). "
-            "Stock term data (BDI 26) is NOT in COTAHIST -- dashboard shows spot "
-            "price fallback. Index term data (BDI 74) is available for IBOV."
+            "Stock term data (BDI 26) is NOT in COTAHIST -- dashboard shows "
+            "the EQUITY FORWARD snapshot fallback (b3.api derivatives.db). "
+            "Index term data (BDI 74) is available for IBOV."
         ),
         "days": "int. Lookback window in trading days. Default: 90.",
     },
@@ -582,8 +839,10 @@ def _build_volume_tab(ticker: str, days: int = 90) -> list[dict]:
 def dashboard(ticker: str = "PETR4", days: int = 90) -> dict:
     """Build the 3-tab B3 term (a termo) dashboard for a single ticker.
 
-    [v5] Stock tickers without term data show spot price fallback (term-relevant
-    reference). Index tickers (IBOV) show full term data.
+    [v6] Stock tickers without COTAHIST term data fall back to the EQUITY
+    FORWARD snapshot from b3.api derivatives.db (forward price per share,
+    open interest, total quantity) + spot price + spread. Index tickers
+    (IBOV) show full term data from COTAHIST.
 
     Args:
         ticker: Stock ticker (e.g. PETR4, VALE3) or index (e.g. IBOV).

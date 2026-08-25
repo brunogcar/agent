@@ -117,6 +117,32 @@ MANIFEST = {
                 'data_source(domain="b3", sub_domain="api", mode="lookup_option_positions", params=\'{"ticker":"PETRA201"}\')',
             ],
         },
+        # [v2.1] Forward positions query — EQUITY FORWARD segment in
+        # derivatives.db. Used by the term skill as a fallback when
+        # COTAHIST has no term data (which is always for stocks — B3
+        # routes stock term to BTC). Returns the forward contract
+        # snapshot (open interest, total quantity, forward price/share)
+        # enriched with company name + ISIN from instruments.db.
+        "forward_positions": {
+            "description": (
+                "Get the EQUITY FORWARD open position for a stock ticker "
+                "(open interest, total contracted quantity, aggregate + "
+                "per-share forward price). Queries derivatives.db "
+                "(SgmtNm = 'EQUITY FORWARD') for the forward ticker "
+                "({TICKER}T — e.g. PETR4 -> PETR4T) and joins instruments.db "
+                "for company name, ISIN, security category, specification. "
+                "Used by the term skill as the stock-term fallback."
+            ),
+            "include_in_all": False,
+            "params": {
+                "ticker": "str. Required. Stock ticker (e.g. PETR4, VALE3). "
+                          "Trailing digits are NOT stripped (PETR4T != PETR3T). "
+                          "If the ticker already ends in 'T', it is used as-is.",
+            },
+            "examples": [
+                'data_source(domain="b3", sub_domain="api", mode="forward_positions", params=\'{"ticker":"PETR4"}\')',
+            ],
+        },
     },
 }
 
@@ -170,6 +196,12 @@ def route(mode: str = "", **kwargs) -> dict:
             sig = inspect.signature(_lookup_pos)
             filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
             return _lookup_pos(**filtered)
+
+        elif mode == "forward_positions":
+            from data_sources.b3.api.query_engine import forward_positions as _fwd_pos
+            sig = inspect.signature(_fwd_pos)
+            filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
+            return _fwd_pos(**filtered)
 
         else:
             return {"status": "error", "error": f"Mode '{mode}' not implemented."}
