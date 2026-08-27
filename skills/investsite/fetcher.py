@@ -118,10 +118,13 @@ def _browser_login(email: str, password: str) -> str | None:
     Opens the login page, fills email + password, waits for Cloudflare
     Turnstile to auto-solve, submits, and extracts the SESSION_ID cookie.
 
+    NOTE: Cloudflare Turnstile detects headless browsers and often won't
+    auto-solve. This is a best-effort fallback — the primary auth path
+    is INVESTSITE_SESSION_ID (manual cookie from browser).
+
     Returns the cookie value, or None if login failed.
     """
     try:
-        # Lazy import to avoid Playwright dependency at module load time
         from tools.browser_ops.factory import _get_page
         from tools.browser_ops.loop import _run_browser_async
         from tools.browser_ops.state import _browser_lock
@@ -131,45 +134,58 @@ def _browser_login(email: str, password: str) -> str | None:
             with _browser_lock:
                 page = _run_browser_async(_get_page("", True), timeout=60)
 
-                # Step 1: Navigate to login page
-                await page.goto(_LOGIN_URL, wait_until="networkidle", timeout=30000)
+                # Step 1: Navigate to login page.
+                # [fix] Use "domcontentloaded" NOT "networkidle" — Turnstile
+                # makes continuous background requests so "networkidle" never
+                # fires, causing a hang.
+                await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=20000)
                 _progress("[investsite] Login page loaded.")
 
-                # Step 2: Fill email + password
+                # Step 2: Wait for form inputs to be ready (short timeout).
+                try:
+                    await page.wait_for_selector('input[name="email"]', timeout=5000)
+                    await page.wait_for_selector('input[name="password"]', timeout=5000)
+                except Exception:
+                    _progress("[investsite] Login form not found — page may have changed.")
+                    return None
+
+                # Step 3: Fill email + password
                 await page.fill('input[name="email"]', email)
                 await page.fill('input[name="password"]', password)
                 _progress("[investsite] Credentials filled.")
 
-                # Step 3: Wait for Cloudflare Turnstile to render + auto-solve.
+                # Step 4: Wait for Cloudflare Turnstile to auto-solve.
                 # Turnstile injects a hidden input cf-turnstile-response when solved.
-                # Wait up to 15 seconds for it to appear.
+                # In headless mode, this often DOESN'T happen (Turnstile detects
+                # automation). Short timeout (10s) — fail fast, don't hang.
                 try:
                     await page.wait_for_selector(
                         'input[name="cf-turnstile-response"]',
-                        state="visible",
-                        timeout=15000
+                        state="attached",
+                        timeout=10000
                     )
-                    _progress("[investsite] Turnstile solved (token visible).")
+                    _progress("[investsite] Turnstile solved (token present).")
                 except Exception:
-                    # Turnstile might be "invisible" mode — try submitting anyway
-                    _progress("[investsite] Turnstile token not detected — attempting submit anyway.")
+                    _progress("[investsite] Turnstile did not auto-solve (headless detected). "
+                              "Falling back — set INVESTSITE_SESSION_ID in .env manually.")
+                    return None
 
-                # Step 4: Click submit
+                # Step 5: Click submit
                 await page.click('button[type="submit"]')
 
-                # Step 5: Wait for redirect away from login.php (success) or
-                # error message (failure). Give it 10 seconds.
+                # Step 6: Wait for redirect away from login.php (success).
+                # Short timeout (8s) — if Turnstile solved, redirect is fast.
                 try:
                     await page.wait_for_url(
                         lambda url: "login.php" not in url,
-                        timeout=10000
+                        timeout=8000
                     )
-                    _progress(f"[investsite] Redirected to: {page.url}")
+                    _progress(f"[investsite] Login successful — redirected to: {page.url}")
                 except Exception:
-                    _progress("[investsite] Still on login page — login may have failed.")
+                    _progress("[investsite] Still on login page — login failed.")
                     return None
 
-                # Step 6: Extract SESSION_ID cookie
+                # Step 7: Extract SESSION_ID cookie
                 cookies = await page.context.cookies(urls=[_BASE_URL])
                 for cookie in cookies:
                     if cookie.get("name") == "SESSION_ID":
@@ -178,7 +194,11 @@ def _browser_login(email: str, password: str) -> str | None:
                 _progress("[investsite] SESSION_ID cookie not found after login.")
                 return None
 
-        return asyncio.run(_do_login())
+        # [fix] Run on the BROWSER event loop (not asyncio.run which creates
+        # a new loop). The page object was created on the browser daemon
+        # thread's loop — Playwright objects can't be used from a different
+        # event loop (causes deadlock).
+        return _run_browser_async(_do_login(), timeout=60)
 
     except ImportError:
         _progress("[investsite] browser_ops not available — cannot do automated login.")

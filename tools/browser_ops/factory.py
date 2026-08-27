@@ -30,8 +30,12 @@ async def _get_or_create_context(trace_id: str, headless: bool = True):
         return ctx
 
     browser = await _launch_browser(headless)
+    # [fix] Removed downloads_path — was removed in Playwright 1.40+ (Nov 2023).
+    # Downloads are now handled per-page via page.expect_download() if needed.
+    # No action in browser_ops/ currently uses downloads, so this is a clean removal.
     ctx = await browser.new_context(
-        downloads_path=str(cfg.workspace_root / "browser_downloads" / key)
+        accept_downloads=True,
+        viewport={"width": 1280, "height": 720},
     )
     _st._contexts[key] = (ctx, time.time())
     return ctx
