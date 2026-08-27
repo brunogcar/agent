@@ -1,5 +1,43 @@
 # DDM Fluxo Skill — Changelog
 
+## v1.1 — 2026-08-27
+
+### Dashboard KPI + table improvements
+
+**KPI boxes — 2 rows of 5 (10 total):**
+- **Row 1 (YTD):** `Ultima data` (DD/MM/YYYY) + 4 `Liquido anual {investor}` —
+  year-to-date net per investor (sum of daily values where `ref_date` starts
+  with the current year). Values auto-scale: ≥1B reais → `bi`, <1B → `mi`.
+  Replaces the old 4 `Total {investor}` KPIs that showed since-inception totals.
+- **Row 2 (Rolling 365 days):** `Dias na base` (total day count in DB) + 4
+  `Liquido 365d {investor}` — last 365 days net per investor (sum of daily
+  values where `ref_date >= last_date - 365 days`).
+
+**Number formatting — `format_brl_from_millions()` (new helper):**
+- Added `skills/ddm/fluxo/helpers.py:format_brl_from_millions(value)` — wraps
+  `core/br_validator.py:format_brl()` with a millions→units conversion
+  (×1_000_000) and EN→PT-BR suffix mapping (`B`→`bi`, `M`→`mi`, `T`→`tri`).
+- Also moves the negative sign from before `R$` to after (br_validator produces
+  `-R$ 3,86 B`, we produce `R$ -3,86 bi` to match the existing `format_brl`
+  convention used in table cells).
+- Examples: `20017.83` → `"R$ 20,02 bi"`, `44.94` → `"R$ 44,94 mi"`,
+  `-39972.79` → `"R$ -39,97 bi"`.
+- Table cells keep `format_brl()` (full precision in millions) for row-by-row
+  comparison; KPI cards use `format_brl_from_millions()` for readability.
+
+**Table sorting — DESC by date (newest first):**
+- `build_fluxo_table()` + `build_investor_table()` in `report.py` now sort
+  observations DESC by `ref_date` BEFORE building rows. Previously rows were
+  emitted in ASC order (oldest first) while the header showed a `sort-desc`
+  arrow — the JS sorter only fires on click, not on page load, causing a
+  visual mismatch.
+- Applies to all 13 tables in the dashboard:
+  - Tab 1 Fluxo: 1 daily table
+  - Tabs 2–5: 3 subtabs each (Diario, Mensal, Anual) = 12 investor tables
+- The Mensal subtab now passes `date_label` (`"Ago/2026"`) for display while
+  keeping `ref_date` (`"2026-08"`) for sorting — previously showed `"2026-08"`
+  raw in the Data column.
+
 ## v1.0 — 2025-01
 
 Initial release. 5-tab dashboard with multi-subtab structure per tab.

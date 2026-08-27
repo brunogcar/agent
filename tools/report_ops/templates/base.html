@@ -385,8 +385,20 @@
           if (isNaN(aVal)) aVal = -Infinity;
           if (isNaN(bVal)) bVal = -Infinity;
         } else {
-          aVal = (aCell.textContent || '').trim();
-          bVal = (bCell.textContent || '').trim();
+          // Prefer data-value attribute when present (e.g. ISO YYYY-MM-DD
+          // for date cells displayed as DD/MM/YYYY). Sorting by textContent
+          // on DD/MM/YYYY gives wrong chronological order because the day
+          // prefix dominates the comparison. data-value carries the ISO
+          // date which sorts correctly as a string.
+          var aRaw = aCell.getAttribute('data-value');
+          var bRaw = bCell.getAttribute('data-value');
+          if (aRaw !== null && bRaw !== null) {
+            aVal = aRaw;
+            bVal = bRaw;
+          } else {
+            aVal = (aCell.textContent || '').trim();
+            bVal = (bCell.textContent || '').trim();
+          }
         }
 
         if (aVal < bVal) return isAscending ? 1 : -1;

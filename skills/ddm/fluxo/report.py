@@ -119,9 +119,12 @@ def build_fluxo_table(title: str, observations: list[dict],
                       description: str = "") -> dict:
     """Build the sortable fluxo table with ALL investor columns.
 
-    One row per ref_date. The dashboard passes observations in ASC order
-    (oldest first); the table's default_sort = column 0 DESC means the
-    user sees the newest dates first.
+    One row per ref_date. Observations are sorted DESC by ref_date
+    (newest first) BEFORE building rows — so the table renders with
+    the latest date at the top, matching the default_sort = Data DESC
+    indicator on the header. Previously the table emitted rows in ASC
+    order (oldest first) while the header showed a DESC arrow, causing
+    a visual mismatch (the JS sorter only fires on click, not on load).
 
     Columns: Data | Estrangeiro | Institucional | Pessoa fisica |
              Inst. Financeira | Outros
@@ -138,8 +141,16 @@ def build_fluxo_table(title: str, observations: list[dict],
     column_align = ["left", "right", "right", "right", "right", "right"]
     sort_types = ["text", "number", "number", "number", "number", "number"]
 
+    # [v2] Sort DESC by ref_date (newest first) so the rendered table
+    # matches the default_sort = Data DESC indicator on the header.
+    sorted_obs = sorted(
+        observations,
+        key=lambda o: o.get("ref_date") or "",
+        reverse=True,
+    )
+
     rows: list[list] = []
-    for obs in observations:
+    for obs in sorted_obs:
         row = [
             _date_cell(obs.get("ref_date")),
             _value_cell(obs.get("estrangeiro")),
@@ -522,6 +533,16 @@ def build_investor_table(title: str, observations: list[dict],
     Sort types: text | number
     negative_red: True.
 
+    [v2] Observations are sorted DESC by ref_date (newest first) BEFORE
+    building rows — so the table renders with the latest date at the top,
+    matching the default_sort indicator. Applies to all 3 subtabs that
+    use this builder:
+      - Diario: ref_date = "2026-08-19" (ISO date)
+      - Mensal: ref_date = "2026-08" (month, set from the "month" field
+                in _build_investor_subtab_monthly)
+      - Anual:  ref_date = "2026-08-19" (ISO date from annual_cumulative)
+    All three formats sort correctly as strings in DESC order.
+
     Args:
         title:        Section title.
         observations: List of {"ref_date", "value"} dicts.
@@ -533,10 +554,28 @@ def build_investor_table(title: str, observations: list[dict],
     column_align = ["left", "right"]
     sort_types = ["text", "number"]
 
+    # [v2] Sort DESC by ref_date (newest first).
+    sorted_obs = sorted(
+        observations,
+        key=lambda o: o.get("ref_date") or "",
+        reverse=True,
+    )
+
     rows: list[list] = []
-    for obs in observations:
+    for obs in sorted_obs:
+        # [v2] Use date_label for display if present (Mensal subtab passes
+        # "Ago/2026" as the display label while keeping ref_date="2026-08"
+        # for sorting). Otherwise format ref_date as DD/MM/YYYY.
+        date_label = obs.get("date_label")
+        if date_label:
+            cell: dict = {"text": date_label}
+            if obs.get("ref_date"):
+                cell["data-value"] = str(obs["ref_date"])
+            date_cell = cell
+        else:
+            date_cell = _date_cell(obs.get("ref_date"))
         row = [
-            _date_cell(obs.get("ref_date")),
+            date_cell,
             _value_cell(obs.get("value")),
         ]
         rows.append(row)

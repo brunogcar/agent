@@ -10,7 +10,8 @@ Verifies:
   - Diario subtab has bar chart + table
   - Mensal subtab has line chart + table
   - Anual subtab has line chart + table
-  - KPIs are at top level (5 KPIs: 1 date + 4 investor totals)
+  - [v2] KPIs are at top level (10 KPIs: 1 date + 4 YTD + 1 day count + 4 rolling-365d)
+  - [v2] Tables sorted DESC by ref_date (newest first) server-side
   - Fluxo table has sortable=True + default_sort by Data DESC
   - Investor table has sortable=True + default_sort by Data DESC
   - Both tables have negative_red=True
@@ -221,26 +222,33 @@ def test_dashboard_annual_subtab_has_chart_and_table(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────
 
 def test_dashboard_kpis_at_top_level(monkeypatch):
-    """KPIs are at top level (not per-tab)."""
+    """KPIs are at top level (not per-tab).
+
+    [v2] Now 10 KPIs: 2 rows of 5.
+      Row 1 (YTD): 1 date + 4 investor YTD net
+      Row 2 (365d): 1 day count + 4 investor last-365-days net
+    """
     _patch_query(monkeypatch)
     from skills.ddm.fluxo.modes import dashboard
     res = dashboard.dashboard()
     assert "kpis" in res
-    # 1 date KPI + 4 investor-total KPIs = 5 KPIs.
-    assert len(res["kpis"]) == 5
+    # 1 date + 4 YTD + 1 day count + 4 rolling-365d = 10 KPIs.
+    assert len(res["kpis"]) == 10
     for t in res["tabs"]:
         assert "kpis" not in t
 
 
 def test_dashboard_kpis_have_expected_labels(monkeypatch):
-    """KPIs include 'Ultima data' + 4 investor totals."""
+    """KPIs include 'Ultima data' + 4 YTD + 'Dias na base' + 4 rolling 365d."""
     _patch_query(monkeypatch)
     from skills.ddm.fluxo.modes import dashboard
     res = dashboard.dashboard()
     labels = [k["label"] for k in res["kpis"]]
     assert "Ultima data" in labels
+    assert "Dias na base" in labels
     for _, label in _INVESTORS:
-        assert f"Total {label}" in labels
+        assert f"Liquido anual {label}" in labels
+        assert f"Liquido 365d {label}" in labels
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -311,26 +319,26 @@ def test_fluxo_table_value_cells_have_data_value(monkeypatch):
 def test_fluxo_table_date_cell_displays_pt_br(monkeypatch):
     """Date cells display as DD/MM/YYYY (PT-BR format).
 
-    The dashboard's fluxo_data() returns observations ASC (oldest first),
-    so the table's rows[0] is the oldest date (2026-08-17 in the mock).
-    The default_sort = Data DESC will reorder the table on the client
-    side via JS, but the raw HTML preserves the source order.
+    [v2] The table is now sorted DESC by ref_date server-side (newest first),
+    so rows[0] is the newest date (2026-08-19 in the mock), not the oldest.
+    Previously rows were in ASC order and the default_sort = Data DESC was
+    only applied client-side via JS on click.
     """
     table = _get_fluxo_table(monkeypatch)
     first_row = table["rows"][0]
     date_cell = first_row[0]
-    assert date_cell["text"] == "17/08/2026"
-    assert date_cell["data-value"] == "2026-08-17"
+    assert date_cell["text"] == "19/08/2026"
+    assert date_cell["data-value"] == "2026-08-19"
 
 
 def test_fluxo_table_value_cell_has_data_value(monkeypatch):
     """Numeric value cell carries the raw float in data-value (for sortTable)."""
     table = _get_fluxo_table(monkeypatch)
     first_row = table["rows"][0]
-    # First row (oldest date 2026-08-17): estrangeiro = -496.07.
+    # [v2] First row (newest date 2026-08-19): estrangeiro = -1582.35.
     estrangeiro_cell = first_row[1]
     assert estrangeiro_cell["text"].startswith("R$ ")
-    assert estrangeiro_cell["data-value"] == "-496.070000"
+    assert estrangeiro_cell["data-value"] == "-1582.350000"
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -602,7 +610,8 @@ _NEG = "#ef4444"
 def test_fluxo_table_negative_cell_has_red_color(monkeypatch):
     """Negative value cells carry cell["color"] = red.
 
-    Mock row 0 (2026-08-17): estrangeiro = -496.07 (negative)."""
+    [v2] Table is now sorted DESC: rows[0] = 2026-08-19 (newest).
+    Mock row (2026-08-19): estrangeiro = -1582.35 (negative)."""
     table = _get_fluxo_table(monkeypatch)
     first_row = table["rows"][0]
     estrangeiro_cell = first_row[1]  # col 1 = Estrangeiro
@@ -612,7 +621,8 @@ def test_fluxo_table_negative_cell_has_red_color(monkeypatch):
 def test_fluxo_table_positive_cell_has_no_color(monkeypatch):
     """Positive value cells do NOT carry cell["color"] (render in default).
 
-    Mock row 0 (2026-08-17): institucional = 71.25 (positive)."""
+    [v2] Table is now sorted DESC: rows[0] = 2026-08-19 (newest).
+    Mock row (2026-08-19): institucional = 1029.81 (positive)."""
     table = _get_fluxo_table(monkeypatch)
     first_row = table["rows"][0]
     institucional_cell = first_row[2]  # col 2 = Institucional
@@ -622,7 +632,8 @@ def test_fluxo_table_positive_cell_has_no_color(monkeypatch):
 def test_fluxo_table_mixed_sign_row_colors(monkeypatch):
     """Row with mixed signs: negatives get red, positives don't.
 
-    Mock row 1 (2026-08-18): estrangeiro=-1782.10 (neg), institucional=
+    [v2] Table is now sorted DESC: rows[1] = 2026-08-18 (middle).
+    Mock row (2026-08-18): estrangeiro=-1782.10 (neg), institucional=
     1362.50 (pos), inst_financeira=-9.69 (neg)."""
     table = _get_fluxo_table(monkeypatch)
     row = table["rows"][1]
@@ -802,4 +813,117 @@ def test_dashboard_template_segment_colors_called_in_render():
     # Must be called right after _applyTooltipPercent in the render path.
     assert "_applySegmentColors(config)" in content, (
         "_applySegmentColors(config) call missing from _renderChart")
+
+
+# ────────────────────────────────────────────────────────────────────────
+# [v2] format_brl_from_millions + KPI value tests
+# ────────────────────────────────────────────────────────────────────────
+
+def test_format_brl_from_millions_auto_scales_to_bi():
+    """Values >= 1B reais (>= 1000 in millions) show as 'bi'."""
+    from skills.ddm.fluxo.helpers import format_brl_from_millions
+    # 20017.83 million = 20_017_830_000 reais = 20.02B → "R$ 20,02 bi"
+    result = format_brl_from_millions(20017.83)
+    assert "bi" in result
+    assert "20,02" in result
+    assert "R$" in result
+
+
+def test_format_brl_from_millions_stays_mi_for_small_values():
+    """Values < 1B reais (< 1000 in millions) stay as 'mi'."""
+    from skills.ddm.fluxo.helpers import format_brl_from_millions
+    # 44.94 million = 44_940_000 reais = 44.94M → "R$ 44,94 mi"
+    result = format_brl_from_millions(44.94)
+    assert "mi" in result
+    assert "44,94" in result
+
+
+def test_format_brl_from_millions_handles_negative():
+    """Negative values get '-' prefix and auto-scale correctly."""
+    from skills.ddm.fluxo.helpers import format_brl_from_millions
+    # -39972.79 million = -39.97B → "R$ -39,97 bi"
+    result = format_brl_from_millions(-39972.79)
+    assert "bi" in result
+    assert "-39,97" in result
+
+
+def test_format_brl_from_millions_handles_none():
+    """None returns '-'."""
+    from skills.ddm.fluxo.helpers import format_brl_from_millions
+    assert format_brl_from_millions(None) == "-"
+
+
+def test_dashboard_kpi_ytd_values_are_auto_scaled(monkeypatch):
+    """YTD KPI values use format_brl_from_millions (bi/mi auto-scale).
+
+    Mock data (all 3 days in 2026):
+      Estrangeiro YTD: -496.07 + -1782.10 + -1582.35 = -3860.52 (million)
+        = -3_860_520_000 reais = -3.86B → "R$ -3,86 bi"
+      Institucional YTD: 71.25 + 1362.50 + 1029.81 = 2463.56 (million)
+        = 2_463_560_000 reais = 2.46B → "R$ 2,46 bi"
+    """
+    _patch_query(monkeypatch)
+    from skills.ddm.fluxo.modes import dashboard
+    res = dashboard.dashboard()
+    ytd_kpis = {k["label"]: k["value"] for k in res["kpis"]
+                if k["label"].startswith("Liquido anual")}
+    # Estrangeiro YTD = -3860.52M = -3.86B → "R$ -3,86 bi"
+    assert "bi" in ytd_kpis["Liquido anual Estrangeiro"]
+    assert "-3,86" in ytd_kpis["Liquido anual Estrangeiro"]
+    # Institucional YTD = 2463.56M = 2.46B → "R$ 2,46 bi"
+    assert "bi" in ytd_kpis["Liquido anual Institucional"]
+    assert "2,46" in ytd_kpis["Liquido anual Institucional"]
+
+
+def test_dashboard_kpi_rolling_365d_values_present(monkeypatch):
+    """Rolling 365d KPI values are present and auto-scaled.
+
+    All 3 mock days are within 365 days of the last date (2026-08-19),
+    so rolling totals = YTD totals.
+    """
+    _patch_query(monkeypatch)
+    from skills.ddm.fluxo.modes import dashboard
+    res = dashboard.dashboard()
+    rolling_kpis = {k["label"]: k["value"] for k in res["kpis"]
+                    if k["label"].startswith("Liquido 365d")}
+    assert len(rolling_kpis) == 4
+    for _, label in _INVESTORS:
+        assert f"Liquido 365d {label}" in rolling_kpis
+        # Value should contain R$ (auto-scaled, either bi or mi)
+        val = rolling_kpis[f"Liquido 365d {label}"]
+        assert val.startswith("R$ ") or val == "-"
+
+
+def test_dashboard_kpi_dias_na_base(monkeypatch):
+    """'Dias na base' KPI shows the total day count from summary."""
+    _patch_query(monkeypatch)
+    from skills.ddm.fluxo.modes import dashboard
+    res = dashboard.dashboard()
+    dias_kpi = next(k for k in res["kpis"] if k["label"] == "Dias na base")
+    # Mock summary returns row_count=3
+    assert dias_kpi["value"] == "3"
+
+
+def test_dashboard_fluxo_table_sorted_desc(monkeypatch):
+    """Fluxo table rows are sorted DESC by ref_date (newest first).
+
+    [v2] Previously rows were in ASC order (oldest first) and the
+    default_sort = Data DESC was only applied client-side via JS.
+    Now the server sorts DESC before building rows.
+    """
+    table = _get_fluxo_table(monkeypatch)
+    dates = [row[0]["data-value"] for row in table["rows"]]
+    assert dates == sorted(dates, reverse=True), (
+        f"Expected DESC order, got {dates}")
+    # First row should be the newest date (2026-08-19 in mock)
+    assert dates[0] == "2026-08-19"
+
+
+def test_dashboard_investor_table_sorted_desc(monkeypatch):
+    """Investor Diario table rows are sorted DESC by ref_date (newest first)."""
+    table = _get_investor_table(monkeypatch, "Estrangeiro", "Diario")
+    dates = [row[0]["data-value"] for row in table["rows"]]
+    assert dates == sorted(dates, reverse=True), (
+        f"Expected DESC order, got {dates}")
+    assert dates[0] == "2026-08-19"
 

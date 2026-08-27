@@ -35,7 +35,7 @@ from skills.ddm.fluxo.report import (
     build_investor_annual_chart, build_investor_table,
     build_error_section,
 )
-from skills.ddm.fluxo.helpers import format_brl, format_date
+from skills.ddm.fluxo.helpers import format_brl, format_date, format_brl_from_millions, format_int
 from data_sources.ddm.fluxo.query_engine import (
     fluxo_data, fluxo_by_investor, summary, monthly_cumulative,
     annual_cumulative,
@@ -163,8 +163,15 @@ def _build_investor_subtab_monthly(investor: str, label: str) -> dict:
     monthly_data = monthly_resp.get("observations", [])
 
     # Build a table from the monthly data.
+    # [v2] Pass both ref_date (for sorting: "2026-08") and date_label
+    # (for display: "Ago/2026"). build_investor_table uses date_label
+    # if present, otherwise formats ref_date as DD/MM/YYYY.
     table_obs = [
-        {"ref_date": d.get("month", ""), "value": d.get("value")}
+        {
+            "ref_date": d.get("month", ""),
+            "date_label": d.get("label", ""),
+            "value": d.get("value"),
+        }
         for d in monthly_data
     ]
 
@@ -289,15 +296,27 @@ def dashboard() -> dict:
 
     obs_all: list[dict] = snap.get("observations", [])
 
-    # KPIs: latest date + total per investor (sum of all daily values).
+    # [v2] KPIs: 2 rows of 5 boxes each (10 total).
+    #
+    # Row 1 (YTD — since Jan 1 of the latest year):
+    #   1. Ultima data (latest sync date, DD/MM/YYYY)
+    #   2-5. Liquido anual {investor} (YTD net per investor, auto-scale bi/mi)
+    #
+    # Row 2 (Rolling 365 days):
+    #   1. Dias na base (total day count in DB)
+    #   2-5. Liquido 365d {investor} (last 365 days net per investor, auto-scale)
     kpis: list[dict] = []
     summ = _safe_call(summary)
     last_date = ""
+    row_count = 0
     if summ.get("status") == "ok":
         last_date = summ.get("last_date", "")
+        row_count = summ.get("row_count", 0) or summ.get("sync_rows", 0)
     elif obs_all:
         last_date = max(o["ref_date"] for o in obs_all if o.get("ref_date"))
+        row_count = len(obs_all)
 
+    # ── Row 1: YTD (year-to-date) ───────────────────────────────────────
     kpis.append(build_kpi_card(
         "Ultima data",
         last_date,
@@ -305,21 +324,73 @@ def dashboard() -> dict:
         formatted=format_date(last_date) if last_date else "-",
     ))
 
-    # Per-investor totals (sum of all daily values).
+    # Determine the current year from last_date (or today's date as fallback).
+    current_year = (last_date[:4] if last_date else _dt.now().strftime("%Y"))
+
+    # Per-investor YTD net (sum of daily values where ref_date starts with current_year).
     for field, label in _INVESTORS:
-        total = 0.0
+        ytd_total = 0.0
         any_value = False
         for o in obs_all:
+            ref = o.get("ref_date", "")
             v = o.get(field)
-            if v is not None:
-                total += v
+            if ref.startswith(current_year) and v is not None:
+                ytd_total += v
                 any_value = True
         if any_value:
             kpis.append(build_kpi_card(
-                f"Total {label}",
-                total,
-                subtitle=f"Soma de todos os dias (milhoes R$)",
-                formatted=format_brl(total),
+                f"Liquido anual {label}",
+                ytd_total,
+                subtitle=f"YTD {current_year} (milhoes R$)",
+                formatted=format_brl_from_millions(ytd_total),
+            ))
+        else:
+            kpis.append(build_kpi_card(
+                f"Liquido anual {label}",
+                0.0,
+                subtitle=f"YTD {current_year} (sem dados)",
+                formatted="-",
+            ))
+
+    # ── Row 2: Rolling 365 days ─────────────────────────────────────────
+    kpis.append(build_kpi_card(
+        "Dias na base",
+        row_count,
+        subtitle="Total de dias sincronizados no banco",
+        formatted=format_int(row_count) if row_count else "-",
+    ))
+
+    # Per-investor last-365-days net.
+    # Compute the cutoff date (365 days before last_date).
+    from datetime import timedelta as _td
+    try:
+        last_dt = _dt.strptime(last_date, "%Y-%m-%d") if last_date else _dt.now()
+    except ValueError:
+        last_dt = _dt.now()
+    cutoff_date = (last_dt - _td(days=365)).strftime("%Y-%m-%d")
+
+    for field, label in _INVESTORS:
+        rolling_total = 0.0
+        any_value = False
+        for o in obs_all:
+            ref = o.get("ref_date", "")
+            v = o.get(field)
+            if ref >= cutoff_date and v is not None:
+                rolling_total += v
+                any_value = True
+        if any_value:
+            kpis.append(build_kpi_card(
+                f"Liquido 365d {label}",
+                rolling_total,
+                subtitle=f"Ultimos 365 dias (milhoes R$)",
+                formatted=format_brl_from_millions(rolling_total),
+            ))
+        else:
+            kpis.append(build_kpi_card(
+                f"Liquido 365d {label}",
+                0.0,
+                subtitle="Ultimos 365 dias (sem dados)",
+                formatted="-",
             ))
 
     tabs: list[dict] = []
