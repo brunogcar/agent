@@ -2,131 +2,112 @@
 
 # 📋 Macro Changelog
 
+## v1.6 — 2026-08-27
+
+**Sortable tables + DD/MM/YYYY dates + charts show all data + collapsible tables + monthly Juros/Retorno Real + merged Cambio + Focus dedup.**
+
+### Tables — sortable + DD/MM/YYYY (all 8 tabs)
+
+- **`report.build_table_section`** now accepts `sortable`, `default_sort`,
+  `sort_types`, `negative_red`, `column_align`, `collapsible` params (passed
+  through to the `data_table` Jinja macro). Default: `sortable=True` with
+  Data DESC (newest first).
+- **`helpers.build_observation_rows`** now returns date cells as dicts with
+  `{text: DD/MM/YYYY, data-value: YYYY-MM-DD}` — the `data-value` attribute
+  carries the ISO date so the `sortTable` JS sorts chronologically (not
+  lexicographically on DD/MM/YYYY).
+- **New `helpers.format_date(iso)`** — converts ISO YYYY-MM-DD to PT-BR
+  DD/MM/YYYY. Also handles monthly YYYY-MM → MM/YYYY.
+- All tables across all 8 tabs now have:
+  - `sortable=True` + `default_sort={"column": 0, "direction": "desc"}`
+  - Dates displayed as DD/MM/YYYY
+  - `negative_red=True` on Retorno Real table (negative real rates in red)
+  - `column_align` on all tables (left for dates/labels, right for numbers)
+- Inline tables (real_returns, expectations, yield_curve) also updated.
+
+### Collapsible tables (all tabs except Resumo)
+
+- All table sections in Indicadores + Analise tabs now have `collapsible=True`
+  (collapsed by default). Charts are visible without scrolling; tables expand
+  on click.
+- `build_table_section` + `build_chart_section` now accept a `collapsible` param.
+
+### Charts — show all available data (~5 years)
+
+- **Dashboard defaults bumped**: `days=3650` (was 365), `months=60` (was 24).
+  The SGS DB has ~1264-1840 daily rows (~5 years). The old `days=365` cap
+  wasted 70% of the data. The range selector lets users zoom in.
+- **Atividade tab**: `days=3650` (was 730) for PIB + Salario minimo.
+- **Cambio tab**: monthly USD/BRL chart now fetches `days=3650` (was 730) +
+  shows `n_months=60` (was 24).
+
+### Chart x-axis date format + range selector fix
+
+- Added `_applyDateFormatXAxis` JS function — converts ISO YYYY-MM-DD labels
+  to DD/MM/YYYY at render time (post-clone tick callback). Also handles
+  YYYY-MM → MM/YYYY. Skips charts with non-date labels (e.g. year-only
+  "2026" in Curva de Juros).
+- Fixed range selector breaking charts on sub-Tudo ranges: `labelToISO`
+  now handles ISO YYYY-MM-DD passthrough (was only DD/MM/YYYY + Mon/YYYY).
+
+### Juros tab — monthly table (was daily)
+
+- `rates.py` tables now show MONTHLY data (last value per month) instead of
+  daily. Selic changes ~every 45 days, not daily — a daily table is mostly
+  redundant. Monthly view is more meaningful.
+- New `helpers.group_by_month(observations)` — groups daily obs by YYYY-MM,
+  keeps the last value of each month.
+
+### Cambio tab — merged charts + 2 collapsible tables
+
+- Merged the 2 daily charts (BRL/USD + USD/BRL) into 1 chart showing BRL/USD
+  (the common Brazilian convention — reais per dollar, ~5.x).
+- Kept 2 separate collapsible tables: one for BRL/USD (5.x), one for USD/BRL
+  (1/rate = ~0.19, dollars per real).
+- Monthly chart + table also collapsible.
+
+### Retorno Real tab — monthly table (was daily)
+
+- Table now shows MONTHLY data (last value per month) instead of daily.
+  Daily changes are not important for real returns — monthly view is more
+  meaningful and easier to read.
+- Shows last 24 months (was last 10 daily observations).
+
+### Expectativas Focus tab — deduplicated + collapsible
+
+- Table rows now deduplicated: when multiple survey rounds happen on the
+  same day for the same reference period (same `data` + `data_referencia`),
+  only the one with the MOST respondents is kept. Previously duplicate rows
+  appeared with slightly different values, causing confusion.
+- Chart also deduplicated (same logic).
+- Tables collapsible=True.
+
+### Curva de Juros tab — removed range selector
+
+- Removed `price_range_selector` from the yield curve chart. This is a
+  forward-looking prediction chart (years on x-axis), not historical data —
+  the range selector (1M/3M/6M/1A/5A/10A) doesn't apply.
+- Table collapsible=True.
+
+### Green dot tab bug — already fixed
+
+The green dot not switching when clicking tabs was already fixed in commit
+`468b300` (CSS rule `.nav-item.active .nav-dot { background: #22c55e; }`).
+The uploaded dashboard HTML was generated from an older version — regenerating
+the dashboard picks up the fix.
+
+### Tests
+
+- 7 new tests: `test_dashboard_tables_are_sortable`,
+  `test_dashboard_table_date_cells_are_dd_mm_yyyy`,
+  `test_dashboard_charts_show_all_available_data`,
+  `test_format_date_converts_iso_to_pt_br`,
+  `test_dashboard_tables_are_collapsible`,
+  `test_rates_table_is_monthly`,
+  `test_yield_curve_chart_has_no_range_selector`,
+  `test_group_by_month`.
+- All 8 existing tests still pass (no breakage).
+
 ## v1.5 — 2026-09-05
 
 **Yield curve mode (Focus expected Selic) — 8th 'Curva de Juros' tab. BMF DI futures deferred (no public URL).**
-
-### Required Summary
-
-- **New mode `yield_curve`** — Focus-based expected Selic yield curve. Queries `data_sources.bcb.focus.query_engine.expectations(indicador="Selic", frequency="annual")` for ALL annual Selic expectations, groups by `data_referencia` (year, e.g. "2026"), and keeps the LATEST observation per year (the most recent `data` field). Returns `{"status": "ok", "mode": "yield_curve", "kpis": [...], "sections": [...]}`. Two sections: (1) line chart of DataReferencia (x-axis, year) vs Mediana (y-axis, % a.a.) with min/max dashed bands (uncertainty range), (2) table of latest expectations per year (Ano | Mediana | Minimo | Maximo | Resp. | Data Focus). Three KPIs: Selic atual (SGS series 432 = "Meta Selic Copom", % a.a.), Selic esperada próximo ano (Focus median for current_year + 1), Selic longo prazo (Focus median for current_year + 5, or the farthest year available when +5 is missing). `include_in_all=False`. Graceful degradation: if the Focus DB is not synced, returns an error section + still emits the current-Selic KPI if SGS is available. Self-contained — section dicts are built inline (does not import the macro `report` module's builders) so the mode is robust to API drift.
-- **Dashboard extended to 8 tabs** — added 8th "Curva de Juros" tab (group: Analise) that composes the `yield_curve` mode sections. Sub-mode failures return an error section, dashboard still renders (graceful-degradation pattern). `_SEC_TOTAL` bumped 7 → 8.
-- **Option A (BMF DI futures) deferred** — B3 does not publish BMF historical data at a public URL like COTAHIST. The Focus-based yield curve (Option B) ships now; Option A needs API portal investigation.
-
-### Dashboard Tabs (8)
-
-| Tab | Name | Group | Content |
-|-----|------|-------|---------|
-| 1 | Resumo | Resumo | Text overview. |
-| 2 | Juros | Indicadores | rates mode sections (5 series). |
-| 3 | Inflacao | Indicadores | inflation mode sections (2 series). |
-| 4 | Cambio | Indicadores | fx mode sections (2 series). |
-| 5 | Atividade | Indicadores | PIB + Salario minimo (chart + table). |
-| 6 | Retorno Real | Analise | real_returns mode (Fisher equation). |
-| 7 | Expectativas Focus | Analise | expectations mode (IPCA / Selic / Cambio). |
-| 8 | Curva de Juros | Analise | yield_curve mode (Focus expected Selic path). |
-
-### Modes (7)
-
-dashboard, rates, inflation, fx, real_returns, expectations, yield_curve.
-
----
-
-## v1.4 — 2026-08-22
-
-**Real-returns mode (Fisher equation) — Selic vs IPCA 12m acumulado. New 6th 'Retorno Real' tab.**
-
-### Required Summary
-
-- **New mode `real_returns`** — Fisher equation: `real = (1 + nominal) / (1 + inflation) - 1`. Nominal = Selic annualized (series 11, daily % a.d. × 252 via `annualize_rate()`). Inflation = IPCA 12m acumulado (series 433, monthly %, sum of last 12 observations via `query_series(code=433, days=max(months, 13))`). Per-day real rate computed by joining each Selic daily observation to the IPCA 12m acumulado of its month (YYYY-MM). Returns `{"status": "ok", "mode": "real_returns", "kpis": [...], "sections": [...]}`. Two sections: (1) chart of real rate over time (line chart, last 12 months via `build_chart_section`), (2) KPI table with current nominal/inflation/real rates. `include_in_all=False`. Graceful error section if Selic or IPCA not synced.
-- **Dashboard extended to 6 tabs** — added 6th "Retorno Real" tab (group: Analise) that composes the `real_returns` mode sections. Sub-mode failures return an error section, dashboard still renders (graceful-degradation pattern).
-
-### Dashboard Tabs (6)
-
-| Tab | Name | Group | Content |
-|-----|------|-------|---------|
-| 1 | Resumo | Resumo | Text overview. |
-| 2 | Juros | Indicadores | rates mode sections (5 series). |
-| 3 | Inflacao | Indicadores | inflation mode sections (2 series). |
-| 4 | Cambio | Indicadores | fx mode sections (2 series). |
-| 5 | Atividade | Indicadores | PIB + Salario minimo (chart + table). |
-| 6 | Retorno Real | Analise | real_returns mode (Fisher equation). |
-
-### Modes (5)
-
-dashboard, rates, inflation, fx, real_returns.
-
----
-
-## v1.3 — 2026-08-15
-
-**Bug fixes: Resumo table units + inflation row count + Salário label + catalog descriptions.**
-
-### Required Summary
-
-- **USD/BRL mensal chart fixed** — series 24369 was NOT USD/BRL (returns values like 7.6 when the exchange rate was ~4.15). Removed 24369 from the catalog + now computes monthly averages directly from the daily series (1) by grouping daily observations by YYYY-MM and averaging. The monthly chart + table now show correct exchange rate values.
-- **USD/BRL charts inverted to show USD/BRL (1/rate)** — charts now show USD/BRL (1/ptax = ~0.19, "dollars per real") instead of BRL/USD (5.x, "reais per dollar"). KPI cards stay as BRL/USD (Brazilian convention). Both daily + monthly charts now have the range selector buttons (Tudo/10A/5A/1A/6M/3M/1M) — added `price_full_datasets` to `build_chart_section` (was missing — buttons rendered but didn't work). Monthly chart now fetches 2 years (730 days) of daily data + shows 24 months via range selector.
-- **Resumo table units fixed** — `query_engine.last_value()` now returns `unit` + `name` from `SERIES_CATALOG`. The Resumo table was showing raw Python floats (e.g. `0.05166` instead of `0.051660%`) + empty "Unidade" column because `last_value()` didn't return a `unit` field. Now `format_value(lv["value"], lv["unit"])` formats correctly.
-- **Inflation mode row count fixed** — `inflation.py` was passing `days=months*31` to `query_series()`, but `days` is actually a row-count LIMIT (not calendar days). For months=24, this returned up to 744 monthly rows (decades of data). Fixed to pass `days=months` directly — returns the most recent N monthly observations as intended.
-- **Salário mínimo label fixed** — changed from "(anual)" to "(mensal)" in the Atividade tab. Series 1619 is monthly in the catalog; the label was misleading.
-- **Catalog descriptions fixed** — removed misleading "(anualizada)" from series 11 (Selic) + 12 (CDI) descriptions. The stored value is the daily rate (`% a.d.`, ~0.05%); the description claimed "anualizada" which was confusing.
-
-## v1.2 — 2026-08-13
-
-**Docs sync — sgs sync_map wiring documented.**
-
-### Required Summary
-
-- **sgs sync_map entry documented** — the `sgs` entry in `skills/_base._trigger_sync.sync_map` was added in an earlier commit (the `historical` skill's `required_sources=["sgs"]` now actually triggers `sync_all(force=True)` when SGS is stale), but the fix shipped without a CHANGELOG entry. v1.2 documents the wiring + updates the ROADMAP (moves "Wire sgs into sync_map" from P2 to Done). Also fixed a stale comment in `_base.py` that said `sync_all(force=False)` (the actual lambda passes `force=True`).
-
-## v1.1 — 2026-08-06
-
-**Finetune: range selector + default window + CDI mock fix.**
-
-### Required Summary
-
-- **Default windows expanded** — `days=365` (was 30), `months=24` (was 12) for meaningful trends.
-- **`price_range_selector`** on all chart sections — adds Tudo/5A/1A/1M time-range buttons. `price_full_labels` + `price_full_data` carry the full series; the JS frontend slices client-side.
-- **CDI KPI mock fix** — `_batch_last_values()` (batched SQL) bypassed the test mock for `last_value`, causing `test_dashboard_cdi_kpi_is_daily` to fail when a real BCB DB existed. Replaced with direct `last_value()` calls (mockable, still efficient on local SQLite).
-- **Resumo as TABLE** (was text section) — renders properly in the dashboard template.
-
-## v1.0 — 2026-07-24
-
-**Initial dashboard release.**
-
-### Required Summary
-
-- **Tab field `name`** (was `label`) — the `dashboard.html` template reads `tab.name`, not `tab.label`.
-- **Top-level `kpis`** (was per-tab `kpis`) — the template renders KPIs in a universal header above tabs.
-- **CDI KPI daily** (was annualized) — per user request: "on top boxes, display CDI not anualizado, but current for the day". Selic KPI stays annualized.
-- **Chart.js `chart_data`** (was separate `labels` + `values` arrays) — chart sections now emit a proper Chart.js config dict so the template can render via `new Chart(canvas, config)`.
-- **Table rows as list of lists** (was list of dicts) — `[["2024-01-02", "0.001234"], ...]` so the template's `data_table` macro can iterate cells directly.
-- **helpers.py syntax fixed** — `monthly_values[max(0, i - 11): i + 1]` (v1 had `monthly_valuesax(0, i - 11): i + 1]`).
-- **5 descriptive PT-BR tab names** — Resumo, Juros, Inflacao, Cambio, Atividade (per user request: "on side bar - menu, just generic names").
-- **TR (226) added to rates mode** — was dropped in the initial draft.
-
-### Dashboard Tabs (5)
-
-| Tab | Name | Group | Content |
-|-----|------|-------|---------|
-| 1 | Resumo | Resumo | Text overview. |
-| 2 | Juros | Indicadores | rates mode sections (5 series). |
-| 3 | Inflacao | Indicadores | inflation mode sections (2 series). |
-| 4 | Cambio | Indicadores | fx mode sections (2 series). |
-| 5 | Atividade | Indicadores | PIB + Salario minimo (chart + table). |
-
-### KPI Cards (4, top-level)
-
-| KPI | Series | Unit | fix |
-|-----|--------|------|--------|
-| Selic (anualizada) | 11 | % a.a. | (unchanged from the initial draft) |
-| CDI (diaria) | 12 | % a.d. | **daily, NOT annualized** |
-| IPCA (mes) | 433 | % | (unchanged) |
-| USD/BRL (ptax) | 1 | R$ | (unchanged) |
-
-### Modes (4)
-
-dashboard, rates, inflation, fx.
-
----
-
-*Last updated: 2026-09-05 (v1.5).*

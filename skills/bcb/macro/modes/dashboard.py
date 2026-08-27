@@ -1,29 +1,24 @@
 """Mode: dashboard -- multi-tab BCB macro dashboard (thin composition mode).
 
 Composes the rates / inflation / fx / real_returns modes into a single
-6-tab payload:
+8-tab payload:
   - Resumo      (text overview)
   - Juros       (rates mode sections)
   - Inflacao    (inflation mode sections)
   - Cambio      (fx mode sections)
   - Atividade   (PIB + Salario minimo - thin, just last values + table)
   - Retorno Real (real_returns mode - Fisher equation)         [v1.4]
+  - Expectativas Focus                                         [v1.4]
+  - Curva de Juros (Focus expected Selic)                      [v1.5]
 
 When a sub-mode fails, the dashboard still returns status=ok with the failed
 tab containing an error section - this mirrors the CVM financials dashboard
 graceful-degradation contract.
 
-[v3] Fixes from v2:
-  - Tab field is `name` (was `label`) - the dashboard.html template reads
-    tab.name, not tab.label.
-  - Top-level `kpis` array (was: per-tab `kpis`). The template renders KPIs
-    in a universal header above the tabs, not per-tab.
-  - CDI KPI shows the DAILY rate (% a.d.), NOT annualized (per user request:
-    "on top boxes, display CDI not anualizado, but current for the day").
-    Selic KPI stays annualized.
-  - Chart sections emit a Chart.js config in `chart_data` (was: separate
-    `labels` + `values` arrays that the template ignored).
-  - Table rows are a list of lists (was: list of dicts).
+[v1.6] Bumped days=3650 + months=60 to show all available data (~5 years).
+       Added sortable tables + DD/MM/YYYY dates across all tabs.
+[v1.7] All table sections now collapsible=True (collapsed by default) so
+       charts are visible without scrolling. Atividade days bumped to 3650.
 
 Registered as "dashboard" in skills.bcb.macro._registry.MODES.
 """
@@ -31,7 +26,7 @@ from __future__ import annotations
 from datetime import datetime as _dt
 
 from skills.bcb.macro._registry import register_mode
-from skills.bcb.macro.helpers import format_value, annualize_rate
+from skills.bcb.macro.helpers import format_value, annualize_rate, format_date
 from skills.bcb.macro.report import (
     build_kpi_card, build_chart_section, build_table_section,
     build_text_section, build_error_section,
@@ -70,11 +65,6 @@ def _build_resumo_kpis() -> list[dict]:
     [v3] CDI is shown as the DAILY rate (% a.d.) per user request - NOT
     annualized. Selic stays annualized (% a.a.). IPCA shows the latest
     monthly variation. USD/BRL shows the latest ptax venda.
-
-    [v3.1] Removed _batch_last_values() (direct DB SQL query) — it bypassed
-    the test mock for last_value(), causing test_dashboard_cdi_kpi_is_daily
-    to fail when a real BCB DB existed. Reverted to direct last_value()
-    calls (mockable, still efficient on local SQLite).
     """
     kpis = []
 
@@ -126,12 +116,13 @@ def _build_atividade_sections() -> list[dict]:
 
     [v4] Salario minimo shown annually (query 2 years of monthly data,
     display as chart + table). PIB shown quarterly.
+    [v1.7] Bumped days to 3650 + tables collapsible=True.
     """
     sections = []
 
     for code, label, unit, days in [
-        (PIB_NOMINAL, "PIB nominal trimestral", "R$ mil", 730),
-        (SALARIO_MIN, "Salario minimo (mensal)", "R$", 730),
+        (PIB_NOMINAL, "PIB nominal trimestral", "R$ mil", 3650),
+        (SALARIO_MIN, "Salario minimo (mensal)", "R$", 3650),
     ]:
         res = query_series(code=code, days=days)
         if res.get("status") == "ok":
@@ -143,6 +134,7 @@ def _build_atividade_sections() -> list[dict]:
             sections.append(build_table_section(
                 f"{label} - tabela", observations, unit=unit, limit=8,
                 description="Dados brutos.",
+                collapsible=True,
             ))
         else:
             sections.append(build_error_section(label, res.get("error", "")))
@@ -159,15 +151,15 @@ def _build_atividade_sections() -> list[dict]:
         "fx + real_returns + expectations + yield_curve modes. KPIs at top level."
     ),
     params={
-        "days":   "int. Daily-series window. Default: 365.",
-        "months": "int. Monthly-series window. Default: 24.",
+        "days":   "int. Daily-series window. Default: 3650.",
+        "months": "int. Monthly-series window. Default: 60.",
     },
     include_in_all=False,
     examples=[
         'skill(domain="bcb", sub_domain="macro", mode="dashboard")',
     ],
 )
-def dashboard(days: int = 365, months: int = 24) -> dict:
+def dashboard(days: int = 3650, months: int = 60) -> dict:
     """Build the multi-tab BCB macro dashboard.
 
     [v3] Default days=365 (was 30) and months=24 (was 12) for meaningful trends.
@@ -175,6 +167,10 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
            real_returns mode sections.
     [v1.5] Added 8th tab "Curva de Juros" (Focus expected Selic path) composing
            the yield_curve mode sections.
+    [v1.6] Bumped days=3650 (was 365) + months=60 (was 24) to show all
+           available data (~5 years). The range selector lets users zoom in.
+           Added sortable tables + DD/MM/YYYY dates across all tabs.
+    [v1.7] All table sections now collapsible=True (collapsed by default).
     """
     _t0 = _dt.now()
     print(f"[bcb.macro] Starting dashboard...", flush=True)
@@ -189,12 +185,12 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     # Top-level KPIs (rendered in the universal header above tabs).
     kpis = _build_resumo_kpis()
 
-    # [v5] One-line section timers (ratios pattern): 6 sections.
+    # [v5] One-line section timers (ratios pattern): 8 sections.
     _SEC_TOTAL = 8
     _sec_count = 0
     _sec_t0 = _dt.now()
 
-    # ── Section 1/6: Resumo ────────────────────────────────────────
+    # ── Section 1/8: Resumo ────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     # [v3] Build Resumo as a TABLE (not text) so the template renders it
@@ -204,7 +200,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
         if lv.get("status") == "ok" and lv.get("value") is not None:
             unit = lv.get("unit", "")
             val_str = format_value(lv["value"], unit)
-            overview_rows.append([label, val_str, lv.get("ref_date", "-"), unit])
+            overview_rows.append([label, val_str, format_date(lv.get("ref_date", "-")), unit])
         else:
             overview_rows.append([label, "-", "-", ""])
     resumo_sections = [{
@@ -212,12 +208,16 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
         "title": "Indicadores Atuais",
         "columns": ["Indicador", "Valor", "Data Ref.", "Unidade"],
         "rows": overview_rows,
+        "sortable": True,
+        "default_sort": {"column": 0, "direction": "asc"},
+        "sort_types": ["text", "text", "text", "text"],
+        "column_align": ["left", "right", "right", "left"],
     }]
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Resumo ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 2/6: Juros ─────────────────────────────────────────
+    # ── Section 2/8: Juros ─────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     juros_sections = rates_res.get("sections", []) or [
@@ -227,7 +227,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Juros ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 3/6: Inflacao ──────────────────────────────────────
+    # ── Section 3/8: Inflacao ──────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     inflacao_sections = inflation_res.get("sections", []) or [
@@ -237,7 +237,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Inflacao ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 4/6: Cambio ────────────────────────────────────────
+    # ── Section 4/8: Cambio ────────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     cambio_sections = fx_res.get("sections", []) or [
@@ -247,7 +247,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Cambio ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 5/6: Atividade ─────────────────────────────────────
+    # ── Section 5/8: Atividade ─────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     atividade_sections = _build_atividade_sections()
@@ -255,7 +255,7 @@ def dashboard(days: int = 365, months: int = 24) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Atividade ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 6/7: Retorno Real ─────────────────────────────────────
+    # ── Section 6/8: Retorno Real ─────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
     real_returns_sections = real_res.get("sections", []) or [

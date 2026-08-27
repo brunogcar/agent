@@ -7,12 +7,16 @@ Copom), 4389 (Selic acumulada mes base 252) and shapes them into KPI cards
 Daily % a.d. rates are annualized to % a.a. (x 252) for the KPI display -
 the raw observations stay in their original unit.
 
+[v1.7] Tables now show MONTHLY data (not daily) — Selic changes ~every 45
+days, not daily, so a daily table is mostly redundant. Monthly view shows
+the rate at month-end. Tables are collapsible=True (collapsed by default).
+
 Registered as "rates" in skills.bcb.macro._registry.MODES.
 """
 from __future__ import annotations
 
 from skills.bcb.macro._registry import register_mode
-from skills.bcb.macro.helpers import annualize_rate, format_value
+from skills.bcb.macro.helpers import annualize_rate, format_value, group_by_month
 from skills.bcb.macro.report import (
     build_kpi_card, build_chart_section, build_table_section, build_error_section,
 )
@@ -47,7 +51,11 @@ SELIC_ACUM    = 4389
     ],
 )
 def rates(days: int = 30) -> dict:
-    """Build the interest-rates dashboard."""
+    """Build the interest-rates dashboard.
+
+    [v1.7] Tables show monthly data (last value per month) instead of daily.
+    Selic changes ~every 45 days, not daily — monthly view is more meaningful.
+    """
     sections = []
     kpis = []
 
@@ -77,13 +85,18 @@ def rates(days: int = 30) -> dict:
         else:
             kpis.append(build_kpi_card(label, latest, unit))
 
+        # Chart: daily data (full resolution with range selector)
         sections.append(build_chart_section(
             f"{label} - ultimos {days} dias", observations, unit=unit,
             description=f"Variacao diaria de {label} nos ultimos {days} dias.",
         ))
+        # [v1.7] Table: monthly grouping (last value per month) + collapsible.
+        # Selic changes ~every 45 days, not daily — monthly view is more meaningful.
+        monthly_obs = group_by_month(observations)
         sections.append(build_table_section(
-            f"{label} - tabela", observations, unit=unit, limit=10,
-            description="Ultimas 10 observacoes.",
+            f"{label} - tabela mensal", monthly_obs, unit=unit, limit=24,
+            description="Valores mensais (ultima observacao de cada mes).",
+            collapsible=True,
         ))
 
     return {

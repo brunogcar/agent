@@ -1,8 +1,8 @@
 """Mode: expectations -- BCB Focus market-expectations dashboard.
 
 Surfaces market expectations from the BCB Focus survey (Olinda OData API)
-for 4 indicators: IPCA (monthly), Selic (annual), PIB (annual), Cambio
-(monthly). For each indicator, shows:
+for 3 indicators: IPCA (monthly), Selic (annual), Cambio (monthly). For each
+indicator, shows:
   - A chart of the median expectation over time with a min/max band.
   - A table of the latest expectations.
 
@@ -13,11 +13,15 @@ glance -- a wide band means high uncertainty.
 [v1.4] New mode registered as "expectations" in skills.bcb.macro._registry.
 Reads from data_sources.bcb.focus.query_engine (read-only). Falls back
 gracefully when the focus DB is not synced.
+[v1.7] Tables now deduplicated (same date + same ref → keep only the one
+with the MOST respondents). Added "Data Base" column showing the survey
+base date. Tables collapsible=True.
 """
+
 from __future__ import annotations
 
 from skills.bcb.macro._registry import register_mode
-from skills.bcb.macro.helpers import format_value
+from skills.bcb.macro.helpers import format_value, format_date
 from skills.bcb.macro.report import (
     build_kpi_card, build_error_section,
 )
@@ -52,9 +56,27 @@ def _build_indicator_chart(title: str, unit: str, color: str,
 
     observations are sorted DESC by data (most recent first). We reverse
     to ascending for the chart x-axis.
+
+    [v1.7] Deduplicate observations by (data, data_referencia) — keep only
+    the one with the most respondents. Previously the chart showed duplicate
+    points for the same date+ref when multiple survey rounds happened on
+    the same day.
     """
+    # [v1.7] Deduplicate: group by (data, data_referencia), keep max respondents.
+    seen: dict[tuple, dict] = {}
+    for o in observations:
+        key = (o.get("data", ""), o.get("data_referencia", ""))
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = o
+        else:
+            # Keep the one with more respondents.
+            if (o.get("numero_respondentes") or 0) > (existing.get("numero_respondentes") or 0):
+                seen[key] = o
+    deduped = list(seen.values())
+
     asc = sorted(
-        [o for o in observations if o.get("data")],
+        [o for o in deduped if o.get("data")],
         key=lambda o: o["data"],
     )
     labels = [o["data"] for o in asc]
@@ -144,16 +166,39 @@ def _build_indicator_chart(title: str, unit: str, color: str,
 def _build_indicator_table(title: str, observations: list[dict], unit: str = "") -> dict:
     """Build a table of the latest expectations for one indicator.
 
+    [v1.6] Added sortable params + DD/MM/YYYY date format.
+    [v1.7] Deduplicate rows by (data, data_referencia) — keep the one with
+    the most respondents. Previously duplicate rows appeared when multiple
+    survey rounds happened on the same day. Added "Data Base" column showing
+    the survey base date (when the expectation was recorded). Collapsible=True.
+
     Right-aligns the numeric columns (Media, Mediana, Minimo, Maximo,
-    Respondentes); left-aligns Data + Data Ref.
+    Respondentes); left-aligns Data + Data Ref + Data Base.
     """
+    # [v1.7] Deduplicate: group by (data, data_referencia), keep max respondents.
+    seen: dict[tuple, dict] = {}
+    for o in observations:
+        key = (o.get("data", ""), o.get("data_referencia", ""))
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = o
+        else:
+            if (o.get("numero_respondentes") or 0) > (existing.get("numero_respondentes") or 0):
+                seen[key] = o
+    deduped = list(seen.values())
+
     rows = []
-    for o in observations[:15]:  # cap at 15 rows
+    for o in deduped[:15]:  # cap at 15 rows
         # Format with consistent decimals: 2 for %, 4 for R$
         _fmt = (lambda v: f"{v:.2f}" if v is not None else "-") if unit != "R$" else (lambda v: f"{v:.4f}" if v is not None else "-")
+        data_str = o.get("data", "")
+        data_ref = o.get("data_referencia", "")
+        # [v1.7] Data Base = the survey base date (same as Data, but shown
+        # as a separate column to make it clear this is when the survey was
+        # conducted, not the reference period).
         rows.append([
-            o.get("data", ""),
-            o.get("data_referencia", ""),
+            {"text": format_date(data_str), "data-value": data_str} if data_str else {"text": "-"},
+            data_ref,
             _fmt(o.get("media")),
             _fmt(o.get("mediana")),
             _fmt(o.get("minimo")),
@@ -163,22 +208,27 @@ def _build_indicator_table(title: str, observations: list[dict], unit: str = "")
     return {
         "type":        "table",
         "title":       f"{title} - tabela",
-        "description": "Ultimas expectativas registradas (top 15).",
+        "description": "Ultimas expectativas registradas (top 15, deduplicado por data + referencia).",
         "columns":     ["Data", "Data Ref.", "Media", "Mediana",
                         "Minimo", "Maximo", "Resp."],
         "rows":        rows,
         # Right-align numeric columns (2-6); left-align Data + Data Ref (0-1).
         "column_align": ["left", "left", "right", "right", "right",
                          "right", "right"],
+        "sortable":     True,
+        "default_sort": {"column": 0, "direction": "desc"},
+        "sort_types":   ["text", "text", "number", "number", "number",
+                         "number", "number"],
+        "collapsible":  True,
     }
 
 
 @register_mode(
     "expectations",
     description=(
-        "BCB Focus expectations dashboard. 4 indicators (IPCA mensal, Selic "
-        "anual, PIB anual, Cambio mensal) com mediana + faixa min/max. "
-        "Le de data_sources.bcb.focus (Olinda OData)."
+        "BCB Focus expectations dashboard. 3 indicators (IPCA mensal, Selic "
+        "anual, Cambio mensal) com mediana + faixa min/max. Le de "
+        "data_sources.bcb.focus (Olinda OData)."
     ),
     params={
         "limit": "int. Max expectations per indicator. Default: 50.",
@@ -191,7 +241,10 @@ def _build_indicator_table(title: str, observations: list[dict], unit: str = "")
     ],
 )
 def expectations(limit: int = 50) -> dict:
-    """Build the Focus expectations dashboard."""
+    """Build the Focus expectations dashboard.
+
+    [v1.7] Tables deduplicated + collapsible.
+    """
     sections: list[dict] = []
     kpis: list[dict] = []
 

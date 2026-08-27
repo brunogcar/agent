@@ -23,6 +23,8 @@ Reads from data_sources.bcb.focus.query_engine (Selic annual) +
 data_sources.bcb.sgs.query_engine (series 432). Falls back gracefully when
 the Focus DB is not synced (returns an error section + the current-Selic
 KPI if SGS is available).
+[v1.7] Removed price_range_selector (this is a forward-looking prediction
+chart, not historical data — range selector doesn't apply). Table collapsible.
 
 Option B (Focus expectations). Option A (BMF DI futures) deferred -- B3
 does not publish BMF historical data at a public URL like COTAHIST. Needs
@@ -71,6 +73,9 @@ def _build_yield_chart(points: list[dict]) -> dict:
 
     ``points`` is a list of {"year", "mediana", "minimo", "maximo"} dicts
     sorted ascending by year.
+
+    [v1.7] Removed price_range_selector — this is a forward-looking prediction
+    chart (years on x-axis), not historical data. Range selector doesn't apply.
     """
     labels = [p["year"] for p in points]
     medians = [p.get("mediana") for p in points]
@@ -143,20 +148,28 @@ def _build_yield_chart(points: list[dict]) -> dict:
                 },
             },
         },
+        # [v1.7] NO price_range_selector — this is a forward-looking prediction
+        # chart (years on x-axis), not historical data. Range selector doesn't apply.
     }
 
 
 def _build_yield_table(points: list[dict]) -> dict:
-    """Build the table of latest Focus expectations per year."""
+    """Build the table of latest Focus expectations per year.
+
+    [v1.6] Added sortable params + DD/MM/YYYY date format.
+    [v1.7] Collapsible=True.
+    """
+    from skills.bcb.macro.helpers import format_date as _fmt_date
     rows = []
     for p in points:
+        data_str = p.get("data", "-")
         rows.append([
             p["year"],
             _format_value(p.get("mediana"), "% a.a."),
             _format_value(p.get("minimo"), "% a.a."),
             _format_value(p.get("maximo"), "% a.a."),
             str(p.get("numero_respondentes") or "-"),
-            p.get("data", "-"),
+            {"text": _fmt_date(data_str), "data-value": data_str} if data_str != "-" else {"text": "-"},
         ])
     return {
         "type": "table",
@@ -165,6 +178,10 @@ def _build_yield_table(points: list[dict]) -> dict:
         "columns": ["Ano", "Mediana", "Minimo", "Maximo", "Resp.", "Data Focus"],
         "rows": rows,
         "column_align": ["left", "right", "right", "right", "right", "left"],
+        "sortable": True,
+        "default_sort": {"column": 0, "direction": "asc"},
+        "sort_types": ["text", "number", "number", "number", "number", "text"],
+        "collapsible": True,
     }
 
 

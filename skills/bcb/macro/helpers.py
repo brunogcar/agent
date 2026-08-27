@@ -6,14 +6,25 @@ trivially testable without mocking the DB.
 
 Functions:
   - format_value(value, unit)        - human-readable PT-BR string
+  - format_date(iso)                 - "2024-01-03" -> "03/01/2024" (DD/MM/YYYY)
   - annualize_rate(daily_pct)        - daily % a.d. -> % a.a. (x 252)
   - compute_stats(values)            - min/max/mean/last for a numeric list
   - build_observation_table(observations) - rows for a report table section
   - accumulate_12m(monthly_values)   - rolling 12-month sum (for IPCA etc.)
+  - group_by_month(observations)     - daily obs -> monthly last-value (for Selic table)
+
+[v2] Added format_date() — converts ISO YYYY-MM-DD to PT-BR DD/MM/YYYY for
+display. build_observation_rows() now returns date cells as dicts with
+{text: DD/MM/YYYY, data-value: YYYY-MM-DD} so the sortTable JS can sort
+chronologically by the ISO data-value (not lexicographically on DD/MM/YYYY).
+[v1.7] Added group_by_month() — groups daily observations by YYYY-MM, keeping
+the last value of each month. Used for the Juros tab Selic table (Selic
+changes ~every 45 days, not daily — monthly view is more meaningful).
 """
 
 from __future__ import annotations
 
+import re
 from statistics import mean
 
 
@@ -41,6 +52,35 @@ def format_value(value, unit: str = "") -> str:
         return fmt(value)
     except (ValueError, TypeError):
         return str(value)
+
+
+def format_date(iso: str) -> str:
+    """Convert ISO YYYY-MM-DD to PT-BR display DD/MM/YYYY.
+
+    "2024-01-03" -> "03/01/2024"
+    "" -> "-"
+    "03/01/2024" -> "03/01/2024"  (already PT-BR -> passthrough)
+    "2024-01" -> "01/2024"  (monthly -> MM/YYYY)
+
+    Returns "-" for empty / unparseable inputs.
+    """
+    if not iso:
+        return "-"
+    s = str(iso).strip()
+    # Already PT-BR (DD/MM/YYYY)?
+    if len(s) == 10 and s[2] == "/" and s[5] == "/":
+        return s
+    # ISO YYYY-MM-DD?
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", s)
+    if m:
+        y, mo, day = m.group(1), m.group(2), m.group(3)
+        return f"{day}/{mo}/{y}"
+    # Monthly YYYY-MM?
+    m = re.match(r"^(\d{4})-(\d{2})$", s)
+    if m:
+        y, mo = m.group(1), m.group(2)
+        return f"{mo}/{y}"
+    return s
 
 
 def annualize_rate(daily_pct: float | None) -> float | None:
@@ -79,8 +119,13 @@ def build_observation_rows(observations: list[dict],
     """Reshape observation dicts into list-of-lists rows for a table section.
 
     Each input dict has {"ref_date", "value"}. Output rows are
-    [ref_date_str, formatted_value_str] (list of lists, NOT list of dicts)
-    so the dashboard template's data_table macro can iterate cells directly.
+    [date_cell, formatted_value_str] where date_cell is a dict with:
+      - "text": DD/MM/YYYY (PT-BR display)
+      - "data-value": YYYY-MM-DD (ISO date, for chronological sorting)
+
+    The data-value attribute is critical — the sortTable JS sorts text cells
+    by data-value when present, so dates sort chronologically even though
+    they display as DD/MM/YYYY (which would sort lexicographically wrong).
 
     If limit > 0, only the last `limit` rows are returned (after sorting
     ascending by ref_date).
@@ -88,8 +133,36 @@ def build_observation_rows(observations: list[dict],
     rows = sorted(observations, key=lambda o: o.get("ref_date", ""))
     if limit > 0:
         rows = rows[-limit:]
-    return [[o.get("ref_date", ""), format_value(o.get("value"), unit)]
-            for o in rows]
+    result = []
+    for o in rows:
+        ref = o.get("ref_date", "")
+        date_cell = {"text": format_date(ref)}
+        if ref:
+            date_cell["data-value"] = str(ref)
+        result.append([date_cell, format_value(o.get("value"), unit)])
+    return result
+
+
+def group_by_month(observations: list[dict]) -> list[dict]:
+    """Group daily observations by YYYY-MM, keeping the LAST value of each month.
+
+    Used for the Juros tab Selic/CDI tables — Selic changes ~every 45 days,
+    not daily, so a daily table is mostly redundant. Monthly view shows the
+    rate at month-end, which is what matters for comparison.
+
+    Input: list of {"ref_date": "YYYY-MM-DD", "value": float} dicts.
+    Output: list of {"ref_date": "YYYY-MM", "value": float} dicts, sorted ASC.
+    """
+    by_month: dict[str, float] = {}
+    for o in observations:
+        ref = o.get("ref_date", "")
+        if len(ref) < 7:
+            continue
+        month_key = ref[:7]  # YYYY-MM
+        val = o.get("value")
+        if val is not None:
+            by_month[month_key] = val  # last value wins (observations are ASC)
+    return [{"ref_date": k, "value": v} for k, v in sorted(by_month.items())]
 
 
 def accumulate_12m(monthly_values: list[dict]) -> list[dict]:

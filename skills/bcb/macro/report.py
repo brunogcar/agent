@@ -21,6 +21,9 @@ Each builder returns a dict shaped for the report tool's build_dashboard()
 (was: separate `labels` + `values` arrays at top level - the template
 ignored those). Table `rows` are now a list of lists (was: list of dicts)
 so the template's data_table macro can iterate cells directly.
+[v1.6] Added sortable/default_sort/sort_types/negative_red/column_align +
+collapsible params to build_table_section.
+[v1.7] Added collapsible param to build_chart_section + build_table_section.
 """
 
 from __future__ import annotations
@@ -60,7 +63,8 @@ def build_kpi_card(label: str, value, unit: str = "",
 
 def build_chart_section(title: str, observations: list[dict],
                         unit: str = "",
-                        description: str = "") -> dict:
+                        description: str = "",
+                        collapsible: bool = False) -> dict:
     """Build a line-chart section from a list of observations.
 
     Emits a Chart.js config in `chart_data` so the dashboard.html template
@@ -71,6 +75,8 @@ def build_chart_section(title: str, observations: list[dict],
         observations: List of {"ref_date", "value"} dicts.
         unit:         BCB unit ("% a.d.", "%", "R$", etc.) - drives color.
         description:  Optional description shown above the chart.
+        collapsible:  If True, the chart section renders inside a collapsible
+                      container (collapsed by default). Default False.
     """
     rows = sorted(
         [o for o in observations if o.get("ref_date")],
@@ -80,7 +86,7 @@ def build_chart_section(title: str, observations: list[dict],
     data = [r.get("value") for r in rows]
     color = _UNIT_COLOR.get(unit, "#0d9488")
 
-    return {
+    section = {
         "type":        "chart",
         "title":       title,
         "unit":        unit,
@@ -121,25 +127,72 @@ def build_chart_section(title: str, observations: list[dict],
         ],
         "price_full_data": data,
     }
+    if collapsible:
+        section["collapsible"] = True
+    return section
 
 
 def build_table_section(title: str, observations: list[dict],
                         unit: str = "",
                         limit: int = 0,
-                        description: str = "") -> dict:
+                        description: str = "",
+                        sortable: bool = True,
+                        default_sort: dict | None = None,
+                        sort_types: list[str] | None = None,
+                        negative_red: bool = False,
+                        column_align: list[str] | None = None,
+                        collapsible: bool = False) -> dict:
     """Build a table section from a list of observations.
 
-    Rows are a LIST OF LISTS (NOT list of dicts) so the dashboard template's
-    data_table macro can iterate cells directly: [[date, value], ...].
+    Rows are a LIST OF LISTS so the dashboard template's data_table macro
+    can iterate cells directly: [[date_cell, value_str], ...].
+
+    [v2] Now accepts sortable/default_sort/sort_types/negative_red/column_align
+    params (passed through to the data_table Jinja macro). Default:
+    sortable=True with Data DESC (newest first). Date cells are dicts with
+    {text: DD/MM/YYYY, data-value: YYYY-MM-DD} for chronological sorting.
+    [v1.7] Added collapsible param — renders the table inside a collapsible
+    container (collapsed by default) so charts are visible without scrolling.
+
+    Args:
+        title:        Section title.
+        observations: List of {"ref_date", "value"} dicts.
+        unit:         BCB unit for value formatting.
+        limit:        Max rows (0 = all). Takes the last `limit` after ASC sort.
+        description:  Optional description.
+        sortable:     Whether the table has clickable sort headers. Default True.
+        default_sort: {"column": int, "direction": "asc"|"desc"}. Default
+                      column 0 DESC (newest date first).
+        sort_types:   Per-column sort type ("text" or "number"). Default
+                      ["text", "number"].
+        negative_red: Whether negative values render in red. Default False.
+        column_align: Per-column alignment ("left" or "right"). Default
+                      ["left", "right"].
+        collapsible:  If True, renders inside a collapsible container. Default False.
     """
-    return {
-        "type":        "table",
-        "title":       title,
-        "unit":        unit,
-        "description": description,
-        "columns":     ["Data", "Valor"],
-        "rows":        build_observation_rows(observations, unit=unit, limit=limit),
+    if default_sort is None:
+        default_sort = {"column": 0, "direction": "desc"}
+    if sort_types is None:
+        sort_types = ["text", "number"]
+    if column_align is None:
+        column_align = ["left", "right"]
+
+    section = {
+        "type":         "table",
+        "title":        title,
+        "unit":         unit,
+        "description":  description,
+        "columns":      ["Data", "Valor"],
+        "rows":         build_observation_rows(observations, unit=unit, limit=limit),
+        "sortable":     sortable,
+        "default_sort": default_sort,
+        "sort_types":   sort_types,
+        "negative_red": negative_red,
+        "column_align": column_align,
     }
+    if collapsible:
+        section["collapsible"] = True
+    return section
 
 
 def build_text_section(title: str, body: str) -> dict:

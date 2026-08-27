@@ -4,6 +4,8 @@ Queries SGS series 433 (IPCA mensal) and 189 (IGP-M mensal) and shapes them
 into KPI cards (latest monthly variation + rolling 12-month acumulado) +
 a per-series chart + table.
 
+[v1.7] Tables now collapsible=True (collapsed by default).
+
 Registered as "inflation" in skills.bcb.macro._registry.MODES.
 """
 from __future__ import annotations
@@ -37,7 +39,10 @@ IGPM_MENSAL = 189
     ],
 )
 def inflation(months: int = 12) -> dict:
-    """Build the inflation dashboard."""
+    """Build the inflation dashboard.
+
+    [v1.7] Tables collapsible=True.
+    """
     sections = []
     kpis = []
 
@@ -74,6 +79,7 @@ def inflation(months: int = 12) -> dict:
              for r in enriched],
             unit="%", limit=12,
             description="Acumulado nos ultimos 12 meses (rolling sum).",
+            collapsible=True,
         ))
 
     return {

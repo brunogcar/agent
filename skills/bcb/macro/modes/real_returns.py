@@ -14,13 +14,15 @@ outpaced nominal Selic -- capital is being eroded in real terms.
 acumulado of its month: every day in a given month uses the same IPCA
 figure, so the real-rate chart moves day-by-day with Selic but steps
 month-by-month with IPCA.
+[v1.7] Table now shows MONTHLY data (not daily) — daily changes are not
+important for real returns. Table is collapsible=True.
 
 Registered as "real_returns" in skills.bcb.macro._registry.MODES.
 """
 from __future__ import annotations
 
 from skills.bcb.macro._registry import register_mode
-from skills.bcb.macro.helpers import annualize_rate, format_value
+from skills.bcb.macro.helpers import annualize_rate, format_value, format_date, group_by_month
 from skills.bcb.macro.report import (
     build_kpi_card, build_chart_section, build_table_section, build_error_section,
 )
@@ -54,7 +56,7 @@ def _ipca_acum_by_month(monthly_obs: list[dict]) -> dict[str, float | None]:
 
     For each monthly observation at index i (sorted ascending), the 12m
     acumulado is the sum of values[i-11..i]. We map by YYYY-MM (not the
-    full ref_date) so daily Selic observations can be joined by month.
+    full ref date) so daily Selic observations can be joined by month.
     """
     out: dict[str, float | None] = {}
     for i, obs in enumerate(monthly_obs):
@@ -86,7 +88,10 @@ def _ipca_acum_by_month(monthly_obs: list[dict]) -> dict[str, float | None]:
     ],
 )
 def real_returns(days: int = 365, months: int = 24) -> dict:
-    """Build the real-interest-rate dashboard."""
+    """Build the real-interest-rate dashboard.
+
+    [v1.7] Table shows monthly data (not daily). Collapsible=True.
+    """
     sections: list[dict] = []
     kpis: list[dict] = []
 
@@ -168,7 +173,7 @@ def real_returns(days: int = 365, months: int = 24) -> dict:
         ),
     ))
 
-    # -- 5. Real-rate chart over time --
+    # -- 5. Real-rate chart over time (daily) --
     sections.append(build_chart_section(
         "Retorno Real - evolucao",
         real_obs,
@@ -180,25 +185,63 @@ def real_returns(days: int = 365, months: int = 24) -> dict:
         ),
     ))
 
-    # -- 6. Real-rate table (last 10 obs) --
+    # -- 6. Real-rate table (monthly, last 24 months) --
+    # [v1.7] Group by month (last value per month) instead of daily.
+    # Daily changes are not important for real returns — monthly view is
+    # more meaningful and easier to read.
+    monthly_real = group_by_month(real_obs)
+    # Also group nominal + inflation by month for the table.
+    monthly_nominal = group_by_month(
+        [{"ref_date": o["ref_date"], "value": o.get("nominal")} for o in real_obs])
+    monthly_inflation = group_by_month(
+        [{"ref_date": o["ref_date"], "value": o.get("inflation")} for o in real_obs])
+
+    # Build merged monthly rows: [{ref_date, value, nominal, inflation}]
+    monthly_merged = []
+    for m in monthly_real:
+        ref = m["ref_date"]
+        nominal_val = next((mn["value"] for mn in monthly_nominal if mn["ref_date"] == ref), None)
+        inflation_val = next((mi["value"] for mi in monthly_inflation if mi["ref_date"] == ref), None)
+        monthly_merged.append({
+            "ref_date": ref,
+            "value": m["value"],
+            "nominal": nominal_val,
+            "inflation": inflation_val,
+        })
+
+    # Build table rows (last 24 months, sorted DESC = newest first)
     table_rows = []
-    last_10 = real_obs[-10:]
-    for o in last_10:
+    last_24 = sorted(monthly_merged[-24:], key=lambda o: o.get("ref_date", ""),
+                     reverse=True)
+    for o in last_24:
+        ref = o.get("ref_date", "")
+        real_val = o.get("value")
+        real_str = format_value(real_val, "% a.a.")
+        # Add red color for negative real rates.
+        real_cell = {"text": real_str}
+        if real_val is not None:
+            real_cell["data-value"] = f"{real_val:.6f}"
+            if real_val < 0:
+                real_cell["color"] = "#ef4444"
         table_rows.append([
-            o.get("ref_date", ""),
-            format_value(o.get("value"), "% a.a."),
+            {"text": format_date(ref), "data-value": ref} if ref else {"text": "-"},
+            real_cell,
             format_value(o.get("nominal"), "% a.a."),
             format_value(o.get("inflation"), "%"),
         ])
     sections.append({
         "type":        "table",
-        "title":       "Retorno Real - ultimas 10 observacoes",
+        "title":       "Retorno Real - ultimos 24 meses",
         "unit":        "% a.a.",
-        "description": "Taxa real, nominal (Selic anualizada) e IPCA 12m acumulado.",
+        "description": "Taxa real, nominal (Selic anualizada) e IPCA 12m acumulado (mensal).",
         "columns":     ["Data", "Taxa Real", "Nominal", "IPCA 12m"],
         "rows":        table_rows,
-        # Right-align the numeric columns (1, 2, 3); left-align the date (0).
         "column_align": ["left", "right", "right", "right"],
+        "sortable":     True,
+        "default_sort": {"column": 0, "direction": "desc"},
+        "sort_types":   ["text", "number", "text", "text"],
+        "negative_red": True,
+        "collapsible":  True,
     })
 
     return {

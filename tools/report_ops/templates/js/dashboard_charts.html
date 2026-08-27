@@ -87,6 +87,10 @@
       //   [A-Za-z]{3} so Q1/2026 doesn't match the regex at all.
       var meses = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
       function labelToISO(l) {
+        // ISO YYYY-MM-DD → passthrough (macro charts use ISO labels)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(l)) return l;
+        // ISO YYYY-MM → passthrough (monthly macro charts)
+        if (/^\d{4}-\d{2}$/.test(l)) return l;
         // DD/MM/YYYY → YYYY-MM-DD (daily charts)
         var d = l.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
         if (d) return d[3] + '-' + d[2] + '-' + d[1];
@@ -279,6 +283,45 @@
     return chart;
   }
 
+  // [v1.6] Format ISO date labels as DD/MM/YYYY on the x-axis.
+  // Charts from BCB macro (and others) use ISO YYYY-MM-DD as labels so the
+  // range selector can filter them chronologically. But the x-axis should
+  // display PT-BR format (DD/MM/YYYY). This function adds a ticks.callback
+  // that converts ISO → DD/MM/YYYY at render time. Also handles YYYY-MM → MM/YYYY.
+  // Mutates `config` in place (adds scales.x.ticks.callback).
+  function _applyDateFormatXAxis(config) {
+    if (!config || !config.data || !config.data.labels) return;
+    var labels = config.data.labels;
+    // Check if ANY label looks like an ISO date (YYYY-MM-DD or YYYY-MM).
+    // If none do, skip (e.g. year-only labels like "2026" in yield curve).
+    var hasISODate = false;
+    for (var i = 0; i < labels.length; i++) {
+      var l = String(labels[i]);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(l) || /^\d{4}-\d{2}$/.test(l)) {
+        hasISODate = true;
+        break;
+      }
+    }
+    if (!hasISODate) return;
+
+    config.options = config.options || {};
+    config.options.scales = config.options.scales || {};
+    config.options.scales.x = config.options.scales.x || {};
+    config.options.scales.x.ticks = config.options.scales.x.ticks || {};
+    config.options.scales.x.ticks.callback = function(value, index, ticks) {
+      var label = this.getLabelForValue(value);
+      if (!label) return label;
+      var s = String(label);
+      // YYYY-MM-DD → DD/MM/YYYY
+      var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (d) return d[3] + '/' + d[2] + '/' + d[1];
+      // YYYY-MM → MM/YYYY
+      var m = s.match(/^(\d{4})-(\d{2})$/);
+      if (m) return m[2] + '/' + m[1];
+      return s;
+    };
+  }
+
   // Render a single chart by canvas ID.  Deep-copies chartData so the
   // original (with _tooltipPercent flag) is preserved in the registry.
   // [b3.price v2] Routes OHLC candlesticks through _renderOHLCChart.
@@ -293,6 +336,7 @@
     var config = JSON.parse(JSON.stringify(chartData));
     _applyTooltipPercent(config);
     _applySegmentColors(config);
+    _applyDateFormatXAxis(config);
     var chart = new Chart(canvas.getContext('2d'), config);
     _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
   }
