@@ -6,13 +6,18 @@ and stores to SQLite with batch commits.
 
 Default: syncs 2010-present (matching CVM DFP start year).
 Each year is ~87MB ZIP → ~765MB TXT → ~2-5 min download + parse + store.
+
+[I12] Incremental sync: for the current year, when force=False, only INSERT
+rows with refdate > MAX(refdate) in the DB. This avoids re-parsing + re-inserting
+~170K rows when only 1 new trading day was added. Past years are skipped
+entirely (already synced). When force=True, full-refresh (DELETE year + re-INSERT).
 """
 
 from __future__ import annotations
 
 import io
+import logging
 import sqlite3
-import sys
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -34,12 +39,36 @@ from data_sources.b3.cotahist.catalog import (
 BATCH_SIZE = 50000  # commit every 50K rows (~1MB per batch)
 
 
+# [I9] Set up logger.
+_logger = logging.getLogger("b3.cotahist")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
+
+
 def _progress(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    """[I9] Log via stdlib logging."""
+    _logger.info(msg)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _get_latest_refdate(conn, year: int) -> str:
+    """[I12] Get the latest refdate for a year in the DB.
+
+    Returns "" if the year has no rows.
+    """
+    try:
+        row = conn.execute(
+            f"SELECT MAX(refdate) as d FROM cotahist WHERE refdate LIKE '{year}%'"
+        ).fetchone()
+        return row["d"] if row and row["d"] else ""
+    except sqlite3.Error:
+        return ""
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -117,25 +146,45 @@ def sync_full_history(force: bool = False) -> dict:
 # ── Internal: sync a single year ─────────────────────────────────────────────
 
 def _sync_year(year: int, force: bool = False) -> dict:
-    """Download, parse, and store COTAHIST data for a single year."""
+    """Download, parse, and store COTAHIST data for a single year.
+
+    [I12] Incremental sync: when force=False and the year is already in the DB,
+    only INSERT rows with refdate > MAX(refdate). This avoids re-parsing +
+    re-inserting ~170K rows when only 1 new trading day was added. When
+    force=True, full-refresh (DELETE year + re-INSERT all rows).
+    """
     t0 = time.time()
     now = _now()
 
     conn = connect(read_only=False)
     ensure_schema(conn)
     try:
-        # Check if already synced
+        # [I12] Check if already synced (non-force).
         if not force:
             existing = conn.execute(
                 "SELECT * FROM sync_state WHERE year=?", (year,),
             ).fetchone()
             if existing:
-                return {
-                    "status": "skipped",
-                    "year": year,
-                    "rows": existing["rows_added"],
-                    "synced_at": existing["synced_at"],
-                }
+                # Already synced — check if we need incremental update.
+                latest_in_db = _get_latest_refdate(conn, year)
+                if latest_in_db:
+                    # Incremental: download + parse, but only INSERT new rows.
+                    _progress(f"[cotahist] Year {year}: incremental sync (latest_in_db={latest_in_db})")
+                    result = _incremental_sync(conn, year, latest_in_db, now)
+                    if result.get("status") == "ok":
+                        duration = round(time.time() - t0, 1)
+                        _progress(f"[cotahist] Year {year}: {result['rows']:,} new rows in {duration}s")
+                        return {**result, "duration_s": duration, "synced_at": now}
+                    # If incremental failed (e.g., download error), fall through to full sync.
+                    _progress(f"[cotahist] Year {year}: incremental failed ({result.get('error')}), falling back to full sync")
+                else:
+                    # No existing rows — skip (already synced but empty).
+                    return {
+                        "status": "skipped",
+                        "year": year,
+                        "rows": existing["rows_added"],
+                        "synced_at": existing["synced_at"],
+                    }
 
         # Download ZIP
         url = COTAHIST_URL.format(year=year)
@@ -181,6 +230,40 @@ def _sync_year(year: int, force: bool = False) -> dict:
                 "traceback": traceback.format_exc()}
     finally:
         conn.close()
+
+
+def _incremental_sync(conn, year: int, latest_in_db: str, now: str) -> dict:
+    """[I12] Download + parse the year's ZIP, but only INSERT rows with refdate > latest_in_db.
+
+    This avoids re-inserting ~170K existing rows when only 1 new trading day
+    was added. The ZIP is still downloaded (87MB) — B3 doesn't offer daily
+    COTAHIST files at a public URL — but only new rows are written to the DB.
+    """
+    url = COTAHIST_URL.format(year=year)
+    try:
+        resp = httpx.get(url, timeout=120, follow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+    except httpx.HTTPError as e:
+        return {"status": "error", "year": year,
+                "error": f"Download failed: {e}"}
+
+    if resp.content[:2] != b"PK":
+        return {"status": "error", "year": year,
+                "error": "Response is not a ZIP file"}
+
+    # Parse + filter to only new rows (refdate > latest_in_db).
+    rows_added = _parse_and_store_filtered(conn, resp.content, year, now, latest_in_db)
+
+    # Update sync state (don't overwrite rows_added — keep the cumulative count).
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_state (year, synced_at, rows_added, duration_s) "
+        "VALUES (?, ?, ?, ?)",
+        (year, now, rows_added, 0),  # duration_s=0 for incremental (not measured)
+    )
+    conn.commit()
+
+    return {"status": "ok", "year": year, "rows": rows_added}
 
 
 # ── Internal: parse + store (streaming) ──────────────────────────────────────
@@ -323,6 +406,122 @@ def _parse_and_store(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
     if deriv_rows_added > 0:
         _progress(f"[cotahist_deriv] {deriv_rows_added:,} derivatives rows stored for {year}")
 
+    return rows_added
+
+
+def _parse_and_store_filtered(conn: sqlite3.Connection, zip_bytes: bytes, year: int,
+                               ingested_at: str, latest_in_db: str) -> int:
+    """[I12] Parse + store only rows with refdate > latest_in_db.
+
+    Same streaming logic as _parse_and_store, but skips rows whose refdate
+    is <= latest_in_db. No DELETE (incremental — preserves existing rows).
+    """
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+
+    txt_name = next(
+        (n for n in zf.namelist() if n.lower().endswith(('.txt', '.csv'))),
+        zf.namelist()[0] if zf.namelist() else None,
+    )
+    if not txt_name:
+        raise ValueError("No TXT file found in COTAHIST ZIP")
+
+    _progress(f"[cotahist] Parsing {txt_name} (incremental, filtering > {latest_in_db})...")
+
+    # NO DELETE — incremental sync preserves existing rows.
+
+    cols = [c[0] for c in COTAHIST_LAYOUT]
+    col_str = ", ".join(cols) + ", _ingested_at"
+    placeholders = ", ".join(["?"] * (len(cols) + 1))
+    insert_sql = f"INSERT INTO cotahist ({col_str}) VALUES ({placeholders})"
+
+    deriv_cols = cols + ["underlying", "option_type", "expiration_month", "strike_parsed", "derivative_type"]
+    deriv_col_str = ", ".join(deriv_cols) + ", _ingested_at"
+    deriv_placeholders = ", ".join(["?"] * (len(deriv_cols) + 1))
+    deriv_insert_sql = f"INSERT INTO cotahist_derivatives ({deriv_col_str}) VALUES ({deriv_placeholders})"
+
+    rows_added = 0
+    deriv_rows_added = 0
+    batch: list[tuple] = []
+    deriv_batch: list[tuple] = []
+    skipped = 0
+
+    with zf.open(txt_name) as f:
+        raw = io.TextIOWrapper(f, encoding=CSV_ENCODING, errors="replace")
+        for line in raw:
+            line = line.rstrip("\n\r")
+            if len(line) < 245:
+                continue
+            if line[:2] != "01":
+                continue
+
+            # [I12] Quick filter: extract refdate (positions 3-10, 1-based) + compare.
+            # refdate is YYYYMMDD in the raw line — convert to YYYY-MM-DD for comparison.
+            refdate_raw = line[2:10].strip()  # positions 3-10 (0-based: 2-9)
+            if len(refdate_raw) == 8:
+                refdate_iso = f"{refdate_raw[:4]}-{refdate_raw[4:6]}-{refdate_raw[6:8]}"
+                if refdate_iso <= latest_in_db:
+                    skipped += 1
+                    continue
+
+            bdi_str = line[10:12].strip()
+            try:
+                bdi = int(bdi_str) if bdi_str else 0
+            except ValueError:
+                bdi = 0
+
+            if bdi in BDI_FILTER:
+                row = _parse_line(line)
+                if row is None:
+                    continue
+                values = tuple(row.get(c, None) for c in cols) + (ingested_at,)
+                batch.append(values)
+                if len(batch) >= BATCH_SIZE:
+                    conn.executemany(insert_sql, batch)
+                    conn.commit()
+                    rows_added += len(batch)
+                    batch = []
+
+            elif bdi in DERIVATIVES_BDI_FILTER:
+                row = _parse_line(line)
+                if row is None:
+                    continue
+                symbol = row.get("symbol", "")
+                parsed = parse_option_ticker(symbol)
+                if parsed:
+                    row["underlying"] = parsed["underlying"]
+                    row["option_type"] = parsed["option_type"]
+                    row["expiration_month"] = parsed["expiration_month"]
+                    row["strike_parsed"] = parsed["strike_parsed"]
+                else:
+                    sym = row.get("symbol", "")
+                    u_base = sym.strip().upper()
+                    while u_base and u_base[-1].isdigit():
+                        u_base = u_base[:-1]
+                    row["underlying"] = u_base if u_base else None
+                    row["option_type"] = None
+                    row["expiration_month"] = None
+                    row["strike_parsed"] = None
+                row["derivative_type"] = BDI_TO_DERIVATIVE_TYPE.get(bdi)
+
+                deriv_values = tuple(row.get(c, None) for c in deriv_cols) + (ingested_at,)
+                deriv_batch.append(deriv_values)
+                if len(deriv_batch) >= BATCH_SIZE:
+                    conn.executemany(deriv_insert_sql, deriv_batch)
+                    conn.commit()
+                    deriv_rows_added += len(deriv_batch)
+                    deriv_batch = []
+
+    if batch:
+        conn.executemany(insert_sql, batch)
+        conn.commit()
+        rows_added += len(batch)
+
+    if deriv_batch:
+        conn.executemany(deriv_insert_sql, deriv_batch)
+        conn.commit()
+        deriv_rows_added += len(deriv_batch)
+
+    _progress(f"[cotahist] Incremental: {rows_added:,} new rows, {deriv_rows_added:,} new derivatives, {skipped:,} skipped (already in DB)")
     return rows_added
 
 

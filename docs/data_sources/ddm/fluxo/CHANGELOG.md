@@ -1,5 +1,21 @@
 # DDM Fluxo — Changelog
 
+## v1.1 — 2026-08-27
+
+**Incremental sync — only INSERT new rows (no gaps).**
+
+### I12: Incremental sync
+
+- `sync_all(force=False)` now queries `MAX(ref_date)` from the DB and only
+  INSERTs rows with `ref_date > latest_in_db`. This avoids re-inserting
+  ~750 existing rows on every sync.
+- When `force=True`, falls back to full-refresh (DELETE + re-INSERT all rows)
+  to handle corrections (DDM may revise historical data).
+- If no new rows exist, skips the DB write entirely (returns `skipped=True`).
+- **No gaps**: the fetcher still fetches the full page (~750 rows), but only
+  new rows are written. If you sync after a gap (e.g., didn't sync for a week),
+  all missing days are inserted in one pass.
+
 ## v1.0 — 2025-01
 
 Initial release. Subdomain pattern mirroring `ddm/focus/` (single-page

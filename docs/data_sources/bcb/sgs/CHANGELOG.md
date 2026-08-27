@@ -2,6 +2,22 @@
 
 # 📋 SGS Changelog
 
+## v3.1 — 2026-08-27
+
+**Incremental sync — pass start=MAX(ref_date) to fetcher (no gaps).**
+
+### I12: Incremental sync
+
+- `sync_series(force=False)` + `sync_all(force=False)` now query
+  `MAX(ref_date)` from the DB and pass it as `start` to the fetcher.
+  This avoids re-downloading 5 years of history (~1264 rows) on every sync.
+- The fetcher already supported `start`/`end` params — sync just never
+  passed them. Now it does.
+- **No gaps**: the BCB API returns all observations from `start` to today,
+  so if you sync after a gap (e.g., didn't sync for a week), all missing
+  days are fetched + inserted in one pass.
+- When `force=True`, fetches full history (5 years) — used for corrections.
+
 ## v3.0 — 2026-07-24
 
 **Fixes ALL issues from v1 + v2.**
