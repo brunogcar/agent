@@ -62,3 +62,15 @@ def _init_services(cfg) -> None:
         os.getenv("DEEP_RESEARCH_CONVERGENCE_THRESHOLD", "0.85")
     )
     # Range check moved to validators.py::_validate_config (was inline here pre-v1.0).
+
+    # -- Investsite (login required since 2026-08) ---------------------------
+    # investsite.com.br now requires login (Cloudflare Turnstile CAPTCHA).
+    # Two auth paths:
+    #   1. INVESTSITE_SESSION_ID — manual: log in via browser, copy the cookie
+    #   2. INVESTSITE_EMAIL + INVESTSITE_PASSWORD — automated via browser_ops
+    #      (Playwright opens login page, fills credentials, Turnstile auto-solves
+    #      in a real browser context, session cookie is extracted)
+    # If SESSION_ID is set, it takes priority (faster — no browser needed).
+    cfg.investsite_email = os.getenv("INVESTSITE_EMAIL", "")
+    cfg.investsite_password = os.getenv("INVESTSITE_PASSWORD", "")
+    cfg.investsite_session_id = os.getenv("INVESTSITE_SESSION_ID", "")

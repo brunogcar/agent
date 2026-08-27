@@ -13,6 +13,7 @@ Live web scraping skill for investsite.com.br. Fetches per-ticker financial data
 - **10 indicator tables** — basic data, prices/valuation, DRE TTM/quarterly, returns/margins, balance sheet, cash flow, experimental CAPEX/FCF.
 - **Direct CVM links** — events mode returns `rad.cvm.gov.br` PDF links.
 - **Rate-limited** — 0.5s between requests to respect the free site.
+- **Session auth (v2.1)** — investsite.com.br now requires login (Cloudflare Turnstile CAPTCHA). Set `INVESTSITE_SESSION_ID` in `.env` (copy from browser: F12 → Application → Cookies → investsite.com.br → SESSION_ID). Automated browser login also available via `INVESTSITE_EMAIL` + `INVESTSITE_PASSWORD`.
 
 ---
 

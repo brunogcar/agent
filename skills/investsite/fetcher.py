@@ -4,12 +4,19 @@ Handles:
   - HTTP GET with browser-like headers (investsite blocks bare UAs)
   - Simple in-memory cache (1h TTL) to avoid re-fetching within a session
   - Rate limiting (0.5s between requests) to respect the free site
+  - [v2] Session authentication via SESSION_ID cookie
+    investsite.com.br now requires login (Cloudflare Turnstile CAPTCHA).
+    Two auth paths:
+      1. INVESTSITE_SESSION_ID env var (manual — log in via browser, copy cookie)
+      2. INVESTSITE_EMAIL + INVESTSITE_PASSWORD env vars (automated via browser_ops)
+    If neither is set, fetches will fail with a clear error.
 
 NO local database — pure live fetching. Each skill call hits the site.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from urllib.parse import quote
@@ -19,6 +26,7 @@ import httpx
 # ── Constants ────────────────────────────────────────────────────────────────
 
 _BASE_URL = "https://www.investsite.com.br"
+_LOGIN_URL = f"{_BASE_URL}/login.php"
 
 _HEADERS = {
     "User-Agent": (
@@ -38,9 +46,155 @@ _RATE_LIMIT_SECONDS = 0.5  # 0.5s between requests
 _cache: dict[str, tuple[str, float]] = {}
 _last_request_time: float = 0.0
 
+# Cached session cookie (set once, reused until it expires)
+_session_cookie: str | None = None
+_session_cookie_checked: bool = False
+
 
 def _progress(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
+
+
+# ── Session management ───────────────────────────────────────────────────────
+
+def _get_session_cookie() -> str | None:
+    """Get the investsite SESSION_ID cookie.
+
+    Priority:
+      1. Cached in-memory (from previous browser login)
+      2. INVESTSITE_SESSION_ID from cfg (loaded from .env by core.config)
+      3. INVESTSITE_EMAIL + INVESTSITE_PASSWORD → browser login (automated)
+
+    Returns the cookie value, or None if no auth is configured.
+    """
+    global _session_cookie, _session_cookie_checked
+
+    # Return cached cookie (from previous browser login)
+    if _session_cookie:
+        return _session_cookie
+
+    # Use cfg from core.config (ensures .env is loaded)
+    email = ""
+    password = ""
+    session_id = ""
+    try:
+        from core.config import cfg
+        session_id = cfg.investsite_session_id or ""
+        email = cfg.investsite_email or ""
+        password = cfg.investsite_password or ""
+    except Exception:
+        # Fallback: os.getenv (in case core.config isn't available)
+        session_id = os.getenv("INVESTSITE_SESSION_ID", "")
+        email = os.getenv("INVESTSITE_EMAIL", "")
+        password = os.getenv("INVESTSITE_PASSWORD", "")
+
+    # Path 1: Manual session cookie from .env
+    if session_id:
+        _session_cookie = session_id
+        _progress(f"[investsite] Using SESSION_ID from .env ({session_id[:20]}...)")
+        return _session_cookie
+
+    # Path 2: Automated browser login (only try once per session)
+    if _session_cookie_checked:
+        return None  # Already tried, failed
+    _session_cookie_checked = True
+
+    if email and password:
+        _progress("[investsite] Attempting browser login (Cloudflare Turnstile)...")
+        cookie = _browser_login(email, password)
+        if cookie:
+            _session_cookie = cookie
+            _progress("[investsite] Browser login successful — session cookie cached.")
+            return _session_cookie
+        _progress("[investsite] Browser login failed (Turnstile may have blocked it). "
+                  "Set INVESTSITE_SESSION_ID in .env manually (see fetcher.py docstring).")
+
+    return None
+
+
+def _browser_login(email: str, password: str) -> str | None:
+    """Log in to investsite via browser_ops (Playwright).
+
+    Opens the login page, fills email + password, waits for Cloudflare
+    Turnstile to auto-solve, submits, and extracts the SESSION_ID cookie.
+
+    Returns the cookie value, or None if login failed.
+    """
+    try:
+        # Lazy import to avoid Playwright dependency at module load time
+        from tools.browser_ops.factory import _get_page
+        from tools.browser_ops.loop import _run_browser_async
+        from tools.browser_ops.state import _browser_lock
+        import asyncio
+
+        async def _do_login():
+            with _browser_lock:
+                page = _run_browser_async(_get_page("", True), timeout=60)
+
+                # Step 1: Navigate to login page
+                await page.goto(_LOGIN_URL, wait_until="networkidle", timeout=30000)
+                _progress("[investsite] Login page loaded.")
+
+                # Step 2: Fill email + password
+                await page.fill('input[name="email"]', email)
+                await page.fill('input[name="password"]', password)
+                _progress("[investsite] Credentials filled.")
+
+                # Step 3: Wait for Cloudflare Turnstile to render + auto-solve.
+                # Turnstile injects a hidden input cf-turnstile-response when solved.
+                # Wait up to 15 seconds for it to appear.
+                try:
+                    await page.wait_for_selector(
+                        'input[name="cf-turnstile-response"]',
+                        state="visible",
+                        timeout=15000
+                    )
+                    _progress("[investsite] Turnstile solved (token visible).")
+                except Exception:
+                    # Turnstile might be "invisible" mode — try submitting anyway
+                    _progress("[investsite] Turnstile token not detected — attempting submit anyway.")
+
+                # Step 4: Click submit
+                await page.click('button[type="submit"]')
+
+                # Step 5: Wait for redirect away from login.php (success) or
+                # error message (failure). Give it 10 seconds.
+                try:
+                    await page.wait_for_url(
+                        lambda url: "login.php" not in url,
+                        timeout=10000
+                    )
+                    _progress(f"[investsite] Redirected to: {page.url}")
+                except Exception:
+                    _progress("[investsite] Still on login page — login may have failed.")
+                    return None
+
+                # Step 6: Extract SESSION_ID cookie
+                cookies = await page.context.cookies(urls=[_BASE_URL])
+                for cookie in cookies:
+                    if cookie.get("name") == "SESSION_ID":
+                        return cookie.get("value")
+
+                _progress("[investsite] SESSION_ID cookie not found after login.")
+                return None
+
+        return asyncio.run(_do_login())
+
+    except ImportError:
+        _progress("[investsite] browser_ops not available — cannot do automated login.")
+        return None
+    except Exception as e:
+        _progress(f"[investsite] Browser login error: {e}")
+        return None
+
+
+def _build_headers_with_cookie() -> dict:
+    """Build headers with session cookie if available."""
+    headers = dict(_HEADERS)
+    cookie = _get_session_cookie()
+    if cookie:
+        headers["Cookie"] = f"SESSION_ID={cookie}"
+    return headers
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -55,6 +209,9 @@ def fetch_page(path: str, params: dict | None = None, force: bool = False) -> st
 
     Returns:
         HTML string.
+
+    Raises:
+        ConnectionError: If the fetch fails or login is required but not configured.
     """
     # Build full URL
     if path.startswith("http"):
@@ -85,16 +242,48 @@ def fetch_page(path: str, params: dict | None = None, force: bool = False) -> st
     if elapsed < _RATE_LIMIT_SECONDS:
         time.sleep(_RATE_LIMIT_SECONDS - elapsed)
 
-    # Fetch
+    # Fetch with session cookie
+    headers = _build_headers_with_cookie()
     _progress(f"[investsite] Fetching: {full_url[:80]}")
     try:
-        resp = httpx.get(full_url, headers=_HEADERS, timeout=30, follow_redirects=True)
-        resp.raise_for_status()
+        resp = httpx.get(full_url, headers=headers, timeout=30, follow_redirects=False)
         _last_request_time = time.time()
+
+        # Check for login redirect (302 → login.php)
+        if resp.status_code == 302 and "login.php" in resp.headers.get("location", ""):
+            # Session cookie is missing or expired — try to refresh it.
+            # DON'T reset _session_cookie_checked: if browser login already
+            # failed, don't retry it on every subsequent fetch (spam).
+            global _session_cookie
+            old_cookie = _session_cookie
+            _session_cookie = None
+
+            new_cookie = _get_session_cookie()
+            if new_cookie and new_cookie != old_cookie:
+                # Got a new cookie — retry the request
+                headers = _build_headers_with_cookie()
+                resp = httpx.get(full_url, headers=headers, timeout=30, follow_redirects=True)
+                _last_request_time = time.time()
+            else:
+                raise ConnectionError(
+                    "investsite session expired or not configured. "
+                    "Set INVESTSITE_SESSION_ID in .env (log in via browser → "
+                    "F12 → Application → Cookies → investsite.com.br → SESSION_ID)."
+                )
+
+        resp.raise_for_status()
     except httpx.HTTPError as e:
         raise ConnectionError(f"Failed to fetch {full_url}: {e}")
 
     html = resp.text
+
+    # Check if we got redirected to login page (not a 302, but the page itself)
+    if "login.php" in str(resp.url) and "email" in html and "password" in html:
+        raise ConnectionError(
+            "investsite returned login page. Session cookie may be expired. "
+            "Update INVESTSITE_SESSION_ID in .env (log in via browser → F12 → "
+            "Application → Cookies → investsite.com.br → SESSION_ID)."
+        )
 
     # Cache
     _cache[cache_key] = (html, time.time())

@@ -79,7 +79,7 @@ def _try_investsite(ticker: str) -> int | None:
     engine assumes shares are constant going backward from the latest available.
     """
     try:
-        from skills.investsite.investsite import indicators
+        from skills.investsite.modes.indicators import indicators
         r = indicators(ticker=ticker)
         if r.get("status") != "ok":
             return None

@@ -68,7 +68,7 @@ def _get_price_brapi(ticker: str) -> dict:
 
 def _get_price_investsite(ticker: str) -> dict:
     try:
-        from skills.investsite.investsite import indicators
+        from skills.investsite.modes.indicators import indicators
         r = indicators(ticker=ticker)
         if r.get("status") != "ok":
             return {"status": "error", "error": f"investsite: {r.get('error','')}"}
