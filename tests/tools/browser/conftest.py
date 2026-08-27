@@ -21,6 +21,13 @@ def reset_browser_state():
 
 
 @pytest.fixture(autouse=True)
+def mock_navigate_sleep():
+    """[fast-tests] Mock time.sleep in navigate retry loop."""
+    with patch("tools.browser_ops.actions.navigate.time.sleep"):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def mock_cfg_for_browser(tmp_path):
     """Mock cfg to prevent AsyncMock leakage and provide browser defaults."""
     with patch("tools.browser_ops.lifecycle.cfg") as mock_cfg_lifecycle,          patch("tools.browser_ops.factory.cfg") as mock_cfg_init,          patch("tools.browser_ops.actions.screenshot.cfg") as mock_cfg_actions:

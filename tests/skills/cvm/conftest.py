@@ -59,25 +59,32 @@ os.environ.setdefault("CVM_SKIP_DB_CACHE", "1")
 
 @pytest.fixture(autouse=True)
 def mock_freshness(monkeypatch):
-    """[v3] Mock add_freshness directly so no test opens real SQLite DBs.
+    """[v4] Mock get_freshness + get_last_synced_period so add_freshness
+    doesn't open real SQLite DBs.
 
-    add_freshness() calls get_freshness() which opens 9 SQLite databases
-    (dfp, itr, fre, ipe, cad, vlmo, cgvn, fca, bridge) to read sync_state
-    timestamps. On a machine with real databases, each call takes 100-500ms.
-    With 30+ tests calling modes that use add_freshness, this adds 10-30
-    seconds of pure DB-open overhead.
+    The v3 approach patched ``add_freshness`` itself at
+    ``skills._freshness.add_freshness``. This worked for modules that
+    imported it inside a function body (``from skills._freshness import
+    add_freshness`` re-imports at call time → sees the patch), but NOT
+    for modules that imported it at MODULE LEVEL (e.g.
+    ``skills/cvm/historical/helpers.py``,
+    ``skills/cvm/historical/modes/summary.py``). A module-level ``from
+    ... import`` creates a local binding that points to the ORIGINAL
+    function object; patching the source module's attribute doesn't
+    update the already-bound reference. This caused every historical
+    test to call the REAL add_freshness → get_freshness, which opens
+    ~15 SQLite DBs (CVM+B3+BCB+DDM), adding ~1.5s per test.
 
-    [v3] Instead of mocking get_freshness (v2 approach — still slow because
-    add_freshness itself runs), we mock add_freshness entirely as a no-op
-    that still injects the data_freshness key so tests that check for it
-    pass. This is MUCH faster because it skips the entire function body.
+    [v4] Instead of patching add_freshness, we patch get_freshness and
+    get_last_synced_period — the two functions add_freshness calls
+    internally. These are resolved by bare name from
+    ``skills._freshness.__dict__`` at CALL TIME (Python global lookup),
+    so the patch is effective regardless of how/where add_freshness was
+    imported.
     """
     _dummy_freshness = {
         "dfp": "", "itr": "", "fre": "", "ipe": "",
         "cad": "", "vlmo": "", "cgvn": "", "fca": "", "bridge": "",
     }
-    def _fake_add_freshness(result):
-        if isinstance(result, dict):
-            result["data_freshness"] = _dummy_freshness
-        return result
-    monkeypatch.setattr("skills._freshness.add_freshness", _fake_add_freshness)
+    monkeypatch.setattr("skills._freshness.get_freshness", lambda: _dummy_freshness)
+    monkeypatch.setattr("skills._freshness.get_last_synced_period", lambda: {})

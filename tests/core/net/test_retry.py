@@ -193,41 +193,36 @@ class TestRetryAsyncFactory:
     def test_on_failure_not_called_on_retried_success(self):
         """v1.5 regression: on_failure must NOT fire on retry attempts that
         eventually succeed.
-
-        Previously on_failure was called per-attempt, so a call that needed
-        2 retries to succeed would record 2 failures permanently. Three such
-        calls would open the CB despite every call succeeding overall.
-        record_success() is a no-op in CLOSED CB state, so interim failures
-        never cancel out.
         """
-        successes = []
-        failures = []
-        call_count = [0]
+        # [fast-tests] Mock _sleep — retry_async_factory sleeps between retries
+        with patch("core.net.retry._sleep"):
+            successes = []
+            failures = []
+            call_count = [0]
 
-        def factory():
-            call_count[0] += 1
-            async def coro():
-                # Fail twice, then succeed on the 3rd attempt.
-                if call_count[0] < 3:
-                    raise httpx.TimeoutException(f"transient #{call_count[0]}")
-                return "ok"
-            return coro()
+            def factory():
+                call_count[0] += 1
+                async def coro():
+                    if call_count[0] < 3:
+                        raise httpx.TimeoutException(f"transient #{call_count[0]}")
+                    return "ok"
+                return coro()
 
-        def run_async(coro):
-            import asyncio
-            return asyncio.run(coro)
+            def run_async(coro):
+                import asyncio
+                return asyncio.run(coro)
 
-        result = retry_async_factory(
-            factory,
-            run_async=run_async,
-            max_retries=3,
-            on_success=lambda: successes.append(1),
-            on_failure=lambda: failures.append(1),
-        )
+            result = retry_async_factory(
+                factory,
+                run_async=run_async,
+                max_retries=3,
+                on_success=lambda: successes.append(1),
+                on_failure=lambda: failures.append(1),
+            )
 
-        assert result == "ok"
-        assert call_count[0] == 3  # initial + 2 retries
-        assert len(successes) == 1
+            assert result == "ok"
+            assert call_count[0] == 3
+            assert len(successes) == 1
         assert len(failures) == 0, (
             f"on_failure must NOT fire on per-attempt retries that succeed overall; "
             f"got {len(failures)} failure callbacks. This regresses the v1.5 CB fix."

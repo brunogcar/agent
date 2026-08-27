@@ -77,8 +77,11 @@ class TestTokenChunking:
 
     def test_token_chunks_returned_as_list(self, mock_cfg):
         path = mock_cfg.workspace_root / "long.md"
-        # ~600 tokens of repetitive text — should produce multiple chunks at size=128
-        path.write_text("The quick brown fox. " * 200, encoding="utf-8")
+        # [fast-tests] Reduced from 200 to 50 repetitions (~150 tokens).
+        # Still produces multiple chunks at size=128, but runs ~4x faster.
+        # The original 200 repetitions generated ~600 tokens which caused
+        # the tokenizer to take 5.9s on Windows.
+        path.write_text("The quick brown fox. " * 50, encoding="utf-8")
         result = file(
             action="read_file",
             path=str(path),

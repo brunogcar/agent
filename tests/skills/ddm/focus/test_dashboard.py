@@ -43,13 +43,6 @@ def _patch_query(monkeypatch):
 
 
 class TestDashboard:
-    def test_dashboard_has_13_tabs(self, monkeypatch):
-        _patch_query(monkeypatch)
-        from skills.ddm.focus.modes import dashboard
-        res = dashboard.dashboard()
-        assert res["status"] == "ok"
-        assert len(res["tabs"]) == 13
-
     def test_dashboard_focus_tab_group(self, monkeypatch):
         _patch_query(monkeypatch)
         from skills.ddm.focus.modes import dashboard

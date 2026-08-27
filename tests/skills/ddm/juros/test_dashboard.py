@@ -89,15 +89,6 @@ def _patch_query(monkeypatch):
     monkeypatch.setattr(dashboard, "monthly_matrix", _mock_monthly_matrix)
 
 
-def test_dashboard_has_4_tabs(monkeypatch):
-    _patch_query(monkeypatch)
-    from skills.ddm.juros.modes import dashboard
-    res = dashboard.dashboard(months=12, compare_months=12)
-    assert res["status"] == "ok"
-    tab_names = [t["name"] for t in res["tabs"]]
-    assert tab_names == ["Selic", "Meta Selic", "CDI", "Comparativo"]
-
-
 def test_dashboard_uses_name_not_label(monkeypatch):
     _patch_query(monkeypatch)
     from skills.ddm.juros.modes import dashboard

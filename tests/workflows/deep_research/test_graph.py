@@ -258,10 +258,10 @@ class TestFacade:
         """run_deep_research_agent returns timeout when graph exceeds limit."""
         mock_run = mocker.patch("workflows.deep_research.run_workflow")
         mock_run.side_effect = lambda **kwargs: (
-            __import__("time").sleep(2),
+            __import__("time").sleep(0.5),
             {"status": "success"}
         )[1]
         from workflows.deep_research import run_deep_research_agent
-        result = run_deep_research_agent("What is LangGraph?", timeout=1)
+        result = run_deep_research_agent("What is LangGraph?", timeout=0.2)
         assert result["status"] == "timeout"
-        assert "exceeded 1s timeout" in result["error"]
+        assert "exceeded 0.2s timeout" in result["error"]

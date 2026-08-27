@@ -26,17 +26,17 @@ def test_slot_timeout_blocks_excess_workers():
     """Workers should time out if all slots are taken."""
     tracker.max_concurrent_inferences = 1
     results = []
-    
+
     def worker():
         try:
-            with tracker.inference_slot(timeout=1.0):
-                time.sleep(2.0)
+            with tracker.inference_slot(timeout=0.2):
+                time.sleep(0.4)
                 return "success"
         except TimeoutError:
             return "timeout"
-            
+
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = [ex.submit(worker) for _ in range(3)]
         results = [f.result() for f in futures]
-        
+
     assert results.count("timeout") >= 2, "Timeout should fire for excess workers"

@@ -274,20 +274,36 @@ class TestCallAllProvidersTimeout:
     def test_call_all_providers_does_not_hang_on_slow_provider(self):
         """If one provider hangs, _call_all_providers must still return within
         the timeout window, not block forever on shutdown(wait=True).
+
+        The v1.0.1 implementation used `with ThreadPoolExecutor(...)` +
+        `as_completed(timeout=...)`. If as_completed raised TimeoutError, the
+        `with` block's __exit__ called shutdown(wait=True), blocking forever on
+        a hanging provider. This affected consensus, vote, and compare.
+
+        The v1.0.2 rewrite mirrors _call_providers_race: explicit executor +
+        try/except TimeoutError + finally: shutdown(wait=False, cancel_futures=True).
+
+        Optimization: Instead of sleeping 30s and waiting ~11s for the real
+        as_completed window to expire, we mock as_completed to yield the fast
+        provider's future (once it actually completes) and then raise
+        TimeoutError — simulating the slow provider still running when the
+        window expires. This tests the same code path (TimeoutError handler +
+        shutdown(wait=False)) in <0.1s instead of 11s.
         """
-        import time as _time
+        import threading
         from unittest.mock import MagicMock, patch
-        import os
         from tools.swarm_ops.helpers import _call_all_providers
 
         def fast_call(*a, **k):
             return {"choices": [{"message": {"content": "fast"}}], "usage": {"total_tokens": 5}}
 
+        # The hanging provider blocks on an Event that is never set during the
+        # test — it simulates a provider that never returns. Since as_completed
+        # is mocked, we never actually wait for it. The event is set at the end
+        # so the orphaned thread can exit cleanly.
+        hang_event = threading.Event()
         def hanging_call(*a, **k):
-            # Sleep longer than the as_completed window (timeout+10).
-            # With timeout=1, the window is 11s; sleep 30s to guarantee the
-            # provider is still running when as_completed times out.
-            _time.sleep(30)
+            hang_event.wait(timeout=30)
             return {"choices": [{"message": {"content": "never"}}], "usage": {"total_tokens": 5}}
 
         fast = MagicMock()
@@ -297,22 +313,26 @@ class TestCallAllProvidersTimeout:
 
         providers = [("openai", "m1", fast), ("slow", "m2", hanging)]
 
-        start = _time.monotonic()
-        # timeout=1 + the +10s buffer in as_completed = ~11s max. Under the
-        # v1.0.1 bug, shutdown(wait=True) would block the full 30s of the
-        # hanging sleep. Under v1.0.2, shutdown(wait=False) returns immediately
-        # after as_completed times out at ~11s.
-        results = _call_all_providers(
-            providers, "sys", "q", "", timeout=1, max_tokens=10
-        )
-        elapsed = _time.monotonic() - start
+        # Mock as_completed: wait for the fast future to actually complete
+        # (near-instant since fast_call returns immediately), yield it, then
+        # raise TimeoutError to simulate the slow provider still running when
+        # the as_completed window expires.
+        with patch("tools.swarm_ops.helpers.as_completed") as mock_as_completed:
+            def fake_as_completed(futures, timeout=None):
+                fast_fut = next(f for f in futures if futures[f] == "openai")
+                # Block until the fast future is done (should be near-instant)
+                fast_fut.result(timeout=5)
+                yield fast_fut
+                raise TimeoutError()
+            mock_as_completed.side_effect = fake_as_completed
 
-        # Should return in ~11s (as_completed timeout), NOT 30s+ (hanging sleep).
-        # Allow generous slack for CI.
-        assert elapsed < 20, (
-            f"_call_all_providers took {elapsed:.1f}s — v1.0.1 bug: shutdown(wait=True) "
-            f"blocked on the hanging provider."
-        )
+            results = _call_all_providers(
+                providers, "sys", "q", "", timeout=1, max_tokens=10
+            )
+
+        # Release the hanging thread so it doesn't linger
+        hang_event.set()
+
         # Both providers should have a result entry
         assert len(results) == 2
         # The fast provider should have succeeded

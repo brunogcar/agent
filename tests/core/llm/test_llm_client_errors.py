@@ -44,7 +44,9 @@ class TestLLMClientErrorHandling:
         """Test handling of timeout exceptions."""
         mock_provider.chat_completion.side_effect = httpx.TimeoutException("Timeout")
         llm_client._registry.register("lmstudio", mock_provider)
-        resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
+        # Patch sleep to skip real backoff between retry attempts (4s → <0.1s)
+        with patch("time.sleep"):
+            resp = llm_client.call(role="executor", messages=[{"role": "user", "content": "test"}])
         assert resp.ok is False
         assert "Timeout" in resp.error
 

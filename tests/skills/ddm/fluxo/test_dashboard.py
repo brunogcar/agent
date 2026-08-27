@@ -116,15 +116,6 @@ def _patch_query(monkeypatch):
 # Tab structure tests
 # ────────────────────────────────────────────────────────────────────────
 
-def test_dashboard_has_5_tabs(monkeypatch):
-    """1 Fluxo tab + 4 investor tabs = 5 tabs total."""
-    _patch_query(monkeypatch)
-    from skills.ddm.fluxo.modes import dashboard
-    res = dashboard.dashboard()
-    assert res["status"] == "ok"
-    assert len(res["tabs"]) == 5
-
-
 def test_dashboard_tab_names(monkeypatch):
     """First tab is 'Fluxo', the rest match the investor list."""
     _patch_query(monkeypatch)

@@ -145,6 +145,12 @@ class TestRoicHistory:
             "skills.cvm.calculations.metrics.roic.debt_periods",
             lambda c: [{"date": "2024-03-31", "debt": 100e9}],
         )
+        # [fast-tests] Mock cash_periods — roic_history imports it lazily
+        # inside the function body. Without this, it hits the real DFP DB.
+        monkeypatch.setattr(
+            "skills.cvm.calculations.engines.bpa.cash.cash_periods",
+            lambda c: [{"date": "2024-03-31", "cash": 30e9}],
+        )
         result = roic_metric.roic_history("PETR4", "2024-01-01", "2024-12-31")
         assert len(result) >= 1
         for entry in result:

@@ -110,6 +110,11 @@ def dashboard(tickers: list = None, consolidado: int = 1, company: str = "") -> 
     if not tickers and company:
         tickers = [company]
 
+    # [fast-tests] Short-circuit on empty tickers BEFORE calling
+    # build_company_header / build_price_chart (which hit real DBs + brapi).
+    if not tickers:
+        return {"status": "error", "error": "tickers (list) is required. Min 2."}
+
     # [v3] Build company header + price chart for the first ticker (target).
     # Only add if the first ticker looks like a B3 ticker (not a sector name).
     target_ticker = (tickers[0] if tickers else "") or company

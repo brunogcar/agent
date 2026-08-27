@@ -24,7 +24,12 @@ class TestNodeVerify:
 
     def test_verify_sets_failed_on_syntax_error(self, base_state):
         from workflows.autocode_impl.nodes.verify import node_verify
-        with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="SyntaxError")):
+        # Mock _call (LLM review) — the test is about syntax-error detection,
+        # not LLM review. Without this, _call hits a real provider (fails fast
+        # but retries with 2s backoff = 6s+ per test).
+        with patch("workflows.autocode_impl.nodes.llm_review._call",
+                   return_value='{"automated_checks_passed": false, "checks": {"syntax": {"passed": false}}, "summary": "Syntax error"}'), \
+             patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="SyntaxError")):
             result = node_verify(base_state)
             assert isinstance(result, dict)
             assert "trace_id" in result

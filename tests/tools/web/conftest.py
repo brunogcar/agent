@@ -53,6 +53,9 @@ def mock_httpx():
         "tools.web_ops.actions.scrape._make_client",
     ]
     patches = [patch(p, return_value=ctx) for p in patch_paths]
+    # Also mock retry backoff sleeps so timeout/connection-error tests don't
+    # wait 3s on real time.sleep calls between retry attempts.
+    patches.append(patch("core.net.retry._sleep"))
     for p in patches:
         p.start()
     try:
