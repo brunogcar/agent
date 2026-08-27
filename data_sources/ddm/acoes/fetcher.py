@@ -84,6 +84,9 @@ def parse_stocks_table(html: str) -> list[dict]:
             table = m.group(0)
         else:
             # Last resort: first table on the page.
+            # [W2 fix] Warn when falling back — could grab the wrong table.
+            import sys
+            print(f"[ddm.acoes WARNING] id/index-values not found, using fallback (first table on page)", file=sys.stderr, flush=True)
             tables = re.findall(r"<table[^>]*>[\s\S]*?</table>", html)
             if not tables:
                 return []

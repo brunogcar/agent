@@ -1,5 +1,44 @@
 # DDM Focus — Changelog
 
+## v2.0 — 2026-08-27
+
+**Schema migration: TEXT → REAL + incremental sync + historical query API.**
+
+### C2: Values stored as REAL (float), not TEXT
+
+- **Schema** (`catalog.py`): `four_weeks_ago`, `one_week_ago`, `today` changed
+  from `TEXT` to `REAL`. `comparison` stays `TEXT` (categorical: up/down/flat).
+- **Migration** (`catalog.py` + `sync_engine.py`): Automatic migration on first
+  sync — detects old TEXT schema via `PRAGMA table_info`, runs CREATE-new +
+  INSERT-with-cast + DROP + RENAME. Preserves all existing data.
+- **Fetcher** (`fetcher.py`): Values parsed to float at fetch time using
+  `_parse_numeric()` (handles "5,151%", "R$ 5,200", "US$ 76,200"). No more
+  PT-BR string storage.
+- **Impact**: Enables numeric SQL operations (sorting, aggregation, charting)
+  and eliminates display-layer parsing on every query.
+
+### W6: Historical query API
+
+- New `focus_history(indicator, year, limit)` function in `query_engine.py`.
+  Returns ALL ref_dates for an indicator+year combo (was: only latest ref_date).
+  Enables time-series analysis of expectation evolution.
+
+### I12: Incremental sync
+
+- `sync_engine.py` now checks if today's data already exists (`ref_date == today`)
+  before fetching. Skips fetch entirely if data is present (unless `force=True`).
+  Saves an HTTP call + parse + INSERT on re-syncs.
+
+### W2: Warning logging on fallback paths
+
+- `fetcher.py` now logs warnings when:
+  - `normal-table` class not found (fallback to first `<table>`)
+  - Table skipped due to missing year heading
+
+### W4: Timezone consistency
+
+- `_today_date()` now uses UTC (was local time) for consistency with `_now_iso()`.
+
 ## v1.0 — 2025-01
 
 Initial release. Subdomain pattern mirroring `ddm/acoes/` (single-page

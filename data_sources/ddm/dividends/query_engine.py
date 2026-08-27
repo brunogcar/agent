@@ -44,9 +44,22 @@ def dividends_list(order_by: str = "value", direction: str = "desc",
         return {"status": "not_synced", "error": str(e)}
 
     try:
-        # order_by + direction are validated against SORT_KEYS whitelist.
+        # [W5 fix] Use dict lookup instead of f-string interpolation for
+        # the ORDER BY clause. The whitelist validation above (SORT_KEYS +
+        # ("asc","desc")) prevents injection, but the dict pattern is more
+        # defense-in-depth and self-documenting.
+        _SORT_COLUMNS = {
+            "value":       "value",
+            "ticker":      "ticker",
+            "tipo":        "tipo",
+            "record_date": "record_date",
+            "ex_date":     "ex_date",
+            "payment_date": "payment_date",
+        }
+        sort_col = _SORT_COLUMNS[order_by]
+        sort_dir = "DESC" if direction == "desc" else "ASC"
         sql = (f"SELECT ticker, tipo, value, record_date, ex_date, payment_date "
-               f"FROM dividends ORDER BY {order_by} {direction.upper()}"
+               f"FROM dividends ORDER BY {sort_col} {sort_dir}"
                + (" LIMIT ?" if limit and limit > 0 else ""))
         params: tuple = (limit,) if limit and limit > 0 else ()
         rows = list(conn.execute(sql, params).fetchall())
@@ -255,7 +268,12 @@ def summary() -> dict:
 
 
 def _today_iso() -> str:
-    """Return today's date as YYYY-MM-DD (UTC)."""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """[W7 fix] Return today's date as YYYY-MM-DD (UTC).
+
+    Previously used UTC but was a 3rd variant (not imported from _base/).
+    Now delegates to the shared BaseDDMSyncEngine._today_date() for
+    consistency with the rest of the codebase.
+    """
+    from data_sources.ddm._base.sync_base import BaseDDMSyncEngine
+    return BaseDDMSyncEngine._today_date()
 

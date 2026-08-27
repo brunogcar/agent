@@ -9,8 +9,9 @@ Handles:
       * Year is identified from the nearest preceding heading (<h2> or <h3>)
         that contains a 4-digit year (e.g. "2026").
       * Indicator name is the first cell of each row.
-      * three value columns ("Ha 4 semanas", "1 sem", "Hoje") preserved
-        verbatim as PT-BR strings ("5,151%", "R$ 5,200").
+      * [v2] Three value columns ("Ha 4 semanas", "1 sem", "Hoje") parsed to
+        float at fetch time using parse_numeric() (handles "5,151%", "R$ 5,200",
+        "US$ 76,200"). Stored as REAL in the DB.
       * Comparison column is mapped: up/down/flat ("up"/"down"/"flat").
       * Respondents count parsed as integer.
 
@@ -29,11 +30,14 @@ Accept-Encoding).
 scaffold + the cache-lookup + httpx.get + cache-write pattern now lives
 in _base/fetcher_base.py; this module keeps only the parser functions
 (which are NOT shared) + a thin fetch_focus_page() wrapper.
+[v2] Values now parsed to float at fetch time (C2 fix). Added warning
+logging when fallback paths are hit (W2 fix).
 """
 
 from __future__ import annotations
 
 import re
+import sys
 
 from data_sources.ddm._base.fetcher_base import CLOUDFRONT_HEADERS, BaseDDMFetcher
 from data_sources.ddm._parsers import strip_html
@@ -58,6 +62,11 @@ _COMPARISON_MAP = {
 }
 
 
+def _warn(msg: str) -> None:
+    """Log a warning to stderr (W2 fix — no more silent data loss)."""
+    print(f"[ddm.focus WARNING] {msg}", file=sys.stderr, flush=True)
+
+
 def _parse_int(s: str) -> int | None:
     """Parse a plain integer ('149') -> 149.
 
@@ -79,6 +88,46 @@ def _parse_int(s: str) -> int | None:
         if digits:
             return int(digits.group(1))
         return None
+
+
+def _parse_numeric(value) -> float | None:
+    """Parse a PT-BR formatted value to float (C2 fix — parse at fetch time).
+
+    Handles:
+      - "5,151%"      -> 5.151     (percentage, strip %)
+      - "R$ 1.234,56" -> 1234.56   (PT-BR currency)
+      - "R$ 5,200"    -> 5.2       (PT-BR currency)
+      - "US$ -60,000" -> -60000.0  (US-style, comma = thousands)
+      - "US$ 76,200"  -> 76200.0   (US-style)
+      - "149"         -> 149.0     (plain number)
+      - None / "" / "--" -> None
+
+    Delegates to skills.ddm.focus.helpers.parse_numeric (same logic, kept
+    in sync). The helpers version is used by the display layer; this one
+    is used by the fetcher for DB storage.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s or s in ("--", "-"):
+        return None
+    # Strip % suffix -- focus wants the raw number, not the decimal form.
+    if "%" in s:
+        s = s.replace("%", "").strip()
+    # US$ values use US-style formatting (comma = thousands).
+    # Strip prefix + commas, then parse as float (handles negative sign).
+    if "US$" in s:
+        s = s.replace("US$", "").strip()
+        s = s.replace(",", "")
+        try:
+            return float(s) if s else None
+        except (ValueError, TypeError):
+            return None
+    # R$ / plain PT-BR values: delegate to the shared parser.
+    from data_sources.ddm._parsers import parse_br_number
+    return parse_br_number(s)
 
 
 def _normalize_comparison(s: str) -> str:
@@ -159,14 +208,12 @@ def parse_focus_tables(html: str) -> list[dict]:
     intermediate divs, or wrap tables in <section> tags.
 
     Returns a list of dicts (in table-row order):
-        [{"year": 2026, "indicator": "IPCA", "four_weeks_ago": "5,151%",
-          "one_week_ago": "5,150%", "today": "5,200%",
+        [{"year": 2026, "indicator": "IPCA", "four_weeks_ago": 5.151,
+          "one_week_ago": 5.150, "today": 5.200,
           "comparison": "up", "respondents": 149}, ...]
 
-    Values are preserved as PT-BR strings ("5,151%", "R$ 5,200") so the
-    dashboard can render them verbatim without reformatting. The
-    `respondents` field is parsed to int (it is a plain count). The
-    `comparison` field is normalized to one of "up" / "down" / "flat" / "".
+    [v2] Values are parsed to float at fetch time (C2 fix). Previously
+    stored as PT-BR strings ("5,151%", "R$ 5,200").
     """
     if not html:
         return []
@@ -181,6 +228,8 @@ def parse_focus_tables(html: str) -> list[dict]:
     # Fallback: if the class-attribute pattern missed (e.g. class with single
     # quotes or extra attributes), try a more permissive scan.
     if not table_matches:
+        # [W2 fix] Warn when falling back — could grab the wrong table.
+        _warn("normal-table class not found, using fallback (first <table> on page)")
         table_matches = list(re.finditer(
             r"<table[^>]*>[\s\S]*?</table>",
             html,
@@ -192,7 +241,8 @@ def parse_focus_tables(html: str) -> list[dict]:
         table_start = tm.start()
         year = _find_year_for_table(html, table_start)
         if year is None:
-            # Without a year we cannot key the row, so skip.
+            # [W2 fix] Warn when skipping a table due to missing year.
+            _warn(f"table at offset {table_start} skipped — no year heading found")
             continue
 
         # Extract <tbody> if present; otherwise parse the whole table body.
@@ -214,9 +264,9 @@ def parse_focus_tables(html: str) -> list[dict]:
             row = {
                 "year":           year,
                 "indicator":      indicator,
-                "four_weeks_ago": strip_html(cells[1]),
-                "one_week_ago":   strip_html(cells[2]),
-                "today":          strip_html(cells[3]),
+                "four_weeks_ago": _parse_numeric(strip_html(cells[1])),
+                "one_week_ago":   _parse_numeric(strip_html(cells[2])),
+                "today":          _parse_numeric(strip_html(cells[3])),
                 "comparison":     _normalize_comparison(cells[4]),
                 "respondents":    _parse_int(strip_html(cells[5])),
             }

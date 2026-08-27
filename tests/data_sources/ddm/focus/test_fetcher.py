@@ -227,22 +227,29 @@ def test_parse_focus_tables_year_assignment_per_row():
 
 
 def test_parse_focus_tables_preserves_value_strings():
-    """Values are preserved as PT-BR strings (no normalization)."""
+    """[v2] Values are now parsed to float at fetch time (C2 fix).
+
+    Previously values were stored as PT-BR strings ("5,151%"). Now they're
+    parsed to float (5.151) using _parse_numeric() — stored as REAL in DB.
+    """
     rows = parse_focus_tables(SAMPLE_FOCUS_HTML)
     ipca_2026 = next(r for r in rows if r["year"] == 2026
                      and r["indicator"] == "IPCA")
-    assert ipca_2026["four_weeks_ago"] == "5,151%"
-    assert ipca_2026["one_week_ago"] == "5,150%"
-    assert ipca_2026["today"] == "5,200%"
+    assert ipca_2026["four_weeks_ago"] == 5.151
+    assert ipca_2026["one_week_ago"] == 5.150
+    assert ipca_2026["today"] == 5.200
     assert ipca_2026["respondents"] == 149
 
 
 def test_parse_focus_tables_preserves_currency_strings():
-    """Currency values like 'R$ 5,200' are preserved verbatim."""
+    """[v2] Currency values like 'R$ 5,200' parsed to float (5.2).
+
+    Previously stored as PT-BR strings. Now parsed via _parse_numeric().
+    """
     rows = parse_focus_tables(SAMPLE_FOCUS_HTML)
     cambio = next(r for r in rows if r["indicator"] == "Cambio")
-    assert cambio["four_weeks_ago"] == "R$ 5,200"
-    assert cambio["today"] == "R$ 5,180"
+    assert cambio["four_weeks_ago"] == 5.2
+    assert cambio["today"] == 5.18
 
 
 def test_parse_focus_tables_comparison_normalization():

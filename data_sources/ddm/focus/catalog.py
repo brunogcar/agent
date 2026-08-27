@@ -7,18 +7,11 @@ with the same 6-column shape:
 
     Indicador | Ha 4 semanas | 1 sem | Hoje | Comp. | Resp.
 
-Values are PT-BR formatted strings preserved verbatim from the source:
-    - "5,151%"      -- percent with comma decimal
-    - "R$ 5,200"    -- currency with PT-BR thousands + decimal
-    - "149"         -- respondent count (integer)
-    - Comp. column  -- one of three glyphs: up/down/flat
-
-Unlike the other DDM sub-domains (inflation / juros / poupanca / acoes),
-Focus is a single-page snapshot, not a per-index historical series. There
-is NO catalog of indices: the 4 year-tables each carry 12-13 indicator
-rows (IPCA, PIB Total, Cambio, Selic, etc.) which are discovered at parse
-time. The DB stores each (year, indicator, ref_date) combination so a
-history of focus snapshots is preserved across syncs.
+[v2] Values are now stored as REAL (float), not TEXT. The fetcher parses
+PT-BR strings ("5,151%", "R$ 5,200") at fetch time using the shared
+parse_br_number / parse_brl helpers. This enables numeric SQL operations
+(sorting, aggregation, charting) and eliminates the need for display-layer
+parsing on every query.
 
 Storage: memory_db/ddm/focus.db (per-subdomain DB in the DDM base folder,
 mirroring ddm/acoes.db + ddm/juros.db + ddm/poupanca.db side-by-side layout).
@@ -42,19 +35,15 @@ FOCUS_URL = f"{API_BASE}/boletim-focus"
 # expose a publication-date column on the page itself, so the sync date is
 # the closest proxy for the bulletin's reference week).
 #
-# All numeric values are stored as TEXT strings preserving the source format
-# ("5,151%", "R$ 5,200"). Downstream consumers (charts, KPIs) parse the
-# strings into floats on demand. This mirrors the acoes variation-pattern
-# but is even more permissive: Focus mixes percentage, currency, and
-# integer-count columns in the same snapshot, so keeping the original
-# string form avoids lossy conversions.
+# [v2] Numeric values stored as REAL (float), not TEXT. The fetcher parses
+# PT-BR strings at fetch time. comparison stays TEXT (categorical: up/down/flat).
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS focus_observations (
     year            INTEGER NOT NULL,
     indicator       TEXT NOT NULL,
-    four_weeks_ago  TEXT,
-    one_week_ago    TEXT,
-    today           TEXT,
+    four_weeks_ago  REAL,
+    one_week_ago    REAL,
+    today           REAL,
     comparison      TEXT,
     respondents     INTEGER,
     ref_date        TEXT,
@@ -72,6 +61,48 @@ CREATE TABLE IF NOT EXISTS sync_state (
     synced_at     TEXT,                 -- ISO timestamp of the sync
     row_count     INTEGER               -- number of rows synced
 );
+"""
+
+# [v2] Migration SQL: converts TEXT columns to REAL by casting existing data.
+# Runs once on sync if the DB has the old TEXT schema (detected by checking
+# column type). SQLite doesn't support ALTER COLUMN, so we use the
+# CREATE-new + INSERT-with-cast + DROP + RENAME pattern.
+MIGRATION_SQL = """
+-- Migration from TEXT to REAL for numeric columns.
+-- Only runs if the old TEXT schema is detected (see _needs_migration()).
+CREATE TABLE IF NOT EXISTS focus_observations_new (
+    year            INTEGER NOT NULL,
+    indicator       TEXT NOT NULL,
+    four_weeks_ago  REAL,
+    one_week_ago    REAL,
+    today           REAL,
+    comparison      TEXT,
+    respondents     INTEGER,
+    ref_date        TEXT,
+    synced_at       TEXT,
+    PRIMARY KEY (year, indicator, ref_date)
+);
+
+INSERT OR REPLACE INTO focus_observations_new
+    (year, indicator, four_weeks_ago, one_week_ago, today,
+     comparison, respondents, ref_date, synced_at)
+SELECT
+    year, indicator,
+    CASE WHEN four_weeks_ago IS NULL OR four_weeks_ago = '' THEN NULL
+         ELSE CAST(four_weeks_ago AS REAL) END,
+    CASE WHEN one_week_ago IS NULL OR one_week_ago = '' THEN NULL
+         ELSE CAST(one_week_ago AS REAL) END,
+    CASE WHEN today IS NULL OR today = '' THEN NULL
+         ELSE CAST(today AS REAL) END,
+    comparison, respondents, ref_date, synced_at
+FROM focus_observations;
+
+DROP TABLE focus_observations;
+ALTER TABLE focus_observations_new RENAME TO focus_observations;
+
+CREATE INDEX IF NOT EXISTS idx_focus_year      ON focus_observations(year);
+CREATE INDEX IF NOT EXISTS idx_focus_indicator ON focus_observations(indicator);
+CREATE INDEX IF NOT EXISTS idx_focus_ref_date  ON focus_observations(ref_date);
 """
 
 

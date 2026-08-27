@@ -96,7 +96,14 @@ def parse_historical_table(html: str) -> list[dict]:
         return []
     tables = re.findall(r"<table[^>]*>[\s\S]*?</table>", html)
     if len(tables) < 2:
+        # [W2 fix] Warn when fewer tables than expected — HTML layout may have changed.
+        import sys
+        print(f"[ddm.inflation WARNING] Expected >=2 tables, found {len(tables)} — HTML layout may have changed", file=sys.stderr, flush=True)
         return []
+    # [W2 fix] Warn when picking tables[1] blindly — could grab the wrong table.
+    import sys
+    if len(tables) > 2:
+        print(f"[ddm.inflation WARNING] Found {len(tables)} tables, picking tables[1] — verify this is the historical data table", file=sys.stderr, flush=True)
     table = tables[1]
 
     rows: list[dict] = []

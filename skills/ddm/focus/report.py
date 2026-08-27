@@ -53,13 +53,14 @@ _WINDOW_LABELS = {
 }
 
 
-def _value_cell(value) -> str:
-    """Render a value cell as plain string (preserve source format).
+def _value_cell(value, indicator: str = "") -> str:
+    """Render a value cell as plain string.
 
-    Values come pre-formatted from the source ("5,151%", "R$ 5,200", "149")
-    so we just pass them through. None / empty -> "-".
+    [v2] Now passes the indicator name to format_value() so it can determine
+    the display unit (%, R$, US$ mi) for float values (C2 schema migration).
+    None / empty -> "-".
     """
-    return format_value(value)
+    return format_value(value, indicator=indicator)
 
 
 def _comparison_cell(comp) -> dict:
@@ -89,14 +90,17 @@ def _respondents_cell(value) -> dict:
     return cell
 
 
-def _value_numeric_cell(value) -> dict:
+def _value_numeric_cell(value, indicator: str = "") -> dict:
     """Build a value cell with text + data-value (for sortable tables).
 
     Numeric values (percentages / currencies) carry a data-value attribute
     holding the parsed float so the JS sorter can sort them accurately
     even when the displayed text has PT-BR formatting.
+
+    [v2] Now passes the indicator name to format_value() for proper unit
+    display (C2 schema migration — values are floats, not PT-BR strings).
     """
-    cell = {"text": _value_cell(value)}
+    cell = {"text": _value_cell(value, indicator=indicator)}
     parsed = parse_numeric(value)
     if parsed is not None:
         cell["data-value"] = f"{parsed:.6f}"
@@ -133,9 +137,9 @@ def build_year_table(title: str, indicators: list[dict],
         indicator = obs.get("indicator", "")
         row = [
             indicator,
-            _value_numeric_cell(obs.get("four_weeks_ago")),
-            _value_numeric_cell(obs.get("one_week_ago")),
-            _value_numeric_cell(obs.get("today")),
+            _value_numeric_cell(obs.get("four_weeks_ago"), indicator=indicator),
+            _value_numeric_cell(obs.get("one_week_ago"), indicator=indicator),
+            _value_numeric_cell(obs.get("today"), indicator=indicator),
             _comparison_cell(obs.get("comparison")),
             _respondents_cell(obs.get("respondents")),
         ]
@@ -194,9 +198,9 @@ def build_indicator_table(title: str, years_data: list[dict],
         year = obs.get("year", "")
         row = [
             str(year),
-            _value_numeric_cell(obs.get("four_weeks_ago")),
-            _value_numeric_cell(obs.get("one_week_ago")),
-            _value_numeric_cell(obs.get("today")),
+            _value_numeric_cell(obs.get("four_weeks_ago"), indicator=indicator),
+            _value_numeric_cell(obs.get("one_week_ago"), indicator=indicator),
+            _value_numeric_cell(obs.get("today"), indicator=indicator),
             _comparison_cell(obs.get("comparison")),
             _respondents_cell(obs.get("respondents")),
         ]

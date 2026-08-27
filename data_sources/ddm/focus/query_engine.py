@@ -7,11 +7,17 @@ Functions:
   - search(query)                 - LIKE search by indicator name
   - summary()                     - overview stats (years, indicators, last sync)
   - all_data()                    - all observations (latest sync)
+  - focus_history(indicator, year) - [W6] all ref_dates for an indicator+year combo
 
 All queries open a read-only SQLite URI connection (fails if DB missing).
 Each query targets only the latest ref_date by default so callers see the
 current Focus bulletin. Historical ref_dates are preserved in the DB for
 future time-series features.
+
+[v2] Values are now stored as REAL (float). The _row_to_dict returns floats
+directly — no display-layer parsing needed. The skills/ddm/focus/helpers.py
+parse_numeric() is still used for backwards compatibility (handles both
+float and string inputs).
 """
 
 from __future__ import annotations
@@ -310,3 +316,60 @@ def all_data() -> dict:
     finally:
         conn.close()
 
+
+
+def focus_history(indicator: str = "", year: int = 0, limit: int = 0) -> dict:
+    """[W6] Query all historical ref_dates for an indicator + year combo.
+
+    Unlike the other query functions (which filter `WHERE ref_date = ?` to
+    the latest sync only), this returns ALL ref_dates stored in the DB for
+    the given (indicator, year) pair. This exposes the historical snapshot
+    series that sync accumulates over time.
+
+    Args:
+        indicator: Indicator name (e.g. "IPCA"). Required. Case-insensitive.
+        year:      4-digit target year (e.g. 2026). Required.
+        limit:     Max rows. 0 = all. Default: 0.
+
+    Returns:
+        {"status": "ok", "indicator": <str>, "year": <int>,
+         "count": <int>, "observations": [<dict>, ...]}
+        Observations are sorted by ref_date ASC (oldest first) so charts
+        can plot the expectation evolution over time.
+    """
+    if not indicator:
+        return {"status": "error", "error": "indicator is required"}
+    if not year:
+        return {"status": "error", "error": "year is required"}
+
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        sql = (
+            "SELECT year, indicator, four_weeks_ago, one_week_ago, today, "
+            "comparison, respondents, ref_date, synced_at "
+            "FROM focus_observations "
+            "WHERE indicator=? COLLATE NOCASE AND year=? "
+            "ORDER BY ref_date ASC"
+        )
+        params: tuple = (indicator, year)
+        if limit and limit > 0:
+            sql += " LIMIT ?"
+            params = (indicator, year, limit)
+        rows = list(conn.execute(sql, params).fetchall())
+        if not rows:
+            return {"status": "not_found", "indicator": indicator,
+                    "year": year,
+                    "error": f"No historical observations for {indicator} {year}"}
+        return {
+            "status":      "ok",
+            "indicator":   rows[0]["indicator"],
+            "year":        year,
+            "count":       len(rows),
+            "observations": [_row_to_dict(r) for r in rows],
+        }
+    finally:
+        conn.close()

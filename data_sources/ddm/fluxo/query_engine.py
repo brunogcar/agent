@@ -373,13 +373,14 @@ def monthly_cumulative(investor: str = "") -> dict:
         return {"status": "not_synced", "error": str(e)}
 
     try:
-        # Group by YYYY-MM (first 7 chars of ref_date), sum the investor col.
+        # [I6 fix] Use strftime('%Y-%m', ref_date) instead of SUBSTR(ref_date, 1, 7).
+        # strftime is more idiomatic and works for any ISO date format.
         rows = list(conn.execute(
-            f"SELECT SUBSTR(ref_date, 1, 7) as month, "
+            f"SELECT strftime('%Y-%m', ref_date) as month, "
             f"       SUM({col}) as value "
             f"FROM fluxo_observations "
             f"WHERE {col} IS NOT NULL "
-            f"GROUP BY SUBSTR(ref_date, 1, 7) "
+            f"GROUP BY strftime('%Y-%m', ref_date) "
             f"ORDER BY month ASC",
         ).fetchall())
         return {

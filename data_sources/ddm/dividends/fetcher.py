@@ -97,6 +97,9 @@ def parse_dividends_table(html: str) -> list[dict]:
     if m:
         table = m.group(0)
     else:
+        # [W2 fix] Warn when falling back — could grab the wrong table.
+        import sys
+        print(f"[ddm.dividends WARNING] normal-table class not found, using fallback (first table on page)", file=sys.stderr, flush=True)
         tables = re.findall(r"<table[^>]*>[\s\S]*?</table>", html)
         if not tables:
             return []

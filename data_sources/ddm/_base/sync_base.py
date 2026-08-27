@@ -32,15 +32,29 @@ The per-source sync_engine.py keeps:
   - sync_index(slug, force) -- multi-page: real per-slug sync; single-page:
     alias for sync_all (slug ignored or validated).
 
+[v2] W4 fix: _today_date() now uses UTC (was local time) for consistency
+with _now().
+[v2] I9 fix: _progress() now uses stdlib logging instead of stderr print.
+[v2] I11 fix: Added _validate_observations() for row-count + value-range checks.
+
 [Phase 3, Commit 1] Extracted from the 7 sync_engine.py files.
 """
 
 from __future__ import annotations
 
-import sys
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+
+# [I9] Set up a per-source logger.
+_logger = logging.getLogger("ddm.sync")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
 
 
 class BaseDDMSyncEngine:
@@ -51,9 +65,9 @@ class BaseDDMSyncEngine:
                              "[ddm.inflation]").
 
     Provides:
-        _progress(msg)               -- print to stderr.
+        _progress(msg)               -- log via stdlib logging.
         _now()                       -- ISO timestamp (UTC).
-        _today_date()                -- YYYY-MM-DD (local).
+        _today_date()                -- YYYY-MM-DD (UTC).
         _record_sync_state(conn, slug, last_date, row_count, synced_at)
             -- INSERT OR REPLACE into sync_state. Identical SQL across all
                7 sources.
@@ -63,9 +77,15 @@ class BaseDDMSyncEngine:
 
     SOURCE_NAME: str = ""
 
-    @staticmethod
-    def _progress(msg: str) -> None:
-        print(msg, file=sys.stderr, flush=True)
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # [I9] Per-subclass logger.
+        cls._logger = logging.getLogger(f"ddm.{cls.SOURCE_NAME}") if cls.SOURCE_NAME else _logger
+
+    @classmethod
+    def _progress(cls, msg: str) -> None:
+        """[I9] Log via stdlib logging instead of stderr print."""
+        cls._logger.info(msg)
 
     @staticmethod
     def _now() -> str:
@@ -73,8 +93,13 @@ class BaseDDMSyncEngine:
 
     @staticmethod
     def _today_date() -> str:
-        """Return today's date as YYYY-MM-DD (local)."""
-        return datetime.now().strftime("%Y-%m-%d")
+        """[W4] Return today's date as YYYY-MM-DD (UTC).
+
+        Previously used local time, which was inconsistent with _now()
+        (UTC). At 23:30 BRT (02:30 UTC), this created a ref_date vs
+        synced_at mismatch. Now both use UTC.
+        """
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     @staticmethod
     def _record_sync_state(
@@ -100,6 +125,75 @@ class BaseDDMSyncEngine:
             "VALUES (?, ?, ?, ?)",
             (slug, last_date, synced_at, row_count),
         )
+
+    @staticmethod
+    def _validate_observations(
+        observations: list[dict],
+        source_name: str,
+        min_count: int = 1,
+        max_count: int = 100000,
+        value_ranges: dict[str, tuple[float, float]] | None = None,
+    ) -> list[dict]:
+        """[I11] Validate observations before INSERT.
+
+        Checks:
+          - Row count is within [min_count, max_count].
+          - If value_ranges is provided, checks that numeric values are
+            within the specified (min, max) range. Outliers are logged
+            and the observation is SKIPPED (not inserted).
+
+        Args:
+            observations: List of observation dicts.
+            source_name:  Source name for logging (e.g. "fluxo").
+            min_count:    Minimum expected row count. If fewer, log a warning
+                          but still return the observations (don't block sync).
+            max_count:    Maximum expected row count. If more, log a warning.
+            value_ranges: Optional dict mapping field name to (min, max) tuple.
+                          e.g. {"value": (-50000, 50000)} for fluxo (millions R$).
+
+        Returns:
+            The filtered list of observations (outliers removed).
+        """
+        logger = logging.getLogger(f"ddm.{source_name}")
+        count = len(observations)
+        if count < min_count:
+            logger.warning(
+                f"Low row count: {count} (expected >= {min_count}). "
+                "Source may have changed HTML layout."
+            )
+        if count > max_count:
+            logger.warning(
+                f"High row count: {count} (expected <= {max_count}). "
+                "Source may have changed HTML layout."
+            )
+
+        if not value_ranges:
+            return observations
+
+        filtered = []
+        skipped = 0
+        for obs in observations:
+            keep = True
+            for field, (vmin, vmax) in value_ranges.items():
+                val = obs.get(field)
+                if val is not None and isinstance(val, (int, float)):
+                    if val < vmin or val > vmax:
+                        logger.warning(
+                            f"Outlier skipped: {field}={val} "
+                            f"(expected [{vmin}, {vmax}]) in obs: {obs}"
+                        )
+                        keep = False
+                        break
+            if keep:
+                filtered.append(obs)
+            else:
+                skipped += 1
+
+        if skipped > 0:
+            logger.warning(
+                f"Skipped {skipped} outlier observations out of {count}"
+            )
+        return filtered
 
     # ────────────────────────────────────────────────────────────────────
     # Single-page sync (acoes, dividends, fluxo, focus)

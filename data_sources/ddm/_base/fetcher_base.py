@@ -22,24 +22,33 @@ Common building blocks for all 7 DDM fetchers:
       * clear_cache() classmethod.
       * _progress / _now_iso / _today_date helpers.
 
-What stays per-source (the genuine diff):
-  - The HTML parser functions (parse_<src>_table, parse_monthly_matrix,
-    flatten_matrix_to_observations, etc.). Parsers are already shared via
-    data_sources/ddm/_parsers.py (Phase 2).
-  - The thin fetch_<src>_page(force) wrapper that picks the URL, headers,
-    and cache_key for the source.
+[v2] W4 fix: _today_date() now uses UTC (was local time) for consistency
+with _now_iso(). Both are now UTC-based.
+[v2] I9 fix: _progress() now uses stdlib logging instead of stderr print.
+[v2] I10 fix: Added 0.3s sleep after each fetch for rate limiting.
 
 [Phase 3, Commit 1] Extracted from the 7 fetcher.py files.
 """
 
 from __future__ import annotations
 
-import sys
+import logging
 import threading
 import time
 from datetime import datetime, timezone
 
 import httpx
+
+
+# [I9] Set up a per-source logger. Each subclass gets its own logger via
+# SOURCE_NAME (e.g. "ddm.focus"). Falls back to "ddm" if SOURCE_NAME is empty.
+_logger = logging.getLogger("ddm")
+if not _logger.handlers:
+    # Add a stderr handler if none exists (prevents "No handlers found" warning).
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[%(name)s] %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -128,10 +137,13 @@ class BaseDDMFetcher:
         cls._cache: dict[str, tuple[object, float]] = {}
         cls._cache_lock = threading.Lock()
         cls._concurrency_semaphore = threading.Semaphore(5)
+        # [I9] Per-subclass logger.
+        cls._logger = logging.getLogger(f"ddm.{cls.SOURCE_NAME}") if cls.SOURCE_NAME else _logger
 
     @classmethod
     def _progress(cls, msg: str) -> None:
-        print(msg, file=sys.stderr, flush=True)
+        """[I9] Log via stdlib logging instead of stderr print."""
+        cls._logger.info(msg)
 
     @classmethod
     def _now_iso(cls) -> str:
@@ -139,8 +151,13 @@ class BaseDDMFetcher:
 
     @classmethod
     def _today_date(cls) -> str:
-        """Return today's date as YYYY-MM-DD (local)."""
-        return datetime.now().strftime("%Y-%m-%d")
+        """[W4] Return today's date as YYYY-MM-DD (UTC).
+
+        Previously used local time, which was inconsistent with _now_iso()
+        (UTC). At 23:30 BRT (02:30 UTC), this created a ref_date vs
+        synced_at mismatch. Now both use UTC.
+        """
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     @classmethod
     def fetch_page(
@@ -171,6 +188,9 @@ class BaseDDMFetcher:
             -- single-page error
             {"status": "error", "slug": <str>, "error": "ddm.<src>: {e}"}
             -- multi-page error
+
+        [I10] Added 0.3s sleep after each fetch for rate limiting (politeness
+        to dadosdemercado.com.br).
         """
         with cls._cache_lock:
             if not force and cache_key in cls._cache:
@@ -197,6 +217,10 @@ class BaseDDMFetcher:
                 if slug is not None:
                     return {"status": "error", "slug": slug, "error": err}
                 return {"status": "error", "error": err}
+            # [I10] Rate limiting: 0.3s sleep after each successful fetch.
+            # Politeness to dadosdemercado.com.br — prevents burst when
+            # 5 concurrent threads finish simultaneously.
+            time.sleep(0.3)
 
         html = resp.text
         result: dict = {

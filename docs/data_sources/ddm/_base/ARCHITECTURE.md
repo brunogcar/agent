@@ -5,6 +5,17 @@ Domain: `ddm`
 Excluded from sub-domain auto-discovery (the hub skips directories starting
 with `_`).
 
+## v2 changes (2026-08-27)
+
+- **W4**: `_today_date()` now uses UTC (was local time) in both `fetcher_base.py`
+  and `sync_base.py` — consistent with `_now_iso()` / `_now()`.
+- **I9**: `_progress()` now uses stdlib `logging` (was `print(file=sys.stderr)`).
+  Per-source loggers: `ddm.inflation`, `ddm.focus`, etc.
+- **I10**: Added 0.3s `time.sleep()` after each fetch in `fetcher_base.py`
+  for rate limiting (politeness to dadosdemercado.com.br).
+- **I11**: Added `_validate_observations()` to `sync_base.py` — row-count
+  + value-range checks with outlier skipping.
+
 ## Purpose
 
 The `_base/` package holds the **shared scaffolding** extracted from the 7
