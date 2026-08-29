@@ -44,19 +44,6 @@ from skills.b3.price.report import (
     build_spread_sections,
 )
 
-# [v1.7] Cross-skill integration: import the b3/options dashboard so we can
-# embed its Cadeia de Opções tab as a 9th tab here. Wrapped in try/except so
-# the price dashboard still works if the options skill is missing or if
-# there's a circular-import issue (b3/options imports from cotahist + sgs,
-# which the price skill also depends on).
-try:
-    from skills.b3.options.modes.dashboard import dashboard as _options_dashboard
-    _OPTIONS_AVAILABLE = True
-except Exception:  # ImportError, circular dep, missing skill, etc.
-    _options_dashboard = None
-    _OPTIONS_AVAILABLE = False
-
-
 def _today_iso() -> str:
     return _date.today().isoformat()
 
@@ -67,66 +54,18 @@ def _ten_years_ago_iso() -> str:
 
 
 
-def _build_options_tab(ticker: str) -> list[dict]:
-    """Build the Opções tab sections (Cadeia de Opções from b3/options).
-
-    Calls the options skill's ``dashboard`` mode and extracts just the
-    "Cadeia de Opções" tab sections (calls table + puts table + legend).
-    Skips the P/C ratio, Volume por Strike, Exercicios, and IV tabs to keep
-    the price dashboard compact.
-
-    [v1.7] Cross-skill integration. Graceful degradation:
-      - If the options skill import failed (circular dep / missing), returns
-        a single text section "Sem opções disponíveis para este ticker".
-      - If the options dashboard call fails or returns no Cadeia de Opções
-        tab, returns a single text section.
-    """
-    if not _OPTIONS_AVAILABLE:
-        return [{
-            "type":  "text",
-            "title": "Opções",
-            "text":  ("Sem opções disponíveis para este ticker "
-                      "(skill b3/options indisponível)."),
-        }]
-    try:
-        res = _options_dashboard(underlying=ticker)
-    except Exception as e:
-        return [{
-            "type":  "text",
-            "title": "Opções",
-            "text":  f"Erro ao consultar opções: {e}",
-        }]
-    if res.get("status") != "ok":
-        return [{
-            "type":  "text",
-            "title": "Opções",
-            "text":  ("Sem opções disponíveis para este ticker "
-                      f"({res.get('error', 'erro')})."),
-        }]
-    # Extract just the "Cadeia de Opções" tab sections.
-    for tab in res.get("tabs", []):
-        if tab.get("name") == "Cadeia de Opções":
-            secs = tab.get("sections", [])
-            if secs:
-                return secs
-            break
-    return [{
-        "type":  "text",
-        "title": "Opções",
-        "text":  "Sem opções disponíveis para este ticker.",
-    }]
 
 @register_mode(
     "dashboard",
     description=(
-        "B3 price analytics dashboard. 9 tabs: Cotação (candlestick + volume + KPIs), "
+        "B3 price analytics dashboard. 8 tabs: Cotação (candlestick + volume + KPIs), "
         "Médias Móveis (SMA20/50/100/200 + crossovers), Volume (bars + price overlay), "
         "Indicadores (RSI + MACD + Stochastic + OBV + ADX + CCI + Williams %R + signals), "
         "Retornos (cumulative + adjusted + drawdown), "
         "Volatilidade (rolling vol + Bollinger), "
         "Fibonacci (levels + COMPRA/VENDA trade setup), "
         "Bid-Ask Spread (spread absoluto + % + bid/ask/close + liquidez), "
-        "Opções (Cadeia de Opções from b3/options — calls + puts + legend)."
+        "Bid-Ask Spread (spread absoluto + % + bid/ask/close + liquidez)."
     ),
     params={"ticker": "str. Required. B3 ticker (e.g. PETR4)."},
     include_in_all=False,
@@ -259,15 +198,54 @@ def dashboard(ticker: str = "") -> dict:
         annual_returns=annual_returns,
         histogram=price_histogram,
     )
-    # Prepend a small header text section with the date range.
-    cotacao_sections.insert(0, {
-        "type": "text",
-        "title": f"Cotação — {tk}",
-        "text": (
-            f"Período: {dates[0]} a {dates[-1]} • {len(dates)} pregões • "
-            f"Fonte: B3 COTAHIST (mercado: lote padrão)"
-        ),
-    })
+    # [v5] Company header + b3 dividends sync (per-ticker)
+    try:
+        from skills.cvm._shared_report.company_header import build_company_header
+
+        # Sync b3 dividends for this ticker (needed for Fibonacci adjusted returns)
+        try:
+            from data_sources.b3.dividends.sync_engine import sync as _div_sync
+            _div_sync(ticker=tk)
+        except Exception:
+            pass
+
+        # Sync CVM DBs for company header
+        for _sync_mod, _sync_fn, _sync_kwargs in [
+            ("data_sources.cvm.cad.sync_engine", "sync", {}),
+            ("data_sources.cvm.fca.sync_engine", "sync", {}),
+            ("data_sources.cvm.bridge.sync_engine", "sync", {"ticker": tk}),
+        ]:
+            try:
+                _mod = __import__(_sync_mod, fromlist=[_sync_fn])
+                _sync = getattr(_mod, _sync_fn)
+                _sync(**_sync_kwargs)
+            except Exception:
+                pass
+
+        company_header = build_company_header(tk)
+        if company_header and company_header.get("ticker") and company_header.get("name"):
+            cotacao_sections.insert(0, {
+                "type": "company_info",
+                "company_header": company_header,
+            })
+        else:
+            cotacao_sections.insert(0, {
+                "type": "text",
+                "title": f"Cotação — {tk}",
+                "text": (
+                    f"Período: {dates[0]} a {dates[-1]} • {len(dates)} pregões • "
+                    f"Fonte: B3 COTAHIST (mercado: lote padrão)"
+                ),
+            })
+    except Exception:
+        cotacao_sections.insert(0, {
+            "type": "text",
+            "title": f"Cotação — {tk}",
+            "text": (
+                f"Período: {dates[0]} a {dates[-1]} • {len(dates)} pregões • "
+                f"Fonte: B3 COTAHIST (mercado: lote padrão)"
+            ),
+        })
 
     medias_sections = build_medias_sections(
         tk, dates, closes, ma20, ma50, ma100, ma200, crossovers,
@@ -305,8 +283,6 @@ def dashboard(ticker: str = "") -> dict:
         volumes=volumes,
         trade_counts=[p.get("trade_count") for p in ohlcv],
     )
-    # [v1.7] Opções tab — cross-skill integration with b3/options.
-    options_sections = _build_options_tab(tk)
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     print(f"  [step] Sections built ({_s_elapsed:.1f}s)", flush=True)
 
@@ -319,7 +295,6 @@ def dashboard(ticker: str = "") -> dict:
         {"name": "Volatilidade",  "group": "Performance",       "sections": volatilidade_sections},
         {"name": "Fibonacci",     "group": "Análise Técnica",  "sections": fibonacci_sections},
         {"name": "Bid-Ask Spread", "group": "Liquidez",           "sections": spread_sections},
-        {"name": "Opções",          "group": "Derivativos",        "sections": options_sections},
     ]
 
     _total = (_dt.now() - _t0).total_seconds()

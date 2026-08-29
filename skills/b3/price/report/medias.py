@@ -44,7 +44,7 @@ def build_medias_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Médias Móveis — {ticker}",
+            "title": f"Médias Móveis",
             "text": "Sem dados de preço para calcular médias móveis.",
         }]
 
@@ -65,7 +65,7 @@ def build_medias_sections(
 
     chart_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Médias Móveis — {ticker}",
+        "title": f"Médias Móveis",
         "description": (
             "Preço de fechamento + médias móveis simples 20/50/100/200 dias. "
             "Cruzamentos indicam sinais de compra (Ouro) ou venda (Morte)."

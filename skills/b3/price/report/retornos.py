@@ -55,7 +55,7 @@ def build_retornos_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Retornos — {ticker}",
+            "title": f"Retornos",
             "text": "Sem dados de preço para calcular retornos.",
         }]
 
@@ -74,7 +74,7 @@ def build_retornos_sections(
     # ── Cumulative return chart (single left axis, %) ─────────────────────
     cum_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Retorno Cumulativo — {ticker}",
+        "title": f"Retorno Cumulativo",
         "description": (
             "Retorno percentual acumulado desde o primeiro dia do período (preço apenas). "
             "Eixo único em %."
@@ -134,7 +134,7 @@ def build_retornos_sections(
             adj_total_return = valid_adj[-1] if valid_adj else None
             adj_section: dict[str, Any] = {
                 "type": "chart",
-                "title": f"Retorno Cumulativo Ajustado — {ticker}",
+                "title": f"Retorno Cumulativo Ajustado",
                 "description": (
                     "Retorno percentual acumulado ajustado por dividendos "
                     "(backward adjustment). Preços históricos são reduzidos "
@@ -197,7 +197,7 @@ def build_retornos_sections(
                 div_total_return = valid_div[-1] / 100.0  # back to fraction for fmt_pct
             div_section: dict[str, Any] = {
                 "type": "chart",
-                "title": f"Retorno de Dividendos — {ticker}",
+                "title": f"Retorno de Dividendos",
                 "description": (
                     "Diferença entre o retorno ajustado e o retorno bruto = "
                     "contribuição dos dividendos. Mostra quanto do retorno total "
@@ -249,7 +249,7 @@ def build_retornos_sections(
     # ── Drawdown chart (always ≤ 0; red fill, single left axis %) ──────────
     dd_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Drawdown — {ticker}",
+        "title": f"Drawdown",
         "description": (
             "Queda do pico de preço mais recente (peak-to-trough). "
             "0% = no novo máximo; -30% = 30% abaixo do pico. Eixo único em %."
@@ -317,7 +317,7 @@ def build_retornos_sections(
 
     kpi_section: dict[str, Any] = {
         "type": "table",
-        "title": "Resumo de Performance",
+        "title": f"Resumo de Performance ({len(dates)} dias)",
         "columns": ["Métrica", "Valor"],
         "rows": kpi_rows,
     }
@@ -328,6 +328,21 @@ def build_retornos_sections(
             "(backward adjustment). A diferença entre os dois = impacto dos "
             "dividendos no período."
         )
-    sections.append(kpi_section)
+    # [v7] Resumo de Performance moved to TOP. Charts collapsible.
+    sections = [kpi_section]
+
+    # [v7] Make charts collapsible (collapsed by default)
+    cum_section["collapsible"] = True
+    cum_section["collapsible_open"] = False
+    sections.append(cum_section)
+
+    if adj_total_return is not None:
+        adj_section["collapsible"] = True
+        adj_section["collapsible_open"] = False
+        sections.append(adj_section)
+
+    dd_section["collapsible"] = True
+    dd_section["collapsible_open"] = False
+    sections.append(dd_section)
 
     return sections

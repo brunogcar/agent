@@ -53,7 +53,7 @@ def build_spread_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Bid-Ask Spread — {ticker}",
+            "title": f"Bid-Ask Spread",
             "text": "Sem dados de cotacao disponiveis.",
         }]
 
@@ -81,7 +81,7 @@ def build_spread_sections(
     if not valid_spreads:
         return [{
             "type": "text",
-            "title": f"Bid-Ask Spread — {ticker}",
+            "title": f"Bid-Ask Spread",
             "text": (
                 "Sem dados de bid/ask para o periodo. As colunas best_bid e "
                 "best_ask do COTAHIST estao ausentes ou NULL para todos os "
@@ -92,7 +92,7 @@ def build_spread_sections(
     # ── 1. Spread absoluto (R$) chart ─────────────────────────────────────
     spread_abs_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"Spread Absoluto — {ticker}",
+        "title": f"Spread Absoluto",
         "description": (
             "Spread absoluto (R$) = best_ask - best_bid por pregao. Valores "
             "altos indicam baixa liquidez ou alta volatilidade intradia; "
@@ -135,7 +135,7 @@ def build_spread_sections(
     # ── 2. Spread percentual (%) chart ────────────────────────────────────
     spread_pct_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"Spread Percentual — {ticker}",
+        "title": f"Spread Percentual",
         "description": (
             "Spread percentual = spread / fechamento * 100. Normaliza a "
             "comparacao entre tickers de precos diferentes (1 centavo de "
@@ -178,7 +178,7 @@ def build_spread_sections(
     # ── 3. Bid / Ask / Close chart ────────────────────────────────────────
     bid_ask_close_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"Bid / Ask / Close — {ticker}",
+        "title": f"Bid / Ask / Close",
         "description": (
             "Melhor bid (verde), melhor ask (vermelho) e fechamento (teal) "
             "por pregao. A area entre bid e ask e o spread intradia; quando "
@@ -308,4 +308,5 @@ def build_spread_sections(
         "column_align": ["left", "right"],
     }
 
-    return [spread_abs_chart, spread_pct_chart, bid_ask_close_chart, kpi_section]
+    # [v7] Estatisticas de Liquidez moved to TOP. Removed Bid/Ask/Close chart.
+    return [kpi_section, spread_abs_chart, spread_pct_chart]

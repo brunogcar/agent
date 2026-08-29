@@ -101,7 +101,7 @@ _SYNC_REGISTRY: dict[str, tuple[str, str, KwargsFn]] = {
     "bridge":       ("data_sources.cvm.bridge.sync_engine", "sync",
                      lambda cy, py, co, ti: {"ticker": co or "", "force": False, "trace_id": ti}),
     "cotahist":     ("data_sources.b3.cotahist.sync_engine", "sync",
-                     lambda cy, py, co, ti: {"year": cy, "force": True, "trace_id": ti}),
+                     lambda cy, py, co, ti: {"year": cy, "force": False, "trace_id": ti}),
     "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
                      lambda cy, py, co, ti: {"force": True, "trace_id": ti}),
     "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",

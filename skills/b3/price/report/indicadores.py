@@ -110,7 +110,7 @@ def build_indicadores_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Indicadores — {ticker}",
+            "title": f"Indicadores",
             "text": "Sem dados para calcular indicadores.",
         }]
 
@@ -121,7 +121,7 @@ def build_indicadores_sections(
     # scroll through the indicators below. NOT collapsible (always visible).
     price_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"Preço — {ticker}",
+        "title": f"Preço",
         "description": (
             "Preço de fechamento diário (referência). Os indicadores abaixo "
             "usam esta série — consulte este gráfico ao ler cada oscilador."
@@ -169,7 +169,7 @@ def build_indicadores_sections(
     rsi_30 = _constant_line(30.0, "Sobrevenda (30)", _COLOR_GREEN, n)
     rsi_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"RSI (14) — {ticker}",
+        "title": f"RSI (14)",
         "description": (
             "Índice de Força Relativa (RSI, 14 períodos). Acima de 70 = "
             "sobrecompra (possível correção). Abaixo de 30 = sobrevenda "
@@ -228,7 +228,7 @@ def build_indicadores_sections(
     ]
     macd_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"MACD (12/26/9) — {ticker}",
+        "title": f"MACD (12/26/9)",
         "description": (
             "Convergência/Divergência de Médias Móveis. Linha azul = MACD "
             "(EMA12 − EMA26). Linha laranja = sinal (EMA9 do MACD). Barras "
@@ -305,7 +305,7 @@ def build_indicadores_sections(
     stoch_20 = _constant_line(20.0, "Sobrevenda (20)", _COLOR_GREEN, n)
     stoch_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"Stochastic (14/3/3) — {ticker}",
+        "title": f"Stochastic (14/3/3)",
         "description": (
             "Oscilador Estocástico. %K = (close − mínima_14) / (máxima_14 − "
             "mínima_14) × 100. %D = SMA3 do %K. Acima de 80 = sobrecompra; "
@@ -374,7 +374,7 @@ def build_indicadores_sections(
     # ── 4. OBV chart (cumulative signed volume, single axis) ────────────────
     obv_chart: dict[str, Any] = {
         "type": "chart",
-        "title": f"On-Balance Volume (OBV) — {ticker}",
+        "title": f"On-Balance Volume (OBV)",
         "description": (
             "Volume acumulado assinado pela direção do preço: +volume em dias "
             "de alta, −volume em dias de baixa. OBV subindo com preço = "
@@ -429,7 +429,7 @@ def build_indicadores_sections(
         adx_75 = _constant_line(75.0, "Tendencia muito forte (75)", _COLOR_RED, n)
         adx_chart: dict[str, Any] = {
             "type": "chart",
-            "title": f"ADX (14) — {ticker}",
+            "title": f"ADX (14)",
             "description": (
                 "Average Directional Index (14 periodos). Mede a FORCA da "
                 "tendencia (0-100), nao a direcao. ADX > 25 = tendencia forte "
@@ -490,7 +490,7 @@ def build_indicadores_sections(
         cci_n100 = _constant_line(-100.0, "Sobrevenda (-100)", _COLOR_GREEN, n)
         cci_chart: dict[str, Any] = {
             "type": "chart",
-            "title": f"CCI (20) — {ticker}",
+            "title": f"CCI (20)",
             "description": (
                 "Commodity Channel Index (20 periodos). Mede o desvio do "
                 "preco tipico (H+L+C)/3 da sua media, normalizado pelo desvio "
@@ -548,7 +548,7 @@ def build_indicadores_sections(
         wr_n80 = _constant_line(-80.0, "Sobrevenda (-80)", _COLOR_GREEN, n)
         wr_chart: dict[str, Any] = {
             "type": "chart",
-            "title": f"Williams %R (14) — {ticker}",
+            "title": f"Williams %R (14)",
             "description": (
                 "Williams %R (14 periodos). Oscilador de momentum 0 a -100. "
                 "%R > -20 (prox. de 0) = sobrecompra; %R < -80 (prox. de -100) "
@@ -708,9 +708,8 @@ def build_indicadores_sections(
         ),
         "columns": ["Indicador", "Valor Atual", "Sinal"],
         "rows": signals_rows,
-        # Right-align the "Valor Atual" column (index 1); left-align the
-        # "Indicador" name (0) and the "Sinal" classifier (2).
         "column_align": ["left", "right", "left"],
+        "negative_red": True,
         "note": (
             "Sinais são leituras pontuais — NÃO são recomendações de "
             "compra/venda. Sempre confirme com a ação do preço + contexto "
@@ -718,4 +717,5 @@ def build_indicadores_sections(
         ),
     }
 
-    return [price_chart, rsi_chart, macd_chart, stoch_chart, obv_chart] + adx_sections + [signals_table]
+    # [v7] Sinais Atuais moved to TOP. Charts after.
+    return [signals_table, price_chart, rsi_chart, macd_chart, stoch_chart, obv_chart] + adx_sections

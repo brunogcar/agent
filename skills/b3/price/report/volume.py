@@ -64,7 +64,7 @@ def build_volume_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Volume — {ticker}",
+            "title": f"Volume",
             "text": "Sem dados de volume disponíveis.",
         }]
 
@@ -129,46 +129,7 @@ def build_volume_sections(
             "price_full_data": data,
         }
 
-    # ── 1. Volume financial (R$) chart ─────────────────────────────────────
-    chart_section = _dual_axis_bar_chart(
-        f"Volume — {ticker}",
-        (
-            "Volume financeiro diário (R$, eixo esquerdo). Verde: fechamento ≥ "
-            "abertura (alta). Vermelho: fechamento < abertura (baixa). Linha teal: "
-            "preço de fechamento (eixo direito)."
-        ),
-        volumes, "Volume (R$)", "Volume (R$)",
-    )
-    sections: list[dict] = [chart_section]
-
-    # ── 2. Trade count chart (v1.5) ────────────────────────────────────────
-    if trade_counts:
-        tc_section = _dual_axis_bar_chart(
-            f"Número de Negócios — {ticker}",
-            (
-                "Quantidade de negócios (trades) por dia (eixo esquerdo). "
-                "Diferente do volume financeiro — mostra participação do mercado "
-                "(número de investidores transacionando). Linha teal: preço (eixo direito)."
-            ),
-            trade_counts, "Negócios", "Negócios",
-        )
-        sections.append(tc_section)
-
-    # ── 3. Contracts chart (v1.5) ──────────────────────────────────────────
-    if contracts:
-        ct_section = _dual_axis_bar_chart(
-            f"Quantidade de Ações — {ticker}",
-            (
-                "Total de ações/contratos negociados por dia (quantidade, eixo "
-                "esquerdo). Normaliza a comparação entre tickers de preços "
-                "diferentes — 1M ações a R$10 = R$10M vs 1M ações a R$100 = "
-                "R$100M (mesma quantidade, volume diferente). Linha teal: preço."
-            ),
-            contracts, "Ações/Contratos", "Ações/Contratos",
-        )
-        sections.append(ct_section)
-
-    # ── 4. Average volume KPI ──────────────────────────────────────────────
+    # ── 1. Average volume KPI (moved to TOP in v7) ────────────────────────
     valid_vols = [v for v in volumes if not _is_missing(v) and v > 0]
     avg_20d = (sum(valid_vols[-20:]) / len(valid_vols[-20:])) if len(valid_vols) >= 1 else None
     avg_60d = (sum(valid_vols[-60:]) / len(valid_vols[-60:])) if len(valid_vols) >= 1 else None
@@ -181,7 +142,6 @@ def build_volume_sections(
         ["Dias com volume registrado", fmt_int(len(valid_vols))],
     ]
 
-    # [v1.5] Add trade count + contracts averages if available.
     if trade_counts:
         valid_tc = [t for t in trade_counts if t is not None and t > 0]
         if valid_tc:
@@ -198,7 +158,54 @@ def build_volume_sections(
         "title": "Estatísticas de Volume",
         "columns": ["Janela", "Volume Médio (R$)"],
         "rows": kpi_rows,
+        "column_align": ["left", "right"],
     }
 
-    sections.append(kpi_section)
+    sections: list[dict] = [kpi_section]
+
+    # ── 2. Volume financial (R$) chart (collapsible) ──────────────────────
+    chart_section = _dual_axis_bar_chart(
+        "Volume",
+        (
+            "Volume financeiro diário (R$, eixo esquerdo). Verde: fechamento ≥ "
+            "abertura (alta). Vermelho: fechamento < abertura (baixa). Linha teal: "
+            "preço de fechamento (eixo direito)."
+        ),
+        volumes, "Volume (R$)", "Volume (R$)",
+    )
+    chart_section["collapsible"] = True
+    chart_section["collapsible_open"] = False
+    sections.append(chart_section)
+
+    # ── 3. Trade count chart (collapsible) ────────────────────────────────
+    if trade_counts:
+        tc_section = _dual_axis_bar_chart(
+            "Número de Negócios",
+            (
+                "Quantidade de negócios (trades) por dia (eixo esquerdo). "
+                "Diferente do volume financeiro — mostra participação do mercado "
+                "(número de investidores transacionando). Linha teal: preço (eixo direito)."
+            ),
+            trade_counts, "Negócios", "Negócios",
+        )
+        tc_section["collapsible"] = True
+        tc_section["collapsible_open"] = False
+        sections.append(tc_section)
+
+    # ── 4. Contracts chart (collapsible) ──────────────────────────────────
+    if contracts:
+        ct_section = _dual_axis_bar_chart(
+            "Quantidade de Ações",
+            (
+                "Total de ações/contratos negociados por dia (quantidade, eixo "
+                "esquerdo). Normaliza a comparação entre tickers de preços "
+                "diferentes — 1M ações a R$10 = R$10M vs 1M ações a R$100 = "
+                "R$100M (mesma quantidade, volume diferente). Linha teal: preço."
+            ),
+            contracts, "Ações/Contratos", "Ações/Contratos",
+        )
+        ct_section["collapsible"] = True
+        ct_section["collapsible_open"] = False
+        sections.append(ct_section)
+
     return sections

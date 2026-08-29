@@ -86,7 +86,7 @@ def build_fibonacci_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Fibonacci — {ticker}",
+            "title": f"Fibonacci",
             "text": "Sem dados de preço para calcular níveis de Fibonacci.",
         }]
 
@@ -95,10 +95,22 @@ def build_fibonacci_sections(
 
     sections: list[dict] = []
 
-    def _pct(target: float) -> str:
+    def _pct(target: float) -> dict:
+        """Format % vs current price as a cell dict with green/red color."""
         if current_price is None or current_price == 0:
+            return {"text": "—"}
+        pct = (target - current_price) / current_price
+        s = fmt_pct(pct)
+        return {"text": s, "color": "#22c55e" if pct >= 0 else "#ef4444"}
+
+    def _fmt_date(iso: str) -> str:
+        """Convert YYYY-MM-DD to DD/MM/YYYY."""
+        if not iso or iso == "—":
             return "—"
-        return fmt_pct((target - current_price) / current_price)
+        parts = iso.split("-")
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0]}"
+        return iso
 
     # ── Per-swing sections (grouped by swing, not by category) ─────────────
     for i, sw in enumerate(swings):
@@ -129,13 +141,14 @@ def build_fibonacci_sections(
             "title": f"Níveis de Fibonacci — {lbl}",
             "description": (
                 f"{desc}. "
-                f"Máxima: {_fmt_price(sw['high_price'])} ({sw['high_date']}) • "
-                f"Mínima: {_fmt_price(sw['low_price'])} ({sw['low_date']}) • "
+                f"Máxima: {_fmt_price(sw['high_price'])} ({_fmt_date(sw['high_date'])}) • "
+                f"Mínima: {_fmt_price(sw['low_price'])} ({_fmt_date(sw['low_date'])}) • "
                 f"Intervalo: {_fmt_price(sw['range'])}. "
                 "Nível 0 = Máxima, nível 1 = Mínima, níveis >1 = extensões."
             ),
             "columns": ["Nível", "Preço (R$)", "Nota"],
             "rows": niveis_rows,
+            "column_align": ["left", "right", "left"],
             "collapsible": True,
             "collapsible_open": False,  # collapsed by default
         })
@@ -158,6 +171,7 @@ def build_fibonacci_sections(
                 ["Alvo 2",    _fmt_price(c["alvo_2"]),    _pct(c["alvo_2"])],
                 ["STOP",      _fmt_price(c["stop"]),      _pct(c["stop"])],
             ],
+            "column_align": ["left", "right", "right"],
             "note": (
                 "Preço atual: " + _fmt_price(current_price) + ". "
                 "Sinais são pontos de referência — NÃO são recomendações."
@@ -184,6 +198,7 @@ def build_fibonacci_sections(
                 ["Alvo 2",    _fmt_price(v["alvo_2"]),    _pct(v["alvo_2"])],
                 ["STOP",      _fmt_price(v["stop"]),      _pct(v["stop"])],
             ],
+            "column_align": ["left", "right", "right"],
             "note": (
                 "Preço atual: " + _fmt_price(current_price) + ". "
                 "Sinais são pontos de referência — NÃO são recomendações."
@@ -196,9 +211,9 @@ def build_fibonacci_sections(
     div_rows: list[list[str]] = []
     for adj in adjustments:
         div_rows.append([
-            adj.get("ex_date", "—"),
+            _fmt_date(adj.get("ex_date", "—")),
             _fmt_price(adj.get("rate")),
-            adj.get("payment_date", "—"),
+            _fmt_date(adj.get("payment_date", "—")),
             adj.get("isin_code", "—"),
         ])
 
@@ -216,6 +231,7 @@ def build_fibonacci_sections(
         ),
         "columns": ["Data Ex-Div", "Valor (R$)", "Data Pagamento", "ISIN"],
         "rows": div_rows if div_rows else [["—", "—", "Nenhum dividendo no período", "—"]],
+        "column_align": ["left", "right", "left", "left"],
     })
 
     return sections

@@ -17,7 +17,7 @@ Single-ticker price analytics from B3 COTAHIST daily OHLCV data. Seven tabs:
 
 ```text
 skills/b3/price/
-├── __init__.py        MANIFEST + route() dispatch (auto-discovery) + REQUIRED_SOURCES=["cotahist","b3_dividends"]
+├── __init__.py        MANIFEST + route() dispatch (auto-discovery) + REQUIRED_SOURCES=["cotahist"]
 ├── _registry.py       ModeSpec + register_mode + MODES dict (delegates to skills/_base/)
 ├── engines.py         ALL computation: ohlcv_series, latest_quote, compute_sma, compute_returns,
 │                      compute_cumulative_returns, compute_drawdowns, compute_volatility,
@@ -153,12 +153,12 @@ filtered alongside the main price series.
 
 | Mode | Default | Source | Returns |
 |------|---------|--------|---------|
-| `dashboard` | 10Y window | COTAHIST + b3_dividends | 7-tab dashboard payload (Cotação / Médias / Volume / Indicadores / Retornos / Volatilidade / Fibonacci) + 6 KPIs |
+| `dashboard` | 10Y window | COTAHIST + b3_dividends | 8-tab dashboard payload (Cotação / Médias / Volume / Indicadores / Retornos / Volatilidade / Fibonacci / Bid-Ask Spread) + 6 KPIs |
 | `quote` | — | COTAHIST | Latest OHLCV + 52-week range + 6 KPI cards |
 
 ## Sync Guard (v1.0 + v1.3)
 
-`REQUIRED_SOURCES = ["cotahist", "b3_dividends"]` wired via `make_route()`.
+`REQUIRED_SOURCES = ["cotahist"]` wired via `make_route()`.
 
 - `route()` calls `ensure_fresh()` before each dispatch — checks `cotahist.sync_state.last_synced_at`.
 - If stale (> 24h) or missing, triggers `sync(year=current_year, force=True)`.

@@ -64,14 +64,24 @@ def _is_missing(v: Any) -> bool:
 def fmt_brl(value: Any, suffix: bool = True) -> str:
     """Format a value as BRL. None/NaN -> dash.
 
-    suffix=True  -> R$ 1,23 B   (compact, investsite-style)
+    suffix=True  -> R$ 1,23 bi   (compact, PT-BR suffixes: bi/mi/tri)
     suffix=False -> R$ 1.234.567,89 (full)
     """
     if _is_missing(value):
         return _DASH
     try:
         from core.br_validator import format_brl
-        return format_brl(float(value), suffix=suffix)
+        s = format_brl(float(value), suffix=suffix)
+        if suffix:
+            if s.startswith("-R$ "):
+                s = "R$ -" + s[4:]
+            if s.endswith(" T"):
+                s = s[:-2] + " tri"
+            elif s.endswith(" B"):
+                s = s[:-2] + " bi"
+            elif s.endswith(" M"):
+                s = s[:-2] + " mi"
+        return s
     except (TypeError, ValueError):
         return _DASH
 

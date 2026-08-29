@@ -5,7 +5,8 @@ from skills.b3.price._registry import MODES  # noqa: F401
 
 auto_discover_modes(__name__)
 
-REQUIRED_SOURCES = ["cotahist", "b3_dividends"]
+# [v4] Removed "b3_dividends" from REQUIRED_SOURCES — per-ticker sync
+REQUIRED_SOURCES = ["cotahist"]
 
 MANIFEST = {
     "sub_domain":  "price",

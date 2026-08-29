@@ -37,7 +37,7 @@ def build_volatilidade_sections(
     if not dates:
         return [{
             "type": "text",
-            "title": f"Volatilidade — {ticker}",
+            "title": f"Volatilidade",
             "text": "Sem dados para calcular volatilidade.",
         }]
 
@@ -60,7 +60,7 @@ def build_volatilidade_sections(
     # ── Rolling volatility chart (3 lines: 20D/60D/252D + dual-axis price) ─
     vol_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Volatilidade Anualizada — {ticker}",
+        "title": f"Volatilidade Anualizada",
         "description": (
             "Desvio-padrão dos retornos diários em janelas rolantes de 20/60/252 dias, "
             "anualizado por √252 (eixo esquerdo). 20D = ruído de curto prazo; 252D = "
@@ -143,7 +143,7 @@ def build_volatilidade_sections(
     # ── Bollinger Bands chart (price + upper/middle/lower) ─────────────────
     bb_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Bandas de Bollinger — {ticker}",
+        "title": f"Bandas de Bollinger",
         "description": (
             "MM20 (média) ± 2 desvios-padrão. Banda estreita = baixa volatilidade "
             "(possível consolidação). Preço tocando banda superior/inferior = "
@@ -246,4 +246,5 @@ def build_volatilidade_sections(
         ],
     }
 
-    return [vol_section, bb_section, kpi_section]
+    # [v7] Volatilidade Atual moved to TOP. Charts after.
+    return [kpi_section, vol_section, bb_section]

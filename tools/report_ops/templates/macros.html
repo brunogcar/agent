@@ -3,7 +3,7 @@
   <div class="kpi-value">{{ value }}</div>
   <div class="kpi-label">{{ label }}</div>
   {% if delta %}
-    <div class="kpi-delta {{ 'pos' if delta.startswith('+') else 'neg' if delta.startswith('-') else 'neu' }}">{{ delta }}</div>
+    <div class="kpi-delta {{ 'neg' if delta.startswith('-') else 'pos' }}">{{ delta }}</div>
   {% endif %}
 </div>
 {% endmacro %}
@@ -329,16 +329,25 @@
 </div>
 {% endmacro %}
 
-{% macro two_column(left_title, left_rows, right_title, right_rows) %}
+{% macro two_column(left_title, left_rows, right_title, right_rows, negative_red=False, positive_green=False) %}
 <div class="two-col-grid">
   <div class="two-col-left">
     <div class="two-col-title">{{ left_title }}</div>
     <table class="data-table statement-table">
       <tbody>
         {% for row in left_rows %}
-        <tr class="statement-row {{ 'subtotal' if row.get('is_subtotal') else '' }} {{ 'total' if row.get('is_total') else '' }}">
-          <td class="statement-label" style="padding-left: {{ (row.get('indent', 0) * 20) + 12 }}px;">{{ row.get('label', '') }}</td>
-          <td class="statement-value">{{ row.get('value', '') }}</td>
+        {% set val = row.get('value', '') %}
+        {% set pct = row.get('pct', '') %}
+        {% set is_neg = negative_red and val is string and val.startswith('-') %}
+        {% set is_pos = positive_green and val is string and not val.startswith('-') and val != '—' and '%' in val %}
+        <tr class="statement-row">
+          <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
+          <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>
+          {% if pct is mapping %}
+          <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: {{ pct.get('color', '') }};">{{ pct.get('text', '') }}</td>
+          {% else %}
+          <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;">{{ pct }}</td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -349,9 +358,18 @@
     <table class="data-table statement-table">
       <tbody>
         {% for row in right_rows %}
-        <tr class="statement-row {{ 'subtotal' if row.get('is_subtotal') else '' }} {{ 'total' if row.get('is_total') else '' }}">
-          <td class="statement-label" style="padding-left: {{ (row.get('indent', 0) * 20) + 12 }}px;">{{ row.get('label', '') }}</td>
-          <td class="statement-value">{{ row.get('value', '') }}</td>
+        {% set val = row.get('value', '') %}
+        {% set pct = row.get('pct', '') %}
+        {% set is_neg = negative_red and val is string and val.startswith('-') %}
+        {% set is_pos = positive_green and val is string and not val.startswith('-') and val != '—' and '%' in val %}
+        <tr class="statement-row">
+          <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
+          <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>
+          {% if pct is mapping %}
+          <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: {{ pct.get('color', '') }};">{{ pct.get('text', '') }}</td>
+          {% else %}
+          <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;">{{ pct }}</td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

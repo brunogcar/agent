@@ -278,6 +278,8 @@
         }
       }]
     };
+    // [v9] Apply zoom plugin to OHLC candlestick charts too.
+    _applyZoomPlugin(config);
     var chart = new Chart(canvas.getContext('2d'), config);
     chart._ohlc = ohlc;
     return chart;
@@ -322,6 +324,54 @@
     };
   }
 
+  // [v9] Apply zoom plugin to charts with price_range_selector.
+  // Adds mouse wheel zoom + drag pan + double-click reset.
+  // Only applies to charts that have the range selector (time-series charts).
+  function _applyZoomPlugin(config) {
+    if (!config || !config.options) return;
+    // Check if this chart has labels that look like dates (time-series).
+    // Only enable zoom on time-series charts, not on bar charts with
+    // category labels (like "2026", "2027" in yield curve).
+    var labels = config.data && config.data.labels;
+    if (!labels || labels.length < 10) return;  // skip short charts
+    var hasDates = false;
+    for (var i = 0; i < Math.min(labels.length, 5); i++) {
+      var l = String(labels[i]);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(l) || /^\d{2}\/\d{2}\/\d{4}$/.test(l)) {
+        hasDates = true;
+        break;
+      }
+    }
+    if (!hasDates) return;
+
+    config.options.plugins = config.options.plugins || {};
+    config.options.plugins.zoom = {
+      pan: {
+        enabled: true,
+        mode: 'x',
+        modifierKey: null,  // no modifier needed — just drag
+      },
+      zoom: {
+        wheel: {
+          enabled: true,  // mouse wheel zoom
+          speed: 0.1,     // zoom speed (lower = smoother)
+        },
+        pinch: {
+          enabled: true,  // touch pinch zoom
+        },
+        mode: 'x',
+        drag: {
+          enabled: false,  // don't enable drag-zoom (conflicts with pan)
+        },
+      },
+      limits: {
+        x: {
+          minRange: 5,  // minimum 5 data points visible (prevents over-zoom)
+        },
+      },
+    };
+  }
+
   // Render a single chart by canvas ID.  Deep-copies chartData so the
   // original (with _tooltipPercent flag) is preserved in the registry.
   // [b3.price v2] Routes OHLC candlesticks through _renderOHLCChart.
@@ -337,6 +387,7 @@
     _applyTooltipPercent(config);
     _applySegmentColors(config);
     _applyDateFormatXAxis(config);
+    _applyZoomPlugin(config);
     var chart = new Chart(canvas.getContext('2d'), config);
     _chartRegistry.push({canvas: canvas, chartData: chartData, chart: chart});
   }

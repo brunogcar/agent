@@ -168,7 +168,7 @@
     {{ m.ratio_grid(sec.categories) }}
     {% endif %}
     {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
-    {{ m.two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows) }}
+    {{ m.two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows, negative_red=sec.negative_red|default(False), positive_green=sec.positive_green|default(False)) }}
     {% endif %}
     {% if sec.type == 'subtabs' and sec.tabs %}
     {{ m.subtabs(sec.tabs, 'tab-' + outer_loop.index|string + '-sub-' + loop.index|string) }}
@@ -196,6 +196,8 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 {# [v2.2] chartjs-chart-financial CDN removed — the b3/price candlestick
    chart is rendered by the vanilla _renderOHLCChart helper (flagged via
    chart_data._ohlc), not the chartjs-chart-financial plugin. The plugin

@@ -2,7 +2,7 @@
 
 Self-contained -- exercises the builder directly with synthetic lists (no
 cotahist DB needed). Verifies:
-  1. Section count + types (4 sections: 3 charts + 1 KPI table).
+  1. Section count + types (3 sections: 2 charts + 1 KPI (v7: removed Bid/Ask/Close) table).
   2. Spread computation correctness (best_ask - best_bid).
   3. Spread pct computation (spread / close * 100).
   4. KPI table column_align is set (right-align the Valor column).
@@ -56,21 +56,20 @@ def test_spread_sections_count_and_types():
         volumes=[100_000_000] * 10,
         trade_counts=[15_000] * 10,
     )
-    assert len(sections) == 4, f"Expected 4 sections, got {len(sections)}"
+    assert len(sections) == 3, f"Expected 3 sections, got {len(sections)}"
     types = [s["type"] for s in sections]
-    assert types == ["chart", "chart", "chart", "table"], f"Unexpected types: {types}"
+    assert types == ["table", "chart", "chart"], f"Unexpected types: {types}"
     titles = [s["title"] for s in sections]
-    assert "Spread Absoluto" in titles[0]
-    assert "Spread Percentual" in titles[1]
-    assert "Bid / Ask / Close" in titles[2]
-    assert "Estatisticas de Liquidez" in titles[3]
+    assert "Estatisticas de Liquidez" in titles[0]
+    assert "Spread Absoluto" in titles[1]
+    assert "Spread Percentual" in titles[2]
 
 
 def test_spread_absolute_correctness():
     """Spread absoluto dataset = best_ask - best_bid (one per day)."""
     dates, bids, asks, closes = _make_synthetic(n_days=5, spread_cents=0.04)
     sections = build_spread_sections("TEST4", dates, bids, asks, closes)
-    chart = sections[0]
+    chart = sections[1]  # [v7] KPI is now first, spread chart is second
     spread_data = chart["chart_data"]["data"]["datasets"][0]["data"]
     # Each spread should equal 0.04 (4 cents).
     for i, s in enumerate(spread_data):
@@ -92,7 +91,7 @@ def test_spread_pct_correctness():
     asks = [c + spread_cents / 2 for c in closes]  # 10.05
     # spread = 0.10, close = 10.0, spread_pct = 0.10/10*100 = 1.0%.
     sections = build_spread_sections("TEST4", dates, bids, asks, closes)
-    chart = sections[1]
+    chart = sections[2]  # [v7] KPI=0, abs=1, pct=2
     pct_data = chart["chart_data"]["data"]["datasets"][0]["data"]
     for i, p in enumerate(pct_data):
         assert p is not None
@@ -103,7 +102,7 @@ def test_kpi_table_column_align_right():
     """KPI table has column_align=['left', 'right'] for the Valor column."""
     dates, bids, asks, closes = _make_synthetic(n_days=10)
     sections = build_spread_sections("PETR4", dates, bids, asks, closes)
-    kpi = sections[3]
+    kpi = sections[0]  # [v7] KPI=0
     assert kpi["type"] == "table"
     assert kpi["columns"] == ["Metrica", "Valor"]
     assert kpi.get("column_align") == ["left", "right"], \
@@ -114,7 +113,7 @@ def test_kpi_table_includes_key_metrics():
     """KPI table includes spread medio (R$), spread medio (%), pregões count."""
     dates, bids, asks, closes = _make_synthetic(n_days=10)
     sections = build_spread_sections("PETR4", dates, bids, asks, closes)
-    kpi = sections[3]
+    kpi = sections[0]  # [v7] KPI=0
     labels = [row[0] for row in kpi["rows"]]
     assert "Spread medio (R$)" in labels
     assert "Spread medio (%)" in labels
@@ -142,8 +141,8 @@ def test_graceful_partial_none_bid_ask():
     closes = [38.00, 38.05, 38.20, 38.25, 38.40]
     sections = build_spread_sections("PETR4", dates, bids, asks, closes)
     # Should still produce 4 sections (3 valid spread observations is enough).
-    assert len(sections) == 4
-    chart = sections[0]
+    assert len(sections) == 3
+    chart = sections[1]  # [v7] KPI=0, chart=1
     spread_data = chart["chart_data"]["data"]["datasets"][0]["data"]
     # Days 0, 2, 4 have valid spread = 0.20; days 1, 3 are None.
     assert spread_data[0] is not None and abs(spread_data[0] - 0.20) < 1e-9

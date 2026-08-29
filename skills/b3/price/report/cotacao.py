@@ -1,19 +1,11 @@
-"""skills/cotacao.py -- Cotação tab builders (v1.4).
+"""skills/cotacao.py -- Cotação tab builders (v7).
 
-Builds the Cotação tab: candlestick chart + price snapshot table + multi-period
-returns table + annual returns table + price histogram (heatmap) + Início vs
-Fim annual chart. The Volume Diário chart was removed in v1.4 (the Volume tab
-already covers it).
-
-[v1.4] New sections:
-  - Price snapshot table (mirrors the user's spreadsheet row 5)
-  - Multi-period performance table (Dia / Semana / ... / 20 anos)
-  - Annual returns table (per-year Início / Fim / %)
-  - Price histogram with heatmap colors (blue→yellow→red by frequency)
-  - Início vs Fim annual line chart (with data labels via inline plugin)
-
-Negative values in tables are colored red via the ``negative_red`` flag on
-the section dict (handled by the data_table macro).
+[v7] Changes:
+- Snapshot: two_column with 3 columns (label, value, %), % colored green/red
+- Candlestick moved BELOW the snapshot tables
+- KPI: Preço (no delta), Variação ($ diff + % delta green/red), Abertura/Máxima/Mínima (price delta)
+- No "+" prefix on positive values
+- Volume KPI uses auto-scale (bi/mi)
 """
 from __future__ import annotations
 
@@ -52,7 +44,12 @@ def _ma_dataset(label: str, data: list, color: str) -> dict:
 
 def build_quote_kpis(quote: dict | None, prev_close: float | None,
                      range_52w: dict | None) -> list[dict]:
-    """Build 6 KPI cards for the Cotação tab (unchanged from v1.0)."""
+    """Build 6 KPI cards for the Cotação tab.
+
+    [v7] Preço: no delta. Variação: value = $ diff, delta = % (green/red).
+    Abertura/Máxima/Mínima: show price delta ($ diff from close).
+    Volume: auto-scale (bi/mi). No "+" prefix anywhere.
+    """
     if not quote:
         return [
             {"type": "kpi", "label": "Preço",          "value": "—", "unit": "", "subtitle": ""},
@@ -70,13 +67,21 @@ def build_quote_kpis(quote: dict | None, prev_close: float | None,
     volume = quote.get("volume") or 0.0
     qdate = quote.get("date", "")
 
+    def _price_delta(value, reference):
+        if value is None or reference is None or _is_missing(value) or _is_missing(reference):
+            return None
+        diff = value - reference
+        return fmt_brl(diff, suffix=False)
+
     if prev_close and prev_close > 0 and not _is_missing(close):
         var_pct = (close - prev_close) / prev_close
         var_str = fmt_pct(var_pct)
-        delta = ("+" if var_pct >= 0 else "") + var_str
+        var_diff = close - prev_close
+        var_value = fmt_brl(var_diff, suffix=False)
+        var_delta = var_str
     else:
-        var_str = "—"
-        delta = None
+        var_value = "—"
+        var_delta = None
 
     sub_52w = ""
     if range_52w and range_52w.get("high_52w") and range_52w.get("low_52w"):
@@ -86,12 +91,12 @@ def build_quote_kpis(quote: dict | None, prev_close: float | None,
         )
 
     return [
-        {"type": "kpi", "label": "Preço",          "value": fmt_brl(close, suffix=False), "unit": "", "subtitle": qdate, "delta": delta},
-        {"type": "kpi", "label": "Variação (dia)", "value": var_str, "unit": "", "subtitle": "vs. fechamento anterior"},
-        {"type": "kpi", "label": "Abertura",       "value": fmt_brl(open_, suffix=False), "unit": "", "subtitle": ""},
-        {"type": "kpi", "label": "Máxima",         "value": fmt_brl(high, suffix=False), "unit": "", "subtitle": sub_52w},
-        {"type": "kpi", "label": "Mínima",         "value": fmt_brl(low, suffix=False), "unit": "", "subtitle": ""},
-        {"type": "kpi", "label": "Volume",         "value": fmt_brl(volume, suffix=False) if volume else "—", "unit": "", "subtitle": f"{quote.get('trade_count') or 0} negócios"},
+        {"type": "kpi", "label": "Preço",          "value": fmt_brl(close, suffix=False), "unit": "", "subtitle": qdate},
+        {"type": "kpi", "label": "Variação (dia)", "value": var_value, "unit": "", "subtitle": "vs. fechamento anterior", "delta": var_delta},
+        {"type": "kpi", "label": "Abertura",       "value": fmt_brl(open_, suffix=False), "unit": "", "subtitle": "", "delta": _price_delta(open_, close)},
+        {"type": "kpi", "label": "Máxima",         "value": fmt_brl(high, suffix=False), "unit": "", "subtitle": sub_52w, "delta": _price_delta(high, close)},
+        {"type": "kpi", "label": "Mínima",         "value": fmt_brl(low, suffix=False), "unit": "", "subtitle": "", "delta": _price_delta(low, close)},
+        {"type": "kpi", "label": "Volume",         "value": fmt_brl(volume, suffix=True) if volume else "—", "unit": "", "subtitle": f"{quote.get('trade_count') or 0} negócios"},
     ]
 
 
@@ -107,37 +112,103 @@ def build_cotacao_sections(
     annual_returns: list[dict] | None = None,
     histogram: dict | None = None,
 ) -> list[dict]:
-    """Build the Cotação tab: candlestick + 3 tables + 2 charts (v1.4).
+    """Build the Cotação tab: snapshot tables FIRST + candlestick + charts.
 
-    [v1.4] The Volume Diário chart was removed (the Volume tab covers it).
-    Added: price snapshot table, multi-period returns table, annual returns
-    table, price histogram (heatmap), Início vs Fim annual chart.
-
-    Args:
-        ticker: PETR4
-        ohlcv:  list of {date, open, high, low, close, volume} sorted oldest-first
-        ma20/50/100/200: SMA series aligned with ohlcv (None for warmup period)
-        snapshot:       [v1.4] compute_price_snapshot result (or None)
-        period_returns: [v1.4] compute_period_returns result (or None)
-        annual_returns: [v1.4] compute_annual_returns result (or None)
-        histogram:      [v1.4] compute_price_histogram result (or None)
-
-    Returns:
-        List of sections (candlestick + snapshot table + period returns
-        table + annual returns table + histogram chart + inicio-fin chart).
+    [v7] Candlestick moved BELOW the snapshot tables. Snapshot uses two_column
+    with 3 columns (label, value, %). % colored green/red.
     """
     if not ohlcv:
-        return [{
-            "type": "text",
-            "title": f"Cotação — {ticker}",
-            "text": "Sem dados de preço disponíveis.",
-        }]
+        return [{"type": "text", "title": "Cotação", "text": "Sem dados de preço disponíveis."}]
 
     sections: list[dict] = []
     dates = [p["date"] for p in ohlcv]
     closes = [p["close"] for p in ohlcv]
 
-    # ── 1. Candlestick chart (with MA overlays + range selector) ────────────
+    # ── 1. Price snapshot — 2 two_column sections (v8: % vs Atual for all) ─
+    if snapshot:
+        snap = snapshot
+        current = snap.get("current")
+        def _fmt_brl(v):
+            if v is None or _is_missing(v):
+                return "—"
+            return fmt_brl(v, suffix=False)
+        def _pct_vs_current(v):
+            """% vs current price (Atual). Returns cell dict with green/red color."""
+            if v is None or _is_missing(v) or current is None or current == 0:
+                return "—"
+            pct = (v - current) / current
+            return {"text": fmt_pct(pct), "color": "#22c55e" if pct >= 0 else "#ef4444"}
+        def _pct_cell(v):
+            """Pre-computed % value. Returns cell dict with green/red color."""
+            if v is None or _is_missing(v):
+                return "—"
+            return {"text": fmt_pct(v), "color": "#22c55e" if v >= 0 else "#ef4444"}
+
+        # Geral: all values show % vs Atual
+        geral_rows = [
+            {"label": "Fechamento Anterior", "value": _fmt_brl(snap.get("prior_close")), "pct": _pct_vs_current(snap.get("prior_close"))},
+            {"label": "Abertura", "value": _fmt_brl(snap.get("open")), "pct": _pct_vs_current(snap.get("open"))},
+            {"label": "Atual", "value": _fmt_brl(current), "pct": "—"},
+        ]
+        # Dia: Mínima/Máxima show % vs Atual; Variação/Amplitude use pre-computed %
+        dia_rows = [
+            {"label": "Variação (dia)", "value": _fmt_brl(snap.get("daily_diff")), "pct": _pct_cell(snap.get("daily_pct"))},
+            {"label": "Mínima (dia)", "value": _fmt_brl(snap.get("intraday_low")), "pct": _pct_vs_current(snap.get("intraday_low"))},
+            {"label": "Máxima (dia)", "value": _fmt_brl(snap.get("intraday_high")), "pct": _pct_vs_current(snap.get("intraday_high"))},
+            {"label": "Amplitude (dia)", "value": _fmt_brl(snap.get("intraday_range")), "pct": _pct_cell(snap.get("intraday_range_pct"))},
+        ]
+        sections.append({
+            "type": "two_column",
+            "left_title": "Geral",
+            "left_rows": geral_rows,
+            "right_title": "Dia",
+            "right_rows": dia_rows,
+            "negative_red": True,
+            "positive_green": True,
+        })
+
+        # 52s: Mínima/Máxima show % vs Atual; Da Mínima/Até a Máxima use pre-computed %
+        min52_rows = [
+            {"label": "Mínima 52s", "value": _fmt_brl(snap.get("low_52w")), "pct": _pct_vs_current(snap.get("low_52w"))},
+            {"label": "Da Mínima", "value": _fmt_brl(snap.get("from_52w_low")), "pct": _pct_cell(snap.get("from_52w_low_pct"))},
+        ]
+        max52_rows = [
+            {"label": "Máxima 52s", "value": _fmt_brl(snap.get("high_52w")), "pct": _pct_vs_current(snap.get("high_52w"))},
+            {"label": "Até a Máxima", "value": _fmt_brl(snap.get("to_52w_high")), "pct": _pct_cell(snap.get("to_52w_high_pct"))},
+        ]
+        sections.append({
+            "type": "two_column",
+            "left_title": "Range 52 Semanas — Mínima",
+            "left_rows": min52_rows,
+            "right_title": "Range 52 Semanas — Máxima",
+            "right_rows": max52_rows,
+            "negative_red": True,
+            "positive_green": True,
+        })
+
+    # ── 2. Performance + Annual returns side by side (no extra % column) ──
+    if period_returns and annual_returns:
+        pr_rows = []
+        for p in period_returns:
+            ret = p.get("return_pct")
+            ret_str = fmt_pct(ret) if ret is not None else "—"
+            pr_rows.append({"label": p["label"], "value": ret_str})
+        ar_rows = []
+        for a in reversed(annual_returns):
+            ret = a.get("return_pct")
+            ret_str = fmt_pct(ret) if ret is not None else "—"
+            ar_rows.append({"label": str(a["year"]), "value": ret_str})
+        sections.append({
+            "type": "two_column",
+            "left_title": "Performance por Período",
+            "left_rows": pr_rows,
+            "right_title": "Oscilações Anuais",
+            "right_rows": ar_rows,
+            "negative_red": True,
+            "positive_green": True,
+        })
+
+    # ── 3. Candlestick chart (moved BELOW tables in v7) ───────────────────
     ohlc_data = [
         {"o": p.get("open"), "h": p.get("high"), "l": p.get("low"), "c": p.get("close")}
         for p in ohlcv
@@ -155,7 +226,7 @@ def build_cotacao_sections(
     ]
     candlestick_section: dict[str, Any] = {
         "type": "chart",
-        "title": f"Candlestick — {ticker}",
+        "title": "Candlestick",
         "description": (
             "Candlestick com MM20/50/100/200. Verde = dia de alta (fechamento ≥ "
             "abertura); vermelho = dia de baixa. Use os botões para filtrar por janela."
@@ -195,94 +266,7 @@ def build_cotacao_sections(
     }
     sections.append(candlestick_section)
 
-    # ── 2. Price snapshot table (v1.4) ─────────────────────────────────────
-    if snapshot:
-        snap = snapshot
-        # Format each value; negative values will be colored red via negative_red.
-        def _fmt_signed_brl(v):
-            if v is None or _is_missing(v):
-                return "—"
-            s = fmt_brl(v, suffix=False)
-            return ("+" if v >= 0 else "") + s if v >= 0 else s
-        def _fmt_signed_pct(v):
-            if v is None or _is_missing(v):
-                return "—"
-            s = fmt_pct(v)
-            return ("+" if v >= 0 else "") + s if v >= 0 else s
-        snap_rows = [
-            ["Fechamento Anterior",  _fmt_signed_brl(snap.get("prior_close"))],
-            ["Abertura",              _fmt_signed_brl(snap.get("open"))],
-            ["Atual",                _fmt_signed_brl(snap.get("current"))],
-            ["Variação (dia)",       _fmt_signed_brl(snap.get("daily_diff")) + " (" + _fmt_signed_pct(snap.get("daily_pct")) + ")"],
-            ["Mínima (dia)",         _fmt_signed_brl(snap.get("intraday_low"))],
-            ["Máxima (dia)",         _fmt_signed_brl(snap.get("intraday_high"))],
-            ["Amplitude (dia)",      _fmt_signed_brl(snap.get("intraday_range")) + " (" + _fmt_signed_pct(snap.get("intraday_range_pct")) + ")"],
-            ["Mínima 52s",           _fmt_signed_brl(snap.get("low_52w"))],
-            ["Máxima 52s",           _fmt_signed_brl(snap.get("high_52w"))],
-            ["Da Mínima 52s",        _fmt_signed_brl(snap.get("from_52w_low")) + " (" + _fmt_signed_pct(snap.get("from_52w_low_pct")) + ")"],
-            ["Até a Máxima 52s",     _fmt_signed_brl(snap.get("to_52w_high")) + " (" + _fmt_signed_pct(snap.get("to_52w_high_pct")) + ")"],
-        ]
-        sections.append({
-            "type": "table",
-            "title": "Snapshot de Preço",
-            "description": (
-                "Resumo do último pregão + posição dentro do range de 52 semanas. "
-                "Valores negativos em vermelho."
-            ),
-            "columns": ["Métrica", "Valor"],
-            "rows": snap_rows,
-            "negative_red": True,
-        })
-
-    # ── 3. Multi-period performance table (v1.4) ────────────────────────────
-    if period_returns:
-        pr_rows = []
-        for p in period_returns:
-            ret = p.get("return_pct")
-            ref = p.get("reference_price")
-            ret_str = ("+" + fmt_pct(ret)) if (ret is not None and ret >= 0) else (fmt_pct(ret) if ret is not None else "—")
-            ref_str = fmt_brl(ref, suffix=False) if ref is not None else "—"
-            pr_rows.append([p["label"], ret_str, ref_str])
-        sections.append({
-            "type": "table",
-            "title": "Performance por Período",
-            "description": (
-                "Retorno percentual + preço de referência em múltiplos horizontes "
-                "(dia, semana, mês, trimestre, ano, 2-20 anos). Calculado a partir "
-                "do fechamento atual vs o fechamento mais próximo de N dias atrás. "
-                "Valores negativos em vermelho."
-            ),
-            "columns": ["Período", "Retorno", "Preço de Referência"],
-            "rows": pr_rows,
-            "negative_red": True,
-        })
-
-    # ── 4. Annual returns table (v1.4) ──────────────────────────────────────
-    if annual_returns:
-        ar_rows = []
-        for a in reversed(annual_returns):  # newest-first
-            ret = a.get("return_pct")
-            ret_str = ("+" + fmt_pct(ret)) if (ret is not None and ret >= 0) else (fmt_pct(ret) if ret is not None else "—")
-            ar_rows.append([
-                str(a["year"]),
-                fmt_brl(a.get("inicio"), suffix=False),
-                fmt_brl(a.get("fim"), suffix=False),
-                ret_str,
-            ])
-        sections.append({
-            "type": "table",
-            "title": "Oscilações Anuais",
-            "description": (
-                "Preço de Início (primeiro pregão do ano) + Fim (último pregão) "
-                "+ variação % por ano. Ano atual usa o último fechamento disponível "
-                "como Fim. Valores negativos em vermelho."
-            ),
-            "columns": ["Ano", "Início", "Fim", "Variação"],
-            "rows": ar_rows,
-            "negative_red": True,
-        })
-
-    # ── 5. Price histogram with heatmap (v1.4) ─────────────────────────────
+    # ── 4. Price histogram with heatmap ───────────────────────────────────
     if histogram and histogram.get("bins"):
         bins = histogram["bins"]
         hist_labels = [b["label"] for b in bins]
@@ -303,7 +287,7 @@ def build_cotacao_sections(
             desc_parts.append(f" Área de Valor (70%): R$ {va_low:.2f} – R$ {va_high:.2f}.")
         sections.append({
             "type": "chart",
-            "title": f"Histograma de Preço — {ticker}",
+            "title": "Histograma de Preço",
             "description": "".join(desc_parts),
             "chart_data": {
                 "type": "bar",
@@ -321,30 +305,26 @@ def build_cotacao_sections(
                 "options": {
                     "responsive": True,
                     "maintainAspectRatio": False,
-                    "interaction": {"mode": "index", "intersect": False},
                     "scales": {
-                        "x": {"ticks": {"maxTicksLimit": 15, "maxRotation": 45, "minRotation": 30},
-                              "title": {"display": True, "text": "Preço (R$)"}},
-                        "y": {"title": {"display": True, "text": "Frequência (pregões)"},
-                              "beginAtZero": True},
+                        "x": {"ticks": {"maxTicksLimit": 20}},
+                        "y": {"title": {"display": True, "text": "Pregões"}},
                     },
-                    "plugins": {"legend": {"display": True, "position": "top"}},
+                    "plugins": {"legend": {"display": False}},
                 },
             },
         })
 
-    # ── 6. Início vs Fim annual chart (v1.4) ─────────────────────────────
-    if annual_returns and len(annual_returns) >= 2:
+    # ── 5. Início vs Fim annual chart ─────────────────────────────────────
+    if annual_returns:
         years = [str(a["year"]) for a in annual_returns]
-        inicio_prices = [a.get("inicio") for a in annual_returns]
-        fim_prices = [a.get("fim") for a in annual_returns]
+        inicio_vals = [a.get("inicio") for a in annual_returns]
+        fim_vals = [a.get("fim") for a in annual_returns]
         sections.append({
             "type": "chart",
-            "title": f"Início vs Fim — {ticker}",
+            "title": "Início vs Fim",
             "description": (
-                "Preço de Início (primeiro pregão do ano, azul) + Fim (último "
-                "pregão, vermelho) por ano. Ano atual usa o último fechamento "
-                "disponível como Fim. Valores exibidos acima de cada ponto."
+                "Preço de Início (primeiro pregão) vs Fim (último pregão) por ano. "
+                "Mostra a trajetória de preço ano a ano."
             ),
             "chart_data": {
                 "type": "line",
@@ -352,27 +332,23 @@ def build_cotacao_sections(
                     "labels": years,
                     "datasets": [
                         {
-                            "type": "line",
                             "label": "Início",
-                            "data": inicio_prices,
-                            "borderColor": "#3b82f6",
-                            "backgroundColor": "#3b82f6",
-                            "borderWidth": 1.5,
-                            "pointRadius": 4,
-                            "pointHoverRadius": 6,
-                            "tension": 0.2,
+                            "data": inicio_vals,
+                            "borderColor": _COLOR_UP,
+                            "backgroundColor": _COLOR_UP,
+                            "borderWidth": 2,
+                            "pointRadius": 3,
+                            "tension": 0.1,
                             "fill": False,
                         },
                         {
-                            "type": "line",
                             "label": "Fim",
-                            "data": fim_prices,
-                            "borderColor": "#ef4444",
-                            "backgroundColor": "#ef4444",
-                            "borderWidth": 1.5,
-                            "pointRadius": 4,
-                            "pointHoverRadius": 6,
-                            "tension": 0.2,
+                            "data": fim_vals,
+                            "borderColor": _COLOR_DOWN,
+                            "backgroundColor": _COLOR_DOWN,
+                            "borderWidth": 2,
+                            "pointRadius": 3,
+                            "tension": 0.1,
                             "fill": False,
                         },
                     ],
@@ -380,22 +356,17 @@ def build_cotacao_sections(
                 "options": {
                     "responsive": True,
                     "maintainAspectRatio": False,
-                    "interaction": {"mode": "index", "intersect": False},
-                    "layout": {"padding": {"top": 20}},
                     "scales": {
-                        "x": {"title": {"display": True, "text": "Ano"},
-                              "ticks": {"maxTicksLimit": 15}},
+                        "x": {"title": {"display": True, "text": "Ano"}},
                         "y": {"title": {"display": True, "text": "Preço (R$)"}},
                     },
                     "plugins": {
+                        "title": {"display": True, "text": "Início vs Fim"},
                         "legend": {"display": True, "position": "top"},
-                        # [v1.4] Inline datalabels flag — the template's
-                        # _priceDatalabels plugin reads this + renders the
-                        # value above each point.
-                        "_datalabels": True,
                     },
                 },
             },
+            "options": {"_datalabels": True},
         })
 
     return sections
