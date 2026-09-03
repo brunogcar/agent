@@ -26,7 +26,7 @@ skills/cvm/financials/
 ├── report/            dashboard section builders — PACKAGE since v2.0 (was monolithic report.py: 3981 lines, 47 functions; split for parity with valuation v2.0)
 │   ├── __init__.py    thin re-exports — ALL 34 public builders + 18 private helpers re-exported for backward compat (`from skills.cvm.financials.report import X` still works)
 │   ├── _helpers.py    shared primitives: _fmt, _num_or_none, _pct_of, _period_sort_key, _format_period_label; constants (_METRIC_LABELS, _RATIO_PCT_KEYS, _INDICADORES_CATEGORIES, _VALUATION_CHART_*, _GROUP_CHART_COLORS)
-│   ├── overview.py    Overview tab: build_overview_kpis, build_overview_sections, build_overview_trend_chart (price overlay [v1.23]), build_financials_radar [v1.22], build_financials_heatmap [v1.22], _fetch_year_end_prices, _attach_price_overlay [v1.23]
+│   ├── overview.py    Overview tab: build_overview_kpis, build_overview_sections (Quarterly Trend with Δ% columns [v2.3] + delta-direction fix [v2.4]), build_overview_trend_chart (Trajetória Anual — bar + unified colors + green price line [v2.4 revamp]), build_financials_radar [v1.22], build_financials_heatmap [v1.22] (tooltips [v2.3]), build_quality_of_earnings_section + build_quality_of_earnings_chart [v2.4 F16], _fetch_year_end_prices, _attach_price_overlay [v1.23]
 │   ├── indicadores.py Indicadores tab: build_indicadores_section + category/grouping helpers (sub-tabs split in v1.19; valuation sub-tab split into 3 charts in v1.25)
 │   ├── crescimento.py Crescimento tab: build_crescimento_sections (relocated from Indicadores in v1.25)
 │   ├── statements.py  shared statement builders: build_multi_period_table [v1.23], _statement_table_section, _merge_bpa_bpp_periods, _build_period_toggle_sections [v1.24 — annual+quarterly wrapper]
@@ -34,8 +34,9 @@ skills/cvm/financials/
 │   ├── dre.py         DRE tab: build_dre_sections (margins + absolute + trend charts — all inside period_toggle since v1.25), build_statement_trend_chart [v1.23 — price overlay], _build_dre_margins_chart, _build_dre_abs_chart
 │   ├── dfc.py         DFC tab: build_dfc_sections (stacked + FCOvsLL + trend — all inside period_toggle since v1.25), build_dfc_trend_chart [v1.23], build_dfc_quality_section (Cash Conversion + FCF_true [v1.20]), _build_dfc_stacked_chart, _build_dfc_fco_vs_ll_chart (fco_series unpacking bug fixed in v2.0)
 │   ├── dva.py         DVA tab: build_dva_sections (point-in-time doughnut + generation + sustainability stay OUTSIDE the toggle), build_dva_trend_chart [v1.23], build_dividend_sustainability_section [v1.20], _build_dva_generation_chart [v1.20]
-│   ├── analysis.py    analytical sections: build_red_flags_section [v1.20], build_dupont_section [v1.21], build_altman_z_section [v1.21], build_wacc_section [v1.21]
+│   ├── analysis.py    analytical sections: build_red_flags_section [v1.20] (collapsible with nested sections [v2.4 — macro now renders them]), build_dupont_section [v1.21], build_altman_z_section [v1.21], build_wacc_section [v1.21]
 │   ├── periods.py     period series: build_ttm_chart, build_ttm_table, build_yoy_chart, build_yoy_table, build_period_table, build_period_chart (TTM 20 periods since v1.25, was 8)
+│   ├── comprehensive.py [v2.3] comprehensive period table + indicator charts: build_comprehensive_period_table (9 sub-tables: Balanço/DRE/DFC/Crescimento/CAGR/Margens/Liquidez/Disponibilidades/EBIT-EBITDA-CAPEX), build_indicator_charts (3 bar charts: Liquidez/Disponibilidades/EBIT-EBITDA-CAPEX). [v2.4] capex_map kwarg uses real capex_at engine with FCI fallback.
 │   └── error.py       error utilities + small helpers: build_error_section, _safe_engine_call, annual_metric, annual_ratio, _metrics_from_period
 └── metrics.py         ratio computation (SUMMARY_CODES, KEY_CODES_BY_GRUPO, compute_ratios,
                        compute_ebitda, compute_ttm, compute_ebitda_from_engines,
@@ -202,65 +203,91 @@ Calculations imports in `modes/summary.py` are lazy (inside `summary()` function
 
 [v1.4] In `metrics.py`, by contrast, the engine-backed variants' imports (`ebit_at`, `da_at`, `revenue_at`, `ttm_earnings_at`, `operating_cf_at`, `investing_cf_at`, `financing_cf_at`) were moved to module top-level in a `[v1.4-financials-migration]` block. This is intentional: `metrics.py` is imported lazily by the per-period modes (`modes/quarterly.py`, `modes/annual.py`, `modes/complete.py`) only when needed, and at that point `PLANNER_MODEL` is already set (financials' conftest sets it at import time). Moving the imports to module top makes the dependency explicit + mockable as `skills.cvm.financials.metrics.<fn>_at` (which is how `test_metrics.py` patches them). Engine calls inside the variants are still wrapped in `_safe_engine_call` (returns None on any error) so a missing DB degrades gracefully.
 
-## Dashboard Architecture (v1.12 + v1.13 + v1.14 + v1.16 + v1.17 + v1.22-v1.25 + v2.0)
+## Dashboard Architecture
 
-**v1.12** — 7-tab dashboard (Overview / Indicadores / Crescimento / Balanço / DRE / DFC / DVA):
-- `dashboard.py` is a thin composition mode — calls `annual()`, `quarterly()`, `compute_all_ratios()`, and 5 standalone statement modes (bpa/bpp/dre/dfc/dva).
-- `report.py` (now `report/` package since v2.0) contains section builders (`build_overview_kpis`, `build_indicadores_section`, `build_crescimento_sections`, `build_balanco_section`, `build_dre_sections`, `build_dfc_sections`, `build_dva_sections`).
-- Each statement-mode call is wrapped in `_safe_call()` — a failure degrades the corresponding tab to an error text section.
-- Section types: `table`, `chart`, `ratio_grid`, `subtabs`, `collapsible`, `text`, `period_toggle` (v1.24).
+The `dashboard` mode is a thin composition mode — it calls `annual()`, `quarterly()`, `compute_all_ratios()`, and 5 standalone statement modes (bpa/bpp/dre/dfc/dva) in parallel via `ThreadPoolExecutor` (8 workers sharing one `engine_cache_scope`). Each statement-mode call is wrapped in `_safe_call()` — a failure degrades the corresponding tab to an error text section.
 
-**v1.13** — Review fixes:
-- Indicadores tab split into sub-tabs by category (Valuation / Rentabilidade / Liquidez / Endividamento / Eficiência / Crescimento / Tributos).
-- DVA doughnut chart shows tooltip percentages via `_tooltipPercent` flag.
-- Crescimento tab uses `growth_helpers.growth_at()` with period-specific gap tolerance.
+### 11-Tab Structure (4 sidebar groups)
 
-**v1.15** — TTM + YoY Quarterly modes:
-- New `ttm` mode: rolling TTM (anualizado) time series — computes TTM at every historical quarter boundary via `compute_ttm_with_engines()`. Produces ~4 deseasonalized data points per year. Flow metrics (DRE/DFC) use TTM derivation; snapshot metrics (BPA/BPP) use 4-quarter averaging.
-- New `yoy_quarterly` mode: same-quarter year-over-year comparison — groups quarters by Q1/Q2/Q3/Q4 and compares across years with YoY growth.
-- Dashboard 7→9 tabs (added TTM tab with table + line chart, YoY Quarterly tab with table + bar chart).
-- Mode families: Period views (quarterly/annual/ttm/yoy_quarterly) + Statement views (bpa/bpp/dre/dfc/dva) + Composition layers (complete/summary/dashboard).
+| Group | Tabs |
+|-------|------|
+| **Resumo** | Overview, Indicadores, Crescimento |
+| **Demonstrações** | Balanço, DRE, DFC, DVA |
+| **Períodos** | Anual, Trimestral QoQ |
+| **Séries Temporais** | Anualizado (TTM), Trimestral YoY |
 
-**v1.14** — Sync guard + print output:
-- `REQUIRED_SOURCES = ["dfp", "itr", "bridge"]` wired via `make_route()`.
-- `route()` calls `ensure_fresh()` before dispatch — force-syncs stale sources.
-- 11 `[financials]` print statements showing progress (start, fetch annual, fetch quarterly, computing ratios, 5x statement fetch, build, done).
+### Overview Tab — 4 Subtabs
 
-**v1.17** — Statement single-fetch optimization: `_fetch_all_statements_annual()` in `fetchers.py` fetches all 5 statements (BPA/BPP/DRE/DFC/DVA) in ONE SQL query against DFP, partitioned in Python by `grupo`. ~80% SQL round-trip reduction per dashboard call.
+| Subtab | Contents |
+|--------|---------|
+| **Cotação & Resumo** | Company info card + price chart (range selector) + summary text + 2 two_column blocks (Resultado/Margens, Balanço/Fluxo) + Quarterly Trend table (Δ% columns) |
+| **Trajetória Anual** | Annual trend chart (Receita/EBITDA/Lucro bars + green price line overlay) |
+| **Análise de Risco** | WACC table (COE/Kd/weights/tax decomposition) + DuPont 3-step ROE + Altman Z-Score (X1-X5 components) + Red Flags Contábeis (collapsible) + Qualidade do Lucro (NI vs FCO + accruals) |
+| **Visão Multidimensional** | Radar (6-axis) + Heatmap (10 metrics, color-coded with tooltips) |
 
-**v1.22** — Radar + Heatmap + Balanço stacked charts + Selic fix:
-- `build_financials_radar` — 6-axis chart (Rentabilidade, Crescimento, Liquidez, Alavancagem, Margem, Eficiência).
-- `build_financials_heatmap` — 10-metric color-coded table.
-- `build_balanco_chart` rewritten: 6 stacked-bar charts (absolute + percentage for Completo/BPA/BPP).
-- Selic 1400% fix — BCB SGS `parse_brl` treated dot as thousands separator.
+### Section Types
 
-**v1.23** — Tooltips + price overlay + multi-period tables + trend charts:
-- Tooltips on Overview tables (Latest Annual Summary, WACC, Altman Z).
-- `_fetch_year_end_prices()` + `_attach_price_overlay()` in `report/overview.py` — dual-Y-axis price overlay on Overview trend + DRE/DFC/DVA trend charts.
-- `build_multi_period_table` — multi-column annual statement tables (4 years side-by-side).
-- New per-statement trend charts (`build_statement_trend_chart`, `build_dfc_trend_chart`, `build_dva_trend_chart`) with price overlay.
+| Type | Used by | Notes |
+|------|---------|-------|
+| `table` | Most tabs | `data_table` macro; supports `wide` (frozen columns), `sortable`, `negative_red`, `positive_green` |
+| `chart` | All tabs with charts | Chart.js; `_fixedYWidth=90` + `_absMillions` for R$ (mi) alignment |
+| `ratio_grid` | Indicadores tab | Per-category grid with tooltips on metric names |
+| `subtabs` | Overview, Trimestral YoY | Nested tab navigation |
+| `collapsible` | Red Flags | Collapsible body renders nested `sections` via `_section_inner` |
+| `period_toggle` | Balanço, DRE, DFC, DVA | Trimestral/Anual toggle (pre-render + JS swap) |
+| `two_column` | Overview (Cotação & Resumo) | Side-by-side tables (Resultado/Margens, Balanço/Fluxo) |
+| `heatmap` | Overview (Visão Multidimensional) | Color-coded metric table with tooltips |
+| `company_info` | Overview (Cotação & Resumo) | Company header card (name, CNPJ, setor, etc.) |
+| `text` | Error fallbacks | Plain text block |
 
-**v1.24** — Quarterly statement tables + period selector:
-- `_fetch_all_statements_quarterly()` — ITR+DFP for ALL KEY_CODES. BPA/BPP snapshot (ITR meses=12 carry-forward for Q1-Q3 — see INSTRUCTIONS v1.25); DRE/DFC/DVA standalone.
-- `_build_period_toggle_sections()` in `report/statements.py` — wraps annual+quarterly tables in `period_toggle`.
-- Frontend: `togglePeriod` JS swaps visibility between Trimestral/Anual panels.
-- Period labels: `"2T2026"` format; up to 20 quarterly periods.
+### Comprehensive Period Tables (Períodos/Séries Temporais tabs)
 
-**v1.25** — CAGR fix + Indicadores split + ALL charts toggle + cache fix:
-- `_cagr_at()` key mismatch fix (ttm_rev/ttm_gp).
-- Indicadores Valuation subtab split into 3 charts (EV/P/Valor). Crescimento moved from Indicadores to Crescimento tab.
-- ALL time-series charts moved inside `period_toggle` (DRE margins+abs+trend, DFC stacked+FCOvsLL+trend, Balanço 6 charts). Point-in-time charts (DVA doughnut, generation, DFC quality, DVA sustainability) stay outside.
-- Templates updated: `_section_inner` renders chart canvases inside `period_toggle` panels; `_renderChart` JS called for toggle panels; `togglePeriod` calls `chart.resize()` on visible panel.
-- `_period_sort_key` parses `data_fim_exerc` date — all tables newest-first.
-- TTM 20 periods (was 8).
-- Tooltips on Overview/WACC/Altman/DFC Quality/DVA Sustainability (1st column).
-- Cache `import json` fix (AGAIN — same bug as v1.10).
+The 4 period tabs (Anual, Trimestral QoQ, Anualizado, Trimestral YoY) each show 9 sub-tables built by `report/comprehensive.py::build_comprehensive_period_table`:
 
-**v2.0** — Report package split:
-- Monolithic `report.py` (3981 lines, 47 functions) → `report/` package (13 files: `__init__.py` + `_helpers.py` + 11 per-concern modules). `__init__.py` re-exports all 34 public builders + 18 private helpers — backward compat preserved. Same pattern as `valuation` v2.0.
-- Fixed pre-existing `fco_series` unpacking bug in `_build_dfc_fco_vs_ll_chart` (`report/dfc.py`).
-- No API changes — `modes/dashboard.py` was untouched.
+1. **Balanço Patrimonial** (11 rows) — Ativo Total, Ativo Circ, Estoques, Ativo Não Circ, Passivo Total, Passivo Circ, Fornecedores, Passivo Não Circ, PL, Part. Acionistas NC, Capital Social
+2. **Demonstrativo de Resultado** (4 rows) — Receitas, Resultado Bruto, Atribuído NC, Lucro Líquido
+3. **Fluxo de Caixa** (8 rows) — FCO, D&A, FCI, FCF, FCT (computed), FCL (computed), Saldo Inicial, Saldo Final (computed)
+4. **Crescimento** (3 rows) — Cres. RL/RB/LL (period-over-period %)
+5. **CAGR** (3 rows) — CAGR RL/RB/LL (5-period compound)
+6. **Margens** (4 rows) — Bruta, EBIT, EBITDA, Líquida
+7. **Liquidez e Alavancagem** (4 rows) — Giro Ativos, Liquidez Corrente, Liquidez Imediata, Div Br/Patrim
+8. **Disponibilidades e Endividamento** (4 rows) — Disponibilidades, Dív. Bruta, Dív. Líquida, Capital Giro
+9. **EBIT, EBITDA e CAPEX** (3 rows) — EBIT, EBITDA, CAPEX (real capex engine with FCI fallback)
+
+Each tab also has: a trend chart (Receita/EBITDA/Lucro bars), a margins bar chart, and 3 indicator bar charts (Liquidez, Disponibilidades, EBIT/EBITDA/CAPEX). Frozen Métrica column (250px) with sticky section headers.
+
+### Parallel Fetch (8 tasks in `engine_cache_scope`)
+
+| Task | Fetches | Caches |
+|------|---------|-------|
+| `annual` | DFP annual (10 periods) via `annual()` mode | Engine cache (shared) |
+| `quarterly` | ITR + DFP quarterly (20 periods) via `quarterly()` mode | Engine cache (shared) |
+| `statements` | ALL 5 statements annual via `_fetch_all_statements_annual()` (1 SQL query) | Engine cache (shared) |
+| `statements_q` | ALL 5 statements quarterly via `_fetch_all_statements_quarterly()` | Engine cache (shared) |
+| `ttm` | TTM (20 periods) via `ttm()` mode | Engine cache (shared) |
+| `yoy` | YoY quarterly (5 years) via `yoy_quarterly()` mode | Engine cache (shared) |
+| `ratios` | `compute_all_ratios()` (66 metrics, point-in-time) | Engine cache (shared) |
+| `capex` | `capex_periods()` (real CapEx engine: description-search imobilizado/intangivel) | Engine cache (shared) |
+
+Context propagation: `contextvars.copy_context()` per worker (all copies share the same cache dict — true cross-task cache sharing).
+
+### Template Rendering
+
+- `tools/report_ops/templates/dashboard.html` — top-level tab + section rendering, chart-render script loops (top-level, period_toggle, subtab, collapsible nested)
+- `tools/report_ops/templates/macros.html` — `data_table` (wide+sortable), `_section_inner` (collapsible wrapper), `subtabs`, `period_toggle`, `collapsible` (renders nested `sections`), `two_column`, `ratio_grid`, `heatmap_table`
+- `tools/report_ops/templates/js/dashboard_charts.html` — `_renderChart`, `_applyFixedYWidth`, `_applyAbsMillions`, `_applyPctYAxis`, `togglePeriod`, `toggleChartCollapsible`
+
+### Key Engine Dependencies
+
+| Dashboard feature | Engine | Source |
+|-------------------|--------|--------|
+| CapEx (comprehensive table + indicator chart) | `capex_at` / `capex_periods` | `skills/cvm/calculations/engines/dfc/capex.py` |
+| WACC components (COE, Kd, weights) | `wacc_history` | `skills/cvm/calculations/metrics/wacc.py` |
+| Altman Z components (X1-X5) | `altman_z_history` | `skills/cvm/calculations/metrics/altman_z.py` |
+| Price overlay (Trajetória Anual + DRE/DFC/DVA trend) | `price_series` | `skills/cvm/calculations/engines/price.py` |
+| DFC Quality (F12) | `capex_at` + `operating_cf_at` + `ttm_earnings_at` | `skills/cvm/calculations/engines/dfc/` |
+| Dividend Sustainability (F13) | `dividends_paid_at` + `ttm_earnings_at` | `skills/cvm/calculations/engines/dva/` |
 
 ---
 
-*Last updated: 2026-08-13 (v2.0 — report/ package split + v1.17 single-fetch + v1.22 radar/heatmap + v1.23 price overlay + v1.24 quarterly tables + period toggle + v1.25 ALL charts toggle + cache fix). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-09-04. See [CHANGELOG.md](CHANGELOG.md) for version history.*

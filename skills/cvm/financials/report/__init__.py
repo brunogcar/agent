@@ -64,6 +64,8 @@ from skills.cvm.financials.report.overview import (
     build_overview_trend_chart,
     build_financials_radar,
     build_financials_heatmap,
+    build_quality_of_earnings_section,      # [v2.4] F16
+    build_quality_of_earnings_chart,       # [v2.4] F16
     _fetch_year_end_prices,    # noqa: F401 (re-exported for backward compat)
     _attach_price_overlay,     # noqa: F401 (re-exported for backward compat)
 )
@@ -165,6 +167,8 @@ __all__ = [
     "build_overview_trend_chart",
     "build_financials_radar",
     "build_financials_heatmap",
+    "build_quality_of_earnings_section",   # [v2.4] F16
+    "build_quality_of_earnings_chart",    # [v2.4] F16
     # indicadores.py
     "build_indicadores_section",
     # crescimento.py

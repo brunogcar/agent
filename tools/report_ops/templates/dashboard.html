@@ -265,7 +265,7 @@
     {{ m.code_block(sec.code | default(''), sec.lang | default('python')) }}
     {% endif %}
     {% if sec.type == 'collapsible' %}
-    {{ m.collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False)) }}
+    {{ m.collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False), sections=sec.get('sections'), prefix='tab-' + outer_loop.index|string + '-sec-' + loop.index|string) }}
     {% endif %}
     {% if sec.type == 'statement' and sec.rows %}
     {{ m.statement_table(sec.rows) }}
@@ -373,6 +373,17 @@
         {% endif %}
       {% endfor %}
     {% endif %}
+    {# [v2.4] Top-level collapsible nested-section charts — for sections like
+       Red Flags that wrap a table/chart inside a collapsible. The canvas ID
+       matches the one emitted by the collapsible macro's _section_inner call. #}
+    {% if sec.type == 'collapsible' and sec.sections %}
+      {% set coll_idx = loop.index %}
+      {% for coll_sec in sec.sections %}
+        {% if coll_sec.type == 'chart' and coll_sec.chart_data %}
+        <script>_renderChart('tab-{{ outer_loop.index }}-sec-{{ coll_idx }}-coll-{{ loop.index }}-chart-{{ loop.index }}', {{ coll_sec.chart_data | tojson }});</script>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
     {# Subtab charts — recurse into type="subtabs" sections #}
     {% if sec.type == 'subtabs' and sec.tabs %}
       {% set subtabs_sec_idx = loop.index %}
@@ -396,6 +407,16 @@
             {% for pt_sec in sub_sec.quarterly_sections %}
               {% if pt_sec.type == 'chart' and pt_sec.chart_data %}
               <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-pt-{{ spt_idx }}-q-chart-{{ loop.index }}', {{ pt_sec.chart_data | tojson }});</script>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {# [v2.4] Subtab collapsible nested-section charts — canvas ID matches
+             the one emitted by the collapsible macro inside the subtabs macro. #}
+          {% if sub_sec.type == 'collapsible' and sub_sec.sections %}
+            {% set sub_coll_idx = loop.index %}
+            {% for coll_sec in sub_sec.sections %}
+              {% if coll_sec.type == 'chart' and coll_sec.chart_data %}
+              <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-sec-{{ sub_coll_idx }}-coll-{{ loop.index }}-chart-{{ loop.index }}', {{ coll_sec.chart_data | tojson }});</script>
               {% endif %}
             {% endfor %}
           {% endif %}

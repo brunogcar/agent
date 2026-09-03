@@ -32,7 +32,7 @@ def build_overview_kpis(
 ) -> list[dict]:
     """Build 6 KPI cards with pre-formatted values + QoQ deltas.
 
-    [v1] Added QoQ % deltas (green for positive, red for negative) by
+    [v2.4] Added QoQ % deltas (green for positive, red for negative) by
     comparing the latest TTM period vs the previous TTM period.
     """
     # Extract TTM metrics if available, fall back to annual.
@@ -59,7 +59,7 @@ def build_overview_kpis(
     if lucro_val is None:
         lucro_val = annual_metric(latest_annual_period, "lucro_liquido")
 
-    # [v1] Compute QoQ deltas for the 3 financial KPIs.
+    # [v2.4] Compute QoQ deltas for the 3 financial KPIs.
     def _qoq_delta(current, previous):
         """Compute QoQ % delta. Returns formatted string or None."""
         if current is None or previous is None or previous == 0:
@@ -213,9 +213,33 @@ def build_overview_sections(
     # "YYYY-QQ" sort key.
     if quarterly_periods:
         # [v24] Quarterly Trend with % evolution columns (QoQ delta)
+        # [v2.4 fix] The delta is relative to the PREVIOUS trimester (the
+        # OLDER period in time), NOT the newer one. The old logic iterated
+        # newest-first with `prev_metrics = m` set at the END of the loop,
+        # so `prev_metrics` was actually the NEWER period — the deltas were
+        # inverted AND shifted by one row (the newest showed "—" and the
+        # oldest showed a delta). Fix: explicitly sort newest-first using
+        # a chronological key (robust to either input order), then for row
+        # at index i, the "previous in time" is at index i+1 (older). The
+        # oldest row (last) has no older period → "—". The newest row
+        # (first) shows the delta vs the 2nd newest (correct QoQ).
+        def _chron_key(p):
+            year = p.get("year")
+            quarter = p.get("quarter")
+            if year is not None and quarter is not None:
+                return (int(year), int(quarter))
+            period_label = p.get("period", "")
+            try:
+                q_str, y_str = period_label.split("T")
+                return (int(y_str), int(q_str))
+            except (ValueError, AttributeError):
+                return (0, 0)
+        # Sort oldest-first, then reverse for newest-first display.
+        sorted_oldest_first = sorted(quarterly_periods, key=_chron_key)
+        newest_first = list(reversed(sorted_oldest_first))
+        n = len(newest_first)
         trend_rows = []
-        prev_metrics = None
-        for p in reversed(quarterly_periods):  # newest-first
+        for i, p in enumerate(newest_first):
             m = p.get("metrics") or {}
             period_label = p.get("period", "—")
             # Build chronological sort key: "2T2026" -> "2026-02"
@@ -229,7 +253,9 @@ def build_overview_sections(
                     sort_key = f"{int(y_str):04d}-{int(q_str):02d}"
                 except (ValueError, AttributeError):
                     sort_key = str(period_label)
-            # Compute QoQ % for each metric
+            # Compute QoQ % for each metric.
+            # The "previous in time" is the OLDER period — at index i+1
+            # (since we iterate newest-first). Oldest row has no older → "—".
             def _qoq(curr_val, prev_val):
                 if curr_val is None or prev_val is None or prev_val == 0:
                     return "—"
@@ -238,10 +264,11 @@ def build_overview_sections(
             rev = m.get("receita_liquida")
             ebd = m.get("ebitda")
             liq = m.get("lucro_liquido")
-            if prev_metrics:
-                rev_pct = _qoq(rev, prev_metrics.get("receita_liquida"))
-                ebd_pct = _qoq(ebd, prev_metrics.get("ebitda"))
-                liq_pct = _qoq(liq, prev_metrics.get("lucro_liquido"))
+            if i + 1 < n:
+                prev_m = newest_first[i + 1].get("metrics") or {}
+                rev_pct = _qoq(rev, prev_m.get("receita_liquida"))
+                ebd_pct = _qoq(ebd, prev_m.get("ebitda"))
+                liq_pct = _qoq(liq, prev_m.get("lucro_liquido"))
             else:
                 rev_pct = "—"
                 ebd_pct = "—"
@@ -252,7 +279,6 @@ def build_overview_sections(
                 _fmt(ebd, "brl"), ebd_pct,
                 _fmt(liq, "brl"), liq_pct,
             ])
-            prev_metrics = m
         sections.append({
             "title": "Quarterly Trend",
             "type": "table",
@@ -317,7 +343,7 @@ def _fetch_year_end_prices(company: str, year_labels: list[str]) -> list[float |
 def build_overview_trend_chart(
     annual_periods: list[dict], company: str | None = None,
 ) -> dict | None:
-    """Build a multi-line chart showing Receita/EBITDA/Lucro Líq. over annual periods.
+    """Build a chart showing Receita/EBITDA/Lucro Líq. bars + price line over annual periods.
 
     [v1.16] New chart for the Overview tab — gives users an immediate
     visual sense of the company's revenue + earnings trajectory without
@@ -326,7 +352,18 @@ def build_overview_trend_chart(
     [v1.23 F2] Now accepts an optional ``company`` parameter; when provided,
     a 4th dataset (year-end closing price) is added on a secondary right
     Y-axis so users can compare fundamentals with share-price trajectory.
+
+    [v2.4] Revamped to match the unified v2.3 chart style: line → bar,
+    unified colors (Receita=orange, EBITDA=magenta, Lucro=purple via
+    ``_CHART_COLORS``), values in R$ (mi) with ``_absMillions`` +
+    ``_fixedYWidth=90`` for vertical alignment with the other tabs.
+    The price overlay is kept (meaningful for annual trajectory) but
+    re-styled: GREEN line (#0d9488 — the old Receita teal color, now free
+    since Receita moved to orange) on the right Y-axis, drawn on top of
+    the bars so it reads as a reference line over the fundamentals.
     """
+    from skills.cvm.financials.report._helpers import _CHART_COLORS
+
     sorted_periods = sorted(
         [p for p in annual_periods if p.get("period")],
         key=lambda p: str(p.get("period")),
@@ -345,37 +382,52 @@ def build_overview_trend_chart(
     if not any(v is not None for v in revenue + ebitda + net_income):
         return None
 
+    # [v2.4] Bar chart with unified color scheme (orange/magenta/purple).
+    # Values divided by 1e6 → R$ (mi) y-axis. _absMillions + _fixedYWidth
+    # for alignment with the other tabs' trend charts.
+    def _to_millions(v):
+        return v / 1_000_000 if v is not None else None
+
     datasets = [
-        {"label": "Receita Líquida", "data": revenue,
-         "borderColor": "#0d9488", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "EBITDA", "data": ebitda,
-         "borderColor": "#f59e0b", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "Lucro Líquido", "data": net_income,
-         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
+        {"label": "Receita Líquida", "data": [_to_millions(v) for v in revenue],
+         "backgroundColor": _CHART_COLORS["receita"],
+         "borderColor": _CHART_COLORS["receita"],
+         "yAxisID": "y", "order": 3},
+        {"label": "EBITDA", "data": [_to_millions(v) for v in ebitda],
+         "backgroundColor": _CHART_COLORS["ebitda"],
+         "borderColor": _CHART_COLORS["ebitda"],
+         "yAxisID": "y", "order": 3},
+        {"label": "Lucro Líquido", "data": [_to_millions(v) for v in net_income],
+         "backgroundColor": _CHART_COLORS["lucro"],
+         "borderColor": _CHART_COLORS["lucro"],
+         "yAxisID": "y", "order": 3},
     ]
 
     scales: dict = {
         "y": {"type": "linear", "position": "left", "ticks": {},
-              "title": {"display": True, "text": "R$"}},
+              "title": {"display": True, "text": "R$ (mi)"}},
     }
 
-    # [v1.23 F2] Price overlay on right Y-axis (purple dashed line).
+    # [v2.4] Price overlay — GREEN line (#0d9488) on the right Y-axis,
+    # drawn ON TOP of the bars (order: 0 so Chart.js renders it last).
+    # This color was Receita's old teal; it's now free since Receita
+    # moved to orange in the unified scheme. User request: "keep price
+    # as line as reference, as green over all the other bars".
     if company:
         price_series_data = _fetch_year_end_prices(company, labels)
         if any(v is not None for v in price_series_data):
             datasets.append({
                 "label": "Preço (R$)",
                 "data": price_series_data,
-                "borderColor": "#a855f7",
-                "backgroundColor": "#a855f7",
+                "type": "line",
+                "borderColor": "#0d9488",
+                "backgroundColor": "#0d9488",
                 "borderDash": [5, 5],
                 "fill": False,
                 "tension": 0.3,
                 "yAxisID": "y1",
                 "pointRadius": 3,
+                "order": 0,  # draw on top of bars
             })
             scales["y1"] = {
                 "type": "linear", "position": "right",
@@ -386,33 +438,27 @@ def build_overview_trend_chart(
 
     return {
         "type": "chart",
-        "title": "Trajetória de Receita e Lucro (Anual)",
+        "title": "Trajetória de Receita, EBITDA e Lucro (Anual)",
         "description": (
-            "Receita Líquida, EBITDA e Lucro Líquido anuais. Mostra a "
-            "trajetória de crescimento e rentabilidade da empresa."
-            + (" Linha roxa tracejada = preço de fechamento em 31/Dez (eixo direito)."
+            "Receita Líquida, EBITDA e Lucro Líquido anuais em R$ (mi). "
+            "Barras mostram a magnitude de cada componente do resultado."
+            + (" Linha verde tracejada = preço de fechamento em 31/Dez (eixo direito)."
                if company and "y1" in scales else "")
         ),
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {"labels": labels, "datasets": datasets},
             "options": {
                 "responsive": True,
                 "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
                 "scales": scales,
                 "plugins": {
                     "title": {"display": True, "text": "Receita, EBITDA e Lucro Líquido"},
                 },
             },
         },
-        "price_range_selector": True,
-        "price_full_labels": [f"{l}-12-31" for l in labels],
-        "price_full_datasets": [
-            {"data": revenue},
-            {"data": ebitda},
-            {"data": net_income},
-        ],
-        "price_full_data": revenue,
     }
 
 
@@ -611,4 +657,203 @@ def build_financials_heatmap(ratios_payload: dict | None) -> dict | None:
         ),
         "columns": ["Métrica", "Valor"],
         "rows": rows,
+    }
+
+
+# ── [v2.4] F16 — Quality of Earnings ──────────────────────────────────────────
+
+def build_quality_of_earnings_section(
+    annual_periods: list[dict],
+    ratios_payload: dict | None = None,
+) -> dict | None:
+    """[v2.4] F16 — Quality of Earnings section for the Análise de Risco subtab.
+
+    Compares Net Income (Lucro Líquido) vs Operating Cash Flow (FCO) over
+    the last 5 annual periods. When NI grows but OCF flatlines or declines
+    (or OCF persists below NI), it indicates low earnings quality
+    (aggressive accruals, unrealized receivables).
+
+    Returns two sections (returned as a list by the caller's wire-up):
+      1. A table with columns [Ano, Lucro Líquido, FCO, Diferença,
+         Accruals Ratio, Qualidade] — the accruals ratio is
+         ``(NI − OCF) / |NI|``; flagged red when > 0.30 (low quality).
+      2. A bar+line chart: FCO bars + Lucro Líquido line overlay (same
+         pattern as the DFC FCO-vs-LL chart, but standalone + with the
+         accruals ratio flagged).
+
+    Args:
+        annual_periods: list of annual period dicts (each with 'period' +
+            'metrics' containing 'lucro_liquido' + 'fco'). Newest-first or
+            oldest-first — sorted internally to oldest-first for the chart.
+        ratios_payload: unused for now (kept for API symmetry with the
+            other Análise de Risco builders); reserved for future
+            accruals-specific ratios.
+
+    Returns:
+        A ``type: "table"`` section dict, or None when fewer than 2 periods
+        have both NI + FCO. The caller (dashboard.py) appends this section
+        to the Análise de Risco subtab; a second chart section is returned
+        as a separate dict via ``build_quality_of_earnings_chart`` when the
+        table builds successfully.
+    """
+    if not annual_periods:
+        return None
+
+    # Sort oldest-first for chronological display.
+    sorted_periods = sorted(
+        [p for p in annual_periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    # Last 5 periods (or all if fewer).
+    last5 = sorted_periods[-5:]
+
+    rows: list[list] = []
+    has_data = False
+    for p in last5:
+        m = p.get("metrics") or {}
+        ni = _num_or_none(m.get("lucro_liquido"))
+        ocf = _num_or_none(m.get("fco"))
+        if ni is None or ocf is None:
+            rows.append([
+                p.get("period", "—"),
+                _fmt(ni, "brl"),
+                _fmt(ocf, "brl"),
+                "—", "—", "—",
+            ])
+            continue
+        has_data = True
+        diff = ni - ocf
+        # Accruals ratio = (NI - OCF) / |NI|. > 0.30 → low quality.
+        accruals = diff / abs(ni) if ni != 0 else None
+        if accruals is None:
+            quality = "—"
+        elif accruals > 0.30:
+            quality = {"text": "⚠ Baixa", "color": "#dc2626"}
+        elif accruals > 0.10:
+            quality = {"text": "△ Média", "color": "#d97706"}
+        else:
+            quality = {"text": "✓ Alta", "color": "#16a34a"}
+        rows.append([
+            p.get("period", "—"),
+            _fmt(ni, "brl"),
+            _fmt(ocf, "brl"),
+            _fmt(diff, "brl"),
+            _fmt(accruals, "pct") if accruals is not None else "—",
+            quality,
+        ])
+
+    if not has_data:
+        return None
+
+    # Count consecutive years with accruals > 0.30 for the red-flag note.
+    consecutive_low = 0
+    max_consecutive = 0
+    for r in rows:
+        q = r[5]
+        if isinstance(q, dict) and "Baixa" in q.get("text", ""):
+            consecutive_low += 1
+            max_consecutive = max(max_consecutive, consecutive_low)
+        else:
+            consecutive_low = 0
+
+    note = None
+    if max_consecutive >= 2:
+        note = (
+            f"⚠ Red flag: accruals ratio > 30% por {max_consecutive} anos "
+            "consecutivos — lucro não está se convertendo em caixa."
+        )
+
+    return {
+        "type": "table",
+        "title": "Qualidade do Lucro — NI vs FCO (5 anos)",
+        "description": (
+            "Accruals Ratio = (Lucro Líquido − FCO) / |Lucro Líquido|. "
+            "Quando > 30%, o lucro contábil não está se convertendo em "
+            "caixa operacional — sinal de qualidade baixa (accruals "
+            "agressivos, recebíveis não realizados)."
+        ),
+        "columns": ["Ano", "Lucro Líquido", "FCO", "Diferença", "Accruals", "Qualidade"],
+        "rows": rows,
+        "negative_red": True,
+        "column_align": ["left", "right", "right", "right", "right", "center"],
+        "note": note,
+    }
+
+
+def build_quality_of_earnings_chart(
+    annual_periods: list[dict],
+) -> dict | None:
+    """[v2.4] F16 — NI vs FCO bar+line chart companion to the QoE table.
+
+    FCO as bars (cyan, matching the DFC FCO-vs-LL chart), Lucro Líquido
+    as a line overlay (purple, matching the unified _CHART_COLORS lucro).
+    Visualizes the divergence between accounting earnings and operating
+    cash flow over the last 5 annual periods.
+
+    Returns a ``type: "chart"`` section dict, or None when fewer than 2
+    periods have data.
+    """
+    from skills.cvm.financials.report._helpers import _CHART_COLORS
+
+    if not annual_periods:
+        return None
+
+    sorted_periods = sorted(
+        [p for p in annual_periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    last5 = sorted_periods[-5:]
+    if len(last5) < 2:
+        return None
+
+    labels = [str(p.get("period")) for p in last5]
+    ni_vals, ocf_vals = [], []
+    for p in last5:
+        m = p.get("metrics") or {}
+        ni = _num_or_none(m.get("lucro_liquido"))
+        ocf = _num_or_none(m.get("fco"))
+        ni_vals.append(ni / 1_000_000 if ni is not None else None)
+        ocf_vals.append(ocf / 1_000_000 if ocf is not None else None)
+
+    if not any(v is not None for v in ni_vals + ocf_vals):
+        return None
+
+    # FCO bars (cyan — same as DFC _DFC_COLORS["fco"]) + Lucro Líquido
+    # line overlay (purple — unified _CHART_COLORS["lucro"]).
+    datasets = [
+        {"label": "FCO", "data": ocf_vals,
+         "backgroundColor": "#0891b2", "borderColor": "#0891b2",
+         "yAxisID": "y", "order": 2},
+        {"label": "Lucro Líquido", "data": ni_vals,
+         "type": "line",
+         "borderColor": _CHART_COLORS["lucro"],
+         "backgroundColor": _CHART_COLORS["lucro"],
+         "fill": False, "tension": 0.3,
+         "yAxisID": "y", "order": 0,
+         "pointRadius": 4},
+    ]
+
+    return {
+        "type": "chart",
+        "title": "Qualidade do Lucro — FCO vs Lucro Líquido (5 anos)",
+        "description": (
+            "Barras cyan = FCO (Fluxo de Caixa Operacional). Linha roxa = "
+            "Lucro Líquido. Quando o Lucro cresce mas o FCO não acompanha, "
+            "a qualidade dos lucros está caindo (accruals)."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {"labels": labels, "datasets": datasets},
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90, "_absMillions": True,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "R$ (mi)"}},
+                },
+                "plugins": {
+                    "title": {"display": True, "text": "FCO vs Lucro Líquido"},
+                },
+            },
+        },
     }

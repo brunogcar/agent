@@ -36,7 +36,9 @@ class TestFinancialsRoute:
 
     def test_route_dispatches_to_dashboard(self, financials_env):
         """[v1.16] route(mode="dashboard", ...) dispatches to dashboard() and
-        returns the 11-tab payload with sidebar grouping."""
+        returns the 11-tab payload with sidebar grouping.
+        [v2.3] Tab 9 renamed from "Trimestral" to "Trimestral QoQ" per user
+        request. Test updated to match."""
         from skills.cvm.financials import route
         result = route(mode="dashboard", company="33000167000101")
         assert result["status"] == "ok"
@@ -45,7 +47,7 @@ class TestFinancialsRoute:
         assert tab_names == [
             "Overview", "Indicadores", "Crescimento",
             "Balanço", "DRE", "DFC", "DVA",
-            "Anual", "Trimestral",
+            "Anual", "Trimestral QoQ",
             "Anualizado", "Trimestral YoY",
         ]
         # KPIs are at top level, not inside tabs.

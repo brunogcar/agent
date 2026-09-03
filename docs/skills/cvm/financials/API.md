@@ -98,7 +98,7 @@ Combined: latest annual + latest quarterly (4Q trend) + key ratios. Best-effort.
 
 `current_ratios` is computed by delegating to `skills.cvm.calculations.metrics.*` at today's date (point-in-time). Each metric is wrapped in `_safe_call` so a missing DB (e.g. `cotahist.db` for price-based ratios) returns `None` instead of crashing the whole summary. Fundamental ratios (ROIC, Graham) typically populate from DFP/ITR alone; price-based ratios (EV/EBITDA, P/FCF, P/EBIT, P/FCO) additionally require `b3/cotahist.db` + `cvm/fre.db`.
 
-### mode="dashboard" (v1.12; v1.13 review fixes; v1.14 sync guard; v1.15 TTM+YoY; v1.16 dashboard v3; v1.17 single-fetch; v1.22 radar/heatmap; v1.23 price overlay + multi-period tables + trend charts; v1.24 quarterly tables + period toggle; v1.25 ALL charts toggle + cache fix; v2.0 report/ package split)
+### mode="dashboard" (v1.12; v1.13 review fixes; v1.14 sync guard; v1.15 TTM+YoY; v1.16 dashboard v3; v1.17 single-fetch; v1.22 radar/heatmap; v1.23 price overlay + multi-period tables + trend charts; v1.24 quarterly tables + period toggle; v1.25 ALL charts toggle + cache fix; v2.0 report/ package split; v2.3 comprehensive tables + unified charts + Overview subtabs + Trimestral QoQ rename; v2.4 Trajetória Anual revamp + Red Flags collapsible fix + Quarterly Trend delta direction + real CapEx engine + F16 Quality of Earnings)
 
 11-tab multi-section dashboard with sidebar grouping, optimized for the report tool's `dashboard` action.
 

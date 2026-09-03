@@ -63,6 +63,8 @@ from skills.cvm.financials.report import (
     build_wacc_section,
     build_financials_radar,
     build_financials_heatmap,
+    build_quality_of_earnings_section,  # [v2.4] F16
+    build_quality_of_earnings_chart,    # [v2.4] F16
     build_error_section,
     build_ttm_chart,
     build_ttm_table,
@@ -159,6 +161,41 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             except Exception as e:
                 return {"error": str(e)}
 
+        def _fetch_capex():
+            # [v2.4] Fetch real CapEx from the capex_at engine (description-
+            # search: imobilizado/intangivel, scoped to DFC 6.02.%, TTM-
+            # derived from DFP + ITR). Returns a {period_label: capex_value}
+            # map keyed by date (YYYY-MM-DD) so the comprehensive table's
+            # period labels can match.
+            # [v2 fix] Only key by YEAR for DFP annual dates (month=12).
+            # ITR dates (month=3/6/9) must NOT key by year — that collapses
+            # all quarters of a year to one TTM value (the last ITR processed).
+            # Quarterly periods match by their computed data_fim_exerc
+            # (year+quarter → YYYY-MM-DD) in _extract_value's capex_engine
+            # handler. Annual periods match by year (DFP Dec-31 → year key).
+            # Engine calls share the engine_cache_scope cache with other tasks.
+            try:
+                from skills.cvm.calculations.engines.dfc.capex import capex_periods
+                periods_list = capex_periods(company)
+                capex_map: dict = {}
+                for p in periods_list:
+                    date = p.get("date") or ""
+                    val = p.get("ttm_capex")
+                    if date and val is not None:
+                        # Always key by full date (e.g. "2026-06-30").
+                        capex_map[date] = val
+                        # Only key by year for DFP annual dates (month=12).
+                        # ITR dates (month=3/6/9) are TTM at quarter-end —
+                        # keying by year would overwrite with each quarter.
+                        month = date[5:7] if len(date) >= 7 else ""
+                        if month == "12":
+                            year = date[:4]
+                            if year:
+                                capex_map[year] = val
+                return capex_map
+            except Exception as e:
+                return {}
+
         tasks = {
             "annual": _fetch_annual,
             "quarterly": _fetch_quarterly,
@@ -167,6 +204,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             "ttm": _fetch_ttm,
             "yoy": _fetch_yoy,
             "ratios": _fetch_ratios,
+            "capex": _fetch_capex,  # [v2.4] real CapEx engine
         }
 
         results: dict[str, object] = {}
@@ -187,7 +225,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             return ctx.run(fn)
 
         # [v1.24] max_workers bumped 6 → 7 for the new statements_q task.
-        with ThreadPoolExecutor(max_workers=7) as executor:
+        # [v2.4] max_workers bumped 7 → 8 for the new capex task.
+        with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {}
             for i, (name, fn) in enumerate(tasks.items()):
                 futures[executor.submit(_run_with_ctx, ctx_copies[i], fn)] = name
@@ -211,6 +250,11 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         ttm_result = results.get("ttm", {})
         yoy_result = results.get("yoy", {})
         ratios_payload.update(results.get("ratios", {}))
+        # [v2.4] Real CapEx engine map — {date_or_year: capex_value}. Used by
+        # build_comprehensive_period_table + build_indicator_charts for the
+        # CAPEX row + the "EBIT, EBITDA e CAPEX" chart. Falls back to FCI
+        # proxy when the engine returns None or the map is empty.
+        capex_map: dict = results.get("capex", {}) or {}
 
         latest_annual_period: dict | None = None
         annual_periods: list[dict] = []
@@ -295,7 +339,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # Subtab 3: Análise de Risco
     sub3_sections = []
     try:
-        wacc_sec = build_wacc_section(ratios_payload)
+        wacc_sec = build_wacc_section(ratios_payload, company=company, today=today)
         if wacc_sec:
             sub3_sections.append(wacc_sec)
     except Exception as e:
@@ -307,7 +351,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] DuPont section failed: {e}", flush=True)
     try:
-        altman_sec = build_altman_z_section(ratios_payload)
+        altman_sec = build_altman_z_section(ratios_payload, company=company, today=today)
         if altman_sec:
             sub3_sections.append(altman_sec)
     except Exception as e:
@@ -320,6 +364,19 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             sub3_sections.append(red_flags)
     except Exception as e:
         print(f"[financials] Red flags section failed: {e}", flush=True)
+    # [v2.4] F16 — Quality of Earnings section + chart. Compares NI vs FCO
+    # over the last 5 annual periods; flags red when accruals ratio > 30%
+    # for 2+ consecutive years. Uses already-fetched annual_periods (no new
+    # engine calls — the metrics come from the annual mode fetch).
+    try:
+        qoe_sec = build_quality_of_earnings_section(annual_periods, ratios_payload)
+        if qoe_sec:
+            sub3_sections.append(qoe_sec)
+        qoe_chart = build_quality_of_earnings_chart(annual_periods)
+        if qoe_chart:
+            sub3_sections.append(qoe_chart)
+    except Exception as e:
+        print(f"[financials] Quality of Earnings section failed: {e}", flush=True)
     if sub3_sections:
         overview_subtabs.append({"name": "Análise de Risco", "sections": sub3_sections})
 
@@ -539,7 +596,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             anual_table = build_comprehensive_period_table(
                 annual_periods, "Anual",
                 bpa_result=bpa_result, bpp_result=bpp_result,
-                dre_result=dre_result, dfc_result=dfc_result)
+                dre_result=dre_result, dfc_result=dfc_result,
+                capex_map=capex_map)
             anual_sections = list(anual_table)  # 4 section tables
             anual_chart = build_period_chart(annual_periods, "Anual")
             if anual_chart:
@@ -550,7 +608,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                 anual_sections.append(anual_margins)
             # [v25] Add indicator charts (liquidez, endividamento, EBIT/EBITDA/CAPEX)
             try:
-                ind_charts = build_indicator_charts(annual_periods, "Anual", bpa_result=bpa_result, bpp_result=bpp_result)
+                ind_charts = build_indicator_charts(annual_periods, "Anual", bpa_result=bpa_result, bpp_result=bpp_result, capex_map=capex_map)
                 anual_sections.extend(ind_charts)
             except Exception as e:
                 print(f"[financials] Indicator charts failed: {e}", flush=True)
@@ -575,7 +633,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             trimestral_table = build_comprehensive_period_table(
                 quarterly_periods, "Trimestral QoQ",
                 bpa_result=bpa_result_q, bpp_result=bpp_result_q,
-                dre_result=dre_result_q, dfc_result=dfc_result_q)
+                dre_result=dre_result_q, dfc_result=dfc_result_q,
+                capex_map=capex_map)
             trimestral_sections = list(trimestral_table)  # 4 section tables
             trimestral_chart = build_period_chart(quarterly_periods, "Trimestral QoQ")
             if trimestral_chart:
@@ -586,7 +645,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                 trimestral_sections.append(trimestral_margins)
             # [v25] Add indicator charts
             try:
-                ind_charts = build_indicator_charts(quarterly_periods, "Trimestral QoQ", bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                ind_charts = build_indicator_charts(quarterly_periods, "Trimestral QoQ", bpa_result=bpa_result_q, bpp_result=bpp_result_q, capex_map=capex_map)
                 trimestral_sections.extend(ind_charts)
             except Exception as e:
                 print(f"[financials] Indicator charts failed: {e}", flush=True)
@@ -620,7 +679,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                 ttm_table = build_comprehensive_period_table(
                     ttm_periods, "Anualizado",
                     bpa_result=bpa_result_q, bpp_result=bpp_result_q,
-                    dre_result=dre_result_q, dfc_result=dfc_result_q)
+                    dre_result=dre_result_q, dfc_result=dfc_result_q,
+                    capex_map=capex_map)
                 ttm_sections.extend(ttm_table)
                 ttm_chart = build_ttm_chart(ttm_periods)
                 if ttm_chart:
@@ -631,7 +691,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                     ttm_sections.append(ttm_margins)
                 # [v25] Add indicator charts
                 try:
-                    ind_charts = build_indicator_charts(ttm_periods, "Anualizado", bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                    ind_charts = build_indicator_charts(ttm_periods, "Anualizado", bpa_result=bpa_result_q, bpp_result=bpp_result_q, capex_map=capex_map)
                     ttm_sections.extend(ind_charts)
                 except Exception as e:
                     print(f"[financials] TTM indicator charts failed: {e}", flush=True)
@@ -671,7 +731,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                 yoy_tables = build_comprehensive_period_table(
                     q_periods, t_label,
                     bpa_result=bpa_result_q, bpp_result=bpp_result_q,
-                    dre_result=dre_result_q, dfc_result=dfc_result_q)
+                    dre_result=dre_result_q, dfc_result=dfc_result_q,
+                    capex_map=capex_map)
                 yoy_secs = list(yoy_tables)
                 # Add trend chart (Receita/EBITDA/Lucro bars)
                 yoy_chart = build_period_chart(q_periods, t_label)
@@ -683,7 +744,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                     yoy_secs.append(yoy_margins)
                 # [v25] Add indicator charts
                 try:
-                    yoy_ind = build_indicator_charts(q_periods, t_label, bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                    yoy_ind = build_indicator_charts(q_periods, t_label, bpa_result=bpa_result_q, bpp_result=bpp_result_q, capex_map=capex_map)
                     yoy_secs.extend(yoy_ind)
                 except Exception as e:
                     print(f"[financials] YoY indicator charts failed: {e}", flush=True)

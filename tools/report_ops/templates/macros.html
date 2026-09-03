@@ -236,13 +236,29 @@
 <div class="mermaid">{{ src }}</div>
 {% endmacro %}
 
-{% macro collapsible(title, content, open=False) %}
+{% macro collapsible(title, content, open=False, sections=None, prefix='') %}
 <div class="collapsible {{ 'open' if open else '' }}">
   <div class="collapsible-header" onclick="toggleCollapsible(this)">
     <span>{{ title }}</span>
     <span class="chevron">&#9660;</span>
   </div>
-  <div class="collapsible-body">{{ content }}</div>
+  <div class="collapsible-body">
+    {# [v2.4] Render raw text content when present (legacy path — e.g. the
+       "Nenhum dado contábil disponível" empty-state for Red Flags). #}
+    {% if content %}{{ content }}{% endif %}
+    {# [v2.4] Render nested sections when present (fixes the Red Flags
+       bug where the consistency-checks table was passed as sec.sections
+       but never rendered — the collapsible body was empty). Each nested
+       section is rendered via _section_inner so it supports table/chart/
+       two_column/ratio_grid/heatmap types. The caller passes sections
+       as a kwarg + a unique prefix for canvas IDs:
+       {{ collapsible(sec.title, sec.text, sec.open, sections=sec.sections, prefix='tab-1-coll-2') }}. #}
+    {% if sections %}
+      {% for sub_sec in sections %}
+      <div class="section">{{ _section_inner(sub_sec, prefix ~ '-coll-' ~ loop.index|string ~ '-chart-' ~ loop.index|string) }}</div>
+      {% endfor %}
+    {% endif %}
+  </div>
 </div>
 {% endmacro %}
 
@@ -304,7 +320,7 @@
       {{ ratio_grid(sec.categories) }}
       {% endif %}
       {% if sec.type == 'collapsible' %}
-      {{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False)) }}
+      {{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False), sections=sec.get('sections'), prefix=prefix ~ '-' + sub_loop.index|string ~ '-sec-' + loop.index|string) }}
       {% endif %}
     </div>
     {% endfor %}

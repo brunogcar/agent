@@ -103,7 +103,7 @@ _COMPREHENSIVE_ROWS = [
     # ── Section 9: EBIT, EBITDA e CAPEX ────────────────────────────
     ("EBIT",                         "EBIT, EBITDA e CAPEX", "metrics", "ebit",          "brl"),
     ("EBITDA",                       "EBIT, EBITDA e CAPEX", "metrics", "ebitda",        "brl"),
-    ("CAPEX",                        "EBIT, EBITDA e CAPEX", "metrics", "fci",           "brl"),  # [v17] FCI as capex proxy
+    ("CAPEX",                        "EBIT, EBITDA e CAPEX", "capex_engine", "capex",     "brl"),  # [v2.4] real capex engine, fallback to FCI
 ]
 
 
@@ -191,6 +191,7 @@ def _extract_value(
     dfc_acc,
     all_periods: list,
     period_idx: int,
+    capex_map: dict | None = None,
 ) -> float | None:
     """Extract a single value for one row + one period.
 
@@ -198,12 +199,21 @@ def _extract_value(
     aren't available (e.g., YoY periods), try the metrics dict instead.
     Also pass quarterly statement results for YoY account lookups.
 
+    [v2.4] Added ``capex_engine`` source — looks up the real CapEx value
+    (from ``capex_periods()``) in ``capex_map`` keyed by period label.
+    Falls back to ``metrics["fci"]`` (the old proxy) when the engine
+    returns None or ``capex_map`` is not provided. CapEx is negative
+    (outflow) in the engine — returns ``abs()`` so the table reads as
+    "spent on capex" (positive value).
+
     Args:
         row_def: (label, section, source, key, format) tuple.
         period: the period dict (has 'metrics', 'ratios').
         bpa_acc/bpp_acc/dre_acc/dfc_acc: the accounts for this period.
         all_periods: all periods (for computing growth/CAGR).
         period_idx: index of current period in all_periods.
+        capex_map: optional {period_label: capex_value} dict from
+            ``capex_periods()``. None → CAPEX row falls back to FCI proxy.
 
     Returns: float value or None.
     """
@@ -216,6 +226,42 @@ def _extract_value(
 
     elif source == "ratios":
         return _num_or_none(r.get(key))
+
+    elif source == "capex_engine":
+        # [v2.4] Real CapEx from the capex_at engine (description-search:
+        # imobilizado/intangivel, scoped to DFC 6.02.%, excludes baixa/
+        # alienacao disposal lines, TTM-derived from DFP + ITR). Falls
+        # back to FCI (total investing cash flow) when the engine returns
+        # None or capex_map is not provided. CapEx is negative (outflow)
+        # in the engine — return abs() so the table reads as "spent".
+        # [v2 fix] Quarterly mode periods have year+quarter but NOT
+        # data_fim_exerc — compute it from year+quarter so the lookup
+        # matches the ITR date in capex_map (e.g. "2T2026" → "2026-06-30").
+        if capex_map:
+            period_label = (
+                str(period.get("period") or period.get("quarter") or "")
+            )
+            date_label = str(period.get("data_fim_exerc") or "")
+            year_label = str(period.get("year") or "")
+            # [v2 fix] Compute data_fim_exerc from year+quarter when missing.
+            # Quarterly mode periods have year+quarter but no data_fim_exerc.
+            if not date_label and year_label:
+                quarter_num = period.get("quarter")
+                if quarter_num is not None:
+                    month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
+                    me = month_end.get(int(quarter_num))
+                    if me:
+                        date_label = f"{year_label}-{me}"
+            # Year extracted from data_fim_exerc (e.g. "2025" from "2025-12-31")
+            year_from_date = date_label[:4] if len(date_label) >= 4 else ""
+            for lookup_key in (date_label, period_label, year_label, year_from_date):
+                if lookup_key and lookup_key in capex_map:
+                    val = capex_map[lookup_key]
+                    if val is not None:
+                        return abs(_num_or_none(val))
+        # Fallback: FCI proxy (total investing cash flow — includes
+        # acquisitions of subsidiaries, loans made, etc. — NOT just capex).
+        return _num_or_none(m.get("fci"))
 
     elif source == "accounts":
         # [v18] Try accounts first, then metrics as fallback.
@@ -412,12 +458,19 @@ def build_comprehensive_period_table(
     bpp_result: dict | None = None,
     dre_result: dict | None = None,
     dfc_result: dict | None = None,
+    capex_map: dict | None = None,
 ) -> dict:
     """[v14] Build a comprehensive multi-section period table.
 
     Matches the user's Google Sheets layout: ~35 metric rows grouped by
     4 section headers (Balanço, DRE, DFC, Indicadores), periods as columns
     (newest first).
+
+    [v2.4] Added ``capex_map`` kwarg — a {period_label: capex_value} dict
+    from ``capex_periods()``. When provided, the CAPEX row uses the real
+    CapEx engine value (description-search: imobilizado/intangivel, scoped
+    to DFC 6.02.%, TTM-derived). Falls back to FCI proxy when the engine
+    returns None or capex_map is not provided (backward-compatible).
 
     Args:
         periods: list of period dicts (annual, quarterly, or TTM). Each
@@ -426,6 +479,8 @@ def build_comprehensive_period_table(
         bpa_result/bpp_result/dre_result/dfc_result: statement results
             with 'accounts' dicts for raw line items. When None, the
             corresponding section rows show "—" for account-based values.
+        capex_map: optional {period_label: capex_value} dict from
+            ``capex_periods()``. None → CAPEX row falls back to FCI proxy.
 
     Returns:
         A type:"table" section dict with wide=True (frozen columns).
@@ -493,7 +548,7 @@ def build_comprehensive_period_table(
 
                 val = _extract_value(
                     row_def, p, bpa_acc, bpp_acc, dre_acc, dfc_acc,
-                    sorted_periods, i)
+                    sorted_periods, i, capex_map=capex_map)
 
                 if fmt == "pct":
                     row.append(_fmt(val, "pct") if val is not None else "—")
@@ -523,12 +578,17 @@ def build_comprehensive_period_table(
 def build_indicator_charts(periods: list[dict], label: str,
     bpa_result: dict | None = None,
     bpp_result: dict | None = None,
+    capex_map: dict | None = None,
 ) -> list[dict]:
     """[v25/v26] Build 3 additional bar charts from the Indicadores data.
     [v26] Fixed: compute ratios inline from metrics+accounts (same as
     comprehensive table), not from per-period ratios dict which doesn't
     have current_ratio/cash_ratio/debt_equity. Fixed Capital Giro. Fixed
     Dív. Bruta color. Added _fixedYWidth to all charts for alignment.
+    [v2.4] Added ``capex_map`` kwarg — the CAPEX bar in the 3rd chart
+    uses the real CapEx engine value (from ``capex_periods()``) when
+    available, falling back to FCI proxy otherwise. Description updated
+    to reflect the source.
     """
     from skills.cvm.financials.report._helpers import _CHART_COLORS, _pct_of
 
@@ -688,21 +748,55 @@ def build_indicator_charts(periods: list[dict], label: str,
         })
 
     # Chart 3: BRL — EBIT, EBITDA, CAPEX (in millions)
+    # [v2.4] CAPEX now uses the real capex_at engine when capex_map is
+    # provided (description-search: imobilizado/intangivel, scoped to
+    # DFC 6.02.%, TTM-derived from DFP + ITR). Falls back to FCI proxy
+    # (total investing cash flow) when the engine returns None.
     ebit_vals, ebitda_vals, capex_vals = [], [], []
+    capex_engine_used = False
     for p in sorted_periods:
         m = p.get("metrics") or {}
         e = _num_or_none(m.get("ebit"))
         ebit_vals.append(e / 1_000_000 if e is not None else None)
         ed = _num_or_none(m.get("ebitda"))
         ebitda_vals.append(ed / 1_000_000 if ed is not None else None)
-        cx = _num_or_none(m.get("fci"))
+        # [v2.4] CapEx: try the real engine first, fall back to FCI.
+        # [v2 fix] Compute data_fim_exerc from year+quarter when missing
+        # (quarterly mode periods have year+quarter but no data_fim_exerc).
+        cx = None
+        if capex_map:
+            period_label = str(p.get("period") or p.get("quarter") or "")
+            date_label = str(p.get("data_fim_exerc") or "")
+            year_label = str(p.get("year") or "")
+            if not date_label and year_label:
+                quarter_num = p.get("quarter")
+                if quarter_num is not None:
+                    month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
+                    me = month_end.get(int(quarter_num))
+                    if me:
+                        date_label = f"{year_label}-{me}"
+            year_from_date = date_label[:4] if len(date_label) >= 4 else ""
+            for lookup_key in (date_label, period_label, year_label, year_from_date):
+                if lookup_key and lookup_key in capex_map:
+                    v = capex_map[lookup_key]
+                    if v is not None:
+                        cx = abs(_num_or_none(v))
+                        capex_engine_used = True
+                        break
+        if cx is None:
+            cx = _num_or_none(m.get("fci"))
         capex_vals.append(cx / 1_000_000 if cx is not None else None)
 
     if any(v is not None for v in ebit_vals + ebitda_vals + capex_vals):
+        capex_desc = (
+            "EBIT, EBITDA e CAPEX (engine: imobilizado/intangivel) por período (R$ milhões)."
+            if capex_engine_used else
+            "EBIT, EBITDA e CAPEX (FCI proxy) por período (R$ milhões)."
+        )
         charts.append({
             "type": "chart",
             "title": f"EBIT, EBITDA e CAPEX — {label}",
-            "description": "EBIT, EBITDA e CAPEX (FCI) por período (R$ milhões).",
+            "description": capex_desc,
             "chart_data": {
                 "type": "bar",
                 "data": {

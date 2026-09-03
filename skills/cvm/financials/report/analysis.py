@@ -201,7 +201,11 @@ def build_dupont_section(ratios_payload: dict) -> dict | None:
     }
 
 
-def build_altman_z_section(ratios_payload: dict) -> dict | None:
+def build_altman_z_section(
+    ratios_payload: dict,
+    company: str | None = None,
+    today: str | None = None,
+) -> dict | None:
     """Build an Altman Z-Score risk section.
 
     Shows the Z-score + zone classification + 5 X-components as a table.
@@ -209,6 +213,9 @@ def build_altman_z_section(ratios_payload: dict) -> dict | None:
 
     [v2.0] New section for the financials dashboard. Uses ratios_payload
     from compute_all_ratios (point-in-time, no history_fn call).
+    [v2.4] Added company+today params to fetch the 5 X-components (X1-X5)
+    from altman_z_history. When not provided, falls back to the 2-row table
+    (Z-Score + Zona only) for backward compat.
     """
     altman_z = ratios_payload.get("altman_z")
     if altman_z is None:
@@ -225,14 +232,53 @@ def build_altman_z_section(ratios_payload: dict) -> dict | None:
         zone = "Risco (< 1.81)"
         zone_color = "#ef4444"
 
+    def _label(text: str, tooltip: str) -> dict:
+        return {"text": text, "tooltip": tooltip}
+
     rows = [
-        [{"text": "Altman Z-Score",
-          "tooltip": "Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5"},
+        [_label("Altman Z-Score",
+                "Z = 1.2×X1 + 1.4×X2 + 3.3×X3 + 0.6×X4 + 1.0×X5"),
          f"{altman_z:.2f}"],
-        [{"text": "Zona",
-          "tooltip": "Z > 2.99 seguro, 1.81-2.99 cinzento, < 1.81 risco"},
+        [_label("Zona",
+                "Z > 2.99 seguro, 1.81-2.99 cinzento, < 1.81 risco"),
          zone],
     ]
+
+    # [v2.4] Fetch the 5 X-components from altman_z_history when company+today
+    # are provided. This adds the decomposition rows the docstring promised
+    # but the v2.0 builder never included.
+    x_components = None
+    if company and today:
+        try:
+            from skills.cvm.calculations.metrics.altman_z import altman_z_history
+            from datetime import date as _date, timedelta
+            date_from = (_date.fromisoformat(today) - timedelta(days=400)).isoformat()
+            hist = altman_z_history(company, date_from, today)
+            if hist:
+                # Take the last entry with non-None z (most recent valid).
+                for entry in reversed(hist):
+                    if entry.get("altman_z") is not None:
+                        x_components = entry
+                        break
+        except Exception:
+            x_components = None
+
+    if x_components:
+        rows.append([_label("X1 — Capital de Giro/Ativo",
+                            "(Ativo Circ - Passivo Circ) / Ativo Total"),
+                     f"{x_components['x1']:.4f}" if x_components.get('x1') is not None else "—"])
+        rows.append([_label("X2 — PL/Ativo",
+                            "PL / Ativo Total (proxy para Lucros Retidos)"),
+                     f"{x_components['x2']:.4f}" if x_components.get('x2') is not None else "—"])
+        rows.append([_label("X3 — EBIT/Ativo",
+                            "EBIT TTM / Ativo Total"),
+                     f"{x_components['x3']:.4f}" if x_components.get('x3') is not None else "—"])
+        rows.append([_label("X4 — MktCap/Passivo",
+                            "(Preço × Ações) / (Ativo - PL)"),
+                     f"{x_components['x4']:.4f}" if x_components.get('x4') is not None else "—"])
+        rows.append([_label("X5 — Receita/Ativo",
+                            "Receita TTM / Ativo Total"),
+                     f"{x_components['x5']:.4f}" if x_components.get('x5') is not None else "—"])
 
     return {
         "title": "Altman Z-Score — Risco de Falência",
@@ -244,13 +290,21 @@ def build_altman_z_section(ratios_payload: dict) -> dict | None:
     }
 
 
-def build_wacc_section(ratios_payload: dict) -> dict | None:
+def build_wacc_section(
+    ratios_payload: dict,
+    company: str | None = None,
+    today: str | None = None,
+) -> dict | None:
     """Build a WACC (Cost of Capital) section.
 
     Shows WACC + ROE + ROIC so users can see if the company is creating
     value (ROE/ROIC > WACC = creating value).
 
     [v2.0] New section for the financials dashboard.
+    [v2.4] Added company+today params to fetch the WACC components (COE,
+    Kd, E/(D+E), D/(D+E), tax rate) from wacc_history. When not provided,
+    falls back to the 4-row table (WACC + ROE + ROIC + Avaliação) for
+    backward compat.
     """
     wacc = ratios_payload.get("wacc")
     if wacc is None:
@@ -259,18 +313,59 @@ def build_wacc_section(ratios_payload: dict) -> dict | None:
     roe = ratios_payload.get("roe")
     roic = ratios_payload.get("roic")
 
-    # [v1.25] Tooltips on the FIRST column (metric name), not the value.
     def _label(text: str, tooltip: str) -> dict:
         return {"text": text, "tooltip": tooltip}
 
     rows = [
         [_label("WACC", "WACC = COE × E/(D+E) + Kd×(1-tax) × D/(D+E)"),
          _fmt(wacc, "pct")],
-        [_label("ROE",  "ROE = Lucro Líquido / Patrimônio Líquido"),
-         _fmt(roe,  "pct")],
-        [_label("ROIC", "ROIC = NOPAT / Capital Investido"),
-         _fmt(roic, "pct")],
     ]
+
+    # [v2.4] Fetch WACC components (COE, Kd, weights, tax) from wacc_history
+    # when company+today are provided. This implements F15 (WACC drivers
+    # decomposition) from the ROADMAP.
+    wacc_components = None
+    if company and today:
+        try:
+            from skills.cvm.calculations.metrics.wacc import wacc_history
+            from skills.cvm.calculations.metrics.effective_tax_rate import effective_tax_rate_at
+            from datetime import date as _date, timedelta
+            date_from = (_date.fromisoformat(today) - timedelta(days=400)).isoformat()
+            hist = wacc_history(company, date_from, today)
+            if hist:
+                # Take the last entry with non-None wacc.
+                for entry in reversed(hist):
+                    if entry.get("wacc") is not None:
+                        wacc_components = entry
+                        break
+            # Tax rate is not in wacc_history output — call directly.
+            if wacc_components:
+                wacc_components["tax_rate"] = effective_tax_rate_at(company, today)
+        except Exception:
+            wacc_components = None
+
+    if wacc_components:
+        coe = wacc_components.get("coe")
+        kd = wacc_components.get("kd")
+        weights = wacc_components.get("weights") or {}
+        e_weight = weights.get("e_weight")
+        d_weight = weights.get("d_weight")
+        tax_rate = wacc_components.get("tax_rate")
+        rows.append([_label("COE", "Cost of Equity (CAPM: Rf + β × ERP)"),
+                     _fmt(coe, "pct") if coe is not None else "—"])
+        rows.append([_label("Kd (after-tax)", "Cost of Debt × (1 - tax)"),
+                     _fmt(kd, "pct") if kd is not None else "—"])
+        rows.append([_label("E/(D+E)", "Peso do Capital Próprio = Market Cap / (D+E)"),
+                     _fmt(e_weight, "pct") if e_weight is not None else "—"])
+        rows.append([_label("D/(D+E)", "Peso do Capital de Terceiros = Debt / (D+E)"),
+                     _fmt(d_weight, "pct") if d_weight is not None else "—"])
+        rows.append([_label("Taxa de Imposto", "Taxa efetiva (EBT-based), default 25%"),
+                     _fmt(tax_rate, "pct") if tax_rate is not None else "—"])
+
+    rows.append([_label("ROE",  "ROE = Lucro Líquido / Patrimônio Líquido"),
+                 _fmt(roe,  "pct")])
+    rows.append([_label("ROIC", "ROIC = NOPAT / Capital Investido"),
+                 _fmt(roic, "pct")])
 
     # Value creation assessment
     if roe is not None and wacc is not None:

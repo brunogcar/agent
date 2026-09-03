@@ -7,12 +7,12 @@
 | Priority | Item | Description |
 |----------|------|-------------|
 | P2 | F2 — Comparison tab | Company vs sector medians (needs reusable sector-median computation) |
-| P2 | F15 — WACC drivers decomposition | Show COE, Kd, E/(D+E), tax shield as a stacked breakdown of WACC |
-| P2 | F16 — Quality of Earnings chart | NI vs OCF divergence (5Y line chart, accruals red-flag) |
 | P2 | F17 — Capital allocation score | FCF usage breakdown: dividends vs buybacks vs debt paydown vs capex |
 | P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
 | P3 | F18 — Sector-specific ratios | Banks: NIM, Basel; Insurers: combined ratio; REITs: FFO/AFFO |
 | P3 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
+| Done | F15 — WACC drivers decomposition (v2.4) | COE, Kd, E/(D+E), D/(D+E), tax rate rows in WACC table; see CHANGELOG v2.4 |
+| Done | F16 — Quality of Earnings (v2.4) | NI vs OCF divergence + accruals ratio red flag (see CHANGELOG v2.4) |
 | Done | Comprehensive Períodos tables (v2.3) | Multi-section tables (Balanço/DRE/DFC/9 Indicadores sub-tables) with frozen columns + accounts fallback |
 | Done | Unified chart color scheme (v2.3) | Receita=orange, EBITDA=magenta, Lucro=purple, margins=maroon/pink shades, DFC=cyan/orange/rose |
 | Done | DRE/DFC chart revamp (v2.3) | Line→bar, new colors, _fixedYWidth alignment, R$ (mi) values |
@@ -20,6 +20,10 @@
 | Done | Trimestral YoY restructure (v2.3) | Per-quarter subtabs (T1-T4) with same table+chart pattern as other tabs |
 | Done | Indicator charts (v2.3) | 3 new bar charts per tab: Liquidez, Disponibilidades/Endividamento, EBIT/EBITDA/CAPEX |
 | Done | Frozen columns (v2.3) | Código+Descrição sticky with section header colspan=2 |
+| Done | Real CapEx engine (v2.4) | comprehensive.py + indicator chart now use capex_at (was FCI proxy); see CHANGELOG v2.4 |
+| Done | Trajetória Anual chart revamp (v2.4) | line→bar + unified colors + green price line; see CHANGELOG v2.4 |
+| Done | Red Flags collapsible fix (v2.4) | collapsible macro now renders nested sections; see CHANGELOG v2.4 |
+| Done | Quarterly Trend delta direction (v2.4) | delta vs OLDER period (was inverted + shifted); see CHANGELOG v2.4 |
 | Done | F3 — Price history overlay (v1.23) | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
 | Done | F4 — Period selector (v1.24) | Trimestral/Anual toggle (pre-render + JS toggle) |
 | Reverted | TTM toggle (v2.1 → v2.2) | 3rd "TTM" panel on DRE/DFC/DVA period_toggle was reverted in v2.2 — TTM data stays in the standalone "Anualizado" tab only (cleaner UX, avoids duplicate TTM views) |
@@ -114,19 +118,15 @@ down). Requires the WACC engine to expose its component values (COE,
 Kd_pre, tax_rate, E, D) — check `calculations/engines/wacc/` for what's
 already available.
 
-### F16 — Quality of Earnings chart
+### F16 — Quality of Earnings chart — ✅ Done (v2.4)
 
-**Priority:** P2
-**Source:** Reviewer suggestion (v2.1 sprint)
+**Priority:** ~~P2~~ Done in v2.4. See [CHANGELOG.md](CHANGELOG.md) v2.4 entry.
 
-5Y line chart showing Net Income vs Operating Cash Flow divergence.
-When NI grows but OCF flatlines or declines (or persists below NI), it
-indicates low earnings quality (aggressive accruals, unrealized
-receivables). Already partially built as `_build_dfc_fco_vs_ll_chart`
-(inside the period_toggle) — this enhancement promotes it to a
-standalone analytical section in the Overview tab with an "accruals
-ratio" = (NI − OCF) / |NI| computed + flagged red when > 0.3 for 2+
-consecutive years.
+Implemented as `build_quality_of_earnings_section` + `build_quality_of_earnings_chart`
+in `report/overview.py`, wired into the "Análise de Risco" subtab. Compares
+NI vs FCO over the last 5 annual periods; accruals ratio > 30% for 2+
+consecutive years triggers a red-flag note. Chart: FCO bars (cyan) +
+Lucro Líquido line overlay (purple).
 
 ### F17 — Capital allocation score
 
@@ -201,4 +201,4 @@ already has sector-aware logic that could be reused.
 
 ---
 
-*Last updated: 2026-08-13 (v2.2 — TTM toggle reverted; standalone "Anualizado" tab kept. F3 + F4 DONE). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-09-04 (v2.4 — F16 Quality of Earnings DONE; v2.3 dashboard overhaul items marked done. F2/F15/F17/F5/F6/F18 remain in backlog). See [CHANGELOG.md](CHANGELOG.md) for version history.*
