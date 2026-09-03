@@ -17,7 +17,9 @@ Private helpers:
 """
 from __future__ import annotations
 
-from skills.cvm.financials.report._helpers import _fmt, _num_or_none, _pct_of, _period_sort_key
+from skills.cvm.financials.report._helpers import (
+    _fmt, _num_or_none, _pct_of, _period_sort_key, _CHART_COLORS,
+)
 from skills.cvm.financials.report.overview import _attach_price_overlay
 from skills.cvm.financials.report.statements import _build_period_toggle_sections
 from skills.cvm.financials.report.error import _metrics_from_period
@@ -77,19 +79,17 @@ def build_dre_sections(
     dre_annual_margins = _build_dre_margins_chart(annual_periods)
     dre_quarterly_margins = _build_dre_margins_chart(q_periods) if q_periods else None
 
-    # [v1.25 v4] Build annual + quarterly absolute-values bar charts.
-    dre_annual_abs = _build_dre_abs_chart(annual_periods, "Anual")
-    dre_quarterly_abs = _build_dre_abs_chart(q_periods, "Trimestral") if q_periods else None
+    # [v11] Removed the _build_dre_abs_chart double chart — the trend chart
+    # now shows the same data (Receita/EBITDA/Lucro) as bars, so the separate
+    # abs chart was redundant. User: "no need to have the double chart".
 
     # [v1.25 v4] Collect all annual charts + all quarterly charts (order:
-    # trend first, then margins, then absolute-values bar chart — matches
-    # the previous top-level ordering where trend was last, but inside the
-    # toggle it makes more sense to lead with the trend chart).
+    # trend first, then margins — matches the previous top-level ordering).
     annual_charts = [c for c in
-                     [dre_annual_trend, dre_annual_margins, dre_annual_abs]
+                     [dre_annual_trend, dre_annual_margins]
                      if c is not None]
     quarterly_charts = [c for c in
-                        [dre_quarterly_trend, dre_quarterly_margins, dre_quarterly_abs]
+                        [dre_quarterly_trend, dre_quarterly_margins]
                         if c is not None]
 
     # [v1.24] Multi-period table (annual + quarterly via period_toggle) +
@@ -140,13 +140,17 @@ def build_dre_sections(
 
 
 def _build_dre_margins_chart(periods: list[dict]) -> dict | None:
-    """[v1.25 v4] Build the DRE margins evolution chart (gross/EBIT/EBITDA/net)
-    from a list of period dicts. Works for BOTH annual + quarterly periods
-    (each period must have a ``ratios`` dict with ``marg_*`` keys).
+    """[v11] Build the DRE margins evolution bar chart (was line chart).
+
+    Changed from line to bar per user request: "Evolução das Margens with
+    bars and new color scheme". Colors now use the unified _CHART_COLORS
+    scheme (dark maroon / light pink / pale pink / maroon) instead of the
+    old green/blue/amber/purple lines.
+
+    Works for BOTH annual + quarterly periods (each period must have a
+    ``ratios`` dict with ``marg_*`` keys).
 
     Returns None if fewer than 2 periods or all margin values are None.
-    Used by ``build_dre_sections`` to build annual + quarterly versions for
-    the period_toggle.
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
@@ -168,27 +172,31 @@ def _build_dre_margins_chart(periods: list[dict]) -> dict | None:
         "type": "chart",
         "title": "Evolução das Margens",
         "description": (
-            "Margens Bruta, EBIT, EBITDA e Líquida ao longo do tempo. "
+            "Margens Bruta, Líquida, EBIT e EBITDA ao longo do tempo. "
             "Mostra a trajetória da rentabilidade operacional."
         ),
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {
                 "labels": labels,
                 "datasets": [
                     {"label": "Marg. Bruta",  "data": gross,
-                     "borderColor": "#22c55e", "fill": False, "tension": 0.3},
-                    {"label": "Marg. EBIT",   "data": operating,
-                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
-                    {"label": "Marg. EBITDA", "data": ebitda,
-                     "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
+                     "backgroundColor": _CHART_COLORS["marg_bruta"],
+                     "borderColor": _CHART_COLORS["marg_bruta"]},
                     {"label": "Marg. Líquida","data": net,
-                     "borderColor": "#a855f7", "fill": False, "tension": 0.3},
+                     "backgroundColor": _CHART_COLORS["marg_liquida"],
+                     "borderColor": _CHART_COLORS["marg_liquida"]},
+                    {"label": "Marg. EBIT",   "data": operating,
+                     "backgroundColor": _CHART_COLORS["marg_ebit"],
+                     "borderColor": _CHART_COLORS["marg_ebit"]},
+                    {"label": "Marg. EBITDA", "data": ebitda,
+                     "backgroundColor": _CHART_COLORS["marg_ebitda"],
+                     "borderColor": _CHART_COLORS["marg_ebitda"]},
                 ],
             },
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
                 "scales": {
                     "y": {"ticks": {},
                           "title": {"display": True, "text": "Margem (%)"}},
@@ -272,18 +280,16 @@ def _build_dre_abs_chart(periods: list[dict], period_label: str) -> dict | None:
 def build_statement_trend_chart(
     periods: list[dict], company: str | None, label: str,
 ) -> dict | None:
-    """[v1.23 F4 / v1.24] Receita/EBITDA/Lucro Líq. trend chart with optional price overlay.
+    """[v11] Receita/EBITDA/Lucro Líq. bar chart (was line chart).
+
+    Changed from line to bar per user request: "to replace chart Trajetória
+    de Receita e Lucro — DRE and add ebitda, with color magenta with bars
+    instead of lines as it is". Colors now use the unified _CHART_COLORS
+    scheme (orange/magenta/purple) instead of the old teal/amber/blue.
 
     Used by the DRE tab (income-statement metrics). Same concept as the
     Overview trend chart, but accepts a custom ``label`` so the same builder
     can be reused by future tabs.
-
-    [v1.24] Now accepts BOTH annual + quarterly periods (quarterly preferred
-    by callers when available). Uses ``_metrics_from_period`` so quarterly
-    periods (which only have ``accounts``, no pre-computed ``metrics``) work
-    transparently. Sort key upgraded to ``_period_sort_key`` so quarterly
-    labels like "4T2025" + "1T2026" sort chronologically (alphabetical sort
-    would put "1T2026" before "4T2025" — wrong).
 
     Args:
         periods: annual OR quarterly period dicts.
@@ -306,41 +312,42 @@ def build_statement_trend_chart(
     if not any(v is not None for v in revenue + ebitda + net_income):
         return None
 
+    # [v11] Bar chart with unified color scheme (orange/magenta/purple)
+    # [v15] Add _fixedYWidth + _absMillions for chart alignment with Balanço
+    # charts. Values divided by 1e6 → R$ mi y-axis.
     datasets = [
-        {"label": "Receita Líquida", "data": revenue,
-         "borderColor": "#0d9488", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "EBITDA", "data": ebitda,
-         "borderColor": "#f59e0b", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "Lucro Líquido", "data": net_income,
-         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
+        {"label": "Receita Líquida", "data": [v / 1_000_000 if v is not None else None for v in revenue],
+         "backgroundColor": _CHART_COLORS["receita"],
+         "borderColor": _CHART_COLORS["receita"]},
+        {"label": "EBITDA", "data": [v / 1_000_000 if v is not None else None for v in ebitda],
+         "backgroundColor": _CHART_COLORS["ebitda"],
+         "borderColor": _CHART_COLORS["ebitda"]},
+        {"label": "Lucro Líquido", "data": [v / 1_000_000 if v is not None else None for v in net_income],
+         "backgroundColor": _CHART_COLORS["lucro"],
+         "borderColor": _CHART_COLORS["lucro"]},
     ]
-    scales: dict = {
-        "y": {"type": "linear", "position": "left", "ticks": {},
-              "title": {"display": True, "text": "R$"}},
-    }
-    has_overlay = _attach_price_overlay(datasets, scales, company, labels)
+    # [v11] Removed price overlay — user wants a clean bar chart without
+    # the dual-axis price line. Keep _attach_price_overlay available for
+    # other callers but don't call it here.
     description = (
         f"Receita Líquida, EBITDA e Lucro Líquido ({label}). "
-        "Trajetória de crescimento e rentabilidade."
+        "Barras mostram a magnitude de cada componente do resultado."
     )
-    if has_overlay:
-        description += (
-            " Linha roxa tracejada = preço de fechamento de fim de período (eixo direito)."
-        )
     return {
         "type": "chart",
-        "title": f"Trajetória de Receita e Lucro — {label}",
+        "title": f"Trajetória de Receita, EBITDA e Lucro — {label}",
         "description": description,
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {"labels": labels, "datasets": datasets},
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
-                "scales": scales,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "R$ (mi)"}},
+                },
                 "plugins": {
                     "title": {"display": True,
                               "text": f"Receita, EBITDA e Lucro — {label}"},

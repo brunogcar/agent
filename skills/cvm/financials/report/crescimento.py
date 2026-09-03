@@ -130,6 +130,7 @@ def build_crescimento_sections(
             "meses; 1Y e 5Y usam janelas de 1 e 5 anos com tolerância de gap."
         ),
         "type": "table",
+            "negative_red": True,
         "columns": ["Métrica", "3M", "1Y", "5Y"],
         "rows": rows,
         "note": (
@@ -146,16 +147,25 @@ def build_crescimento_sections(
     # bars." Now we emit 3 separate bar charts, each with 3 bars (3M/1Y/5Y)
     # for a single metric. Makes cross-horizon comparison within a metric
     # easier (no longer competing on the same axis as the other metrics).
-    _COLORS = {"3M": "#a855f7", "1A": "#22c55e", "5A": "#3b82f6"}
+    # [v24] Different color per metric, with shades for 3M/1Y/5Y
+    # Receita Líquida: teal shades (light → dark)
+    # Lucro Bruto: orange shades
+    # Lucro Líquido: purple shades
+    _METRIC_COLORS = {
+        "Receita Líquida": ["#5eead4", "#14b8a6", "#0f766e"],  # teal: 3M light, 1Y mid, 5Y dark
+        "Lucro Bruto":     ["#fdba74", "#f97316", "#c2410c"],  # orange
+        "Lucro Líquido":   ["#d8b4fe", "#a855f7", "#7e22ce"],  # purple
+    }
 
     def _metric_chart(
         metric_label: str, vals: list[float | None],
     ) -> dict | None:
-        """Build a single-metric 3-bar chart (3M / 1A / 5Y)."""
+        """Build a single-metric 3-bar chart (3M / 1A / 5Y) with shaded colors."""
         if all(v is None for v in vals):
             return None
         labels = ["3M", "1A", "5A"]
         data = [(v * 100 if v is not None else None) for v in vals]
+        colors = _METRIC_COLORS.get(metric_label, ["#a855f7", "#22c55e", "#3b82f6"])
         return {
             "type": "chart",
             "title": f"Crescimento {metric_label} (3M / 1A / 5A)",
@@ -172,9 +182,7 @@ def build_crescimento_sections(
                     "datasets": [{
                         "label": f"{metric_label} (%)",
                         "data": data,
-                        "backgroundColor": [
-                            _COLORS["3M"], _COLORS["1A"], _COLORS["5A"],
-                        ],
+                        "backgroundColor": colors,
                     }],
                 },
                 "options": {
@@ -190,6 +198,9 @@ def build_crescimento_sections(
                         "title": {
                             "display": True,
                             "text": f"{metric_label} — Crescimento por Horizonte",
+                        },
+                        "legend": {
+                            "display": False,
                         },
                     },
                 },

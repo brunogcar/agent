@@ -116,6 +116,26 @@ def _format_period_label(p: dict) -> str:
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+# [v11] Unified chart color scheme for DRE/Períodos/Séries Temporais charts.
+# Applied to all Receita/EBITDA/Lucro bar charts + margins bar charts so the
+# same metric always uses the same color across tabs.
+# Receita Líquida: orange (was teal #0d9488)
+# EBITDA: magenta (was amber #f59e0b)
+# Lucro Líquido: purple (was blue #3b82f6 — now same family as the reference image)
+# Marg. Bruta: dark maroon
+# Marg. EBIT: light pink/mauve
+# Marg. EBITDA: pale pink
+# Marg. Líquida: maroon
+_CHART_COLORS = {
+    "receita":      "#f59e0b",  # orange (Receita Líquida)
+    "ebitda":       "#d946a0",  # magenta (EBITDA)
+    "lucro":        "#a855f7",  # purple (Lucro Líquido)
+    "marg_bruta":   "#7f1d1d",  # dark maroon (Marg. Bruta)
+    "marg_ebit":    "#f9a8d4",  # light pink/mauve (Marg. EBIT)
+    "marg_ebitda":  "#fbcfe8",  # pale pink (Marg. EBITDA)
+    "marg_liquida": "#be123c",  # maroon (Marg. Líquida)
+}
+
 # Pretty labels for individual metric names (registry canonical names).
 # Only the most common ones — anything not in here falls back to the canonical
 # name as the label.
@@ -157,18 +177,20 @@ _METRIC_LABELS = {
 _RATIO_PCT_KEYS = {
     "roe", "roa", "roic", "roi", "gross_margin", "operating_margin", "net_margin",
     "ebitda_margin", "ocf_margin", "fcf_margin",
-    "debt_equity", "cash_flow_to_debt", "capex_revenue",
+    "capex_revenue",
     "retention_ratio", "sustainable_growth",
     "dpa", "effective_tax_rate",
-    # [v1.25] Growth + CAGR metrics (all fractions displayed as %).
-    # Previously shown as raw 0.15 — fixed to 15%.
+    # [v2] Removed debt_equity, cash_flow_to_debt, gross_debt_equity from %
+    # format — these are RATIO metrics (x times), not percentages.
+    # Displaying as % makes them incomparable on charts with other ratios.
+    # Growth + CAGR metrics (all fractions displayed as %).
     "revenue_growth_3m", "revenue_growth_1y", "revenue_growth_5y",
     "net_income_growth_3m", "net_income_growth_1y", "net_income_growth_5y",
     "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y",
     "revenue_cagr_3m", "revenue_cagr_1y", "revenue_cagr_5y",
     "earnings_cagr_3m", "earnings_cagr_1y", "earnings_cagr_5y",
     "gross_profit_cagr_3m", "gross_profit_cagr_1y", "gross_profit_cagr_5y",
-    # [v1.25] Valuation fractions (displayed as %).
+    # Valuation fractions (displayed as %).
     "dcf_margin_of_safety", "earnings_yield", "irr", "wacc",
 }
 
@@ -216,10 +238,10 @@ _GROUP_CHART_COLORS = {
     # profitability
     "Retorno":               "#16a34a",  # green
     "Margens":               "#ea580c",  # orange
-    "Rentabilidade":         "#16a34a",  # green (else bucket — DuPont)
+    "Rentabilidade":         "#65a30d",  # lime (was green #16a34a — duplicated with Retorno)
     # efficiency
     "Giro":                  "#db2777",  # pink
-    "Eficiência":            "#db2777",  # pink (else bucket — Capex)
+    "Eficiência":            "#be185d",  # magenta (was pink #db2777 — duplicated with Giro)
     # liquidity
     "Liquidez":              "#0891b2",  # cyan
     # leverage

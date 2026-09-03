@@ -123,11 +123,18 @@ def _build_summary_codes():
 SUMMARY_CODES = _build_summary_codes()
 
 # Key codes for `complete` mode (per grupo, not all 497)
+# [v14] Extended with codes needed for the comprehensive Períodos/Séries Temporais
+# tables matching the user's Google Sheets layout. Added:
+#   BPA: 1.01.03 (Estoques)
+#   BPP: 2.01.01 (Fornecedores), 2.03.02 (Participação Acionistas NC)
+#   DRE: 3.09.02 (Atribuído a Sócios NC), 3.09.01 (Lucro Líquido Cons. Controladora)
+#   DFC_MI: 6.01.01 (Caixa Líquido Atividades Operacionais — for Saldo Inicial/Final)
+# Future: more codes can be added here as the comprehensive table evolves.
 KEY_CODES_BY_GRUPO = {
-    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.02", "1.02.01"],
-    "BPP":    ["2", "2.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01"],
-    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.09", "3.11"],
-    "DFC_MI": ["6.01", "6.01.01.02", "6.02", "6.03"],
+    "BPA":    ["1", "1.01", "1.01.01", "1.01.02", "1.01.03", "1.02", "1.02.01"],
+    "BPP":    ["2", "2.01", "2.01.01", "2.01.04", "2.02", "2.02.01", "2.03", "2.03.01", "2.03.02"],
+    "DRE":    ["3.01", "3.02", "3.03", "3.04", "3.04.02", "3.05", "3.06", "3.09", "3.09.01", "3.09.02", "3.11"],
+    "DFC_MI": ["6.01", "6.01.01", "6.01.01.02", "6.02", "6.03"],
     "DVA":    [
         # Generation side (v1.12 — completes the DVA statement)
         "7.01", "7.03", "7.04", "7.05", "7.06", "7.07", "7.08",

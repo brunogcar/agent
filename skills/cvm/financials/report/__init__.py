@@ -140,6 +140,14 @@ from skills.cvm.financials.report.periods import (
     build_yoy_table,
     build_period_table,
     build_period_chart,
+    build_period_margins_chart,  # [v11] new margins bar chart for Períodos tabs
+    build_ttm_margins_chart,     # [v11] new margins bar chart for Anualizado tab
+)
+
+# ── comprehensive.py — comprehensive period table [v14] ───────────────────
+from skills.cvm.financials.report.comprehensive import (
+    build_comprehensive_period_table,
+    build_indicator_charts,
 )
 
 
@@ -190,4 +198,9 @@ __all__ = [
     "build_yoy_table",
     "build_period_table",
     "build_period_chart",
+    "build_period_margins_chart",
+    "build_ttm_margins_chart",
+    # comprehensive.py
+    "build_comprehensive_period_table",
+    "build_indicator_charts",
 ]

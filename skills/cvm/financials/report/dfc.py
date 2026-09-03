@@ -18,10 +18,20 @@ Private helpers:
 """
 from __future__ import annotations
 
-from skills.cvm.financials.report._helpers import _fmt, _num_or_none, _period_sort_key
+from skills.cvm.financials.report._helpers import _fmt, _num_or_none, _period_sort_key, _CHART_COLORS
 from skills.cvm.financials.report.overview import _attach_price_overlay
 from skills.cvm.financials.report.statements import _build_period_toggle_sections
 from skills.cvm.financials.report.error import _metrics_from_period, _safe_engine_call
+
+
+# [v13] DFC chart colors — different from the red/blue/green used before.
+# FCO (operating) = teal/cyan, FCI (investing) = orange, FCF (financing) = rose/pink.
+# Lucro Líquido uses the same purple as DRE charts (_CHART_COLORS["lucro"]).
+_DFC_COLORS = {
+    "fco":  "#0891b2",  # cyan/teal (FCO — Fluxo de Caixa Operacional)
+    "fci":  "#ea580c",  # orange    (FCI — Fluxo de Caixa de Investimento)
+    "fcf":  "#e11d48",  # rose      (FCF — Fluxo de Caixa de Financiamento)
+}
 
 
 # ── Tab 6: DFC (table + stacked bar chart) ───────────────────────────────────
@@ -72,9 +82,12 @@ def build_dfc_sections(
     dfc_periods_q = (dfc_result_q or {}).get("periods") or []
     q_periods = quarterly_periods or []
 
-    # [v1.25 v3] Build annual + quarterly trend charts, pass into period_toggle.
-    dfc_annual_trend = build_dfc_trend_chart(dfc_periods, company)
-    dfc_quarterly_trend = build_dfc_trend_chart(dfc_periods_q, company) if dfc_periods_q else None
+    # [v13] Build annual + quarterly trend charts, pass into period_toggle.
+    # Annual trend uses annual_periods (not dfc_periods) so the Anual panel
+    # has the same 3 charts as the Trimestral panel. Was: dfc_periods which
+    # sometimes returned None, leaving the Anual panel with only 2 charts.
+    dfc_annual_trend = build_dfc_trend_chart(annual_periods, company)
+    dfc_quarterly_trend = build_dfc_trend_chart(q_periods if q_periods else dfc_periods_q, company)
 
     # [v1.25 v4] Build annual + quarterly stacked-bar charts (FCO/FCI/FCF).
     dfc_annual_stacked = _build_dfc_stacked_chart(annual_periods)
@@ -166,18 +179,19 @@ def _build_dfc_stacked_chart(periods: list[dict]) -> dict | None:
             "data": {
                 "labels": labels,
                 "datasets": [
-                    {"label": "FCO", "data": fco, "backgroundColor": "#22c55e"},
-                    {"label": "FCI", "data": fci, "backgroundColor": "#ef4444"},
-                    {"label": "FCF", "data": fcf, "backgroundColor": "#3b82f6"},
+                    {"label": "FCO", "data": [v / 1_000_000 if v is not None else None for v in fco], "backgroundColor": _DFC_COLORS["fco"]},
+                    {"label": "FCI", "data": [v / 1_000_000 if v is not None else None for v in fci], "backgroundColor": _DFC_COLORS["fci"]},
+                    {"label": "FCF", "data": [v / 1_000_000 if v is not None else None for v in fcf], "backgroundColor": _DFC_COLORS["fcf"]},
                 ],
             },
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
                 "scales": {
                     "x": {"stacked": True},
                     "y": {"stacked": True,
-                          "title": {"display": True, "text": "R$"}},
+                          "title": {"display": True, "text": "R$ (mi)"}},
                 },
                 "plugins": {
                     "title": {"display": True, "text": "Fluxos de Caixa Consolidados"},
@@ -188,16 +202,15 @@ def _build_dfc_stacked_chart(periods: list[dict]) -> dict | None:
 
 
 def _build_dfc_fco_vs_ll_chart(periods: list[dict]) -> dict | None:
-    """[v1.25 v4] Build the FCO vs Lucro Líquido line chart (earnings-quality
-    divergence) from a list of period dicts. Works for BOTH annual + quarterly
-    periods (each period must have a ``metrics`` dict with ``fco`` and
-    ``lucro_liquido`` keys).
+    """[v13] Build the FCO vs Lucro Líquido chart (FCO bars + Lucro line).
+
+    Changed: FCO is now bars (was line), Lucro Líquido stays as a line but
+    uses the same purple color as DRE charts (_CHART_COLORS["lucro"]).
+
+    Works for BOTH annual + quarterly periods (each period must have a
+    ``metrics`` dict with ``fco`` and ``lucro_liquido`` keys).
 
     Returns None if fewer than 2 periods or all values are None.
-
-    Moved here from ``build_dfc_quality_section`` so the chart switches with
-    the period_toggle. The quality TABLE (TTM values) stays in
-    ``build_dfc_quality_section`` (point-in-time, not time-series).
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
@@ -218,29 +231,36 @@ def _build_dfc_fco_vs_ll_chart(periods: list[dict]) -> dict | None:
         "type": "chart",
         "title": "FCO vs Lucro Líquido",
         "description": (
-            "Divergência entre FCO (Fluxo de Caixa Operacional) e Lucro "
-            "Líquido ao longo do tempo. Quando o Lucro Líquido cresce mas o "
-            "FCO cai (ou fica persistentemente abaixo), pode indicar baixa "
-            "qualidade dos lucros (accruals agressivos, recebimentos não "
-            "realizados)."
+            "Divergência entre FCO (Fluxo de Caixa Operacional, barras) e "
+            "Lucro Líquido (linha) ao longo do tempo. Quando o Lucro Líquido "
+            "cresce mas o FCO cai (ou fica persistentemente abaixo), pode "
+            "indicar baixa qualidade dos lucros (accruals agressivos, "
+            "recebimentos não realizados)."
         ),
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {
                 "labels": labels,
                 "datasets": [
-                    {"label": "FCO", "data": fco_series,
-                     "borderColor": "#22c55e", "fill": False, "tension": 0.3},
-                    {"label": "Lucro Líquido", "data": ni_series,
-                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
+                    {"label": "Lucro Líquido", "data": [v / 1_000_000 if v is not None else None for v in ni_series],
+                     "type": "line",
+                     "borderColor": _CHART_COLORS["lucro"],
+                     "backgroundColor": _CHART_COLORS["lucro"],
+                     "fill": False, "tension": 0.3,
+                     "order": 0},
+                    {"label": "FCO", "data": [v / 1_000_000 if v is not None else None for v in fco_series],
+                     "backgroundColor": _DFC_COLORS["fco"],
+                     "borderColor": _DFC_COLORS["fco"],
+                     "order": 1},
                 ],
             },
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
                 "scales": {
                     "y": {"ticks": {},
-                          "title": {"display": True, "text": "R$"}},
+                          "title": {"display": True, "text": "R$ (mi)"}},
                 },
                 "plugins": {
                     "title": {"display": True,
@@ -254,17 +274,17 @@ def _build_dfc_fco_vs_ll_chart(periods: list[dict]) -> dict | None:
 def build_dfc_trend_chart(
     periods: list[dict], company: str | None,
 ) -> dict | None:
-    """[v1.23 F4 / v1.24] FCO/FCI/FCF trend chart with optional price overlay.
+    """[v13] FCO/FCI/FCF bar chart (was line chart).
+
+    Changed from line to bar per user request. New color scheme: FCO cyan,
+    FCI orange, FCF rose (was green/red/blue lines — colors already used
+    elsewhere). Removed price overlay for a clean bar chart.
 
     Used by the DFC tab. Plots the 3 DFC sub-totals across periods.
 
-    [v1.24] Now accepts BOTH annual + quarterly periods. Uses
-    ``_metrics_from_period`` for quarterly support. Sort key upgraded to
-    ``_period_sort_key`` for chronological quarterly ordering.
-
     Args:
         periods: annual OR quarterly period dicts.
-        company: B3 ticker for the price overlay; None skips the overlay.
+        company: B3 ticker (unused now — overlay removed, kept for compat).
     """
     sorted_periods = sorted(
         [p for p in periods if p.get("period")],
@@ -282,41 +302,38 @@ def build_dfc_trend_chart(
     if not any(v is not None for v in fco + fci + fcf):
         return None
 
+    # [v15] Bar chart with DFC color scheme. Values in millions + _fixedYWidth
+    # for alignment with other charts.
     datasets = [
-        {"label": "FCO", "data": fco,
-         "borderColor": "#22c55e", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "FCI", "data": fci,
-         "borderColor": "#ef4444", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
-        {"label": "FCF", "data": fcf,
-         "borderColor": "#3b82f6", "fill": False, "tension": 0.3,
-         "yAxisID": "y"},
+        {"label": "FCO", "data": [v / 1_000_000 if v is not None else None for v in fco],
+         "backgroundColor": _DFC_COLORS["fco"],
+         "borderColor": _DFC_COLORS["fco"]},
+        {"label": "FCI", "data": [v / 1_000_000 if v is not None else None for v in fci],
+         "backgroundColor": _DFC_COLORS["fci"],
+         "borderColor": _DFC_COLORS["fci"]},
+        {"label": "FCF", "data": [v / 1_000_000 if v is not None else None for v in fcf],
+         "backgroundColor": _DFC_COLORS["fcf"],
+         "borderColor": _DFC_COLORS["fcf"]},
     ]
-    scales: dict = {
-        "y": {"type": "linear", "position": "left", "ticks": {},
-              "title": {"display": True, "text": "R$"}},
-    }
-    has_overlay = _attach_price_overlay(datasets, scales, company, labels)
     description = (
         "Fluxos de Caixa Operacional (FCO), de Investimento (FCI) e de "
-        "Financiamento (FCF)."
+        "Financiamento (FCF). Barras mostram a magnitude de cada fluxo."
     )
-    if has_overlay:
-        description += (
-            " Linha roxa tracejada = preço de fechamento de fim de período (eixo direito)."
-        )
     return {
         "type": "chart",
         "title": "Trajetória dos Fluxos de Caixa",
         "description": description,
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {"labels": labels, "datasets": datasets},
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
-                "scales": scales,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "R$ (mi)"}},
+                },
                 "plugins": {
                     "title": {"display": True, "text": "FCO, FCI e FCF por Período"},
                 },

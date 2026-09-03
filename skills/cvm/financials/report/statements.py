@@ -51,6 +51,7 @@ def _statement_table_section(title: str, accounts_dict: dict) -> dict:
     return {
         "title": title,
         "type": "table",
+            "negative_red": True,
         "columns": ["Código", "Descrição", "Valor (BRL)"],
         "rows": rows,
     }
@@ -114,9 +115,18 @@ def build_multi_period_table(
     for codigo, meta in code_meta.items():
         section = meta["section"]
         if section and section != last_section:
-            # Section header row — span all columns.
-            header_row = [f"— {section} —", ""]
-            header_row.extend([""] * n_periods)
+            # [v13] Section header row — uses the SAME frozen-column structure
+            # as data rows (not colspan). Was: single colspan cell, but
+            # position:sticky doesn't work on colspan <td> in most browsers.
+            # Now: first cell (frozen-0, sticky) = section label, second cell
+            # (frozen-1, sticky) = empty, remaining cells = empty. Both
+            # Código + Descrição columns are sticky so the section header
+            # stays fixed when scrolling right, matching the frozen columns.
+            # [v24] Section header: colspan=2 merges Código + Descrição
+            header_row = [
+                {"text": f"— {section} —", "is_header": True, "colspan": 2},
+            ]
+            header_row.extend([{"text": "", "is_header": True}] * n_periods)
             rows.append(header_row)
             last_section = section
         row: list = [codigo, meta["label"]]
@@ -133,6 +143,7 @@ def build_multi_period_table(
     return {
         "title": title,
         "type": "table",
+            "negative_red": True,
         "columns": columns,
         "rows": rows,
         # [v1.24] Wrap wide tables (≥7 columns → "Código" + "Descrição" + 5+ periods)

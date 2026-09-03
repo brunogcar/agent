@@ -8,14 +8,56 @@
 </div>
 {% endmacro %}
 
-{% macro data_table(headers, rows, negative_red=False, column_align=None, sortable=False, default_sort=None, sort_types=None) %}
-<table class="data-table" style="width: auto; min-width: 100%">
+{% macro data_table(headers, rows, negative_red=False, column_align=None, sortable=False, default_sort=None, sort_types=None, wide=False, extra_class='') %}
+<table class="data-table{% if wide %} wide{% endif %}{{ ' ' ~ extra_class if extra_class else '' }}" style="width: auto; min-width: 100%">
   <thead><tr>
-    {% for h in headers %}<th{% if column_align and loop.index0 < column_align|length %} style="text-align: {{ 'left' if column_align[loop.index0] == 'left' else 'right' }};{% if sortable %} cursor: pointer; user-select: none;{% endif %}"{% elif sortable %} style="cursor: pointer; user-select: none;"{% endif %}{% if sortable %} class="sortable{% if default_sort and default_sort.column == loop.index0 %} sort-{{ default_sort.direction }}{% endif %}" onclick="sortTable(this, {{ loop.index0 }})" data-sort-type="{% if sort_types and loop.index0 < sort_types|length %}{{ sort_types[loop.index0] }}{% elif column_align and loop.index0 < column_align|length %}{{ 'number' if column_align[loop.index0] != 'left' else 'text' }}{% else %}text{% endif %}"{% if default_sort and default_sort.column == loop.index0 %} data-sorted="{{ default_sort.direction }}"{% endif %}{% endif %}>{{ h }}</th>{% endfor %}
+    {% for h in headers %}
+    {% set col_idx = loop.index0 %}
+    {% set is_frozen = wide and col_idx < 2 %}
+    {% set align = column_align[col_idx] if column_align and col_idx < column_align|length else 'left' %}
+    {% set sort_type = sort_types[col_idx] if sort_types and col_idx < sort_types|length else ('number' if align != 'left' else 'text') %}
+    {% set sort_class = 'sortable' if sortable else '' %}
+    {% set sort_dir_class = (' sort-' ~ default_sort.direction) if sortable and default_sort and default_sort.column == col_idx else '' %}
+    {% set frozen_class = (' frozen-' ~ col_idx) if is_frozen else '' %}
+    <th style="text-align: {{ align }};{% if sortable %} cursor: pointer; user-select: none;{% endif %}" class="{{ sort_class }}{{ sort_dir_class }}{{ frozen_class }}"{% if sortable %} onclick="sortTable(this, {{ col_idx }})" data-sort-type="{{ sort_type }}"{% if default_sort and default_sort.column == col_idx %} data-sorted="{{ default_sort.direction }}"{% endif %}{% endif %}>{{ h }}</th>
+    {% endfor %}
   </tr></thead>
   <tbody>
     {% for row in rows %}
-    <tr>{% for cell in row %}{% set cell_text = cell.text if cell is mapping else cell %}{% set cell_data_value = cell['data-value'] if cell is mapping else None %}{% set is_neg = negative_red and cell_text is string and cell_text.startswith('-') %}<td{% set cell_bg = cell.bg if cell is mapping else None %}{% set cell_color = cell.color if cell is mapping else None %}{% if column_align and loop.index0 < column_align|length %} style="text-align: {{ 'left' if column_align[loop.index0] == 'left' else 'right' }};{% if column_align[loop.index0] != 'left' %} font-variant-numeric: tabular-nums; white-space: nowrap;{% endif %}{% if is_neg %} color: #ef4444; font-weight: 600;{% elif cell_color %} color: {{ cell_color }};{% endif %}{% if cell_bg %} background: {{ cell_bg }};{% endif %}"{% elif is_neg %} style="color: #ef4444; font-weight: 600;"{% elif cell_bg %} style="{% if cell_color %}color: {{ cell_color }};{% endif %} background: {{ cell_bg }};"{% endif %}{% if cell_data_value %} data-value="{{ cell_data_value }}"{% endif %}{% if cell is mapping and cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}" style="cursor: help"{% endif %}>{% if cell is mapping %}{{ cell_text }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>{% endfor %}</tr>
+    {# [v13] Detect if this row is a section header (has a cell with is_header=True).
+       Section header rows use the same frozen-column structure as data rows
+       (first 2 cells sticky) so the header stays fixed when scrolling. #}
+    {% set ns = namespace(is_header_row=false) %}
+    {% for cell in row %}{% if cell is mapping and cell.is_header %}{% set ns.is_header_row = true %}{% endif %}{% endfor %}
+    <tr{% if ns.is_header_row %} class="section-header-tr"{% endif %}>
+    {% for cell in row %}
+    {% set cell_text = cell.text if cell is mapping else cell %}
+    {% set cell_data_value = cell['data-value'] if cell is mapping else None %}
+    {% set cell_colspan = cell.colspan if cell is mapping else None %}
+    {% set cell_is_header = cell.is_header if cell is mapping else False %}
+    {% set cell_bg = cell.bg if cell is mapping else None %}
+    {% set cell_color = cell.color if cell is mapping else None %}
+    {% set cell_tooltip = cell.tooltip if cell is mapping else None %}
+    {% set is_neg = negative_red and cell_text is string and (cell_text.startswith('-') or 'R$ -' in cell_text) %}
+    {% set col_idx = loop.index0 %}
+    {% set is_frozen = wide and not cell_colspan and col_idx < 2 %}
+    {% set align = column_align[col_idx] if column_align and col_idx < column_align|length else 'left' %}
+    {# [v24] Section header cells with colspan=2: don't add frozen classes
+       (the cell spans both Código + Descrição columns). Without colspan,
+       keep the frozen-N classes for sticky positioning. #}
+    {% set frozen_hdr_class = '' %}
+    {% if cell_is_header and is_frozen and not cell_colspan %}{% set frozen_hdr_class = ' frozen-' ~ col_idx %}{% endif %}
+    <td
+    {% if cell_colspan %} colspan="{{ cell_colspan }}"{% endif %}
+    {% if cell_is_header %} class="section-header-row{{ frozen_hdr_class }}" style="text-align: left; font-weight: 600; color: var(--text); background: var(--bg-sec); font-style: italic; padding: 6px 12px; border-top: 1px solid var(--border);"
+    {% else %}
+      {% if is_frozen %} class="frozen-{{ col_idx }}"{% endif %}
+      style="text-align: {{ align }};{% if align != 'left' %} font-variant-numeric: tabular-nums; white-space: nowrap;{% endif %}{% if is_neg %} color: #ef4444; font-weight: 600;{% elif cell_color %} color: {{ cell_color }};{% endif %}{% if cell_bg %} background: {{ cell_bg }};{% endif %}{% if cell_tooltip %} cursor: help;{% endif %}"
+      {% if cell_data_value %} data-value="{{ cell_data_value }}"{% endif %}
+      {% if cell_tooltip %} title="{{ cell_tooltip }}" data-tooltip="{{ cell_tooltip }}"{% endif %}
+    {% endif %}>{% if cell is mapping %}{{ cell_text }}{% if cell_tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>
+    {% endfor %}
+    </tr>
     {% endfor %}
   </tbody>
 </table>
@@ -31,7 +73,7 @@
       {% for row in rows %}<tr>
         {% for cell in row %}
         {% if loop.first %}<td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>
-        {% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;">{{ cell.text if cell.text is defined else cell }}</td>
+        {% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;{% if cell.tooltip %} cursor: help;{% endif %}"{% if cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}"{% endif %}>{{ cell.text if cell.text is defined else cell }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}</td>
         {% endif %}
         {% endfor %}
       </tr>{% endfor %}
@@ -71,7 +113,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
+    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -94,7 +136,7 @@
 {% endif %}
 {% if sec.type == 'table' and sec.columns and sec.rows %}
 {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
+{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
 {% if sec.wide %}</div>{% endif %}
 {% elif sec.type == 'table' %}
 <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -108,7 +150,7 @@
     <tbody>
       {% for row in sec.rows %}<tr>
         {% for cell in row %}
-        {% if loop.first %}<td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>{% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;">{{ cell.text if cell.text is defined else cell }}</td>{% endif %}
+        {% if loop.first %}<td style="padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); color: var(--text); font-weight: 500;">{{ cell }}</td>{% else %}<td style="padding: 8px 12px; text-align: center; border-bottom: 1px solid var(--border); {% if cell.bg %}background: {{ cell.bg }};{% endif %} {% if cell.color %}color: {{ cell.color }};{% else %}color: var(--text);{% endif %} font-weight: 500;{% if cell.tooltip %} cursor: help;{% endif %}"{% if cell.tooltip %} title="{{ cell.tooltip }}" data-tooltip="{{ cell.tooltip }}"{% endif %}>{{ cell.text if cell.text is defined else cell }}{% if cell.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}</td>{% endif %}
         {% endfor %}
       </tr>{% endfor %}
     </tbody>
@@ -231,7 +273,7 @@
       {% if sec.type == 'table' and sec.columns and sec.rows %}
       {# [v1.24] Wrap wide tables (>5 period columns) in overflow-x: auto. #}
       {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
+      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
       {% if sec.wide %}</div>{% endif %}
       {% elif sec.type == 'heatmap' and sec.columns and sec.rows %}
       {{ heatmap_table(sec.columns, sec.rows) }}
@@ -320,7 +362,7 @@
       {% for item in cat["items"] %}
       <div class="ratio-item"{% if item.tooltip %} title="{{ item.tooltip }}" data-tooltip="{{ item.tooltip }}"{% endif %}>
         <span class="ratio-label">{{ item.label }}{% if item.tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}</span>
-        <span class="ratio-value {{ 'pos' if item.value is string and item.value.startswith('+') else 'neg' if item.value is string and item.value.startswith('-') else 'neu' if item.value in ['—', 'None', 'N/A'] else '' }}">{{ item.value }}</span>
+        <span class="ratio-value {{ 'neg' if item.value is string and (item.value.startswith('-') or 'R$ -' in item.value) else 'pos' if item.value_raw is number and item.value_raw > 0 and (item.value is string and '%' in item.value) else 'neu' if item.value in ['—', 'None', 'N/A'] else '' }}">{{ item.value }}</span>
       </div>
       {% endfor %}
     </div>
@@ -338,8 +380,8 @@
         {% for row in left_rows %}
         {% set val = row.get('value', '') %}
         {% set pct = row.get('pct', '') %}
-        {% set is_neg = negative_red and val is string and val.startswith('-') %}
-        {% set is_pos = positive_green and val is string and not val.startswith('-') and val != '—' and '%' in val %}
+        {% set is_neg = negative_red and val is string and (val.startswith('-') or 'R$ -' in val) %}
+        {% set is_pos = positive_green and val is string and not is_neg and val != '—' and '%' in val %}
         <tr class="statement-row">
           <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
           <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>
@@ -360,8 +402,8 @@
         {% for row in right_rows %}
         {% set val = row.get('value', '') %}
         {% set pct = row.get('pct', '') %}
-        {% set is_neg = negative_red and val is string and val.startswith('-') %}
-        {% set is_pos = positive_green and val is string and not val.startswith('-') and val != '—' and '%' in val %}
+        {% set is_neg = negative_red and val is string and (val.startswith('-') or 'R$ -' in val) %}
+        {% set is_pos = positive_green and val is string and not is_neg and val != '—' and '%' in val %}
         <tr class="statement-row">
           <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
           <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>

@@ -12,13 +12,16 @@ Public builders:
 """
 from __future__ import annotations
 
-from skills.cvm.financials.report._helpers import _fmt, _num_or_none
+from skills.cvm.financials.report._helpers import _fmt, _num_or_none, _pct_of, _CHART_COLORS
 
 
 # ── TTM chart builder (v1.15) ────────────────────────────────────────────────
 
 def build_ttm_chart(ttm_periods: list[dict]) -> dict | None:
-    """Build a line chart showing TTM Revenue + EBITDA + Net Income over time.
+    """Build a bar chart showing TTM Revenue + EBITDA + Net Income over time.
+
+    [v11] Changed from line to bar + unified color scheme (orange/magenta/
+    purple) to match DRE/Períodos charts.
 
     Args:
         ttm_periods: list of TTM period dicts (from ttm() mode) with
@@ -54,23 +57,27 @@ def build_ttm_chart(ttm_periods: list[dict]) -> dict | None:
             "trimestrais e mostra a tendência real."
         ),
         "chart_data": {
-            "type": "line",
+            "type": "bar",
             "data": {
                 "labels": labels,
                 "datasets": [
-                    {"label": "Receita (TTM)", "data": revenue,
-                     "borderColor": "#0d9488", "fill": False, "tension": 0.3},
-                    {"label": "EBITDA (TTM)", "data": ebitda,
-                     "borderColor": "#f59e0b", "fill": False, "tension": 0.3},
-                    {"label": "Lucro Líq. (TTM)", "data": net_income,
-                     "borderColor": "#3b82f6", "fill": False, "tension": 0.3},
+                    {"label": "Receita (TTM)", "data": [v / 1_000_000 if v is not None else None for v in revenue],
+                     "backgroundColor": _CHART_COLORS["receita"],
+                     "borderColor": _CHART_COLORS["receita"]},
+                    {"label": "EBITDA (TTM)", "data": [v / 1_000_000 if v is not None else None for v in ebitda],
+                     "backgroundColor": _CHART_COLORS["ebitda"],
+                     "borderColor": _CHART_COLORS["ebitda"]},
+                    {"label": "Lucro Líq. (TTM)", "data": [v / 1_000_000 if v is not None else None for v in net_income],
+                     "backgroundColor": _CHART_COLORS["lucro"],
+                     "borderColor": _CHART_COLORS["lucro"]},
                 ],
             },
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
                 "scales": {"y": {"ticks": {},
-                                  "title": {"display": True, "text": "R$ (TTM)"}}},
+                                  "title": {"display": True, "text": "R$ (mi)"}}},
                 "plugins": {
                     "title": {"display": True, "text": "Série Temporal TTM (Anualizada)"},
                 },
@@ -320,7 +327,8 @@ def build_period_chart(periods: list[dict], label: str) -> dict | None:
     if not any(v is not None for v in revenue + ebitda + net_income):
         return None
 
-    chart_type = "line" if label.lower().startswith("anual") else "bar"
+    chart_type = "bar"  # [v11] Always bar (was line for Anual) + new colors
+    # [v15] Values in millions + _fixedYWidth + _absMillions for alignment
     return {
         "type": "chart",
         "title": f"Trajetória — {label}",
@@ -333,22 +341,174 @@ def build_period_chart(periods: list[dict], label: str) -> dict | None:
             "data": {
                 "labels": labels,
                 "datasets": [
-                    {"label": "Receita Líquida", "data": revenue,
-                     "backgroundColor": "#0d9488", "borderColor": "#0d9488"},
-                    {"label": "EBITDA", "data": ebitda,
-                     "backgroundColor": "#f59e0b", "borderColor": "#f59e0b"},
-                    {"label": "Lucro Líquido", "data": net_income,
-                     "backgroundColor": "#3b82f6", "borderColor": "#3b82f6"},
+                    {"label": "Receita Líquida", "data": [v / 1_000_000 if v is not None else None for v in revenue],
+                     "backgroundColor": _CHART_COLORS["receita"],
+                     "borderColor": _CHART_COLORS["receita"]},
+                    {"label": "EBITDA", "data": [v / 1_000_000 if v is not None else None for v in ebitda],
+                     "backgroundColor": _CHART_COLORS["ebitda"],
+                     "borderColor": _CHART_COLORS["ebitda"]},
+                    {"label": "Lucro Líquido", "data": [v / 1_000_000 if v is not None else None for v in net_income],
+                     "backgroundColor": _CHART_COLORS["lucro"],
+                     "borderColor": _CHART_COLORS["lucro"]},
                 ],
             },
             "options": {
-                "responsive": True,
-                "maintainAspectRatio": False,
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "_absMillions": True,
                 "scales": {"y": {"ticks": {},
-                                 "title": {"display": True, "text": "R$"}}},
+                                 "title": {"display": True, "text": "R$ (mi)"}}},
                 "plugins": {
                     "title": {"display": True,
                               "text": f"Receita, EBITDA e Lucro — {label}"},
+                },
+            },
+        },
+    }
+
+
+# ── Margins bar chart for Períodos/Séries Temporais tabs (v11) ────────────────
+
+def build_period_margins_chart(periods: list[dict], label: str) -> dict | None:
+    """[v11] Build a margins evolution bar chart for the Períodos tabs.
+
+    Shows Marg. Bruta, EBIT, EBITDA, Líquida as grouped bars per period.
+    Uses the unified _CHART_COLORS scheme (dark maroon / light pink /
+    pale pink / maroon) — same as the DRE Evolução das Margens chart.
+
+    Used by the Anual + Trimestral tabs (raw period data) + the Anualizado
+    (TTM) tab so all Períodos/Séries Temporais tabs have the same margins
+    chart alongside the Receita/EBITDA/Lucro bar chart.
+
+    Args:
+        periods: list of period dicts (annual, quarterly, or TTM). Each
+            must have a "period" label + a "ratios" dict with marg_* keys.
+        label: "Anual", "Trimestral", or "TTM" — used in the chart title.
+
+    Returns None if fewer than 2 periods or all margin values are None.
+    """
+    sorted_periods = sorted(
+        [p for p in periods if p.get("period")],
+        key=lambda p: str(p.get("period")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+
+    labels = [str(p.get("period")) for p in sorted_periods]
+    gross, operating, net, ebitda = [], [], [], []
+    for p in sorted_periods:
+        r = p.get("ratios") or {}
+        gross.append(_pct_of(r.get("marg_bruta")))
+        operating.append(_pct_of(r.get("marg_ebit")))
+        net.append(_pct_of(r.get("marg_liquida")))
+        ebitda.append(_pct_of(r.get("marg_ebitda")))
+
+    if not any(v is not None for v in gross + operating + net + ebitda):
+        return None
+
+    return {
+        "type": "chart",
+        "title": f"Evolução das Margens — {label}",
+        "description": (
+            f"Margens Bruta, EBIT, EBITDA e Líquida por período ({label}). "
+            "Barras agrupadas mostram a rentabilidade operacional ao longo do tempo."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {"label": "Marg. Bruta", "data": gross,
+                     "backgroundColor": _CHART_COLORS["marg_bruta"],
+                     "borderColor": _CHART_COLORS["marg_bruta"]},
+                    {"label": "Marg. Líquida", "data": net,
+                     "backgroundColor": _CHART_COLORS["marg_liquida"],
+                     "borderColor": _CHART_COLORS["marg_liquida"]},
+                    {"label": "Marg. EBIT", "data": operating,
+                     "backgroundColor": _CHART_COLORS["marg_ebit"],
+                     "borderColor": _CHART_COLORS["marg_ebit"]},
+                    {"label": "Marg. EBITDA", "data": ebitda,
+                     "backgroundColor": _CHART_COLORS["marg_ebitda"],
+                     "borderColor": _CHART_COLORS["marg_ebitda"]},
+                ],
+            },
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "Margem (%)"}},
+                },
+                "plugins": {
+                    "title": {"display": True,
+                              "text": f"Margens — {label}"},
+                },
+            },
+        },
+    }
+
+
+def build_ttm_margins_chart(ttm_periods: list[dict]) -> dict | None:
+    """[v11] Build a margins bar chart for the Anualizado (TTM) tab.
+
+    Same as build_period_margins_chart but uses "quarter" as the label
+    key (TTM periods use "quarter" not "period"). Title says "TTM".
+    """
+    sorted_periods = sorted(
+        [p for p in ttm_periods if p.get("quarter")],
+        key=lambda p: str(p.get("quarter")),
+    )
+    if len(sorted_periods) < 2:
+        return None
+
+    labels = [str(p.get("quarter")) for p in sorted_periods]
+    gross, operating, net, ebitda = [], [], [], []
+    for p in sorted_periods:
+        r = p.get("ratios") or {}
+        gross.append(_pct_of(r.get("marg_bruta")))
+        operating.append(_pct_of(r.get("marg_ebit")))
+        net.append(_pct_of(r.get("marg_liquida")))
+        ebitda.append(_pct_of(r.get("marg_ebitda")))
+
+    if not any(v is not None for v in gross + operating + net + ebitda):
+        return None
+
+    return {
+        "type": "chart",
+        "title": "Evolução das Margens — TTM",
+        "description": (
+            "Margens Bruta, EBIT, EBITDA e Líquida trailing-12-months (TTM). "
+            "Dessaonaliza os dados trimestrais e mostra a tendência real das margens."
+        ),
+        "chart_data": {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {"label": "Marg. Bruta", "data": gross,
+                     "backgroundColor": _CHART_COLORS["marg_bruta"],
+                     "borderColor": _CHART_COLORS["marg_bruta"]},
+                    {"label": "Marg. Líquida", "data": net,
+                     "backgroundColor": _CHART_COLORS["marg_liquida"],
+                     "borderColor": _CHART_COLORS["marg_liquida"]},
+                    {"label": "Marg. EBIT", "data": operating,
+                     "backgroundColor": _CHART_COLORS["marg_ebit"],
+                     "borderColor": _CHART_COLORS["marg_ebit"]},
+                    {"label": "Marg. EBITDA", "data": ebitda,
+                     "backgroundColor": _CHART_COLORS["marg_ebitda"],
+                     "borderColor": _CHART_COLORS["marg_ebitda"]},
+                ],
+            },
+            "options": {
+                "responsive": True, "maintainAspectRatio": False,
+                "_fixedYWidth": 90,
+                "scales": {
+                    "y": {"ticks": {},
+                          "title": {"display": True, "text": "Margem (%)"}},
+                },
+                "plugins": {
+                    "title": {"display": True,
+                              "text": "Margens — TTM (Anualizado)"},
                 },
             },
         },

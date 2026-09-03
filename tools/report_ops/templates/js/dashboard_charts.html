@@ -161,6 +161,62 @@
     };
   }
 
+  // [v8] Attach a percentage y-axis tick callback when chartData.options._pctYAxis
+  // is true. Mutates `config` in place (strips the flag). Same pattern as
+  // _applyTooltipPercent: Python sets the flag, JSON.parse(JSON.stringify)
+  // would strip a real function, so this injects the real JS callback post-clone.
+  // Renders y-axis ticks as "0%", "25%", "50%", "75%", "100%" (stepSize=25
+  // set on the Python side). Used by Balanço Composição Percentual charts.
+  function _applyPctYAxis(config) {
+    if (!config || !config.options || !config.options._pctYAxis) return;
+    delete config.options._pctYAxis;
+    config.options.scales = config.options.scales || {};
+    config.options.scales.y = config.options.scales.y || {};
+    config.options.scales.y.ticks = config.options.scales.y.ticks || {};
+    config.options.scales.y.ticks.callback = function(value, index, ticks) {
+      return value + '%';
+    };
+  }
+
+  // [v9] Force y-axis to a fixed pixel width when chartData.options._fixedYWidth
+  // is set (a number, e.g. 90). Mutates `config` in place (strips the flag).
+  // Uses afterFit callback — Chart.js calls this after computing the scale
+  // dimensions, and we override the width. This makes Absolutos and Percentual
+  // charts have the same y-axis width so bars align vertically for comparison.
+  // Without this, the longer R$ labels (e.g. "200,000,000") make the Absolutos
+  // y-axis wider than the Percentual ("100%"), shifting bars right.
+  function _applyFixedYWidth(config) {
+    if (!config || !config.options || !config.options._fixedYWidth) return;
+    var w = config.options._fixedYWidth;
+    delete config.options._fixedYWidth;
+    config.options.scales = config.options.scales || {};
+    config.options.scales.y = config.options.scales.y || {};
+    config.options.scales.y.afterFit = function(scaleInstance) {
+      scaleInstance.width = w;
+    };
+  }
+
+  // [v9] Format y-axis ticks as "R$ X.XXX" (millions, pt-BR comma decimal)
+  // when chartData.options._absMillions is true. Data is already divided by
+  // 1e6 on the Python side (see _to_millions in balanco.py), so the tick
+  // values are in millions. This callback formats them with comma decimals
+  // so "163052" displays as "163.052" (pt-BR). Mutates config in place.
+  function _applyAbsMillions(config) {
+    if (!config || !config.options || !config.options._absMillions) return;
+    delete config.options._absMillions;
+    config.options.scales = config.options.scales || {};
+    config.options.scales.y = config.options.scales.y || {};
+    config.options.scales.y.ticks = config.options.scales.y.ticks || {};
+    config.options.scales.y.ticks.callback = function(value, index, ticks) {
+      if (value === null || value === undefined) return '';
+      // Format with pt-BR comma decimal, no thousand separator (keeps it short)
+      return Number(value).toLocaleString('pt-BR', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      });
+    };
+  }
+
   // [ddm.fluxo v3/v4] Segment color injector — paints each line SEGMENT
   // based on the sign of its endpoints:
   //   pos→pos : green   (_segment_pos_color)
@@ -385,6 +441,9 @@
     }
     var config = JSON.parse(JSON.stringify(chartData));
     _applyTooltipPercent(config);
+    _applyPctYAxis(config);
+    _applyFixedYWidth(config);
+    _applyAbsMillions(config);
     _applySegmentColors(config);
     _applyDateFormatXAxis(config);
     _applyZoomPlugin(config);

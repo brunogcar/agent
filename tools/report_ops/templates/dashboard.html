@@ -13,13 +13,121 @@
     {% set ns.current_group = tab_group %}
     <div class="nav-section-label">{{ tab_group if tab_group else 'Dashboard' }}</div>
   {% endif %}
-<button class="nav-item {% if loop.first %}ok active{% endif %}" data-target="tab-{{ loop.index }}" onclick="showTab(this, 'tab-{{ loop.index }}')">
+<button class="nav-item {% if loop.first %}active{% endif %}" data-target="tab-{{ loop.index }}" onclick="showTab(this, 'tab-{{ loop.index }}')">
   <span class="nav-dot"></span>{{ tab.name | default('Tab ' + loop.index|string) }}
 </button>
 {% endfor %}
 {% endblock %}
 
 {% block content %}
+
+{# [v5] Frozen-column CSS for wide statement tables (Balanço/DRE/DFC/DVA).
+   When a table has the `wide` class (set by data_table macro when wide=True),
+   the first 2 columns (Código + Descrição) get position: sticky so they stay
+   visible while the user scrolls the period columns horizontally.
+   [v7] Fixed transparency: frozen cells use SOLID backgrounds (not the
+   semi-transparent --table-stripe/--table-hover which let scrolled values
+   show through). Uses color-mix() to blend the stripe/hover tint onto a
+   solid --bg-card base so the frozen cell matches the row's visual band but
+   is fully opaque. Falls back to --bg-card on browsers without color-mix(). #}
+<style>
+  .data-table.wide { border-collapse: separate; border-spacing: 0; }
+  .data-table.wide th, .data-table.wide td { border-right: 1px solid var(--border); }
+  .data-table.wide th.frozen-0, .data-table.wide td.frozen-0 {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--bg-card);
+    min-width: 75px; max-width: 75px; width: 75px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .data-table.wide th.frozen-1, .data-table.wide td.frozen-1 {
+    position: sticky; left: 75px; z-index: 2;
+    background: var(--bg-card);
+    min-width: 230px; max-width: 230px; width: 230px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .data-table.wide td.frozen-0, .data-table.wide td.frozen-1 {
+    box-shadow: 2px 0 4px rgba(0,0,0,0.08);
+  }
+  {# [v7] Stripe + hover on frozen cells: use SOLID backgrounds so the
+     scrolled period values don't bleed through. The row's stripe/hover
+     tints are semi-transparent (rgba 1-4% alpha) which lets content show
+     through sticky cells. Here we define explicit solid frozen-stripe +
+     frozen-hover colors per-theme via CSS custom properties scoped to the
+     table, so the frozen cells are fully opaque. #}
+  .data-table.wide {
+    --frozen-bg: var(--bg-card);
+    --frozen-stripe-bg: #161922;
+    --frozen-hover-bg: #1a2a26;
+  }
+  .data-table.wide th.frozen-0, .data-table.wide td.frozen-0,
+  .data-table.wide th.frozen-1, .data-table.wide td.frozen-1 {
+    background: var(--frozen-bg);
+  }
+  .data-table.wide tbody tr:nth-child(odd) td.frozen-0,
+  .data-table.wide tbody tr:nth-child(odd) td.frozen-1 {
+    background: var(--frozen-stripe-bg);
+  }
+  .data-table.wide tbody tr:hover td.frozen-0,
+  .data-table.wide tbody tr:hover td.frozen-1 {
+    background: var(--frozen-hover-bg);
+  }
+  {# Light theme: lighter solid stripe + brand-tinted solid hover. The
+     [data-theme="light"] selector overrides the dark defaults above. #}
+  [data-theme="light"] .data-table.wide {
+    --frozen-bg: #ffffff;
+    --frozen-stripe-bg: #f1f5f9;
+    --frozen-hover-bg: #e6f7f4;
+  }
+  .data-table.wide th.frozen-0, .data-table.wide th.frozen-1 {
+    z-index: 3;
+  }
+  .data-table.wide td.frozen-0 { text-align: left; font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-sec); }
+  .data-table.wide td.frozen-1 { text-align: left; }
+  {# [v13] Section header rows now use the same frozen-column structure as
+     data rows (first 2 cells sticky). The section-header-row class provides
+     the bold/italic styling; the frozen-0/frozen-1 classes (already defined
+     above) provide position:sticky. This makes section headers stay fixed
+     when scrolling right, matching the Código + Descrição columns.
+     The background is already solid via the inline style on the td. #}
+  {# [v13] Section header cells must NOT get the stripe/hover background
+     (they have their own solid bg via inline style). Override the frozen
+     stripe/hover rules for section-header-row cells. #}
+  .data-table.wide tbody tr.section-header-tr td.frozen-0,
+  .data-table.wide tbody tr.section-header-tr td.frozen-1,
+  .data-table.wide tbody tr.section-header-tr:nth-child(odd) td.frozen-0,
+  .data-table.wide tbody tr.section-header-tr:nth-child(odd) td.frozen-1,
+  .data-table.wide tbody tr.section-header-tr:hover td.frozen-0,
+  .data-table.wide tbody tr.section-header-tr:hover td.frozen-1 {
+    background: var(--bg-sec) !important;
+  }
+  {# [v24] Section header with colspan=2 — sticky at left:0, spans both
+     frozen columns. z-index:4 so it stays above data cells. #}
+  .data-table.wide td[colspan="2"].section-header-row {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    background: var(--bg-sec) !important;
+  }
+  .data-table.wide th:not(.frozen-0):not(.frozen-1),
+  .data-table.wide td:not(.frozen-0):not(.frozen-1):not(.section-header-row) {
+    min-width: 110px;
+  }
+  {# [v16] Comprehensive tables (single Métrica column) — wider frozen-0
+     so metric labels like "Ativo Não Circulante" fit. The standard frozen-0
+     is 75px (designed for Código like "1.01.03"). Comprehensive tables need
+     250px. We override via a .data-table.wide.comprehensive class. #}
+  .data-table.wide.comprehensive th.frozen-0,
+  .data-table.wide.comprehensive td.frozen-0 {
+    min-width: 250px; max-width: 250px; width: 250px;
+    text-align: left; font-size: 13px; font-family: inherit;
+    color: var(--text);
+  }
+  {# [v8] Chart-box: equal min-height so Absolutos + Composição Percentual
+     render at the same height → bars align visually for comparison.
+     base.html already sets height: 380px; this is a safety net. The y-axis
+     width alignment is handled in balanco.py via y.ticks.maxWidth + y.title.width. #}
+  .chart-box { min-height: 380px; }
+</style>
 
 {# ── KPI boxes (top-level header — common to all dashboards) ───────────────
    [v1.18] The KPI grid is the universal header. The company info card +
@@ -102,7 +210,7 @@
         {% endif %}
         {% if sec.type == 'table' and sec.columns and sec.rows %}
         {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
+        {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
         {% if sec.wide %}</div>{% endif %}
         {% elif sec.type == 'table' %}
         <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -127,7 +235,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None)) }}
+    {{ m.data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -181,6 +289,9 @@
     {% endif %}
     {% if sec.type == 'bug' %}
     {{ m.bug_card(sec.severity | default('minor'), sec.location | default(''), sec.title, sec.description, sec.get('fix')) }}
+    {% endif %}
+    {% if sec.type == 'heatmap' and sec.columns and sec.rows %}
+    {{ m.heatmap_table(sec.columns, sec.rows) }}
     {% endif %}
   </div>
   {% endfor %}

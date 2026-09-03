@@ -70,6 +70,10 @@ from skills.cvm.financials.report import (
     build_yoy_table,
     build_period_table,
     build_period_chart,
+    build_period_margins_chart,
+    build_ttm_margins_chart,
+    build_comprehensive_period_table,  # [v14] comprehensive period table
+    build_indicator_charts,  # [v25] indicator bar charts
     # [v1.23 F4] New per-statement trend chart builders.
     build_statement_trend_chart,
     build_dfc_trend_chart,
@@ -126,7 +130,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         ratios_payload: dict = {"date": today}
 
         def _fetch_annual():
-            return _safe_call(annual, company=company, periods=6, consolidado=consolidado)
+            return _safe_call(annual, company=company, periods=10, consolidado=consolidado)
 
         def _fetch_quarterly():
             return _safe_call(quarterly, company=company, periods=20, consolidado=consolidado)
@@ -256,74 +260,93 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # redundant FCA + CAD + COTAHIST queries.
     company_header = build_company_header(company)
 
-    overview_sections = build_overview_sections(
-        latest_annual_period, quarterly_periods, ratios_payload)
+    # [v24] Overview tab restructured into 4 subtabs:
+    # 1. "Cotação & Resumo" — company info + price chart + summary text + quarterly trend
+    # 2. "Trajetória Anual" — annual trend chart (Receita, EBITDA e Lucro)
+    # 3. "Análise de Risco" — WACC + DuPont + Altman Z + Red Flags
+    # 4. "Visão Multidimensional" — Radar + Heatmap
+    overview_subtabs = []
 
+    # Subtab 1: Cotação & Resumo
+    sub1_sections = []
     if company_header.get("name"):
-        overview_sections.insert(0, {
+        sub1_sections.append({
             "type": "company_info",
             "company_header": company_header,
         })
-
-    # [v1.16.1] Historical price chart with time-range selector — top of Overview.
     price_chart = build_price_chart(company)
     if price_chart:
-        overview_sections.insert(1, price_chart)
+        sub1_sections.append(price_chart)
+    # Add summary text + quarterly trend from build_overview_sections
+    base_overview = build_overview_sections(
+        latest_annual_period, quarterly_periods, ratios_payload)
+    sub1_sections.extend(base_overview)
+    if sub1_sections:
+        overview_subtabs.append({"name": "Cotação & Resumo", "sections": sub1_sections})
 
-    # [v1.16.1] Annual trend chart (Receita/EBITDA/Lucro) — after price chart.
-    # [v1.23 F2] Pass `company` so a year-end price overlay (right Y-axis,
-    # purple dashed line) is rendered alongside the fundamentals.
+    # Subtab 2: Trajetória Anual
+    sub2_sections = []
     overview_trend = build_overview_trend_chart(annual_periods, company)
     if overview_trend:
-        overview_sections.append(overview_trend)
+        sub2_sections.append(overview_trend)
+    if sub2_sections:
+        overview_subtabs.append({"name": "Trajetória Anual", "sections": sub2_sections})
 
-    # [new commit] F14 — Accounting red flags (collapsible section at the
-    # BOTTOM of Overview). Surfaces validation.py consistency checks +
-    # ROE-negative-PL + FCO-3Y-decline checks. Wrapped in try/except so a
-    # validation.py failure doesn't crash the Overview tab.
-    try:
-        red_flags = build_red_flags_section(
-            bpa_result, bpp_result, dre_result, dfc_result, dva_result,
-            annual_periods)
-        if red_flags:
-            overview_sections.append(red_flags)
-    except Exception as e:
-        print(f"[financials] Red flags section failed: {e}", flush=True)
-
-    # [v2.0] WACC + DuPont + Altman Z sections (from ratios_payload).
-    # These are point-in-time (no history_fn), so they're fast.
+    # Subtab 3: Análise de Risco
+    sub3_sections = []
     try:
         wacc_sec = build_wacc_section(ratios_payload)
         if wacc_sec:
-            overview_sections.append(wacc_sec)
+            sub3_sections.append(wacc_sec)
     except Exception as e:
         print(f"[financials] WACC section failed: {e}", flush=True)
     try:
         dupont_sec = build_dupont_section(ratios_payload)
         if dupont_sec:
-            overview_sections.append(dupont_sec)
+            sub3_sections.append(dupont_sec)
     except Exception as e:
         print(f"[financials] DuPont section failed: {e}", flush=True)
     try:
         altman_sec = build_altman_z_section(ratios_payload)
         if altman_sec:
-            overview_sections.append(altman_sec)
+            sub3_sections.append(altman_sec)
     except Exception as e:
         print(f"[financials] Altman Z section failed: {e}", flush=True)
+    try:
+        red_flags = build_red_flags_section(
+            bpa_result, bpp_result, dre_result, dfc_result, dva_result,
+            annual_periods)
+        if red_flags:
+            sub3_sections.append(red_flags)
+    except Exception as e:
+        print(f"[financials] Red flags section failed: {e}", flush=True)
+    if sub3_sections:
+        overview_subtabs.append({"name": "Análise de Risco", "sections": sub3_sections})
 
-    # [v1.22] Radar + Heatmap in Overview tab.
+    # Subtab 4: Visão Multidimensional
+    sub4_sections = []
     try:
         radar = build_financials_radar(ratios_payload)
         if radar:
-            overview_sections.append(radar)
+            sub4_sections.append(radar)
     except Exception as e:
         print(f"[financials] Radar failed: {e}", flush=True)
     try:
         heatmap = build_financials_heatmap(ratios_payload)
         if heatmap:
-            overview_sections.append(heatmap)
+            sub4_sections.append(heatmap)
     except Exception as e:
         print(f"[financials] Heatmap failed: {e}", flush=True)
+    if sub4_sections:
+        overview_subtabs.append({"name": "Visão Multidimensional", "sections": sub4_sections})
+
+    # Wrap in subtabs if we have multiple, otherwise use flat list
+    if len(overview_subtabs) > 1:
+        overview_sections = [{"type": "subtabs", "tabs": overview_subtabs}]
+    else:
+        overview_sections = []
+        for st in overview_subtabs:
+            overview_sections.extend(st.get("sections", []))
 
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
@@ -368,11 +391,11 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         # Annual versions (no quarterly args → uses annual periods).
         # build_balanco_chart returns 2 charts (Completo abs + pct).
         completo_charts_annual = build_balanco_chart(bpa_result, bpp_result)
-        # build_balanco_decomp_charts returns 4 charts: BPA abs+pct then
-        # BPP abs+pct. Slice into BPA [0:2] and BPP [2:4].
+        # [v9] build_balanco_decomp_charts returns 8 charts: BPA [0:4] then
+        # BPP [4:8]. Each group has 2 original stacked (abs+pct) + 2 single.
         decomp_annual = build_balanco_decomp_charts(bpa_result, bpp_result)
-        bpa_charts_annual = decomp_annual[:2]
-        bpp_charts_annual = decomp_annual[2:]
+        bpa_charts_annual = decomp_annual[:4]
+        bpp_charts_annual = decomp_annual[4:]
 
         # Quarterly versions (with quarterly args → uses quarterly periods).
         # Only built when both quarterly BPA + BPP are available.
@@ -383,8 +406,8 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
             decomp_quarterly = build_balanco_decomp_charts(
                 bpa_result, bpp_result,
                 bpa_result_q=bpa_result_q, bpp_result_q=bpp_result_q)
-            bpa_charts_quarterly = decomp_quarterly[:2]
-            bpp_charts_quarterly = decomp_quarterly[2:]
+            bpa_charts_quarterly = decomp_quarterly[:4]
+            bpp_charts_quarterly = decomp_quarterly[4:]
         else:
             completo_charts_quarterly = []
             bpa_charts_quarterly = []
@@ -506,12 +529,35 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # ── Section 8/11: Anual ───────────────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
-    # Tab 8: Anual (raw annual periods table + trend chart)
+    # [v14] Tab 8: Anual — comprehensive table (Balanço+DRE+DFC+Indicadores)
+    # + trend chart + margins chart. Replaces the simple 7-column table.
     if annual_payload.get("status") == "ok":
-        anual_sections = [build_period_table(annual_periods, "Anual")]
-        anual_chart = build_period_chart(annual_periods, "Anual")
-        if anual_chart:
-            anual_sections.append(anual_chart)
+        try:
+            # Build comprehensive table using annual_periods + statement results.
+            # For annual, use the annual statement results (bpa_result etc.)
+            # [v16] build_comprehensive_period_table now returns a LIST of 4 tables.
+            anual_table = build_comprehensive_period_table(
+                annual_periods, "Anual",
+                bpa_result=bpa_result, bpp_result=bpp_result,
+                dre_result=dre_result, dfc_result=dfc_result)
+            anual_sections = list(anual_table)  # 4 section tables
+            anual_chart = build_period_chart(annual_periods, "Anual")
+            if anual_chart:
+                anual_sections.append(anual_chart)
+            # [v11] Add margins bar chart to the Anual tab
+            anual_margins = build_period_margins_chart(annual_periods, "Anual")
+            if anual_margins:
+                anual_sections.append(anual_margins)
+            # [v25] Add indicator charts (liquidez, endividamento, EBIT/EBITDA/CAPEX)
+            try:
+                ind_charts = build_indicator_charts(annual_periods, "Anual", bpa_result=bpa_result, bpp_result=bpp_result)
+                anual_sections.extend(ind_charts)
+            except Exception as e:
+                print(f"[financials] Indicator charts failed: {e}", flush=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            anual_sections = [build_error_section("Anual", str(e))]
     else:
         anual_sections = [build_error_section("Anual", annual_payload.get("error", "unknown"))]
 
@@ -519,17 +565,37 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
     print(f"  [sections] {_sec_count}/{_SEC_TOTAL} Anual ({_s_elapsed:.1f}s, total {_sec_elapsed:.1f}s)", flush=True)
 
-    # ── Section 9/11: Trimestral ──────────────────────────────────
+    # ── Section 9/11: Trimestral QoQ ───────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
-    # Tab 9: Trimestral (raw quarterly periods table + bar chart)
+    # [v15] Renamed from "Trimestral" to "Trimestral QoQ" per user request.
+    # [v14] Comprehensive table + trend chart + margins.
     if quarterly_payload.get("status") == "ok":
-        trimestral_sections = [build_period_table(quarterly_periods, "Trimestral")]
-        trimestral_chart = build_period_chart(quarterly_periods, "Trimestral")
-        if trimestral_chart:
-            trimestral_sections.append(trimestral_chart)
+        try:
+            trimestral_table = build_comprehensive_period_table(
+                quarterly_periods, "Trimestral QoQ",
+                bpa_result=bpa_result_q, bpp_result=bpp_result_q,
+                dre_result=dre_result_q, dfc_result=dfc_result_q)
+            trimestral_sections = list(trimestral_table)  # 4 section tables
+            trimestral_chart = build_period_chart(quarterly_periods, "Trimestral QoQ")
+            if trimestral_chart:
+                trimestral_sections.append(trimestral_chart)
+            # [v11] Add margins bar chart to the Trimestral tab
+            trimestral_margins = build_period_margins_chart(quarterly_periods, "Trimestral QoQ")
+            if trimestral_margins:
+                trimestral_sections.append(trimestral_margins)
+            # [v25] Add indicator charts
+            try:
+                ind_charts = build_indicator_charts(quarterly_periods, "Trimestral QoQ", bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                trimestral_sections.extend(ind_charts)
+            except Exception as e:
+                print(f"[financials] Indicator charts failed: {e}", flush=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            trimestral_sections = [build_error_section("Trimestral QoQ", str(e))]
     else:
-        trimestral_sections = [build_error_section("Trimestral", quarterly_payload.get("error", "unknown"))]
+        trimestral_sections = [build_error_section("Trimestral QoQ", quarterly_payload.get("error", "unknown"))]
 
     _s_elapsed = (_dt.now() - _s_t0).total_seconds()
     _sec_elapsed = (_dt.now() - _sec_t0).total_seconds()
@@ -538,15 +604,41 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # ── Section 10/11: Anualizado (TTM) ───────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
-    # Tab 10: TTM (Anualizado)
+    # [v14] Tab 10: TTM (Anualizado) — comprehensive table + chart + margins.
+    # TTM periods don't have statement results, so accounts-based rows show "—".
+    # The metrics-based rows (Receita, EBIT, EBITDA, Lucro, FCO, etc.) + ratios
+    # will populate from the ttm_periods metrics/ratios dicts.
     ttm_sections: list[dict] = []
     if isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
         ttm_periods = ttm_result.get("periods") or []
         if ttm_periods:
-            ttm_sections.append(build_ttm_table(ttm_periods))
-            ttm_chart = build_ttm_chart(ttm_periods)
-            if ttm_chart:
-                ttm_sections.append(ttm_chart)
+            try:
+                # [v19] Pass quarterly statement results for TTM — TTM period
+                # labels (e.g. "2T2026") match quarterly statement result labels,
+                # so accounts-based rows (Ativo Circ, Passivo, etc.) populate.
+                # [v16] Returns a LIST of 4 tables.
+                ttm_table = build_comprehensive_period_table(
+                    ttm_periods, "Anualizado",
+                    bpa_result=bpa_result_q, bpp_result=bpp_result_q,
+                    dre_result=dre_result_q, dfc_result=dfc_result_q)
+                ttm_sections.extend(ttm_table)
+                ttm_chart = build_ttm_chart(ttm_periods)
+                if ttm_chart:
+                    ttm_sections.append(ttm_chart)
+                # [v11] Add margins bar chart to the Anualizado (TTM) tab
+                ttm_margins = build_ttm_margins_chart(ttm_periods)
+                if ttm_margins:
+                    ttm_sections.append(ttm_margins)
+                # [v25] Add indicator charts
+                try:
+                    ind_charts = build_indicator_charts(ttm_periods, "Anualizado", bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                    ttm_sections.extend(ind_charts)
+                except Exception as e:
+                    print(f"[financials] TTM indicator charts failed: {e}", flush=True)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                ttm_sections.append(build_error_section("Anualizado", str(e)))
     if not ttm_sections:
         ttm_sections = [build_error_section("Anualizado", ttm_result.get("error", "unknown") if isinstance(ttm_result, dict) else "unknown")]
 
@@ -557,16 +649,49 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     # ── Section 11/11: Trimestral YoY ─────────────────────────────
     _sec_count += 1
     _s_t0 = _dt.now()
-    # Tab 11: YoY Quarterly (Trimestral YoY)
-    # [v1.18] build_yoy_table now returns a LIST of sections (one per year).
+    # [v17] Trimestral YoY restructured — each quarter subtab gets the SAME
+    # 4 comprehensive tables + charts as the other tabs. No more old build_yoy_table.
     yoy_sections: list[dict] = []
     if isinstance(yoy_result, dict) and yoy_result.get("status") == "ok":
         yoy_groups = yoy_result.get("groups") or []
         if yoy_groups:
-            yoy_sections.extend(build_yoy_table(yoy_groups))
-            yoy_chart = build_yoy_chart(yoy_groups)
-            if yoy_chart:
-                yoy_sections.append(yoy_chart)
+            sub_tabs = []
+            for g in yoy_groups:
+                q_label = g.get("quarter", "")
+                q_periods = g.get("periods") or []
+                if not q_periods:
+                    continue
+                # [v17] Rename "Q4" → "T4", "Q1" → "T1", etc.
+                t_label = q_label.replace("Q", "T") if q_label.startswith("Q") else q_label
+                # [v18] Build comprehensive tables from YoY periods.
+                # Pass quarterly statement results so accounts-based rows
+                # (Ativo Circ, Passivo, etc.) have data. The YoY period
+                # labels are like "4T2025" which match the quarterly
+                # statement result period labels.
+                yoy_tables = build_comprehensive_period_table(
+                    q_periods, t_label,
+                    bpa_result=bpa_result_q, bpp_result=bpp_result_q,
+                    dre_result=dre_result_q, dfc_result=dfc_result_q)
+                yoy_secs = list(yoy_tables)
+                # Add trend chart (Receita/EBITDA/Lucro bars)
+                yoy_chart = build_period_chart(q_periods, t_label)
+                if yoy_chart:
+                    yoy_secs.append(yoy_chart)
+                # Add margins bar chart
+                yoy_margins = build_period_margins_chart(q_periods, t_label)
+                if yoy_margins:
+                    yoy_secs.append(yoy_margins)
+                # [v25] Add indicator charts
+                try:
+                    yoy_ind = build_indicator_charts(q_periods, t_label, bpa_result=bpa_result_q, bpp_result=bpp_result_q)
+                    yoy_secs.extend(yoy_ind)
+                except Exception as e:
+                    print(f"[financials] YoY indicator charts failed: {e}", flush=True)
+                sub_tabs.append({"name": t_label, "sections": yoy_secs})
+
+            if sub_tabs:
+                yoy_sections = [{"type": "subtabs", "tabs": sub_tabs}]
+
     if not yoy_sections:
         yoy_sections = [build_error_section("Trimestral YoY", yoy_result.get("error", "unknown") if isinstance(yoy_result, dict) else "unknown")]
 
@@ -587,7 +712,7 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         {"name": "DVA",           "group": "Demonstrações",     "sections": dva_sections},
         # PERÍODOS
         {"name": "Anual",         "group": "Períodos",          "sections": anual_sections},
-        {"name": "Trimestral",    "group": "Períodos",          "sections": trimestral_sections},
+        {"name": "Trimestral QoQ", "group": "Períodos",          "sections": trimestral_sections},
         # SÉRIES TEMPORAIS
         {"name": "Anualizado",    "group": "Séries Temporais",  "sections": ttm_sections},
         {"name": "Trimestral YoY", "group": "Séries Temporais", "sections": yoy_sections},
@@ -655,7 +780,7 @@ def _fetch_all_statements(
         all_data = _fetch_all_statements_quarterly(company, consolidado, periods=20)
     else:
         from skills.cvm.financials.fetchers import _fetch_all_statements_annual
-        all_data = _fetch_all_statements_annual(company, consolidado, periods=4)
+        all_data = _fetch_all_statements_annual(company, consolidado, periods=10)
 
     # If the fetch itself failed (not_found/not_synced), return error for all 5
     if all_data.get("status") != "ok" and "status" in all_data:

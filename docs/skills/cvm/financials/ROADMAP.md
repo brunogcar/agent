@@ -13,6 +13,13 @@
 | P3 | F5 — Cross-skill dashboard | Unified company profile (financials + valuation + governance + insider) |
 | P3 | F18 — Sector-specific ratios | Banks: NIM, Basel; Insurers: combined ratio; REITs: FFO/AFFO |
 | P3 | F6 — Real-data verification script | Nightly script: null-rate, consistency checks, PL source breakdown |
+| Done | Comprehensive Períodos tables (v2.3) | Multi-section tables (Balanço/DRE/DFC/9 Indicadores sub-tables) with frozen columns + accounts fallback |
+| Done | Unified chart color scheme (v2.3) | Receita=orange, EBITDA=magenta, Lucro=purple, margins=maroon/pink shades, DFC=cyan/orange/rose |
+| Done | DRE/DFC chart revamp (v2.3) | Line→bar, new colors, _fixedYWidth alignment, R$ (mi) values |
+| Done | Overview subtabs (v2.3) | 4 subtabs: Cotação & Resumo, Trajetória Anual, Análise de Risco, Visão Multidimensional |
+| Done | Trimestral YoY restructure (v2.3) | Per-quarter subtabs (T1-T4) with same table+chart pattern as other tabs |
+| Done | Indicator charts (v2.3) | 3 new bar charts per tab: Liquidez, Disponibilidades/Endividamento, EBIT/EBITDA/CAPEX |
+| Done | Frozen columns (v2.3) | Código+Descrição sticky with section header colspan=2 |
 | Done | F3 — Price history overlay (v1.23) | COTAHIST daily price on DRE/DFC/DVA charts (dual Y-axis) |
 | Done | F4 — Period selector (v1.24) | Trimestral/Anual toggle (pre-render + JS toggle) |
 | Reverted | TTM toggle (v2.1 → v2.2) | 3rd "TTM" panel on DRE/DFC/DVA period_toggle was reverted in v2.2 — TTM data stays in the standalone "Anualizado" tab only (cleaner UX, avoids duplicate TTM views) |

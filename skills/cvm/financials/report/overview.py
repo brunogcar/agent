@@ -30,20 +30,21 @@ def build_overview_kpis(
     net_debt_ebitda_val: float | None,
     ttm_result: dict | None = None,
 ) -> list[dict]:
-    """Build 6 KPI cards with pre-formatted values.
+    """Build 6 KPI cards with pre-formatted values + QoQ deltas.
 
-    [new commit] F9 fix: "Receita (TTM)" now shows ACTUAL TTM data (from
-    ttm_result), not the annual DFP value. Was calling annual_metric() which
-    returns the latest annual period — only equals TTM on Dec 31. Now
-    prefers ttm_result["periods"][-1]["metrics"] with annual fallback for
-    new filers (<4 quarters of ITR history).
+    [v1] Added QoQ % deltas (green for positive, red for negative) by
+    comparing the latest TTM period vs the previous TTM period.
     """
-    # [new commit] Extract TTM metrics if available, fall back to annual.
+    # Extract TTM metrics if available, fall back to annual.
+    # [v3] TTM periods are OLDEST-FIRST — use [-1] (newest) and [-2] (prev).
     ttm_metrics: dict = {}
+    ttm_prev_metrics: dict = {}
     if ttm_result and isinstance(ttm_result, dict) and ttm_result.get("status") == "ok":
         ttm_periods = ttm_result.get("periods") or []
         if ttm_periods:
-            ttm_metrics = ttm_periods[0].get("metrics") or {}
+            ttm_metrics = ttm_periods[-1].get("metrics") or {}
+            if len(ttm_periods) > 1:
+                ttm_prev_metrics = ttm_periods[-2].get("metrics") or {}
 
     # Receita: prefer TTM, fall back to annual
     receita_val = ttm_metrics.get("receita_liquida")
@@ -58,21 +59,36 @@ def build_overview_kpis(
     if lucro_val is None:
         lucro_val = annual_metric(latest_annual_period, "lucro_liquido")
 
+    # [v1] Compute QoQ deltas for the 3 financial KPIs.
+    def _qoq_delta(current, previous):
+        """Compute QoQ % delta. Returns formatted string or None."""
+        if current is None or previous is None or previous == 0:
+            return None
+        pct = (current - previous) / abs(previous)
+        return _fmt(pct, "pct")
+
+    receita_delta = _qoq_delta(receita_val, ttm_prev_metrics.get("receita_liquida"))
+    ebitda_delta = _qoq_delta(ebitda_val, ttm_prev_metrics.get("ebitda"))
+    lucro_delta = _qoq_delta(lucro_val, ttm_prev_metrics.get("lucro_liquido"))
+
     return [
         {
             "label": "Receita (TTM)",
             "value": _fmt(receita_val, "brl"),
             "unit": "BRL",
+            "delta": receita_delta,
         },
         {
             "label": "EBITDA (TTM)",
             "value": _fmt(ebitda_val, "brl"),
             "unit": "BRL",
+            "delta": ebitda_delta,
         },
         {
             "label": "Lucro Líquido (TTM)",
             "value": _fmt(lucro_val, "brl"),
             "unit": "BRL",
+            "delta": lucro_delta,
         },
         {
             "label": "ROE",
@@ -129,84 +145,125 @@ def build_overview_sections(
         "text": " ".join(summary_lines),
     })
 
-    # Latest-annual headline metrics table
+    # [v4] Latest-annual headline — TWO two_column blocks side-by-side.
+    # Block 1: Resultado (absolute R$) | Margens (% values).
+    # Block 2: Balanço | Fluxo de Caixa.
+    # Margins split OUT of Resultado into their own "Margens" table per user
+    # request. positive_green=True so positive % render green; negative_red
+    # so negative R$ (e.g. FCI) render red.
     if latest_annual_period:
         m = latest_annual_period.get("metrics") or {}
         r = latest_annual_period.get("ratios") or {}
-        # [v1.25] Tooltips now on the FIRST column (metric name/label),
-        # not the value cell. User feedback: "tooltips should be on the
-        # metric name (e.g. 'Receita Líquida'), not on the value".
-        def _label(text: str, tooltip: str) -> dict:
-            return {"text": text, "tooltip": tooltip}
 
-        rows = [
-            ["Período",           latest_annual_period.get("period", "—")],
-            [_label("Receita Líquida",
-                    "Receita Líquida = DRE 3.01 (Receita de Vendas)"),
-                                  _fmt(m.get("receita_liquida"),   "brl")],
-            [_label("Lucro Bruto",
-                    "Lucro Bruto = DRE 3.02 (Receita - CPV)"),
-                                  _fmt(m.get("lucro_bruto"),       "brl")],
-            [_label("EBIT",
-                    "EBIT = DRE 3.05 (Resultado antes de juros e impostos)"),
-                                  _fmt(m.get("ebit"),              "brl")],
-            [_label("EBITDA",
-                    "EBITDA = EBIT + D&A (DFC 6.01.01.02)"),
-                                  _fmt(m.get("ebitda"),            "brl")],
-            [_label("Lucro Líquido",
-                    "Lucro Líquido = DRE 3.09 (Resultado do período)"),
-                                  _fmt(m.get("lucro_liquido"),     "brl")],
-            [_label("Margem Bruta",
-                    "Margem Bruta = Lucro Bruto / Receita Líquida"),
-                                  _fmt(r.get("marg_bruta"),        "pct")],
-            [_label("Margem EBITDA",
-                    "Margem EBITDA = EBITDA / Receita Líquida"),
-                                  _fmt(r.get("marg_ebitda"),       "pct")],
-            [_label("Margem Líquida",
-                    "Margem Líquida = Lucro Líquido / Receita Líquida"),
-                                  _fmt(r.get("marg_liquida"),      "pct")],
-            [_label("Ativo Total",
-                    "Ativo Total = BPA 1"),
-                                  _fmt(m.get("ativo_total"),       "brl")],
-            [_label("Patrimônio Liq.",
-                    "PL = BPP 2.03"),
-                                  _fmt(m.get("patrimonio_liquido"),"brl")],
-            [_label("Caixa",
-                    "Caixa = BPA 1.01.01"),
-                                  _fmt(m.get("caixa"),             "brl")],
-            [_label("Divida Bruta",
-                    "Dívida Bruta = BPP 2.01.04 + 2.02.01"),
-                                  _fmt(m.get("divida_bruta"),      "brl")],
-            [_label("FCO",
-                    "Fluxo de Caixa Operacional = DFC 6.01"),
-                                  _fmt(m.get("fco"),               "brl")],
-            [_label("FCI",
-                    "Fluxo de Caixa de Investimento = DFC 6.02"),
-                                  _fmt(m.get("fci"),               "brl")],
+        # Block 1 left: Resultado (absolute R$ only — no margins)
+        resultado_rows = [
+            {"label": "Período", "value": latest_annual_period.get("period", "—")},
+            {"label": "Receita Líquida", "value": _fmt(m.get("receita_liquida"),   "brl")},
+            {"label": "Lucro Bruto", "value": _fmt(m.get("lucro_bruto"),       "brl")},
+            {"label": "EBIT", "value": _fmt(m.get("ebit"),              "brl")},
+            {"label": "EBITDA", "value": _fmt(m.get("ebitda"),            "brl")},
+            {"label": "Lucro Líquido", "value": _fmt(m.get("lucro_liquido"),     "brl")},
         ]
+
+        # Block 1 right: Margens (3 % values, split out of Resultado)
+        margens_rows = [
+            {"label": "Margem Bruta", "value": _fmt(r.get("marg_bruta"),    "pct")},
+            {"label": "Margem EBITDA", "value": _fmt(r.get("marg_ebitda"),   "pct")},
+            {"label": "Margem Líquida", "value": _fmt(r.get("marg_liquida"),  "pct")},
+        ]
+
         sections.append({
-            "title": "Latest Annual Summary",
-            "type": "table",
-            "columns": ["Indicador", "Valor"],
-            "rows": rows,
+            "type": "two_column",
+            "left_title": "Latest Annual — Resultado",
+            "left_rows": resultado_rows,
+            "right_title": "Latest Annual — Margens",
+            "right_rows": margens_rows,
+            "negative_red": True,
+            "positive_green": True,
         })
 
-    # Quarterly trend table (oldest-first reversed for display newest-first)
+        # Block 2 left: Balanço
+        balanco_rows = [
+            {"label": "Ativo Total", "value": _fmt(m.get("ativo_total"),       "brl")},
+            {"label": "Patrimônio Liq.", "value": _fmt(m.get("patrimonio_liquido"),"brl")},
+            {"label": "Caixa", "value": _fmt(m.get("caixa"),             "brl")},
+            {"label": "Dívida Bruta", "value": _fmt(m.get("divida_bruta"),      "brl")},
+        ]
+
+        # Block 2 right: Fluxo de Caixa
+        fluxo_rows = [
+            {"label": "FCO", "value": _fmt(m.get("fco"), "brl")},
+            {"label": "FCI", "value": _fmt(m.get("fci"), "brl")},
+        ]
+
+        sections.append({
+            "type": "two_column",
+            "left_title": "Latest Annual — Balanço",
+            "left_rows": balanco_rows,
+            "right_title": "Latest Annual — Fluxo de Caixa",
+            "right_rows": fluxo_rows,
+            "negative_red": True,
+            "positive_green": True,
+        })
+
+    # [v4] Quarterly trend — sortable, default newest-first, with
+    # chronological data-value on period cells so re-sorting by "Período"
+    # toggles true chronological asc/desc (not lexicographic on "QtYYYY").
+    # Period dict carries year + quarter (meses); we derive a
+    # "YYYY-QQ" sort key.
     if quarterly_periods:
+        # [v24] Quarterly Trend with % evolution columns (QoQ delta)
         trend_rows = []
-        for p in reversed(quarterly_periods):
+        prev_metrics = None
+        for p in reversed(quarterly_periods):  # newest-first
             m = p.get("metrics") or {}
+            period_label = p.get("period", "—")
+            # Build chronological sort key: "2T2026" -> "2026-02"
+            year = p.get("year")
+            quarter = p.get("quarter")
+            if year is not None and quarter is not None:
+                sort_key = f"{int(year):04d}-{int(quarter):02d}"
+            else:
+                try:
+                    q_str, y_str = period_label.split("T")
+                    sort_key = f"{int(y_str):04d}-{int(q_str):02d}"
+                except (ValueError, AttributeError):
+                    sort_key = str(period_label)
+            # Compute QoQ % for each metric
+            def _qoq(curr_val, prev_val):
+                if curr_val is None or prev_val is None or prev_val == 0:
+                    return "—"
+                pct = (curr_val - prev_val) / abs(prev_val)
+                return _fmt(pct, "pct")
+            rev = m.get("receita_liquida")
+            ebd = m.get("ebitda")
+            liq = m.get("lucro_liquido")
+            if prev_metrics:
+                rev_pct = _qoq(rev, prev_metrics.get("receita_liquida"))
+                ebd_pct = _qoq(ebd, prev_metrics.get("ebitda"))
+                liq_pct = _qoq(liq, prev_metrics.get("lucro_liquido"))
+            else:
+                rev_pct = "—"
+                ebd_pct = "—"
+                liq_pct = "—"
             trend_rows.append([
-                p.get("period", "—"),
-                _fmt(m.get("receita_liquida"), "brl"),
-                _fmt(m.get("ebitda"),          "brl"),
-                _fmt(m.get("lucro_liquido"),   "brl"),
+                {"text": period_label, "data-value": sort_key},
+                _fmt(rev, "brl"), rev_pct,
+                _fmt(ebd, "brl"), ebd_pct,
+                _fmt(liq, "brl"), liq_pct,
             ])
+            prev_metrics = m
         sections.append({
             "title": "Quarterly Trend",
             "type": "table",
-            "columns": ["Período", "Receita", "EBITDA", "Lucro Liq."],
+            "negative_red": True,
+            "positive_green": True,
+            "columns": ["Período", "Receita", "Δ%", "EBITDA", "Δ%", "Lucro Liq.", "Δ%"],
             "rows": trend_rows,
+            "sortable": True,
+            "default_sort": {"column": 0, "direction": "desc"},
+            "sort_types": ["text", "text", "text", "text", "text", "text", "text"],
+            "column_align": ["left", "right", "right", "right", "right", "right", "right"],
         })
 
     # [v1.16] Freshness tables removed from Overview — the freshness footer
@@ -491,45 +548,58 @@ def build_financials_heatmap(ratios_payload: dict | None) -> dict | None:
     # [v1.22 fix] In financials, ratios_payload is a FLAT dict — use directly.
     ratios = ratios_payload
 
-    def _heat(val, good, bad, reverse=False):
+    _HEATMAP_TOOLTIPS = {
+        "ROE": "ROE = Lucro Líquido / Patrimônio Líquido. >20% bom, <10% ruim.",
+        "ROA": "ROA = Lucro Líquido / Ativo Total. >10% bom, <5% ruim.",
+        "ROIC": "ROIC = NOPAT / Capital Investido. >12% bom, <7% ruim.",
+        "Margem Líquida": "Margem Líquida = Lucro / Receita. >15% bom, <5% ruim.",
+        "Margem EBITDA": "Margem EBITDA = EBITDA / Receita. >25% bom, <10% ruim.",
+        "Margem Operacional": "Margem Oper. = EBIT / Receita. >15% bom, <5% ruim.",
+        "D/E": "Dívida/PL. <0,5 bom, >2,0 ruim.",
+        "Dív. Líq./EBITDA": "Dív. Líq./EBITDA. <1,5 bom, >3,5 ruim.",
+        "Liquidez Corrente": "Ativo Circ. / Passivo Circ. >1,5 bom, <1,0 ruim.",
+        "Cresc. Receita 1Y": "Crescimento Receita YoY. >10% bom, <0% ruim.",
+    }
+
+    def _heat(val, good, bad, reverse=False, tooltip=""):
         if val is None:
-            return {"text": "—", "bg": "", "color": ""}
+            return {"text": "—", "bg": "", "color": "", "tooltip": tooltip}
         if reverse:
             if val <= good:
-                return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+                return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a", "tooltip": tooltip}
             elif val <= bad:
-                return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+                return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706", "tooltip": tooltip}
             else:
-                return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+                return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626", "tooltip": tooltip}
         else:
             if val >= good:
-                return {"text": f"{val*100:.1f}%", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a", "tooltip": tooltip}
             elif val >= bad:
-                return {"text": f"{val*100:.1f}%", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(245,158,11,0.2)", "color": "#d97706", "tooltip": tooltip}
             else:
-                return {"text": f"{val*100:.1f}%", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+                return {"text": f"{val*100:.1f}%", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626", "tooltip": tooltip}
 
-    def _heat_ratio(val, good_min, bad_min):
+    def _heat_ratio(val, good_min, bad_min, tooltip=""):
         if val is None:
-            return {"text": "—", "bg": "", "color": ""}
+            return {"text": "—", "bg": "", "color": "", "tooltip": tooltip}
         if val >= good_min:
-            return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a"}
+            return {"text": f"{val:.2f}", "bg": "rgba(34,197,94,0.2)", "color": "#16a34a", "tooltip": tooltip}
         elif val >= bad_min:
-            return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706"}
+            return {"text": f"{val:.2f}", "bg": "rgba(245,158,11,0.2)", "color": "#d97706", "tooltip": tooltip}
         else:
-            return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626"}
+            return {"text": f"{val:.2f}", "bg": "rgba(220,38,38,0.2)", "color": "#dc2626", "tooltip": tooltip}
 
     rows = [
-        ["ROE", _heat(ratios.get("roe"), 0.20, 0.10)],
-        ["ROA", _heat(ratios.get("roa"), 0.10, 0.05)],
-        ["ROIC", _heat(ratios.get("roic"), 0.12, 0.07)],
-        ["Margem Líquida", _heat(ratios.get("net_margin"), 0.15, 0.05)],
-        ["Margem EBITDA", _heat(ratios.get("ebitda_margin"), 0.25, 0.10)],
-        ["Margem Operacional", _heat(ratios.get("operating_margin"), 0.15, 0.05)],
-        ["D/E", _heat(ratios.get("debt_equity"), 0.5, 2.0, reverse=True)],
-        ["Dív. Líq./EBITDA", _heat(ratios.get("net_debt_ebitda"), 1.5, 3.5, reverse=True)],
-        ["Liquidez Corrente", _heat_ratio(ratios.get("current_ratio"), 1.5, 1.0)],
-        ["Cresc. Receita 1Y", _heat(ratios.get("revenue_growth_1y"), 0.10, 0.0)],
+        ["ROE", _heat(ratios.get("roe"), 0.20, 0.10, tooltip=_HEATMAP_TOOLTIPS["ROE"])],
+        ["ROA", _heat(ratios.get("roa"), 0.10, 0.05, tooltip=_HEATMAP_TOOLTIPS["ROA"])],
+        ["ROIC", _heat(ratios.get("roic"), 0.12, 0.07, tooltip=_HEATMAP_TOOLTIPS["ROIC"])],
+        ["Margem Líquida", _heat(ratios.get("net_margin"), 0.15, 0.05, tooltip=_HEATMAP_TOOLTIPS["Margem Líquida"])],
+        ["Margem EBITDA", _heat(ratios.get("ebitda_margin"), 0.25, 0.10, tooltip=_HEATMAP_TOOLTIPS["Margem EBITDA"])],
+        ["Margem Operacional", _heat(ratios.get("operating_margin"), 0.15, 0.05, tooltip=_HEATMAP_TOOLTIPS["Margem Operacional"])],
+        ["D/E", _heat(ratios.get("debt_equity"), 0.5, 2.0, reverse=True, tooltip=_HEATMAP_TOOLTIPS["D/E"])],
+        ["Dív. Líq./EBITDA", _heat(ratios.get("net_debt_ebitda"), 1.5, 3.5, reverse=True, tooltip=_HEATMAP_TOOLTIPS["Dív. Líq./EBITDA"])],
+        ["Liquidez Corrente", _heat_ratio(ratios.get("current_ratio"), 1.5, 1.0, tooltip=_HEATMAP_TOOLTIPS["Liquidez Corrente"])],
+        ["Cresc. Receita 1Y", _heat(ratios.get("revenue_growth_1y"), 0.10, 0.0, tooltip=_HEATMAP_TOOLTIPS["Cresc. Receita 1Y"])],
     ]
 
     return {
