@@ -286,6 +286,8 @@ def build_altman_z_section(
         "type": "table",
         "columns": ["Métrica", "Valor"],
         "rows": rows,
+        "negative_red": True,
+        "positive_green": True,
         "note": "X2 usa PL como proxy para lucros retidos (engine BPP 2.03.03+2.03.04 não existe ainda). Interpretar com cautela para empresas não-manufatureiras (bancos, serviços).",
     }
 
@@ -385,4 +387,6 @@ def build_wacc_section(
         "type": "table",
         "columns": ["Métrica", "Valor"],
         "rows": rows,
+        "negative_red": True,
+        "positive_green": True,
     }

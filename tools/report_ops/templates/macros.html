@@ -8,7 +8,7 @@
 </div>
 {% endmacro %}
 
-{% macro data_table(headers, rows, negative_red=False, column_align=None, sortable=False, default_sort=None, sort_types=None, wide=False, extra_class='') %}
+{% macro data_table(headers, rows, negative_red=False, column_align=None, sortable=False, default_sort=None, sort_types=None, wide=False, extra_class='', positive_green=False) %}
 <table class="data-table{% if wide %} wide{% endif %}{{ ' ' ~ extra_class if extra_class else '' }}" style="width: auto; min-width: 100%">
   <thead><tr>
     {% for h in headers %}
@@ -39,6 +39,7 @@
     {% set cell_color = cell.color if cell is mapping else None %}
     {% set cell_tooltip = cell.tooltip if cell is mapping else None %}
     {% set is_neg = negative_red and cell_text is string and (cell_text.startswith('-') or 'R$ -' in cell_text) %}
+    {% set is_pos = positive_green and cell_text is string and not is_neg and cell_text != '—' and '%' in cell_text %}
     {% set col_idx = loop.index0 %}
     {% set is_frozen = wide and not cell_colspan and col_idx < 2 %}
     {% set align = column_align[col_idx] if column_align and col_idx < column_align|length else 'left' %}
@@ -52,7 +53,7 @@
     {% if cell_is_header %} class="section-header-row{{ frozen_hdr_class }}" style="text-align: left; font-weight: 600; color: var(--text); background: var(--bg-sec); font-style: italic; padding: 6px 12px; border-top: 1px solid var(--border);"
     {% else %}
       {% if is_frozen %} class="frozen-{{ col_idx }}"{% endif %}
-      style="text-align: {{ align }};{% if align != 'left' %} font-variant-numeric: tabular-nums; white-space: nowrap;{% endif %}{% if is_neg %} color: #ef4444; font-weight: 600;{% elif cell_color %} color: {{ cell_color }};{% endif %}{% if cell_bg %} background: {{ cell_bg }};{% endif %}{% if cell_tooltip %} cursor: help;{% endif %}"
+      style="text-align: {{ align }};{% if align != 'left' %} font-variant-numeric: tabular-nums; white-space: nowrap;{% endif %}{% if is_neg %} color: #ef4444; font-weight: 600;{% elif is_pos %} color: #22c55e; font-weight: 600;{% elif cell_color %} color: {{ cell_color }};{% endif %}{% if cell_bg %} background: {{ cell_bg }};{% endif %}{% if cell_tooltip %} cursor: help;{% endif %}"
       {% if cell_data_value %} data-value="{{ cell_data_value }}"{% endif %}
       {% if cell_tooltip %} title="{{ cell_tooltip }}" data-tooltip="{{ cell_tooltip }}"{% endif %}
     {% endif %}>{% if cell is mapping %}{{ cell_text }}{% if cell_tooltip %}<span class="ratio-info" aria-hidden="true">&#9432;</span>{% endif %}{% else %}{{ cell }}{% endif %}</td>
@@ -113,7 +114,7 @@
     {% endif %}
     {% if sec.type == 'table' and sec.columns and sec.rows %}
     {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
+    {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default(''), positive_green=sec.positive_green|default(False)) }}
     {% if sec.wide %}</div>{% endif %}
     {% elif sec.type == 'table' %}
     <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -136,7 +137,7 @@
 {% endif %}
 {% if sec.type == 'table' and sec.columns and sec.rows %}
 {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
+{{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default(''), positive_green=sec.positive_green|default(False)) }}
 {% if sec.wide %}</div>{% endif %}
 {% elif sec.type == 'table' %}
 <div class="text-block" style="color: var(--text-sec); font-style: italic;">No data available.</div>
@@ -173,6 +174,12 @@
 {% endif %}
 {% if sec.type == 'chart' and sec.chart_data %}
 <div class="chart-box"><canvas id="{{ canvas_id }}"></canvas></div>
+{% endif %}
+{% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
+{{ two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows, negative_red=sec.negative_red|default(False), positive_green=sec.positive_green|default(False)) }}
+{% endif %}
+{% if sec.type == 'collapsible' and sec.sections %}
+{{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False), sections=sec.get('sections'), prefix=canvas_id) }}
 {% endif %}
 {% endif %}
 {% endmacro %}
@@ -289,7 +296,7 @@
       {% if sec.type == 'table' and sec.columns and sec.rows %}
       {# [v1.24] Wrap wide tables (>5 period columns) in overflow-x: auto. #}
       {% if sec.wide %}<div style="overflow-x: auto;">{% endif %}
-      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default('')) }}
+      {{ data_table(sec.columns, sec.rows, negative_red=sec.negative_red|default(False), column_align=sec.column_align|default(None), sortable=sec.sortable|default(False), default_sort=sec.default_sort|default(None), sort_types=sec.sort_types|default(None), wide=sec.wide|default(False), extra_class=sec.extra_class|default(''), positive_green=sec.positive_green|default(False)) }}
       {% if sec.wide %}</div>{% endif %}
       {% elif sec.type == 'heatmap' and sec.columns and sec.rows %}
       {{ heatmap_table(sec.columns, sec.rows) }}
@@ -314,7 +321,7 @@
       {{ chart_canvas(prefix + '-' + sub_loop.index|string + '-chart-' + loop.index|string) }}
       {% endif %}
       {% if sec.type == 'two_column' and sec.left_rows and sec.right_rows %}
-      {{ two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows) }}
+      {{ two_column(sec.left_title | default(''), sec.left_rows, sec.right_title | default(''), sec.right_rows, negative_red=sec.negative_red|default(False), positive_green=sec.positive_green|default(False)) }}
       {% endif %}
       {% if sec.type == 'ratio_grid' and sec.categories %}
       {{ ratio_grid(sec.categories) }}

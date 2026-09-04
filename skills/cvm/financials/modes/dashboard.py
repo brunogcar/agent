@@ -194,6 +194,12 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
                                 capex_map[year] = val
                 return capex_map
             except Exception as e:
+                # [v2.5 fix] Log the exception so a structural failure (not
+                # just "no data") is observable. The empty dict return
+                # degrades gracefully (CAPEX falls back to FCI proxy) but
+                # without this log the failure is completely silent.
+                import sys
+                print(f"[financials] CapEx engine fetch failed: {e}", file=sys.stderr, flush=True)
                 return {}
 
         tasks = {
@@ -337,11 +343,17 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
         overview_subtabs.append({"name": "Trajetória Anual", "sections": sub2_sections})
 
     # Subtab 3: Análise de Risco
+    # [v2.5 fix] WACC + Altman builders call wacc_history / altman_z_history
+    # which make ~1,620 engine calls each (6 engines × 270 dates). These
+    # MUST be wrapped in engine_cache_scope so the engine calls share the
+    # cache populated by the parallel-fetch phase. Without this, every
+    # engine call re-queries DFP/ITR/cotahist from scratch.
     sub3_sections = []
     try:
-        wacc_sec = build_wacc_section(ratios_payload, company=company, today=today)
-        if wacc_sec:
-            sub3_sections.append(wacc_sec)
+        with engine_cache_scope():
+            wacc_sec = build_wacc_section(ratios_payload, company=company, today=today)
+            if wacc_sec:
+                sub3_sections.append(wacc_sec)
     except Exception as e:
         print(f"[financials] WACC section failed: {e}", flush=True)
     try:
@@ -351,9 +363,10 @@ def dashboard(company: str = "", consolidado: int = 1) -> dict:
     except Exception as e:
         print(f"[financials] DuPont section failed: {e}", flush=True)
     try:
-        altman_sec = build_altman_z_section(ratios_payload, company=company, today=today)
-        if altman_sec:
-            sub3_sections.append(altman_sec)
+        with engine_cache_scope():
+            altman_sec = build_altman_z_section(ratios_payload, company=company, today=today)
+            if altman_sec:
+                sub3_sections.append(altman_sec)
     except Exception as e:
         print(f"[financials] Altman Z section failed: {e}", flush=True)
     try:

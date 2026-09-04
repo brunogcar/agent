@@ -249,7 +249,10 @@ def _extract_value(
                 quarter_num = period.get("quarter")
                 if quarter_num is not None:
                     month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
-                    me = month_end.get(int(quarter_num))
+                    try:
+                        me = month_end.get(int(quarter_num))
+                    except (TypeError, ValueError):
+                        me = None
                     if me:
                         date_label = f"{year_label}-{me}"
             # Year extracted from data_fim_exerc (e.g. "2025" from "2025-12-31")
@@ -772,7 +775,10 @@ def build_indicator_charts(periods: list[dict], label: str,
                 quarter_num = p.get("quarter")
                 if quarter_num is not None:
                     month_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
-                    me = month_end.get(int(quarter_num))
+                    try:
+                        me = month_end.get(int(quarter_num))
+                    except (TypeError, ValueError):
+                        me = None
                     if me:
                         date_label = f"{year_label}-{me}"
             year_from_date = date_label[:4] if len(date_label) >= 4 else ""

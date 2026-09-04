@@ -130,7 +130,8 @@ def build_crescimento_sections(
             "meses; 1Y e 5Y usam janelas de 1 e 5 anos com tolerância de gap."
         ),
         "type": "table",
-            "negative_red": True,
+        "negative_red": True,
+        "positive_green": True,
         "columns": ["Métrica", "3M", "1Y", "5Y"],
         "rows": rows,
         "note": (

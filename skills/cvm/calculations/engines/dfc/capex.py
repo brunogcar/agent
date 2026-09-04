@@ -250,6 +250,17 @@ def capex_at(company: str, date: str) -> float | None:
     current_meses = current["meses"]
     current_year = current["year"]
 
+    # [v2.5 fix B31] When the current year's DFP (full year, meses=12) is
+    # available and its date <= the query date, return the full-year DFP
+    # value directly. This handles the case where the user queries
+    # date=2024-12-31 (year-end) but the most recent ITR is 2024-09-30
+    # (Q3). Without this, the TTM would end at 2024-09-30 (stale by one
+    # quarter). The DFP for the current year IS the full-year CapEx, so
+    # returning it directly is the correct year-end value.
+    current_dfp = dfp.get(str(current_year))
+    if current_dfp and current_dfp["date"] <= date:
+        return current_dfp["value"]
+
     # Find same period (same meses) from prior year
     prior_year = current_year - 1
     prior_itr_date = None
@@ -303,6 +314,22 @@ def capex_periods(company: str) -> list[dict]:
     for year, data in sorted(dfp.items()):
         if data["date"] < all_itr_dates[0] if all_itr_dates else True:
             periods.append({"date": data["date"], "ttm_capex": data["value"]})
+
+    # [v2.5 fix B30] Also add the latest DFP date when it's more recent than
+    # the latest ITR. Without this, the most recent annual period (e.g.
+    # 2024-12-31 DFP after the latest ITR 2024-09-30) is missing from the
+    # result, so the annual comprehensive table's most recent year falls
+    # back to the FCI proxy instead of real CapEx.
+    if dfp and all_itr_dates:
+        latest_dfp_year = max(dfp.keys())
+        latest_dfp = dfp[latest_dfp_year]
+        if latest_dfp["date"] > all_itr_dates[-1]:
+            # capex_at for the DFP date returns full-year CapEx when the DFP
+            # is available (the B31 fix in capex_at handles this).
+            full_year_capex = capex_at(company, latest_dfp["date"])
+            if full_year_capex is not None:
+                periods.append({"date": latest_dfp["date"],
+                                "ttm_capex": full_year_capex})
 
     # Sort and deduplicate by date
     periods.sort(key=lambda p: p["date"])

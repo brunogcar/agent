@@ -213,7 +213,7 @@ def build_overview_sections(
     # "YYYY-QQ" sort key.
     if quarterly_periods:
         # [v24] Quarterly Trend with % evolution columns (QoQ delta)
-        # [v2.4 fix] The delta is relative to the PREVIOUS trimester (the
+        # [v2.5 fix] The delta is relative to the PREVIOUS trimester (the
         # OLDER period in time), NOT the newer one. The old logic iterated
         # newest-first with `prev_metrics = m` set at the END of the loop,
         # so `prev_metrics` was actually the NEWER period — the deltas were
@@ -763,6 +763,14 @@ def build_quality_of_earnings_section(
             "consecutivos — lucro não está se convertendo em caixa."
         )
 
+    # [v2.5 fix B33] Add caveat about |NI| denominator fragility.
+    caveat = (
+        "Nota: o ratio usa |Lucro Líquido| no denominador — instável "
+        "quando o lucro é próximo de zero. Para empresas em prejuízo, "
+        "interpretar o label com cautela."
+    )
+    full_note = " | ".join(filter(None, [note, caveat]))
+
     return {
         "type": "table",
         "title": "Qualidade do Lucro — NI vs FCO (5 anos)",
@@ -775,8 +783,9 @@ def build_quality_of_earnings_section(
         "columns": ["Ano", "Lucro Líquido", "FCO", "Diferença", "Accruals", "Qualidade"],
         "rows": rows,
         "negative_red": True,
+        "positive_green": True,
         "column_align": ["left", "right", "right", "right", "right", "center"],
-        "note": note,
+        "note": full_note,
     }
 
 

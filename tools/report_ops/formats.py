@@ -81,6 +81,8 @@ def fmt_brl(value: Any, suffix: bool = True) -> str:
                 s = s[:-2] + " bi"
             elif s.endswith(" M"):
                 s = s[:-2] + " mi"
+            elif s.endswith(" K"):  # [v2.5 fix B37] K (thousand) → mil
+                s = s[:-2] + " mil"
         return s
     except (TypeError, ValueError):
         return _DASH

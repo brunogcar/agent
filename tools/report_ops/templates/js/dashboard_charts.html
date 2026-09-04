@@ -393,7 +393,9 @@
     var hasDates = false;
     for (var i = 0; i < Math.min(labels.length, 5); i++) {
       var l = String(labels[i]);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(l) || /^\d{2}\/\d{2}\/\d{4}$/.test(l)) {
+      // [v2.5 fix B36] Include Brazilian quarterly labels (1T2026, 4T2025)
+      // so quarterly trend charts get zoom too.
+      if (/^\d{4}-\d{2}-\d{2}$/.test(l) || /^\d{2}\/\d{2}\/\d{4}$/.test(l) || /^[1-4]T\d{4}$/.test(l)) {
         hasDates = true;
         break;
       }
@@ -405,12 +407,13 @@
       pan: {
         enabled: true,
         mode: 'x',
-        modifierKey: null,  // no modifier needed — just drag
+        modifierKey: 'shift',  // [v2.5 fix B32] require Shift+drag to pan — bare drag would block text selection
       },
       zoom: {
         wheel: {
           enabled: true,  // mouse wheel zoom
           speed: 0.1,     // zoom speed (lower = smoother)
+          modifierKey: 'shift',  // [v2.5 fix B32] require Shift+wheel to zoom — bare wheel would block page scroll
         },
         pinch: {
           enabled: true,  // touch pinch zoom
