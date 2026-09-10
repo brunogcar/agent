@@ -44,6 +44,15 @@ from skills.cvm.valuation.report import (
     build_margin_trend_chart,
     build_valuation_radar,
     build_valuation_heatmap,
+    build_price_multiples_history_chart,
+    build_ebit_multiples_history_chart,
+    build_ebitda_multiples_history_chart,
+    build_price_to_balance_history_chart,
+    build_asset_to_price_history_chart,
+    build_margins_horizons_chart,
+    build_growth_evolution_charts,
+    _fmt,
+    _safe_get,
 )
 
 
@@ -171,33 +180,77 @@ def dashboard(company: str = "") -> dict:
         multiples_sections = _safe_build(build_multiples_sections, ratios_dict)
         per_share_sections = _safe_build(build_per_share_sections, ratios_dict)
 
-        # Split multiples_sections by title into the 3 groups.
+        # Split multiples_sections by title into groups.
         price_secs: list[dict] = []
         ev_secs: list[dict] = []
         less_secs: list[dict] = []
+        ebit_ebitda_secs: list[dict] = []  # [v2.1] New EBIT/EBITDA subtab
         for s in multiples_sections:
             title = (s.get("title") or "").lower()
-            if "ev" in title and "menos" not in title:
-                ev_secs.append(s)
-            elif "menos comuns" in title:
+            if "menos comuns" in title:
                 less_secs.append(s)
+            elif "ev" in title:
+                ev_secs.append(s)
+            elif "ebit" in title or "ebitda" in title:
+                ebit_ebitda_secs.append(s)
             else:
                 price_secs.append(s)
         price_secs.extend(per_share_sections)
 
         # [v1.10] P/L, LPA, P/VP, VPA 5Y historical evolution chart.
+        # [v2.1] Chart moved to the TOP of the Preço subtab (was appended last).
         try:
             pl_lpa_chart = build_pl_lpa_pvp_vpa_history_chart(company)
             if pl_lpa_chart:
-                price_secs.append(pl_lpa_chart)
+                price_secs.insert(0, pl_lpa_chart)
         except Exception as e:
             print(f"[valuation] P/L-LPA history chart failed: {e}", flush=True)
 
+        # [v2.1] New price-multiples evolution chart (PSR, P/RB, P/L, P/CG, P/DB).
+        try:
+            price_mult_chart = build_price_multiples_history_chart(company)
+            if price_mult_chart:
+                price_secs.insert(1, price_mult_chart)
+        except Exception as e:
+            print(f"[valuation] Price multiples history chart failed: {e}", flush=True)
+
+        # [v2.1] New EBIT evolution chart at the top of the EBIT/EBITDA subtab.
+        try:
+            ebit_chart = build_ebit_multiples_history_chart(company)
+            if ebit_chart:
+                ebit_ebitda_secs.insert(0, ebit_chart)
+        except Exception as e:
+            print(f"[valuation] EBIT multiples history chart failed: {e}", flush=True)
+
+        # [v2.1] New EBITDA evolution chart (2nd position in EBIT/EBITDA subtab).
+        try:
+            ebitda_chart = build_ebitda_multiples_history_chart(company)
+            if ebitda_chart:
+                ebit_ebitda_secs.insert(1, ebitda_chart)
+        except Exception as e:
+            print(f"[valuation] EBITDA multiples history chart failed: {e}", flush=True)
+
+        # [v2.1] Split price-to-balance + asset-to-price evolution charts.
+        try:
+            ptb_chart = build_price_to_balance_history_chart(company)
+            if ptb_chart:
+                less_secs.insert(0, ptb_chart)
+        except Exception as e:
+            print(f"[valuation] Price-to-balance history chart failed: {e}", flush=True)
+        try:
+            atp_chart = build_asset_to_price_history_chart(company)
+            if atp_chart:
+                less_secs.insert(1, atp_chart)
+        except Exception as e:
+            print(f"[valuation] Asset-to-price history chart failed: {e}", flush=True)
+
         multiples_tab_sections: list[dict] = []
-        if price_secs or ev_secs or less_secs:
+        if price_secs or ev_secs or less_secs or ebit_ebitda_secs:
             multiples_subtabs: list[dict] = []
             if price_secs:
                 multiples_subtabs.append({"name": "Preço", "sections": price_secs})
+            if ebit_ebitda_secs:
+                multiples_subtabs.append({"name": "EBIT/EBITDA", "sections": ebit_ebitda_secs})
             if ev_secs:
                 multiples_subtabs.append({"name": "EV", "sections": ev_secs})
             if less_secs:
@@ -230,20 +283,33 @@ def dashboard(company: str = "") -> dict:
                     seen_returns_chart = True
 
         # [v1.10] ROIC/ROE/ROA 5Y historical step-line chart (uses *_history()).
+        # [v2.1] Chart moved to the TOP of the Retornos subtab (was appended last).
         try:
             roe_trend = build_roe_trend_chart(company)
             if roe_trend:
-                ret_secs.append(roe_trend)
+                ret_secs.insert(0, roe_trend)
         except Exception as e:
             print(f"[valuation] ROE trend chart failed: {e}", flush=True)
 
         # [v1.11] Margins 5Y historical step-line chart in Margens subtab.
+        # [v2.1] Chart moved to the TOP of the Margens subtab (was appended last).
+        #        Colors unified with financials (maroon/pink shades).
         try:
             margin_trend = build_margin_trend_chart(company)
             if margin_trend:
-                mar_secs.append(margin_trend)
+                mar_secs.insert(0, margin_trend)
         except Exception as e:
             print(f"[valuation] Margin trend chart failed: {e}", flush=True)
+
+        # [v2.1] New margins × horizons chart (MB/ML at 3M/1A/5A + EBIT/EBITDA%).
+        # Now returns 3 separate charts (EBIT, EBITDA, MB+ML).
+        try:
+            margins_charts = build_margins_horizons_chart(company)
+            if margins_charts:
+                for mc in margins_charts:
+                    mar_secs.insert(1, mc)
+        except Exception as e:
+            print(f"[valuation] Margins horizons chart failed: {e}", flush=True)
 
         # [v1.11] Radar + Heatmap in Overview tab.
         try:
@@ -329,6 +395,106 @@ def dashboard(company: str = "") -> dict:
             else:
                 eff_secs.append(s)
 
+        # [v2.1] New growth evolution charts (RL, RB, LL with 3M/1A/5A).
+        try:
+            growth_charts = build_growth_evolution_charts(company)
+        except Exception as e:
+            print(f"[valuation] Growth evolution charts failed: {e}", flush=True)
+            growth_charts = []
+
+        # [v2.1] Restructure Crescimento into 4 self-contained sub-subtabs:
+        #   Receita Líq.   — RL evolution chart + RL mini-table (3M/1Y/5Y) + RL bar chart
+        #   Receita Bruta — RB evolution chart + RB mini-table + RB bar chart
+        #   Lucro Líq.    — LL evolution chart + LL mini-table + LL bar chart
+        #   Comparativo   — original per-horizon tables + comparison bar charts
+        # Each metric subtab shows that metric's data end-to-end; the Comparativo
+        # subtab preserves the cross-metric comparison view. The template now
+        # supports nested subtabs (macros.html `subtabs` macro recurses).
+
+        # Map each evolution chart to its metric by title.
+        rl_evo = rb_evo = ll_evo = None
+        for gc in growth_charts:
+            gc_title = (gc.get("title") or "").lower()
+            if "receita líquida" in gc_title:
+                rl_evo = gc
+            elif "receita bruta" in gc_title:
+                rb_evo = gc
+            elif "lucro líquido" in gc_title:
+                ll_evo = gc
+
+        # Per-metric growth definitions: (label, key_3m, key_1y, key_5y, color, evo_chart, tab_name)
+        _METRIC_DEFS = [
+            ("Receita Líquida", "revenue_growth_3m", "revenue_growth_1y", "revenue_growth_5y",
+             "#f59e0b", rl_evo, "Receita Líq."),
+            ("Receita Bruta", "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y",
+             "#d946a0", rb_evo, "Receita Bruta"),
+            ("Lucro Líquido", "net_income_growth_3m", "net_income_growth_1y", "net_income_growth_5y",
+             "#a855f7", ll_evo, "Lucro Líq."),
+        ]
+        _HORIZONS = [("3M", 0), ("1Y", 1), ("5Y", 5)]
+
+        def _build_metric_subtab(metric_label, key_3m, key_1y, key_5y, color, evo_chart):
+            """Build a self-contained subtab for one growth metric."""
+            secs: list[dict] = []
+            if evo_chart:
+                secs.append(evo_chart)
+            # Per-metric mini-table: 3 rows (3M, 1Y, 5Y) for this metric only.
+            rows = []
+            bar_labels: list[str] = []
+            bar_values: list[float] = []
+            for win_label, _ in _HORIZONS:
+                key = key_3m if win_label == "3M" else key_1y if win_label == "1Y" else key_5y
+                val = _safe_get(ratios_dict, key)
+                formula = _get_tooltip(key) or f"Crescimento de {metric_label} {win_label}"
+                rows.append([{"text": f"Crescimento {win_label}", "tooltip": formula},
+                             _fmt(val, "pct")])
+                if val is not None:
+                    bar_labels.append(win_label)
+                    bar_values.append(val * 100 if abs(val) < 1 else val)
+            secs.append({
+                "title": f"{metric_label} — Crescimento por Horizonte",
+                "description": f"Crescimento de {metric_label} em 3 meses, 1 ano e 5 anos.",
+                "type": "table",
+                "columns": ["Horizonte", "Crescimento"],
+                "rows": rows,
+                "negative_red": True,
+                "positive_green": True,
+            })
+            # Per-metric bar chart comparing the 3 horizons (same color as the
+            # evolution chart so the subtab is visually cohesive).
+            if len(bar_labels) >= 2:
+                secs.append({
+                    "type": "chart",
+                    "title": f"{metric_label} — Comparativo de Horizontes",
+                    "description": f"Crescimento de {metric_label}: 3M, 1Y e 5Y.",
+                    "chart_data": {
+                        "type": "bar",
+                        "data": {"labels": bar_labels,
+                                 "datasets": [{"label": metric_label, "data": bar_values,
+                                               "backgroundColor": color}]},
+                        "options": {"responsive": True, "maintainAspectRatio": False,
+                                    "scales": {"y": {"beginAtZero": True}}},
+                    },
+                })
+            return secs
+
+        cres_subtabs: list[dict] = []
+        for metric_label, k3m, k1y, k5y, color, evo, tab_name in _METRIC_DEFS:
+            sub_secs = _build_metric_subtab(metric_label, k3m, k1y, k5y, color, evo)
+            if sub_secs:
+                cres_subtabs.append({"name": tab_name, "sections": sub_secs})
+
+        # Comparativo subtab: keep ALL original per-horizon tables + comparison
+        # bar charts (they compare Receita Líquida / Receita Bruta / Lucro
+        # Líquido side by side at each horizon).
+        if grow_secs:
+            cres_subtabs.append({"name": "Comparativo", "sections": grow_secs})
+
+        if cres_subtabs:
+            grow_secs = [{"type": "subtabs", "tabs": cres_subtabs}]
+        else:
+            grow_secs = []
+
         efficiency_tab_sections: list[dict] = []
         if eff_secs or grow_secs:
             eg_subtabs: list[dict] = []
@@ -369,38 +535,35 @@ def dashboard(company: str = "") -> dict:
             if intrinsic is not None:
                 rows.append([
                     {"text": "DCF Valor Intrínseco", "tooltip": _get_tooltip("dcf_intrinsic_value")},
-                    f"R$ {intrinsic:.2f}",
+                    _fmt(intrinsic, "brl_full"),
                 ])
             if price_val is not None:
                 rows.append([
                     {"text": "Preço Atual", "tooltip": "Preço atual da ação no mercado (COTAHIST)"},
-                    f"R$ {float(price_val):.2f}",
+                    _fmt(float(price_val), "brl_full"),
                 ])
             if mos is not None:
-                mos_pct = mos * 100
                 assessment = "Subavaliado" if mos > 0.25 else ("Justo" if mos > 0 else "Supervalorizado")
                 rows.append([
                     {"text": "Margem de Segurança", "tooltip": _get_tooltip("dcf_margin_of_safety")},
-                    f"{mos_pct:.1f}% ({assessment})",
+                    f"{_fmt(mos, 'pct')} ({assessment})",
                 ])
             if irr_val is not None:
-                irr_pct = irr_val * 100
                 rows.append([
                     {"text": "TIR (IRR)", "tooltip": _get_tooltip("irr")},
-                    f"{irr_pct:.1f}%",
+                    _fmt(irr_val, "pct"),
                 ])
             if wacc_val is not None:
-                wacc_pct = wacc_val * 100
                 rows.append([
                     {"text": "WACC", "tooltip": _get_tooltip("wacc")},
-                    f"{wacc_pct:.1f}%",
+                    _fmt(wacc_val, "pct"),
                 ])
                 if irr_val is not None:
-                    spread = (irr_val - wacc_val) * 100
+                    spread = irr_val - wacc_val
                     verdict = "Cria valor (TIR > WACC)" if irr_val > wacc_val else "Destrói valor (TIR < WACC)"
                     rows.append([
                         {"text": "TIR - WACC", "tooltip": "Spread entre retorno esperado e custo de capital. >0 = cria valor."},
-                        f"{spread:.1f}% ({verdict})",
+                        f"{_fmt(spread, 'pct')} ({verdict})",
                     ])
 
             if rows:
@@ -410,6 +573,8 @@ def dashboard(company: str = "") -> dict:
                     "type": "table",
                     "columns": ["Métrica", "Valor"],
                     "rows": rows,
+                    "negative_red": True,
+                    "positive_green": True,
                     "note": "Premissas: crescimento FCF = revenue_growth_1y, crescimento terminal = IPCA 12M, período = 5 anos, desconto = WACC.",
                 })
                 overview_sections.append(intrinsic_sections[-1])

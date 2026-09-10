@@ -249,8 +249,8 @@ def build_margin_trend_chart(company: str) -> dict | None:
                 {
                     "label": "Margem Bruta",
                     "data": gm_vals,
-                    "borderColor": "#3b82f6",   # blue
-                    "backgroundColor": "rgba(59,130,246,0.1)",
+                    "borderColor": "#7f1d1d",   # dark maroon (unified financials scheme)
+                    "backgroundColor": "rgba(127,29,29,0.1)",
                     "tension": 0,
                     "stepped": "after",
                     "fill": False,
@@ -259,22 +259,10 @@ def build_margin_trend_chart(company: str) -> dict | None:
                     "borderWidth": 2,
                 },
                 {
-                    "label": "Margem Operacional",
+                    "label": "Margem EBIT",
                     "data": om_vals,
-                    "borderColor": "#0d9488",   # teal
-                    "backgroundColor": "rgba(13,148,136,0.1)",
-                    "tension": 0,
-                    "stepped": "after",
-                    "fill": False,
-                    "pointRadius": 0,
-                    "pointHoverRadius": 4,
-                    "borderWidth": 2,
-                },
-                {
-                    "label": "Margem Líquida",
-                    "data": nm_vals,
-                    "borderColor": "#22c55e",   # green
-                    "backgroundColor": "rgba(34,197,94,0.1)",
+                    "borderColor": "#f9a8d4",   # light pink/mauve (unified financials scheme)
+                    "backgroundColor": "rgba(249,168,212,0.1)",
                     "tension": 0,
                     "stepped": "after",
                     "fill": False,
@@ -285,8 +273,20 @@ def build_margin_trend_chart(company: str) -> dict | None:
                 {
                     "label": "Margem EBITDA",
                     "data": em_vals,
-                    "borderColor": "#f59e0b",   # orange
-                    "backgroundColor": "rgba(245,158,11,0.1)",
+                    "borderColor": "#fbcfe8",   # pale pink (unified financials scheme)
+                    "backgroundColor": "rgba(251,207,232,0.1)",
+                    "tension": 0,
+                    "stepped": "after",
+                    "fill": False,
+                    "pointRadius": 0,
+                    "pointHoverRadius": 4,
+                    "borderWidth": 2,
+                },
+                {
+                    "label": "Margem Líquida",
+                    "data": nm_vals,
+                    "borderColor": "#be123c",   # maroon (unified financials scheme)
+                    "backgroundColor": "rgba(190,18,60,0.1)",
                     "tension": 0,
                     "stepped": "after",
                     "fill": False,
@@ -318,11 +318,12 @@ def build_margin_trend_chart(company: str) -> dict | None:
 
     return {
         "type": "chart",
-        "title": f"Margens — Evolução 5A — {company}",
+        "title": "Margens",
         "description": (
             "Evolução histórica das margens (escada trimestral). Bruta, "
-            "Operacional, Líquida e EBITDA. Margens mudam quando novos "
-            "resultados trimestrais são publicados."
+            "EBIT, EBITDA e Líquida. Margens mudam quando novos "
+            "resultados trimestrais são publicados. Cores unificadas com "
+            "o dashboard financials (tons marrom/rosa)."
         ),
         "chart_data": chart_data,
         "price_range_selector": True,
@@ -330,8 +331,8 @@ def build_margin_trend_chart(company: str) -> dict | None:
         "price_full_datasets": [
             {"data": gm_vals},
             {"data": om_vals},
-            {"data": nm_vals},
             {"data": em_vals},
+            {"data": nm_vals},
         ],
         "price_full_data": nm_vals,
     }

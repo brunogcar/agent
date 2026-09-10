@@ -362,6 +362,15 @@
     }
     if (!hasISODate) return;
 
+    // [v2.1] Helper: convert ISO date string → DD/MM/YYYY (or MM/YYYY)
+    function _isoToBR(s) {
+      var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (d) return d[3] + '/' + d[2] + '/' + d[1];
+      var m = s.match(/^(\d{4})-(\d{2})$/);
+      if (m) return m[2] + '/' + m[1];
+      return s;
+    }
+
     config.options = config.options || {};
     config.options.scales = config.options.scales || {};
     config.options.scales.x = config.options.scales.x || {};
@@ -369,14 +378,20 @@
     config.options.scales.x.ticks.callback = function(value, index, ticks) {
       var label = this.getLabelForValue(value);
       if (!label) return label;
-      var s = String(label);
-      // YYYY-MM-DD → DD/MM/YYYY
-      var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (d) return d[3] + '/' + d[2] + '/' + d[1];
-      // YYYY-MM → MM/YYYY
-      var m = s.match(/^(\d{4})-(\d{2})$/);
-      if (m) return m[2] + '/' + m[1];
-      return s;
+      return _isoToBR(String(label));
+    };
+
+    // [v2.1] Also format tooltip titles as DD/MM/YYYY (was showing ISO
+    // YYYY-MM-DD in tooltips, only the x-axis was formatted).
+    config.options.plugins = config.options.plugins || {};
+    config.options.plugins.tooltip = config.options.plugins.tooltip || {};
+    config.options.plugins.tooltip.callbacks = config.options.plugins.tooltip.callbacks || {};
+    // Preserve existing label callback if set (e.g. _tooltipPercent).
+    var _existingLabel = config.options.plugins.tooltip.callbacks.label;
+    config.options.plugins.tooltip.callbacks.title = function(tooltipItems) {
+      if (!tooltipItems || !tooltipItems.length) return '';
+      var label = tooltipItems[0].label || '';
+      return _isoToBR(String(label));
     };
   }
 

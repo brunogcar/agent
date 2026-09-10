@@ -66,6 +66,8 @@ _MULTIPLES_EV: list[tuple[str, str, str, str]] = [
 # Less-common multiples. Key is ratios_dict key. P/Ativo, P/Passivo, P/RB
 # come from the calculations registry (metric names apa/ppa/rbpa hold the
 # ratio value). P/CG and P/DB are derived from components in _derive_multiples.
+# [v2.1] A/P uses 1/apa (inverse of P/Ativo). A/PL uses financial_leverage
+# (registered metric = total_assets / PL). P/PL uses p_vpa (P/VPA ratio).
 _MULTIPLES_LESS_COMMON: list[tuple[str, str, str, str]] = [
     ("P/Ativos",        "apa",                    "num", "Cheap if < 1; expensive if > 2"),
     ("P/Passivos",      "ppa",                    "num", "Higher = more leveraged"),
@@ -73,6 +75,10 @@ _MULTIPLES_LESS_COMMON: list[tuple[str, str, str, str]] = [
     ("P/CG",            "p_cg",                   "num", "Higher = pricier vs working capital"),
     ("P/DB",            "p_db",                   "num", "Higher = pricier vs gross debt"),
     ("P/Tangible Book", "price_to_tangible_book", "num", "Cheap if < 1; expensive if > 3"),
+    # [v2.1] Balance-sheet ratios — use registered metrics directly
+    ("A/P",             "a_p_inverse",            "num", "Ativo / Preço = 1 / P-Ativo. Higher = more assets per price"),
+    ("A/PL",            "financial_leverage",     "num", "Ativo / PL. Leverage indicator (higher = more leveraged)"),
+    ("P/PL",            "p_vpa",                  "num", "Preço / PL ≈ P/VPA. Cheap if < 1; expensive if > 3"),
 ]
 
 # Multiples shown in the comparison bar chart (raw values, no normalization).
@@ -130,6 +136,8 @@ def _derive_multiples(ratios_dict: dict | None) -> dict[str, float | None]:
         "p_ev":       _safe_div(market_cap, ev),
         "p_cg":       _safe_div(market_cap, wc),
         "p_db":       _safe_div(market_cap, db),
+        # [v2.1] A/P = 1 / P-Ativo (inverse of apa ratio from registry)
+        "a_p_inverse": (1.0 / ratios_dict["apa"]) if ratios_dict.get("apa") and ratios_dict["apa"] != 0 else None,
     }
 
 
@@ -139,6 +147,8 @@ def _derive_per_share(ratios_dict: dict | None) -> dict[str, float | None]:
     These are derived from components that ARE in ratios_dict:
       - cgpa = working_capital / shares
       - dbpa = divida_bruta / shares
+      - a_p_ratio = 1 / (P/Ativo) = 1 / apa  (Ativo / Preço)
+      - a_pl_ratio = ativo_total / patrimonio_liquido (Ativo / PL)
     """
     if not isinstance(ratios_dict, dict):
         return {}
@@ -147,9 +157,26 @@ def _derive_per_share(ratios_dict: dict | None) -> dict[str, float | None]:
     wc     = ratios_dict.get("working_capital")
     db     = ratios_dict.get("divida_bruta")
 
+    # [v2.1] A/P = 1 / P-Ativo. apa in ratios_dict is the P/Ativo RATIO
+    # (not the per-share value). So A/P = 1 / apa.
+    apa_ratio = ratios_dict.get("apa")  # P/Ativo ratio
+    a_p = None
+    if apa_ratio is not None and apa_ratio != 0:
+        a_p = 1.0 / apa_ratio
+
+    # [v2.1] A/PL = Ativo Total / PL. Both are in ratios_dict as
+    # ativo_total / patrimonio_liquido (snapshot values from engines).
+    ativo_total = ratios_dict.get("ativo_total") or ratios_dict.get("total_assets")
+    pl = ratios_dict.get("patrimonio_liquido")
+    a_pl = None
+    if ativo_total is not None and pl is not None and pl != 0:
+        a_pl = ativo_total / pl
+
     return {
         "cgpa": _safe_div(wc, shares),
         "dbpa": _safe_div(db, shares),
+        "a_p_ratio": a_p,
+        "a_pl_ratio": a_pl,
     }
 
 

@@ -75,11 +75,13 @@ def build_efficiency_growth_sections(
             _fmt(raw, spec),
         ])
     sections.append({
-        "title": "Efficiency Ratios",
+        "title": "Índices de Eficiência",
         "description": "Giro do Ativo, Giro de Estoque, Giro de Contas a Receber, etc. Passe o mouse sobre a métrica para ver a fórmula (ⓘ).",
         "type": "table",
         "columns": ["Métrica", "Valor"],
         "rows": eff_rows,
+        "negative_red": True,
+        "positive_green": True,
     })
 
     # ── Growth: compute from annual_periods if ratios_dict growth is None ──
@@ -122,21 +124,25 @@ def build_efficiency_growth_sections(
         except Exception:
             return None
 
-    # [v4] Regrouped by TIME HORIZON (was by metric type). User feedback:
-    # "instead of sorting by type, lets sort and group by time, to compare
-    # each type by 3m/1y/5y". So now: "Crescimento 3M" table shows all 3
-    # metrics, "Crescimento 1Y" shows all 3, "Crescimento 5Y" shows all 3.
+    # [v4] Regrouped by TIME HORIZON. User feedback: "instead of sorting
+    # by type, lets sort and group by time, to compare each type by 3m/1y/5y".
+    # [v2.1] Bar chart colors unified with the growth evolution charts:
+    #   Receita Líquida = orange #f59e0b
+    #   Receita Bruta = magenta #d946a0
+    #   Lucro Líquido = purple #a855f7
     _GROWTH_METRICS = [
         ("Receita Líquida", "revenue_growth_3m", "revenue_growth_1y", "revenue_growth_5y", "receita_liquida"),
-        ("Lucro Bruto", "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y", "lucro_bruto"),
+        ("Receita Bruta", "gross_profit_growth_3m", "gross_profit_growth_1y", "gross_profit_growth_5y", "lucro_bruto"),
         ("Lucro Líquido", "net_income_growth_3m", "net_income_growth_1y", "net_income_growth_5y", "lucro_liquido"),
     ]
+    _METRIC_COLORS = ["#f59e0b", "#d946a0", "#a855f7"]  # orange, magenta, purple
     _HORIZONS = [("3M", 0), ("1Y", 1), ("5Y", 5)]
     for win_label, lookback_years in _HORIZONS:
         rows = []
         chart_labels = []
         chart_values = []
-        for metric_label, key_3m, key_1y, key_5y, annual_key in _GROWTH_METRICS:
+        chart_colors = []
+        for i, (metric_label, key_3m, key_1y, key_5y, annual_key) in enumerate(_GROWTH_METRICS):
             key = key_3m if win_label == "3M" else key_1y if win_label == "1Y" else key_5y
             val = _get_growth(key, annual_key, lookback_years)
             formula = _get_tooltip(key)
@@ -146,24 +152,26 @@ def build_efficiency_growth_sections(
             if val is not None:
                 chart_labels.append(metric_label)
                 chart_values.append(val * 100 if abs(val) < 1 else val)
+                chart_colors.append(_METRIC_COLORS[i])
         sections.append({
             "title": f"Crescimento {win_label}",
-            "description": f"Comparativo de crescimento {win_label} entre Receita, Lucro Bruto e Lucro Líquido.",
+            "description": f"Comparativo de crescimento {win_label} entre Receita Líquida, Receita Bruta e Lucro Líquido.",
             "type": "table",
             "columns": ["Métrica", "Crescimento"],
             "rows": rows,
+            "negative_red": True,
+            "positive_green": True,
         })
         if len(chart_labels) >= 2:
-            _HORIZON_COLORS = {"3M": "#a855f7", "1Y": "#22c55e", "5Y": "#3b82f6"}
             sections.append({
                 "type": "chart",
                 "title": f"Crescimento {win_label} — Comparativo",
-                "description": f"Crescimento {win_label} de Receita Líquida, Lucro Bruto e Lucro Líquido.",
+                "description": f"Crescimento {win_label} de Receita Líquida (laranja), Receita Bruta (magenta) e Lucro Líquido (roxo).",
                 "chart_data": {
                     "type": "bar",
                     "data": {"labels": chart_labels,
                              "datasets": [{"label": f"Crescimento {win_label}", "data": chart_values,
-                                           "backgroundColor": _HORIZON_COLORS.get(win_label, "#0d9488")}]},
+                                           "backgroundColor": chart_colors}]},
                     "options": {"responsive": True, "maintainAspectRatio": False,
                                 "scales": {"y": {"beginAtZero": True}}},
                 },

@@ -420,6 +420,26 @@
               {% endif %}
             {% endfor %}
           {% endif %}
+          {# [v2.1] Nested subtabs — when a subtab section is itself a subtabs
+             container (e.g. Crescimento → Receita Líq./Bruta/Lucro Líq.),
+             recurse one more level to wire up the charts inside. Canvas ID
+             matches the one emitted by the subtabs macro's recursive call:
+             prefix ~ '-' ~ sub_loop.index ~ '-sub-' ~ loop.index  ⇒
+             tab-{tabIdx}-sub-{secIdx}-{subIdx}-sub-{nestedSecIdx}-{nestedSubIdx}-chart-{idx} #}
+          {% if sub_sec.type == 'subtabs' and sub_sec.tabs %}
+            {% set nested_subtabs_idx = loop.index %}
+            {% for nested_subtab in sub_sec.tabs %}
+              {% set nested_sub_loop = loop %}
+              {% for nested_sec in nested_subtab.sections %}
+                {% if nested_sec.type == 'chart' and nested_sec.chart_data %}
+                <script>_renderChart('tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-sub-{{ nested_subtabs_idx }}-{{ nested_sub_loop.index }}-chart-{{ loop.index }}', {{ nested_sec.chart_data | tojson }});</script>
+                {% endif %}
+                {% if nested_sec.type == 'chart' and nested_sec.price_range_selector %}
+                <script>_priceChartFullData['tab-{{ outer_loop.index }}-sub-{{ subtabs_sec_idx }}-{{ sub_loop.index }}-sub-{{ nested_subtabs_idx }}-{{ nested_sub_loop.index }}-chart-{{ loop.index }}'] = {labels: {{ nested_sec.price_full_labels | default([]) | tojson }}, datasets: {{ nested_sec.price_full_datasets | default([]) | tojson }}, data: {{ nested_sec.price_full_data | default([]) | tojson }}, ohlc: {{ nested_sec.price_full_ohlc | default([]) | tojson }}};</script>
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+          {% endif %}
         {% endfor %}
       {% endfor %}
     {% endif %}

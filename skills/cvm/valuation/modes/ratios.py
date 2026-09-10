@@ -42,6 +42,7 @@ from skills.cvm.calculations.engines.dre.ebit import ebit_at
 from skills.cvm.calculations.engines.bpp.pl import pl_at
 from skills.cvm.calculations.engines.bpp.debt import debt_at
 from skills.cvm.calculations.engines.bpa.cash import cash_at
+from skills.cvm.calculations.engines.bpa.total_assets import total_assets_at
 from skills.cvm.calculations.engines.shares import shares_at
 from skills.cvm.calculations.engines.dfc.da import da_at
 from skills.cvm.calculations.engines.dfc.operating_cf import operating_cf_at
@@ -125,10 +126,11 @@ def ratios(company: str = "") -> dict:
     # 2. Get TTM financials via calculations engines [v2.0.0]
     # Each engine fetches ONE quantity at "today" (most recent <= today).
     # _safe_call swallows FileNotFoundError when an underlying DB is missing.
-    # [v1.22] Parallel fetch — all 11 engine calls are independent.
+    # [v1.22] Parallel fetch — all 12 engine calls are independent.
+    # [v2.1] Added total_assets_at for A/PL computation.
     today = datetime.now().strftime("%Y-%m-%d")
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=5) as _ex:
+    with ThreadPoolExecutor(max_workers=6) as _ex:
         futs = {
             _ex.submit(_safe_call, fn, ticker, today): key
             for key, fn in [
@@ -136,7 +138,7 @@ def ratios(company: str = "") -> dict:
                 ("ebit", ebit_at), ("pl", pl_at), ("debt", debt_at),
                 ("cash", cash_at), ("da", da_at), ("fco", operating_cf_at),
                 ("fci", investing_cf_at), ("shares", shares_at),
-                ("dpa", dividends_at),
+                ("dpa", dividends_at), ("ativo_total", total_assets_at),
             ]
         }
         _eng = {futs[f]: f.result() for f in futs}
@@ -152,6 +154,8 @@ def ratios(company: str = "") -> dict:
     total_shares = _eng.get("shares")
     # dividends_at returns DPA per-share (R$/share TTM), NOT total dividends.
     dpa_ttm = _eng.get("dpa")
+    # [v2.1] Total assets for A/PL computation.
+    ativo_total = _eng.get("ativo_total")
 
     # EBITDA = EBIT + D&A (only computable when both are present)
     ebitda = (ebit + da) if (ebit is not None and da is not None) else None
@@ -240,6 +244,7 @@ def ratios(company: str = "") -> dict:
         "ebitda_method": "ebit+da" if ebitda is not None else None,
         "fco": fco,
         "fci": fci,
+        "ativo_total": ativo_total,  # [v2.1] for A/PL computation
         "receita_liquida": receita_liquida,
         "caixa": caixa,
         "divida_bruta": divida_bruta,

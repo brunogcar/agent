@@ -181,6 +181,12 @@
 {% if sec.type == 'collapsible' and sec.sections %}
 {{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False), sections=sec.get('sections'), prefix=canvas_id) }}
 {% endif %}
+{# [v2.1] Nested subtabs — recurse into the subtabs macro with a unique
+   prefix so a subtabs section can itself contain subtabs (e.g. the
+   Crescimento subtab which splits into Receita Líq./Bruta/Lucro Líq.). #}
+{% if sec.type == 'subtabs' and sec.tabs %}
+{{ subtabs(sec.tabs, canvas_id ~ '-sub') }}
+{% endif %}
 {% endif %}
 {% endmacro %}
 
@@ -328,6 +334,12 @@
       {% endif %}
       {% if sec.type == 'collapsible' %}
       {{ collapsible(sec.title | default('Section'), sec.text | default(sec.content | default('')), sec.get('open', False), sections=sec.get('sections'), prefix=prefix ~ '-' + sub_loop.index|string ~ '-sec-' + loop.index|string) }}
+      {% endif %}
+      {# [v2.1] Nested subtabs — a subtab section can itself be a subtabs
+         container (e.g. Crescimento → Receita Líq./Bruta/Lucro Líq.).
+         Recurse with a unique prefix derived from the parent prefix. #}
+      {% if sec.type == 'subtabs' and sec.tabs %}
+      {{ subtabs(sec.tabs, prefix ~ '-' + sub_loop.index|string ~ '-sub-' + loop.index|string) }}
       {% endif %}
     </div>
     {% endfor %}

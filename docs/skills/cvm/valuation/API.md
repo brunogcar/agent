@@ -106,7 +106,7 @@ Returns:
 }
 ```
 
-### `mode="dashboard"` (v1.10 — 6-tab multi-tab dashboard)
+### `mode="dashboard"` (v2.1 — 6-tab multi-tab dashboard)
 
 Multi-tab valuation dashboard optimized for the report tool's `dashboard`
 action. Calls `ratios()` ONCE and passes the resulting dict to every tab

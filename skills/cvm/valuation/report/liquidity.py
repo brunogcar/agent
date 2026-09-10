@@ -84,6 +84,8 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
             {"text": "Working Capital", "tooltip": _get_tooltip("working_capital")},
             _fmt(wc_raw, "brl"),
         ]],
+        "negative_red": True,
+        "positive_green": True,
     })
 
     # ── Leverage ratio_grid ──
@@ -165,6 +167,8 @@ def build_liquidity_leverage_sections(ratios_dict: dict | None) -> list[dict]:
         "type": "table",
         "columns": ["Métrica", "Valor", "Interpretação"],
         "rows": detail_rows,
+        "negative_red": True,
+        "positive_green": True,
     })
 
     return sections

@@ -49,6 +49,13 @@ from skills.cvm.valuation.report.intrinsic import (
 from skills.cvm.valuation.report.history_charts import (
     build_pl_lpa_pvp_vpa_history_chart,
     build_roe_trend_chart,
+    build_price_multiples_history_chart,
+    build_ebit_multiples_history_chart,
+    build_ebitda_multiples_history_chart,
+    build_price_to_balance_history_chart,
+    build_asset_to_price_history_chart,
+    build_margins_horizons_chart,
+    build_growth_evolution_charts,
 )
 
 __all__ = [
@@ -65,4 +72,11 @@ __all__ = [
     "build_dcf_sensitivity_section",
     "build_pl_lpa_pvp_vpa_history_chart",
     "build_roe_trend_chart",
+    "build_price_multiples_history_chart",
+    "build_ebit_multiples_history_chart",
+    "build_ebitda_multiples_history_chart",
+    "build_price_to_balance_history_chart",
+    "build_asset_to_price_history_chart",
+    "build_margins_horizons_chart",
+    "build_growth_evolution_charts",
 ]

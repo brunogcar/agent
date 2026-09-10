@@ -36,11 +36,10 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
         return v
 
     # ── Group 1: Múltiplos de Preço ──
+    # [v2.1] P/EBIT and P/EBITDA moved to the EBIT/EBITDA subtab.
     _PRICE_MULTIPLES = [
         ("P/L",       "p_l",       "num", "Cheap if < 10; expensive if > 25",  _get_tooltip("lpa")),
         ("P/VPA",     "p_vpa",     "num", "Cheap if < 1; expensive if > 3",    _get_tooltip("vpa")),
-        ("P/EBIT",    "p_ebit",    "num", "Cheap if < 8; expensive if > 20",   _get_tooltip("p_ebit")),
-        ("P/EBITDA",  "p_ebitda",  "num", "Cheap if < 8; expensive if > 15",   _get_tooltip("p_ebitda")),
         ("PSR",       "psr",       "num", "Cheap if < 1; expensive if > 3",    _get_tooltip("rps")),
         ("P/FCO",     "p_fco",     "num", "Cheap if < 10; expensive if > 25",  _get_tooltip("p_fco")),
         ("P/FCF",     "p_fcf",     "num", "Cheap if < 15; expensive if > 30",  _get_tooltip("p_fcf")),
@@ -59,12 +58,14 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
         "type": "table",
         "columns": ["Métrica", "Valor", "Interpretação"],
         "rows": price_rows,
+        "negative_red": True,
+        "positive_green": True,
     })
     if len(price_chart_labels) >= 2:
         sections.append({
             "type": "chart",
             "title": "Múltiplos de Preço — Comparativo",
-            "description": "P/L, P/VPA, P/EBIT, P/EBITDA, PSR. Menor = mais barato.",
+            "description": "P/L, P/VPA, PSR, P/FCO, P/FCF. Menor = mais barato.",
             "chart_data": {
                 "type": "bar",
                 "data": {
@@ -77,10 +78,50 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
             },
         })
 
-    # ── Group 2: Múltiplos EV ──
+    # ── Group 2: Múltiplos EBIT ──
+    # [v2.1] New EBIT table: P/EBIT, EV/EBIT, DL/EBIT side-by-side.
+    _EBIT_MULTIPLES = [
+        ("P/EBIT",    "p_ebit",    "num", "Cheap if < 8; expensive if > 20",   _get_tooltip("p_ebit")),
+        ("EV/EBIT",   "ev_ebit",   "num", "Cheap if < 8; expensive if > 15",   _get_tooltip("ev_ebit")),
+        ("DL/EBIT",   "dl_ebit",   "num", "Dívida Líquida / EBIT. <2 baixa, >4 alta", _get_tooltip("dl_ebit")),
+    ]
+    ebit_rows = []
+    for label, key, spec, interp, formula in _EBIT_MULTIPLES:
+        value = _lookup(key)
+        ebit_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
+    sections.append({
+        "title": "Múltiplos EBIT",
+        "type": "table",
+        "columns": ["Métrica", "Valor", "Interpretação"],
+        "rows": ebit_rows,
+        "negative_red": True,
+        "positive_green": True,
+    })
+
+    # ── Group 3: Múltiplos EBITDA ──
+    # [v2.1] New EBITDA table: P/EBITDA, EV/EBITDA, DL/EBITDA side-by-side.
+    _EBITDA_MULTIPLES = [
+        ("P/EBITDA",  "p_ebitda",  "num", "Cheap if < 8; expensive if > 15",   _get_tooltip("p_ebitda")),
+        ("EV/EBITDA", "ev_ebitda", "num", "Cheap if < 8; expensive if > 15",   _get_tooltip("ev_ebitda")),
+        ("DL/EBITDA", "net_debt_ebitda", "num", "Dívida Líq / EBITDA. <1.5 baixa, >3.5 alta", _get_tooltip("net_debt_ebitda")),
+    ]
+    ebitda_rows = []
+    for label, key, spec, interp, formula in _EBITDA_MULTIPLES:
+        value = _lookup(key)
+        ebitda_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
+    sections.append({
+        "title": "Múltiplos EBITDA",
+        "type": "table",
+        "columns": ["Métrica", "Valor", "Interpretação"],
+        "rows": ebitda_rows,
+        "negative_red": True,
+        "positive_green": True,
+    })
+
+    # ── Group 4: Múltiplos EV ──
+    # [v2.1] EV/EBIT + EV/EBITDA moved to EBIT/EBITDA tables above. EV
+    # subtab keeps EV/Sales, EV/FCF, P/EV — the EV-specific multiples.
     _EV_MULTIPLES = [
-        ("EV/EBIT",   "ev_ebit",   "num", "Cheap if < 8; expensive if > 15", _get_tooltip("ev_ebit")),
-        ("EV/EBITDA", "ev_ebitda", "num", "Cheap if < 8; expensive if > 15", _get_tooltip("ev_ebitda")),
         ("EV/Sales",  "ev_sales",  "num", "Cheap if < 1; expensive if > 3",   _get_tooltip("ev_sales")),
         ("EV/FCF",    "ev_fcf",    "num", "Cheap if < 10; expensive if > 25", _get_tooltip("ev_fcf")),
         ("P/EV",      "p_ev",      "num", "Cheap if < 1; expensive if > 3",   _get_tooltip("p_ev")),
@@ -99,6 +140,8 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
         "type": "table",
         "columns": ["Métrica", "Valor", "Interpretação"],
         "rows": ev_rows,
+        "negative_red": True,
+        "positive_green": True,
     })
     if len(ev_chart_labels) >= 2:
         sections.append({
@@ -128,6 +171,8 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
         "type": "table",
         "columns": ["Métrica", "Valor", "Interpretação"],
         "rows": less_rows,
+        "negative_red": True,
+        "positive_green": True,
     })
 
     return sections
@@ -177,6 +222,8 @@ def build_per_share_sections(ratios_dict: dict | None) -> list[dict]:
         "type": "table",
         "columns": ["Métrica", "Valor (R$)", "Preço/Valor"],
         "rows": rows,
+        "negative_red": True,
+        "positive_green": True,
         "note": (
             "Per-share BRL values + the corresponding price multiple. "
             "RBPA / APA / PPA require engines not yet wired (see ROADMAP) — "
