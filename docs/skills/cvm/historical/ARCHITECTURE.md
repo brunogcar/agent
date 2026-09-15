@@ -92,7 +92,7 @@ skills/cvm/calculations/                     # SHARED ENGINE/METRIC LIBRARY (unc
 │   ├── __init__.py
 │   ├── price.py             # market — COTAHIST
 │   ├── dividends.py         # market — B3 cash_dividends DPA TTM
-│   ├── shares.py            # shares — FRE + investsite fallback
+│   ├── shares.py            # shares — FRE [v2.2: investsite fallback removed]
 │   ├── earnings.py          # dre — DFP+ITR 3.11 TTM
 │   ├── revenue.py           # dre — DFP+ITR 3.01 TTM
 │   ├── gross_profit.py      # dre — DFP+ITR 3.03 TTM
@@ -132,7 +132,7 @@ The `category` field on `EngineSpec` groups engines by financial statement / dat
 | Category | Engines | Description |
 |---|---|---|
 | `market` | price, dividends | B3 market data (COTAHIST daily close, B3 cash_dividends DPA TTM) |
-| `shares` | shares | FRE shares outstanding (+ investsite fallback when FRE NULL) |
+| `shares` | shares | FRE shares outstanding [v2.2: investsite fallback removed — returns None if FRE NULL] |
 | `dre` | earnings, revenue, gross_profit, ebit, tax | DRE statement flows (all TTM derivation, by codigo 3.11, 3.01, 3.03, 3.05, 3.08) |
 | `bpa` | assets, total_assets, cash | BPA statement balances (snapshots — 1.01 Ativo Circulante, 1 Ativo Total, 1.01.01 Caixa) |
 | `bpp` | pl, debt, current_liabilities | BPP statement balances (snapshots — 2.03 PL, 2.01.04+2.02.01 Debt, 2.01 Passivo Circulante) |

@@ -2,7 +2,7 @@
 
 # 💰 VALUATION — Valuation Ratios Skill
 
-Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE shares. The "investsite goldmine" — but computed from our own databases instead of scraped.
+Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE shares. Computed from our own databases — no external scraping (investsite removed in v2.2).
 
 **Key characteristics:**
 - **Combines 3 data sources** — b3/api (trades.db price) + cvm/dfp (financials) + cvm/fre (shares outstanding) + cvm/bridge (ticker resolution)

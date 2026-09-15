@@ -26,7 +26,7 @@ MOCK_PL_PERIODS = [
 ]
 
 MOCK_SHARES_PERIODS = [
-    {"date": "2000-01-01", "shares": 13e9},  # constant (investsite fallback)
+    {"date": "2000-01-01", "shares": 13e9},  # constant (single-entry fallback)
 ]
 
 

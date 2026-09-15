@@ -9,7 +9,7 @@ Architecture:
   Engines (calculations/engines/) — one per raw quantity, auto-discovered:
     - price.py    — COTAHIST daily close
     - earnings.py — DFP + ITR TTM earnings derivation
-    - shares.py   — FRE shares outstanding (+ investsite fallback)
+    - shares.py   — FRE shares outstanding
     - pl.py       — DFP + ITR BPP 2.03 Patrimônio Líquido snapshot
   Metrics (calculations/metrics/) — one per ratio, auto-discovered +
   self-registered:

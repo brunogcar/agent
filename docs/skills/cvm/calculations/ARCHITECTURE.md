@@ -13,7 +13,7 @@
 | `skills/cvm/calculations/engines/__init__.py` | Minimal docstring (auto-discovery is in `_registry.py`) |
 | `skills/cvm/calculations/engines/price.py` | COTAHIST daily close: `price_at()`, `price_series()` |
 | `skills/cvm/calculations/engines/dre/earnings.py` | TTM earnings: `ttm_earnings_at()`, `ttm_earnings_periods()` |
-| `skills/cvm/calculations/engines/shares.py` | FRE shares (+ investsite fallback): `shares_at()`, `shares_periods()` |
+| `skills/cvm/calculations/engines/shares.py` | FRE shares: `shares_at()`, `shares_periods()` [v2.2: investsite fallback removed] |
 | `skills/cvm/calculations/engines/bpp/pl.py` | PL snapshot (BPP 2.03): `pl_at()`, `pl_periods()` |
 | `skills/cvm/calculations/engines/dividends.py` | DPA TTM (B3 cash_dividends): `dividends_at()`, `dividends_periods()` |
 | `skills/cvm/calculations/engines/dre/revenue.py` | TTM revenue (DRE 3.01): `revenue_at()`, `revenue_periods()` |
@@ -132,7 +132,7 @@ calculations/
 ├── engines/  (leaves — never import each other or metrics)
 │   ├── price.py → COTAHIST
 │   ├── earnings.py → DFP+ITR (TTM)
-│   ├── shares.py → FRE+investsite
+│   ├── shares.py → FRE [v2.2: investsite fallback removed]
 │   ├── pl.py → DFP+ITR BPP 2.03 (snapshot)
 │   ├── ... (26 more engines)
 │

@@ -10,7 +10,7 @@ Computes financial ratios over time by combining **engines** (basics: price, ear
 - **Engines** (in [`calculations/engines/`](calculations/ARCHITECTURE.md)) — one per raw quantity. Self-register via `register_engine()`. Auto-discovered by the central `_registry.py`. Engines are leaves: they never import each other or metrics. 18 engines in 7 categories.
   - `price.py` — COTAHIST daily close
   - `earnings.py` — DFP + ITR TTM earnings derivation
-  - `shares.py` — FRE shares outstanding (+ investsite fallback)
+  - `shares.py` — FRE shares outstanding [v2.2: investsite fallback removed]
   - `pl.py` — DFP + ITR BPP 2.03 Patrimônio Líquido snapshot
   - `dividends.py` — B3 cash_dividends DPA TTM
   - `revenue.py`, `gross_profit.py`, `ebit.py`, `tax.py` — DRE TTM flows
@@ -90,7 +90,7 @@ No skill-specific config. Requires:
 - `data_sources/b3/dividends` synced (cash dividends per ticker — needed for DPA/Div Yield/Payout)
 - `data_sources/cvm/dfp` synced (annual earnings + PL snapshots)
 - `data_sources/cvm/itr` synced (quarterly cumulative earnings + PL snapshots, 2011-present)
-- `data_sources/cvm/fre` synced (shares outstanding — may be empty; investsite fallback used)
+- `data_sources/cvm/fre` synced (shares outstanding — may be empty for obscure tickers; investsite fallback removed in v2.2, returns None if FRE NULL)
 - `data_sources/cvm/bridge` synced (ticker → CNPJ resolution)
 
 ---

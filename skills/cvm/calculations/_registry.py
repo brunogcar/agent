@@ -83,7 +83,7 @@ class EngineSpec:
                      Used in docs + for backtest skill discovery.
         category:    Engine category for organizational grouping. One of:
                      - "market":  B3 market data (price, dividends)
-                     - "shares":  shares outstanding (FRE/investsite)
+                     - "shares":  shares outstanding (FRE)
                      - "dre":     DRE statement (earnings, revenue, ebit, etc.)
                      - "bpa":     BPA statement (assets)
                      - "bpp":     BPP statement (PL, debt)

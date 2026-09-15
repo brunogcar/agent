@@ -1,10 +1,14 @@
 """engines/shares.py — FRE shares outstanding engine.
 
 Gets shares outstanding at any historical date from FRE distribuicao_capital
-+ capital_social tables. Falls back to investsite (current only) for the
-latest count, then assumes constant going backward.
++ capital_social tables.
 
 Standalone module: importable by historical skill + future backtest skill.
+
+[v2.2] investsite fallback removed — investsite started forcing login
+(token rotation), making it unreliable. Shares now come from FRE only. If
+FRE has no data, shares_at returns None (cascading to None for P/L, P/VPA,
+market_cap, etc.).
 
 Usage:
     from skills.cvm.calculations.engines.shares import shares_at
@@ -72,35 +76,6 @@ def _try_fre(cnpj: str, date: str) -> int | None:
         conn.close()
 
 
-def _try_investsite(ticker: str) -> int | None:
-    """Get current shares from investsite (fallback for missing FRE data).
-
-    investsite only has current data — used as a last resort. The historical
-    engine assumes shares are constant going backward from the latest available.
-    """
-    try:
-        from skills.investsite.modes.indicators import indicators
-        r = indicators(ticker=ticker)
-        if r.get("status") != "ok":
-            return None
-        balanco = r.get("sections", {}).get("balanco_patrimonial", {})
-        total_str = balanco.get("Total")
-        if total_str is None:
-            return None
-        if isinstance(total_str, (int, float)):
-            return int(total_str)
-        clean = str(total_str).strip().replace(".", "").replace(",", "")
-        try:
-            return int(clean)
-        except ValueError:
-            try:
-                return int(float(clean))
-            except ValueError:
-                return None
-    except Exception:
-        return None
-
-
 @engine_cached
 def shares_at(company: str, date: str) -> int | None:
     """Get shares outstanding closest to date.
@@ -108,14 +83,16 @@ def shares_at(company: str, date: str) -> int | None:
     Resolution order:
     1. FRE distribuicao_capital (qtd_total or ON+PN) at or before date
     2. FRE capital_social (qtd_acoes_total or ON+PN) at or before date
-    3. Investsite current shares (assumed constant going backward)
+
+    [v2.2] investsite fallback removed — FRE only. If FRE has no data,
+    returns None (cascading to None for P/L, P/VPA, market_cap, etc.).
 
     Args:
         company: Ticker, name, or CNPJ.
         date: YYYY-MM-DD.
 
     Returns:
-        Total shares outstanding as int, or None if not available.
+        Total shares outstanding as int, or None if not available in FRE.
     """
     from data_sources.cvm._bridge import _resolve_via_bridge, _auto_sync_bridge
 
@@ -127,13 +104,8 @@ def shares_at(company: str, date: str) -> int | None:
     if not cnpj:
         return None
 
-    # Try FRE first
+    # Try FRE only (investsite fallback removed in v2.2)
     shares = _try_fre(cnpj, date)
-    if shares:
-        return shares
-
-    # Fallback: investsite (current only — assume constant backward)
-    shares = _try_investsite(company)
     if shares:
         return shares
 
@@ -147,9 +119,8 @@ def shares_periods(company: str) -> list[dict]:
     Returns: [{"date": "2024-12-31", "shares": 13000000000}, ...]
     Sorted oldest-first.
 
-    If FRE has no share data, returns a single entry with investsite current
-    shares (assumed constant). This enables the step-function lookup in
-    pe_history() to work even without historical FRE share counts.
+    [v2.2] investsite fallback removed — FRE only. If FRE has no share data,
+    returns an empty list (the caller handles the None/empty case).
     """
     from data_sources.cvm._db import connect_fre
     from data_sources.cvm._bridge import _resolve_via_bridge
@@ -210,12 +181,8 @@ def shares_periods(company: str) -> list[dict]:
         finally:
             conn.close()
 
-    # If FRE has no share data, use investsite as fallback (single entry, current)
-    if not periods:
-        shares = _try_investsite(company)
-        if shares:
-            # Use a very early date so it applies to all historical dates
-            periods.append({"date": "2000-01-01", "shares": shares})
+    # [v2.2] investsite fallback removed — return empty list if FRE has no data.
+    # The caller (pe_history, vpa_history, etc.) handles the empty case.
 
     return periods
 
@@ -229,6 +196,6 @@ register_engine(EngineSpec(
     quantity="shares",
     at_fn=shares_at,
     periods_fn=shares_periods,
-    source="FRE (distribuicao_capital) + investsite.com.br fallback",
+    source="FRE (distribuicao_capital) [v2.2: investsite fallback removed]",
     category="shares",
 ))

@@ -12,7 +12,7 @@ Formula:
 Inputs (all exist as engines/metrics):
   - FCF = operating_cf_at + investing_cf_at (TTM, cached)
   - WACC = wacc_at (CAPM-based, with Selic + Beta fallbacks)
-  - Shares = shares_at (FRE + investsite fallback)
+  - Shares = shares_at (FRE)
   - Growth = revenue_growth_1y (actual TTM YoY growth)
   - Terminal growth = IPCA 12M accumulated (from BCB SGS series 433)
   - Price = price_at (COTAHIST)
