@@ -237,7 +237,7 @@ The `dashboard` mode is a thin composition mode — it calls `annual()`, `quarte
 | `period_toggle` | Balanço, DRE, DFC, DVA | Trimestral/Anual toggle (pre-render + JS swap) |
 | `two_column` | Overview (Cotação & Resumo) | Side-by-side tables (Resultado/Margens, Balanço/Fluxo) |
 | `heatmap` | Overview (Visão Multidimensional) | Color-coded metric table with tooltips |
-| `company_info` | Overview (Cotação & Resumo) | Company header card (name, CNPJ, setor, etc.) |
+| `company_info` | Overview (Cotação & Resumo) | Company header card — 3 parts: identity (ticker, name, price, market cap, shares), 4 registration tables (Identificação, Instrumento B3, Classificação, Governança), Atividade description [v1.12 reorganization] |
 | `text` | Error fallbacks | Plain text block |
 
 ### Comprehensive Period Tables (Períodos/Séries Temporais tabs)

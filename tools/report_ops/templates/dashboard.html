@@ -150,10 +150,15 @@
      because they now live inside the Overview tab, not the header. #}
   <div class="section">
     {% if sec.type == 'company_info' and sec.company_header %}
-    {# [v1.18] Company info card — top of Overview tab. This pattern will be
-       reused by valuation/historical/governance dashboards. The KPI boxes
-       in the universal header stay separate. #}
+    {# [v2.2-header] Company header — 3 parts:
+       Part 1: Identity card (standalone) — ticker, name, trade_name, price, market_cap, shares
+       Part 2: Registration details — 4 tables in 2×2 grid (Identificação, Instrumento B3,
+               Classificação, Governança)
+       Part 3: Atividade (full-width description table)
+       This pattern is shared by financials, valuation, historical dashboards. #}
     {% set ch = sec.company_header %}
+
+    {# ── Part 1: Identity card (standalone) ── #}
     <div class="company-header" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px;">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
         <div style="flex: 1; min-width: 300px;">
@@ -163,25 +168,82 @@
           <div style="font-size: 13px; color: var(--text-sec);">{{ ch.trade_name }}</div>
           {% endif %}
         </div>
-        {% if ch.last_close %}
-        <div style="text-align: right;">
-          <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--text-sec);">Último Fechamento</div>
-          <div style="font-size: 22px; font-weight: 700; color: var(--brand);">R$ {{ ch.last_close }}</div>
+        <div style="text-align: right; display: flex; flex-direction: column; gap: 10px;">
+          {% if ch.last_close_str %}
+          <div>
+            <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--text-sec);">Último Fechamento</div>
+            <div style="font-size: 22px; font-weight: 700; color: var(--brand);">R$ {{ ch.last_close_str }}</div>
+          </div>
+          {% endif %}
+          {% if ch.market_cap_str %}
+          <div>
+            <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--text-sec);">Market Cap</div>
+            <div style="font-size: 16px; font-weight: 600; color: var(--text);">{{ ch.market_cap_str }}</div>
+          </div>
+          {% endif %}
+          {% if ch.total_shares_str %}
+          <div>
+            <div style="font-size: 11px; font-family: ui-monospace, monospace; letter-spacing: 1px; text-transform: uppercase; color: var(--text-sec);">Total Ações</div>
+            <div style="font-size: 16px; font-weight: 600; color: var(--text);">{{ ch.total_shares_str }}</div>
+          </div>
+          {% endif %}
         </div>
-        {% endif %}
-      </div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px 20px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
-        {% if ch.cnpj %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">CNPJ:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.cnpj }}</span></div>{% endif %}
-        {% if ch.cd_cvm %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">CD CVM:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.cd_cvm }}</span></div>{% endif %}
-        {% if ch.isin %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">ISIN:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.isin }}</span></div>{% endif %}
-        {% if ch.sector %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Setor:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.sector }}</span></div>{% endif %}
-        {% if ch.listing_segment %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Segmento:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.listing_segment }}</span></div>{% endif %}
-        {% if ch.control_type %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Controle:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.control_type }}</span></div>{% endif %}
-        {% if ch.uf %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">UF:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.uf }}</span></div>{% endif %}
-        {% if ch.fiscal_year_end %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Fim Exerc.:</span> <span style="color: var(--text); font-weight: 500;">{{ ch.fiscal_year_end }}</span></div>{% endif %}
-        {% if ch.website %}<div style="font-size: 12px;"><span style="color: var(--text-sec);">Web:</span> <a href="{{ ch.website }}" target="_blank" style="color: var(--brand); text-decoration: none;">{{ ch.website }}</a></div>{% endif %}
       </div>
     </div>
+
+    {# ── Part 2: Registration details — 4 tables in 2×2 grid ── #}
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 16px;">
+
+      {# Table 1: Identificação #}
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--brand); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Identificação</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          {% if ch.cnpj %}<tr><td style="padding: 4px 0; color: var(--text-sec); width: 45%; border-bottom: 1px solid var(--border);">CNPJ</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.cnpj }}</td></tr>{% endif %}
+          {% if ch.cd_cvm %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">CD CVM</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.cd_cvm }}</td></tr>{% endif %}
+          {% if ch.isin %}<tr><td style="padding: 4px 0; color: var(--text-sec);">ISIN</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500;">{{ ch.isin }}</td></tr>{% endif %}
+        </table>
+      </div>
+
+      {# Table 2: Instrumento B3 #}
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--brand); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Instrumento B3</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          {% if ch.market_name %}<tr><td style="padding: 4px 0; color: var(--text-sec); width: 45%; border-bottom: 1px solid var(--border);">Mercado</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.market_name }}</td></tr>{% endif %}
+          {% if ch.security_category %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">Categoria</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.security_category }}</td></tr>{% endif %}
+          {% if ch.b3_segment %}<tr><td style="padding: 4px 0; color: var(--text-sec);">Segmento B3</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500;">{{ ch.b3_segment }}</td></tr>{% endif %}
+        </table>
+      </div>
+
+      {# Table 3: Classificação #}
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--brand); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Classificação</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          {% if ch.sector %}<tr><td style="padding: 4px 0; color: var(--text-sec); width: 45%; border-bottom: 1px solid var(--border);">Setor</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.sector }}</td></tr>{% endif %}
+          {% if ch.fiscal_year_end %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">Fim Exerc.</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.fiscal_year_end }}</td></tr>{% endif %}
+          {% if ch.uf %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">UF</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.uf }}</td></tr>{% endif %}
+          {% if ch.last_synced_trimester %}<tr><td style="padding: 4px 0; color: var(--text-sec);">Último ITR</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500;">{{ ch.last_synced_trimester }}</td></tr>{% endif %}
+        </table>
+      </div>
+
+      {# Table 4: Governança #}
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--brand); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Governança</div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          {% if ch.control_type %}<tr><td style="padding: 4px 0; color: var(--text-sec); width: 45%; border-bottom: 1px solid var(--border);">Controle</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.control_type }}</td></tr>{% endif %}
+          {% if ch.listing_segment %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">Segmento Listagem</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.listing_segment }}</td></tr>{% endif %}
+          {% if ch.auditor %}<tr><td style="padding: 4px 0; color: var(--text-sec); border-bottom: 1px solid var(--border);">Auditor</td><td style="padding: 4px 0 4px 8px; color: var(--text); font-weight: 500; border-bottom: 1px solid var(--border);">{{ ch.auditor }}</td></tr>{% endif %}
+          {% if ch.website %}<tr><td style="padding: 4px 0; color: var(--text-sec);">Website</td><td style="padding: 4px 0 4px 8px;"><a href="{{ ch.website }}" target="_blank" style="color: var(--brand); text-decoration: none;">{{ ch.website }}</a></td></tr>{% endif %}
+        </table>
+      </div>
+    </div>
+
+    {# ── Part 3: Atividade (full-width) ── #}
+    {% if ch.activity_description %}
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-top: 12px;">
+      <div style="font-size: 11px; font-weight: 700; color: var(--brand); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">Descrição da Atividade</div>
+      <div style="font-size: 12px; color: var(--text); line-height: 1.6;">{{ ch.activity_description }}</div>
+    </div>
+    {% endif %}
     {% endif %}
     {% if sec.collapsible %}
     {# [v1.2-v2] Collapsible section — title becomes the header (click to
