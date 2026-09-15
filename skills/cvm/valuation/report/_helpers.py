@@ -147,8 +147,11 @@ def _derive_per_share(ratios_dict: dict | None) -> dict[str, float | None]:
     These are derived from components that ARE in ratios_dict:
       - cgpa = working_capital / shares
       - dbpa = divida_bruta / shares
-      - a_p_ratio = 1 / (P/Ativo) = 1 / apa  (Ativo / Preço)
-      - a_pl_ratio = ativo_total / patrimonio_liquido (Ativo / PL)
+
+    [v2.2] A/P and A/PL were previously derived here (a_p_ratio,
+    a_pl_ratio) but NEVER consumed by any table — the Menos Comuns table
+    uses a_p_inverse (from _derive_multiples) and financial_leverage
+    (from ratios_dict). Removed the dead code (Minimax B47).
     """
     if not isinstance(ratios_dict, dict):
         return {}
@@ -157,26 +160,9 @@ def _derive_per_share(ratios_dict: dict | None) -> dict[str, float | None]:
     wc     = ratios_dict.get("working_capital")
     db     = ratios_dict.get("divida_bruta")
 
-    # [v2.1] A/P = 1 / P-Ativo. apa in ratios_dict is the P/Ativo RATIO
-    # (not the per-share value). So A/P = 1 / apa.
-    apa_ratio = ratios_dict.get("apa")  # P/Ativo ratio
-    a_p = None
-    if apa_ratio is not None and apa_ratio != 0:
-        a_p = 1.0 / apa_ratio
-
-    # [v2.1] A/PL = Ativo Total / PL. Both are in ratios_dict as
-    # ativo_total / patrimonio_liquido (snapshot values from engines).
-    ativo_total = ratios_dict.get("ativo_total") or ratios_dict.get("total_assets")
-    pl = ratios_dict.get("patrimonio_liquido")
-    a_pl = None
-    if ativo_total is not None and pl is not None and pl != 0:
-        a_pl = ativo_total / pl
-
     return {
         "cgpa": _safe_div(wc, shares),
         "dbpa": _safe_div(db, shares),
-        "a_p_ratio": a_p,
-        "a_pl_ratio": a_pl,
     }
 
 

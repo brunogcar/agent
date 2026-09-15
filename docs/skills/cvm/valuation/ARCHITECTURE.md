@@ -15,7 +15,7 @@ skills/cvm/valuation/
 │   ├── dashboard.py   @register_mode("dashboard")   — include_in_all=False (v2.0 6-tab)
 │   └── historical_valuation.py  @register_mode("historical_valuation") — v1.8, 5Y daily history
 ├── fetchers.py        price fetching (_get_price / _get_price_brapi /
-│                     _get_price_investsite / _get_latest_price — b3 trades.db fallback)
+│                     _get_latest_price — 2-tier brapi → b3 trades.db fallback) [v2.2 investsite removed]
 ├── helpers.py         _safe_call, _safe_div (shared utilities)
 └── report/            [v2.0] Split from monolithic report.py into package
     ├── __init__.py    thin re-exports all 13 public builders (backward compat)
@@ -26,11 +26,19 @@ skills/cvm/valuation/
     ├── profitability.py  build_profitability_section, build_margin_trend_chart
     ├── liquidity.py   build_liquidity_leverage_sections
     ├── efficiency.py  build_efficiency_growth_sections
-    ├── intrinsic.py   _dcf_at_growth, build_dcf_sensitivity_section
+    ├── intrinsic.py   _dcf_at_growth, _normalized_fcf_per_share,
+    │                  _dcf_at_growth_normalized, build_dcf_sensitivity_section [v2.2]
     └── history_charts.py  build_pl_lpa_pvp_vpa_history_chart, build_roe_trend_chart
 ```
 
 **v2.0 report split:** The monolithic `report.py` (1859 lines) was split into a `report/` package (9 files). Each file contains builders for one dashboard tab/concern. The `__init__.py` re-exports all 13 public builders, so `from skills.cvm.valuation.report import build_overview_kpis` still works without changes. This pattern can be applied to financials/historical when they bump to 2.0.
+
+**v2.2 changes:**
+- investsite removed from the price fallback chain (login requirement made it unreliable). fetchers.py is now 2-tier: brapi → b3 trades.db. P/L, P/VPA, market_cap always computed from market_cap + fundamentals (no investsite-derived path).
+- `build_dcf_sensitivity_section` rewritten: calls `_dcf_at_growth_normalized` (2-stage DCF with 5Y median normalized FCF + IPCA-anchored terminal growth). Scenarios vary BOTH Stage-1 growth AND terminal g. Pessimista uses market-implied g (WACC - FCF_yield) → reproduces the current price. Honest "g implícito (mercado)" row + ATENÇÃO warning for high-FCF-yield cyclicals.
+- `_normalized_fcf_per_share` added — 5Y median of annual FCF per share (owner-earnings smoothing for cyclicals).
+- Dead code removed: `a_p_ratio` and `a_pl_ratio` from `_derive_per_share` (never consumed).
+- 3M growth fallback fixed in `efficiency.py` — was using LOOKBACK_5Y for the 3M case.
 
 **v1.10 changes:**
 - `build_roe_trend_chart` signature changed from `(company, annual_periods)` to `(company)` — now uses `roe_history()`/`roa_history()`/`roic_history()` instead of annual_periods.
@@ -80,8 +88,8 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
   ▼  2. validate_ticker("PETR4") → "PETR4"  [core/br_validator]
   │
   ▼  3. _get_price("PETR4")  [fetchers.py]
-  │     → brapi → investsite → b3 trades.db fallback chain
-  │     → returns {last_price, date, source, market_cap, pe_ratio, p_vpa}
+  │     → brapi → b3 trades.db fallback chain [v2.2: investsite removed]
+  │     → returns {last_price, date, source, market_cap, pe_ratio}
   │
   ▼  4. Parallel calculations engine calls [v1.22 parallel fetch]
   │     → ThreadPoolExecutor(max_workers=5) runs 11 engines concurrently:
@@ -137,7 +145,7 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
 | ROE | lucro_liquido / patrimonio_liquido | calculations registry |
 | ROIC | NOPAT / Invested Capital | calculations registry (actual tax rate) |
 | Graham Number | sqrt(22.5 × EPS × VPA) | calculations registry |
-| DCF Intrinsic Value | Σ FCF/(1+WACC)^t + TV | calculations registry (v1.9) |
+| DCF Intrinsic Value | Σ FCF/(1+WACC)^t + TV | calculations registry (v1.9; v2.2 sensitivity uses normalized FCF) |
 | IRR (TIR) | rate where NPV(price) = 0 | calculations registry (v1.9) |
 | WACC | COE × E/(D+E) + Kd×(1-tax) × D/(D+E) | calculations registry (v1.9) |
 
@@ -145,7 +153,7 @@ skill(domain="cvm", sub_domain="valuation", mode="ratios", params='{"company":"P
 
 | Source | What | Required for |
 |--------|------|-------------|
-| brapi / investsite / b3 trades.db | Latest price + market_cap | All market-cap-based ratios |
+| brapi / b3 trades.db | Latest price + market_cap | All market-cap-based ratios [v2.2: investsite removed] |
 | cvm/dfp dfp.db | Annual financials (meses=12) | EPS, VPA, EV, P/EBIT, P/FCO |
 | cvm/itr itr.db | Quarterly financials (TTM computation) | TTM earnings, revenue, EBIT, etc. |
 | cvm/fre fre.db | Shares outstanding (distribuicao_capital) | Market Cap, EPS, VPA, per-share ratios |
@@ -163,4 +171,4 @@ This skill uses `validate_ticker()` and `parse_escala()` from `core/br_validator
 
 ---
 
-*Last updated: 2026-08-12 (v2.0 — Graham overlay removed, P/L-LPA history chart, ROE trend rewrite, Menos Comuns fix, doc cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*
+*Last updated: 2026-09-15 (v2.2 — DCF rewire with normalized FCF + investsite removal + P3 cleanup). See [CHANGELOG.md](CHANGELOG.md) for version history.*

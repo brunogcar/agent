@@ -34,7 +34,7 @@ def _safe_div(a: float | None, b: float | None) -> float | None:
 
     Used by the manual ratio computations in ratios() (market_cap / lucro_liquido,
     etc.). Calculations metrics handle None internally, but the manual ratios
-    that compose brapi_market_cap + investsite fallback still need this helper.
+    that compose brapi_market_cap still need this helper.
     """
     if a is None or b is None or b == 0:
         return None

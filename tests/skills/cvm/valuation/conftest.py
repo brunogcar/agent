@@ -219,7 +219,7 @@ def valuation_env(monkeypatch):
     def mock_get_price(ticker):
         return {
             "status": "ok",
-            "source": "investsite",
+            "source": "brapi",
             "last_price": 38.5,
             "date": "2024-01-01",
             "market_cap": None,

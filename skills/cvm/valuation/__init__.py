@@ -45,7 +45,7 @@ MANIFEST = {
     "description": (
         "Valuation ratios (P/L, P/VPA, EV, Dividend Yield, P/EBIT, P/FCO) "
         "combining b3 price + CVM financials + FRE shares. "
-        "The investsite goldmine — computed from local data."
+        "Computed from local data — no external scraping."
     ),
     "source":  "b3 trades.db + cvm dfp.db + cvm fre.db + bridge.db",
     "storage": "read-only — no own database",

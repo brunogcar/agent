@@ -98,7 +98,7 @@ def build_efficiency_growth_sections(
             return None
         try:
             from skills.cvm.calculations.growth_helpers import (
-                growth_at, LOOKBACK_1Y, LOOKBACK_5Y,
+                growth_at, LOOKBACK_3M, LOOKBACK_1Y, LOOKBACK_5Y,
             )
             # Build period list for growth_at
             metric_map = {
@@ -119,7 +119,16 @@ def build_efficiency_growth_sections(
             if len(periods) < 2:
                 return None
             target_date = periods[-1]["date"]
-            lookback = LOOKBACK_1Y if lookback_years == 1 else LOOKBACK_5Y
+            # [v2.2] Fix Minimax B44: the 3M case (lookback_years == 0) was
+            # falling through to LOOKBACK_5Y because the only branch was
+            # ``LOOKBACK_1Y if lookback_years == 1 else LOOKBACK_5Y``. Now
+            # all 3 horizons get their correct lookback window.
+            if lookback_years == 0:
+                lookback = LOOKBACK_3M
+            elif lookback_years == 1:
+                lookback = LOOKBACK_1Y
+            else:
+                lookback = LOOKBACK_5Y
             return growth_at(periods, target_date, lookback)
         except Exception:
             return None

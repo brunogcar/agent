@@ -106,7 +106,7 @@ Returns:
 }
 ```
 
-### `mode="dashboard"` (v2.1 — 6-tab multi-tab dashboard)
+### `mode="dashboard"` (v2.2 — 6-tab multi-tab dashboard)
 
 Multi-tab valuation dashboard optimized for the report tool's `dashboard`
 action. Calls `ratios()` ONCE and passes the resulting dict to every tab
@@ -125,7 +125,7 @@ Market Cap, ROE) rendered above all tabs by the dashboard template.
 |---|-----|-------|----------|
 | 1 | **Overview** | Resumo | Company header (FCA/CAD/COTAHIST) + historical price chart (Tudo/5A/1A/1M) + 3 metric tables (Mercado, Resultado TTM, Balanço) + Valor Intrínseco summary |
 | 2 | **Múltiplos** | Resumo | Subtabs: Preço (7 price multiples table + bar chart + per-share table + P/L-LPA-P/VP-VPA 5Y history chart [v1.10]), EV (5 EV multiples table + bar chart), Menos Comuns (P/Ativos, P/Passivos, P/RB, P/CG, P/DB, P/Tangible Book table — all with values + tooltips [v1.10 fix]) |
-| 3 | **Valor Intrínseco** | Resumo | DCF Intrinsic Value + Margin of Safety + TIR (IRR) + WACC + TIR-WACC spread table + DCF Sensitivity Analysis (5 scenarios table + bar chart) [v1.9] |
+| 3 | **Valor Intrínseco** | Resumo | DCF Intrinsic Value + Margin of Safety + TIR (IRR) + WACC + TIR-WACC spread table + DCF Sensitivity Analysis (5 scenarios table + LINE chart intrinsic vs terminal g) [v2.2 — 2-stage DCF with normalized FCF] |
 | 4 | **Rentabilidade** | Fundamentos | Subtabs: Retornos (ratio_grid + ROIC/ROE/ROA 5Y step-line history chart [v1.10 rewrite]), Margens (ratio_grid + bar chart) |
 | 5 | **Liquidez e Alavancagem** | Fundamentos | Subtabs: Liquidez (ratio_grid + bar chart), Endividamento (ratio_grid + detailed table) |
 | 6 | **Eficiência e Crescimento** | Crescimento | Subtabs: Eficiência (efficiency table + growth tables for Receita/Luco Bruto/Luco Líquido with charts), Crescimento (growth tables) |
@@ -217,7 +217,7 @@ skill(domain="cvm", sub_domain="valuation", mode="historical_valuation",
 | P/Ativo (APA) | price / (total_assets / shares) | From calculations registry (v1.10) |
 | P/Passivo (PPA) | price / ((total_assets - pl) / shares) | From calculations registry (v1.10) |
 | P/RB (RBPA) | price / (gross_profit / shares) | From calculations registry (v1.10) |
-| DCF Intrinsic Value | Σ FCF/(1+WACC)^t + TV | v1.9 |
+| DCF Intrinsic Value | Σ FCF/(1+WACC)^t + TV | v1.9 (2-stage with normalized FCF + market-implied Pessimista in v2.2) |
 | IRR (TIR) | rate where NPV(price) = 0 | v1.9 |
 | WACC | COE × E/(D+E) + Kd×(1-tax) × D/(D+E) | v1.9 |
 
@@ -233,4 +233,4 @@ skill(domain="cvm", sub_domain="valuation", mode="historical_valuation",
 
 ---
 
-*Last updated: 2026-08-12 (v2.0).*
+*Last updated: 2026-09-15 (v2.2 — DCF rewire with normalized FCF + investsite removal + P3 cleanup).*

@@ -1,19 +1,19 @@
-"""skills/cvm/valuation/fetchers.py -- Price data fetching (brapi/investsite/b3).
+"""skills/cvm/valuation/fetchers.py -- Price data fetching (brapi/b3).
 
 Holds the internal price-fetching helpers consumed by modes/ratios.py. These
-implement a 3-tier fallback chain for the current price (brapi -> investsite
--> b3 trades.db) that is NOT covered by the calculations price engine (which
+implement a 2-tier fallback chain for the current price (brapi -> b3
+trades.db) that is NOT covered by the calculations price engine (which
 is COTAHIST-only and used for historical daily prices).
 
-[v2.0.0] KEPT from v1.0.14 -- the calculations price engine uses COTAHIST
-only (historical daily prices). The 3-tier fallback here gets the CURRENT
-price from brapi first, then investsite, then b3 trades.db. Will be merged
-into the price engine in a future phase.
+[v2.2] investsite REMOVED — investsite started forcing login (token
+rotation), making it unreliable as an automated fallback. The price
+chain is now brapi -> b3 trades only. All investsite-derived ratios
+(P/L, P/VPA, market_cap back-calculation for UNIT tickers) are computed
+from market_cap + fundamentals instead.
 
 Functions:
-  - _get_price               : 3-tier dispatcher (brapi -> investsite -> b3 trades).
+  - _get_price               : 2-tier dispatcher (brapi -> b3 trades).
   - _get_price_brapi         : brapi quote (also returns market_cap + pe_ratio).
-  - _get_price_investsite     : investsite indicators (parses market_cap + pe + pvpa).
   - _get_latest_price         : b3 trades.db fallback (most recent trade).
 """
 from __future__ import annotations
@@ -21,29 +21,28 @@ from __future__ import annotations
 from datetime import datetime
 
 
-# ── Internal: get price (brapi -> investsite -> b3 trades) ───────────────────
-# [v2.0.0] KEPT from v1.0.14 -- calculations price engine uses COTAHIST only
-# (historical daily prices). This 3-tier fallback gets the CURRENT price from
-# brapi first, then investsite, then b3 trades.db. Will be merged into the
-# price engine in a future phase.
+# ── Internal: get price (brapi -> b3 trades) ────────────────────────────────
+# [v2.2] investsite removed from the chain — login requirement made it
+# unreliable. The 2-tier fallback gets the CURRENT price from brapi first,
+# then b3 trades.db. brapi also returns market_cap + pe_ratio for the
+# ratios.py manual computations.
 
 def _get_price(ticker: str) -> dict:
-    """3-tier price source: brapi -> investsite -> b3 trades."""
+    """2-tier price source: brapi -> b3 trades."""
     brapi_data = _get_price_brapi(ticker)
     if brapi_data.get("status") == "ok":
         return brapi_data
-
-    investsite_data = _get_price_investsite(ticker)
-    if investsite_data.get("status") == "ok":
-        return investsite_data
 
     b3_data = _get_latest_price(ticker)
     if b3_data.get("status") == "ok":
         b3_data["source"] = "b3_trades"
         return b3_data
 
-    investsite_data["source"] = "investsite+b3_trades (both failed)"
-    return investsite_data
+    # Both failed — return the brapi error (more informative than b3's)
+    return brapi_data if brapi_data.get("status") == "error" else {
+        "status": "error",
+        "error": f"Price unavailable for {ticker} (brapi + b3 both failed)",
+    }
 
 
 def _get_price_brapi(ticker: str) -> dict:
@@ -64,72 +63,6 @@ def _get_price_brapi(ticker: str) -> dict:
         }
     except Exception as e:
         return {"status": "error", "error": f"brapi: {e}"}
-
-
-def _get_price_investsite(ticker: str) -> dict:
-    try:
-        from skills.investsite.modes.indicators import indicators
-        r = indicators(ticker=ticker)
-        if r.get("status") != "ok":
-            return {"status": "error", "error": f"investsite: {r.get('error','')}"}
-
-        precos = r.get("sections", {}).get("precos_relativos", {})
-        price = precos.get("Preco Atual da Acao")
-        date_str = precos.get("Data do Preco da Acao", "")
-
-        if price is None:
-            return {"status": "error", "error": "investsite: no price"}
-
-        if not isinstance(price, (int, float)):
-            from core.br_validator import parse_brl
-            try:
-                price = parse_brl(str(price))
-            except ValueError:
-                return {"status": "error", "error": f"investsite: cannot parse price '{price}'"}
-
-        # [v1.0.12] Extract market cap -- EXACT key match (not substring)
-        market_cap = None
-        _MCAP_KEYS = {"valor de mercado", "market cap", "valor mercado"}
-        for key, raw in precos.items():
-            if key.lower().strip() not in _MCAP_KEYS:
-                continue
-            if isinstance(raw, list) and raw:
-                raw = raw[0]
-            if isinstance(raw, (int, float)):
-                market_cap = float(raw)
-            elif isinstance(raw, str):
-                from core.br_validator import parse_brl
-                try:
-                    market_cap = parse_brl(raw)
-                except ValueError:
-                    pass
-            if market_cap is not None and market_cap > 0:
-                break
-
-        # [v1.0.10] Extract investsite's pre-computed P/L + P/VPA
-        pe_ratio = None
-        raw_pe = precos.get("Preco/Lucro")
-        if raw_pe is not None and isinstance(raw_pe, (int, float)):
-            pe_ratio = float(raw_pe)
-
-        p_vpa_investsite = None
-        raw_pvpa = precos.get("Preco/VPA")
-        if raw_pvpa is not None and isinstance(raw_pvpa, (int, float)):
-            p_vpa_investsite = float(raw_pvpa)
-
-        result = {
-            "status": "ok", "source": "investsite",
-            "last_price": float(price), "date": date_str,
-        }
-        if market_cap is not None:
-            result["market_cap"] = market_cap
-        if pe_ratio is not None:
-            result["pe_ratio"] = pe_ratio
-        if p_vpa_investsite is not None:
-            result["p_vpa"] = p_vpa_investsite
-        return result
-    except Exception as e:
-        return {"status": "error", "error": f"investsite: {e}"}
 
 
 def _get_latest_price(ticker: str) -> dict:

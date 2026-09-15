@@ -4,13 +4,13 @@
 
 ### NEVER DO
 
-1. **Never fetch price from the web** — Use b3 trades.db (local). The investsite skill is for web data; this skill uses local databases only.
+1. **Never fetch price from the web** — Use b3 trades.db (local) via the 2-tier brapi → b3 trades fallback. [v2.2: investsite removed entirely — login requirement made it unreliable.]
 2. **Never compute ratios without checking for None** — Use `_safe_div()` for all divisions. Returns None on zero/None denominator.
 3. **Never change the ratio formulas** — P/L = market_cap/lucro_liquido, P/VPA = market_cap/PL, EV = Market Cap + Debt - Cash. These are market-cap-based (v1.0.9) — correct for both regular and UNIT tickers. Do NOT revert to per-share (price/EPS) — it breaks units.
 4. **Never create `.bak` files** — Forbidden by project rules.
 5. **Never rewrite entire files** — Surgical edits only. Preserve existing code exactly.
 6. **Never print to stdout** — MCP stdio corruption. Use `core.tracer` or stderr. (Exception: `print(..., flush=True)` for progress messages is OK — the dashboard mode uses these for user-facing progress.)
-7. **Never use substring matching for investsite keys** — investsite's `precos_relativos` has keys like "Valor de Mercado" (market cap) AND "Valor de Mercado / Receita" (PSR). Substring "mercado" matches both. Use EXACT key match (`key.lower().strip() in {"valor de mercado", ...}`). See v1.0.12 lesson.
+7. **Never use investsite as a price fallback** — [v2.2] investsite started forcing login (token rotation). The price chain is now brapi → b3 trades only. Do NOT reintroduce investsite — it breaks automated runs. (See v1.0.12 lesson for the old investsite key-matching issue, now moot.)
 8. **Never add the Graham Number overlay back to the price chart** — Removed in v1.10 by user request. The price chart uses the default shared `build_price_chart()` output unmodified.
 9. **Never call `ratios()` per-tab in the dashboard** — Call it ONCE at the top of `dashboard()` and pass the dict to every builder. 6 calls = 6× the engine load.
 10. **Never make the dashboard crash on a single builder failure** — Wrap each tab builder in `_safe_build()` (try/except) so a failure degrades to an error section in that tab.
@@ -99,6 +99,22 @@
 > - **Fix:** Switched to series 432 ("Meta Selic Copom, % a.a.") — the actual Copom policy rate. It's already annual (% a.a.), values are 5-45%, no compound annualization needed, no overflow possible.
 > - **Lesson:** Don't trust data source metadata (unit, frequency) without verifying against actual API responses. BCB's catalog says "daily" but returns monthly. Always add a sanity check on the computed value (e.g. "Brazilian Selic has never exceeded 45%") to catch metadata mismatches.
 
+#### v2.2 — DCF perpetuity breaks for high-FCF-yield cyclicals
+> - **What happened:** The DCF sensitivity used a single-stage Gordon perpetuity `Intrinsic = FCF_per_share / (WACC - g)` with a clamped g. For PETR4 (FCF yield 28%, WACC 13%, implied g = -15.7%), the clamp forced g to -2%, producing R$ 89-122 for a R$ 50 stock. The "Mercado" scenario was supposed to equal the current price by construction, but the clamp broke the calibration.
+> - **Root cause:** (1) The perpetuity formula breaks down when FCF yield >> WACC — the denominator (WACC - g) is small, inflating intrinsic value. (2) TTM FCF captures cyclical peaks (oil-price spike), not steady-state. (3) A perpetuity with negative g is conceptually wrong (contradicts going-concern) but the market prices in decline for declining-reserves companies.
+> - **Fix:** Rewired `build_dcf_sensitivity_section` to call `_dcf_at_growth_normalized` — a 2-stage DCF using 5Y median normalized FCF (owner-earnings smoothing) + IPCA-anchored terminal growth. Scenarios vary BOTH Stage-1 growth AND terminal g. Pessimista uses market-implied g (WACC - FCF_yield) → reproduces the current price. The honest "g implícito (mercado)" row + ATENÇÃO warning shows what the market is pricing in.
+> - **Lesson:** A Gordon perpetuity is the wrong model for high-FCF-yield cyclicals. Use a 2-stage DCF with normalized (multi-year median) FCF + capped terminal growth. Vary Stage-1 growth (bounded uncertainty) and terminal g (captures decline). Always show the market-implied g so the user can see what the market is pricing — the DCF output alone is misleading for these companies.
+
+#### v2.2 — investsite login requirement
+> - **What happened:** investsite started forcing login (token rotation), making it unreliable as an automated price fallback. Dashboard runs would fail when investsite returned a login page instead of the indicators JSON.
+> - **Fix:** Removed investsite from the price fallback chain entirely. fetchers.py is now 2-tier: brapi → b3 trades.db. P/L, P/VPA, market_cap always computed from market_cap + fundamentals (no investsite-derived path).
+> - **Lesson:** Don't depend on web-scraping services that require authentication for automated fallbacks. They break without warning when the auth flow changes. Use local databases (b3 trades.db) + public APIs (brapi) as the fallback chain.
+
+#### v2.2 — 3M growth fallback used 5Y window
+> - **What happened:** The `_get_growth` fallback in `efficiency.py` used `lookback = LOOKBACK_1Y if lookback_years == 1 else LOOKBACK_5Y`. For the 3M case (`lookback_years == 0`), the `== 1` check was False, so it fell through to `LOOKBACK_5Y` (1825 days). The 3M growth row would show a 5-year growth number when the registry metric returned None.
+> - **Fix:** 3-way branch: `LOOKBACK_3M` (90d) / `LOOKBACK_1Y` (365d) / `LOOKBACK_5Y` (1825d).
+> - **Lesson:** When a ternary lookback has a 0-case, don't use a binary `if/else` — the 0 falls through to the else. Use an explicit 3-way branch or a dict lookup.
+
 #### v2.0 — ITR HEAD check unreliable (CVM doesn't update Last-Modified)
 > - **What happened:** The sync guard does a HEAD request to CVM's ZIP URL and compares the `Last-Modified` header to the last sync timestamp. For ITR (quarterly), this said "up to date" even when CVM had published new 2T2026 filings — because CVM doesn't update the `Last-Modified` header when they ADD new filings to an existing ZIP. The header only changes when a NEW ZIP file is created (annually).
 > - **Fix:** ITR now skips the HEAD check and uses the 24h freshness window (like non-CVM sources). DFP/FCA keep the HEAD check (they're annual — one ZIP per year, header is reliable).
@@ -111,4 +127,4 @@
 
 ---
 
-*Last updated: 2026-08-12 (v2.0 — added Selic series 432 + ITR Head check + report split lessons).*
+*Last updated: 2026-09-15 (v2.2 — DCF perpetuity fix + investsite removal + 3M fallback fix lessons).*
