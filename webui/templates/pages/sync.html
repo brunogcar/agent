@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.sync") }} — Agent{% endblock %}
+{% block content %}
+<div class="page-sync">
+  <h1>{{ t("sync.sources") }}</h1>
+
+  {# Freshness table (auto-refreshes via HTMX) #}
+  <div id="sync-status"
+       hx-get="/api/webui/sync/status"
+       hx-trigger="load, every 30s"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <div class="loading">{{ t("sync.checking") }}</div>
+  </div>
+
+  {# SSE-powered live sync log #}
+  <div class="sync-log-section">
+    <h3>Sync Log</h3>
+    <div class="sync-log" id="sync-log"
+         hx-ext="sse"
+         sse-connect="/api/webui/sync/stream"
+         sse-swap="message">
+      <div class="loading">Aguardando eventos...</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

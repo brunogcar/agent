@@ -1,0 +1,118 @@
+{# webui/templates/base.html — main shell with sidebar + topbar.
+
+[WebUI v1] Persistent shell with:
+  - Left sidebar (global nav: Dashboard, Macro, Sync, Settings)
+  - Top bar (ticker search + theme toggle + language switcher)
+  - Main content area (HTMX-swapped)
+
+FOUC prevention: inline script in <head> sets data-theme before CSS loads.
+
+Vendor JS: HTMX + Alpine + Chart.js (local, no CDN dependency).
+#}<!DOCTYPE html>
+<html lang="{{ locale }}" data-theme="{{ theme }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Brazilian Financial Data{% endblock %}</title>
+
+  {# ── FOUC prevention: set theme before CSS loads ── #}
+  <script>
+    (function() {
+      var saved = localStorage.getItem('webui_theme');
+      if (!saved) saved = document.documentElement.getAttribute('data-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', saved);
+    })();
+  </script>
+
+  {# ── Theme CSS variables (inline, from theme.py) ── #}
+  <style>{{ theme_css | safe }}</style>
+
+  {# ── Vendor JS (local, no CDN) ── #}
+  <script src="/static/vendor/htmx.min.js"></script>
+  <script defer src="/static/vendor/alpine.min.js"></script>
+  <script src="/static/vendor/chart.umd.min.js"></script>
+
+  {# ── App CSS + JS ── #}
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/charts.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    {# ── Sidebar ── #}
+    <aside class="sidebar" x-data="{ collapsed: false }">
+      <div class="sidebar-header">
+        <span class="logo">📊</span>
+        <span class="title" x-show="!collapsed">Agent</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="/webui" class="nav-item {{ 'active' if active_tab == 'dashboard' else '' }}">
+          <span class="icon">🏠</span>
+          <span class="label">{{ t("nav.dashboard") }}</span>
+        </a>
+        <a href="/webui/macro" class="nav-item {{ 'active' if active_tab == 'macro' else '' }}">
+          <span class="icon">🌎</span>
+          <span class="label">{{ t("nav.macro") }}</span>
+        </a>
+        <a href="/webui/sync" class="nav-item {{ 'active' if active_tab == 'sync' else '' }}">
+          <span class="icon">🔄</span>
+          <span class="label">{{ t("nav.sync") }}</span>
+        </a>
+        <a href="/webui/settings" class="nav-item {{ 'active' if active_tab == 'settings' else '' }}">
+          <span class="icon">⚙️</span>
+          <span class="label">{{ t("nav.settings") }}</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="collapse-btn" @click="collapsed = !collapsed">
+          <span x-text="collapsed ? '▶' : '◀'"></span>
+        </button>
+      </div>
+    </aside>
+
+    {# ── Main area ── #}
+    <div class="main-area">
+      {# ── Top bar ── #}
+      <header class="topbar">
+        <div class="search-box">
+          <input type="text"
+                 placeholder="{{ t('company.search_placeholder') }}"
+                 hx-get="/api/webui/search"
+                 hx-trigger="keyup changed delay:300ms"
+                 hx-target="#search-results"
+                 name="q"
+                 autocomplete="off">
+          <div id="search-results" class="search-results"></div>
+        </div>
+        <div class="topbar-actions">
+          {# Theme toggle #}
+          <div class="theme-switcher" x-data="{ open: false }">
+            <button @click="open = !open" class="icon-btn">🎨</button>
+            <div x-show="open" class="dropdown" @click.outside="open = false">
+              {% for th in themes %}
+              <a href="?theme={{ th.id }}"
+                 onclick="document.cookie='webui_theme={{ th.id }};path=/;max-age=31536000'; document.documentElement.setAttribute('data-theme','{{ th.id }}'); this.closest('.dropdown').previousElementSibling.click();">
+                {{ th.name }}
+              </a>
+              {% endfor %}
+            </div>
+          </div>
+          {# Language switcher #}
+          <div class="lang-switcher" x-data="{ open: false }">
+            <button @click="open = !open" class="icon-btn">🌐 {{ locale }}</button>
+            <div x-show="open" class="dropdown" @click.outside="open = false">
+              <a href="?lang=pt-BR" onclick="document.cookie='webui_locale=pt-BR;path=/;max-age=31536000'; location.reload();">Português (BR)</a>
+              <a href="?lang=en-US" onclick="document.cookie='webui_locale=en-US;path=/;max-age=31536000'; location.reload();">English (US)</a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {# ── Content area (HTMX swaps here) ── #}
+      <main class="content" id="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+</body>
+</html>

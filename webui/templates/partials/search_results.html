@@ -1,0 +1,15 @@
+{# webui/templates/partials/search_results.html — HTMX search results #}
+{% if results %}
+<ul class="search-list">
+  {% for r in results %}
+  <li>
+    <a href="/webui/company/{{ r.ticker }}" onclick="this.closest('.search-results').innerHTML=''">
+      <span class="ticker">{{ r.ticker }}</span>
+      <span class="name">{{ r.name }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% elif request.query_params.get('q') %}
+<div class="no-results">{{ t("company.no_results") }}</div>
+{% endif %}

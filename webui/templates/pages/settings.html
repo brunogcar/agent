@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.settings") }} — Agent{% endblock %}
+{% block content %}
+<div class="page-settings">
+  <h1>{{ t("nav.settings") }}</h1>
+
+  <div class="settings-section">
+    <h3>{{ t("settings.appearance") }}</h3>
+    <div class="setting-row">
+      <label>{{ t("settings.theme") }}</label>
+      <select onchange="document.cookie='webui_theme='+this.value+';path=/;max-age=31536000'; document.documentElement.setAttribute('data-theme',this.value);">
+        {% for th in themes %}
+        <option value="{{ th.id }}" {{ 'selected' if theme == th.id else '' }}>{{ th.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="setting-row">
+      <label>{{ t("settings.language") }}</label>
+      <select onchange="document.cookie='webui_locale='+this.value+';path=/;max-age=31536000'; location.reload();">
+        <option value="pt-BR" {{ 'selected' if locale == 'pt-BR' else '' }}>Português (BR)</option>
+        <option value="en-US" {{ 'selected' if locale == 'en-US' else '' }}>English (US)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>{{ t("settings.data") }}</h3>
+    <p>{{ t("settings.auto_sync") }}: <a href="/webui/sync">{{ t("sync.sync_now") }}</a></p>
+  </div>
+</div>
+{% endblock %}

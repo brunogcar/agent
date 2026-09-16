@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ ticker }} — {{ t("nav.company") }}{% endblock %}
+{% block content %}
+<div class="page-company" x-data="{ tab: '{{ active_tab }}' }">
+  {# ── Company header (persistent across tabs) ── #}
+  <div id="company-header"
+       hx-get="/api/webui/company/{{ ticker }}/header"
+       hx-trigger="load"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Company tabs (second-tier nav) ── #}
+  <nav class="company-tabs">
+    <button class="tab-btn {{ 'active' if active_tab == 'overview' else '' }}"
+            @click="tab='overview'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/overview"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.overview") }}
+    </button>
+    <button class="tab-btn {{ 'active' if active_tab == 'valuation' else '' }}"
+            @click="tab='valuation'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/valuation"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.valuation") }}
+    </button>
+    <button class="tab-btn {{ 'active' if active_tab == 'financials' else '' }}"
+            @click="tab='financials'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/financials"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.financials") }}
+    </button>
+    <button class="tab-btn {{ 'active' if active_tab == 'dividends' else '' }}"
+            @click="tab='dividends'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/dividends"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.dividends") }}
+    </button>
+    <button class="tab-btn {{ 'active' if active_tab == 'historical' else '' }}"
+            @click="tab='historical'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/historical"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.historical") }}
+    </button>
+  </nav>
+
+  {# ── Tab content (HTMX-swapped) ── #}
+  <div id="tab-content" class="tab-content">
+    {# Default: load overview on first visit #}
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>
+
+<script>
+  // Load the active tab on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    var tab = '{{ active_tab }}';
+    var ticker = '{{ ticker }}';
+    htmx.ajax('GET', '/api/webui/company/' + ticker + '/tab/' + tab, '#tab-content');
+  });
+</script>
+{% endblock %}

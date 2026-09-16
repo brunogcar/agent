@@ -2,7 +2,7 @@
 
 > Canonical map of the MCP Agent Stack repo. This is the reference for "where does X live?" — the README is a summary, this is the full layout.
 
-Last updated: 2026-09-15 (Phase 3: ddm/_base/ extraction, skills/_base/ package split, dashboard.html JS partials; Phase 4 C1: data_sources/_base/ + skills/_base/kpi.py + skills/_base/error.py)
+Last updated: 2026-09-16 (WebUI v1 — live web interface, extends FastAPI gateway, Jinja2 + HTMX + Alpine + Chart.js)
 
 ---
 
@@ -22,6 +22,8 @@ agent/
 ├── workflows/             # 6 LangGraph state machines
 ├── data_sources/          # Raw data ingestion + query (CVM, B3, BCB, DDM)
 ├── skills/                # Analytical views combining data sources
+├── webui/                 # Live web interface (Jinja2 + HTMX + Alpine + Chart.js)
+├── webui.py               # WebUI single-command entry point (python webui.py)
 ├── benchmark/             # Role benchmarking tool
 ├── docs/                  # 5-file documentation standard per component
 └── tests/                 # Pytest suites mirror source structure

@@ -1,0 +1,20 @@
+{
+  "_name": "Claro",
+  "tokens": {
+    "bg": "#ffffff",
+    "bg-sec": "#f6f8fa",
+    "bg-card": "#ffffff",
+    "text": "#1f2328",
+    "text-sec": "#656d76",
+    "border": "#d0d7de",
+    "brand": "#0d9488",
+    "brand-dim": "rgba(13,148,136,0.1)",
+    "accent": "#0d9488",
+    "info": "#0969da",
+    "success": "#1a7f37",
+    "warning": "#9a6700",
+    "danger": "#cf222e",
+    "chart-grid": "rgba(0,0,0,0.06)",
+    "chart-text": "#656d76"
+  }
+}

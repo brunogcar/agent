@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.dashboard") }} — Agent{% endblock %}
+{% block content %}
+<div class="page-dashboard">
+  <h1>{{ t("nav.dashboard") }}</h1>
+  <p class="subtitle">Brazilian Financial Data</p>
+
+  {# Sync status ribbon #}
+  <div class="sync-ribbon"
+       hx-get="/api/webui/sync/status"
+       hx-trigger="load, every 30s"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <span class="loading">{{ t("sync.checking") }}</span>
+  </div>
+
+  {# Quick links #}
+  <div class="quick-links">
+    <a href="/webui/company/PETR4" class="quick-card">
+      <span class="ticker">PETR4</span>
+      <span class="name">Petrobras</span>
+    </a>
+    <a href="/webui/company/VALE3" class="quick-card">
+      <span class="ticker">VALE3</span>
+      <span class="name">Vale</span>
+    </a>
+    <a href="/webui/company/ITUB4" class="quick-card">
+      <span class="ticker">ITUB4</span>
+      <span class="name">Itaú Unibanco</span>
+    </a>
+  </div>
+</div>
+{% endblock %}

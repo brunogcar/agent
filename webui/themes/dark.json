@@ -1,0 +1,20 @@
+{
+  "_name": "Escuro",
+  "tokens": {
+    "bg": "#0a0c10",
+    "bg-sec": "#111318",
+    "bg-card": "#161b22",
+    "text": "#e6edf3",
+    "text-sec": "#7d8590",
+    "border": "#30363d",
+    "brand": "#0d9488",
+    "brand-dim": "rgba(13,148,136,0.15)",
+    "accent": "#0d9488",
+    "info": "#3b82f6",
+    "success": "#22c55e",
+    "warning": "#f59e0b",
+    "danger": "#ef4444",
+    "chart-grid": "rgba(255,255,255,0.06)",
+    "chart-text": "#7d8590"
+  }
+}

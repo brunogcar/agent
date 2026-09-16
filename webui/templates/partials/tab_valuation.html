@@ -1,0 +1,58 @@
+{# webui/templates/partials/tab_valuation.html — valuation tab with live ratios #}
+<div class="tab-valuation">
+  <h2>{{ t("company.valuation") }} — {{ ticker }}</h2>
+
+  {% if ratios and ratios._error %}
+  <div class="error">Erro: {{ ratios._error }}</div>
+  {% elif ratios %}
+
+  {# KPI cards — key valuation metrics #}
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">P/L</div>
+      <div class="kpi-value">{{ ratios.get("p_l", "—") }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">P/VPA</div>
+      <div class="kpi-value">{{ ratios.get("p_vpa", "—") }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">EV/EBITDA</div>
+      <div class="kpi-value">{{ ratios.get("ev_ebitda", "—") }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">ROE</div>
+      <div class="kpi-value">{{ ratios.get("roe", "—") }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">ROIC</div>
+      <div class="kpi-value">{{ ratios.get("roic", "—") }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Dividend Yield</div>
+      <div class="kpi-value">{{ ratios.get("dividend_yield", "—") }}</div>
+    </div>
+  </div>
+
+  {# Full ratios table #}
+  <div class="ratios-section">
+    <h3>Todas as métricas ({{ ratios | length }})</h3>
+    <table class="ratios-table">
+      <thead><tr><th>Métrica</th><th>Valor</th></tr></thead>
+      <tbody>
+        {% for key, val in ratios.items() %}
+        {% if not key.startswith("_") and val is not none %}
+        <tr>
+          <td>{{ key }}</td>
+          <td>{{ val }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div class="loading">{{ t("common.loading") }}</div>
+  {% endif %}
+</div>

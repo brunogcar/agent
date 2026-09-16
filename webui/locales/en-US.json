@@ -1,0 +1,45 @@
+{
+  "_name": "English (US)",
+  "nav": {
+    "dashboard": "Dashboard",
+    "company": "Company",
+    "macro": "Macro",
+    "sync": "Sync",
+    "settings": "Settings"
+  },
+  "company": {
+    "search_placeholder": "Search ticker (e.g. PETR4)...",
+    "search_results": "Results",
+    "no_results": "No results",
+    "overview": "Overview",
+    "valuation": "Valuation",
+    "financials": "Financials",
+    "dividends": "Dividends",
+    "historical": "Historical"
+  },
+  "sync": {
+    "checking": "Checking sources...",
+    "up_to_date": "Up to date",
+    "stale": "Stale",
+    "syncing": "Syncing",
+    "sync_now": "Sync now",
+    "last_sync": "Last sync",
+    "never": "Never",
+    "sources": "Data sources"
+  },
+  "settings": {
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "language": "Language",
+    "data": "Data",
+    "auto_sync": "Auto-sync on startup"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Retry",
+    "close": "Close",
+    "save": "Save",
+    "cancel": "Cancel"
+  }
+}
