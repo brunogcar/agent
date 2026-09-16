@@ -2,7 +2,7 @@
 {% block title %}{{ ticker }} — {{ t("nav.company") }}{% endblock %}
 {% block content %}
 <div class="page-company" x-data="{ tab: '{{ active_tab }}' }">
-  {# ── Company header (persistent across tabs) ── #}
+  {# ── Identity card (persistent across all tabs) ── #}
   <div id="company-header"
        hx-get="/api/webui/company/{{ ticker }}/header"
        hx-trigger="load"
@@ -13,12 +13,12 @@
 
   {# ── Company tabs (second-tier nav) ── #}
   <nav class="company-tabs">
-    <button class="tab-btn {{ 'active' if active_tab == 'overview' else '' }}"
-            @click="tab='overview'"
-            hx-get="/api/webui/company/{{ ticker }}/tab/overview"
+    <button class="tab-btn {{ 'active' if active_tab == 'visao_geral' else '' }}"
+            @click="tab='visao_geral'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/visao_geral"
             hx-target="#tab-content"
             hx-swap="innerHTML">
-      {{ t("company.overview") }}
+      Visão Geral
     </button>
     <button class="tab-btn {{ 'active' if active_tab == 'valuation' else '' }}"
             @click="tab='valuation'"
@@ -52,7 +52,6 @@
 
   {# ── Tab content (HTMX-swapped) ── #}
   <div id="tab-content" class="tab-content">
-    {# Default: load overview on first visit #}
     <div class="loading">{{ t("common.loading") }}</div>
   </div>
 </div>
@@ -60,7 +59,7 @@
 <script>
   // Load the active tab on page load
   document.addEventListener('DOMContentLoaded', function() {
-    var tab = '{{ active_tab }}';
+    var tab = '{{ active_tab }}' || 'visao_geral';
     var ticker = '{{ ticker }}';
     htmx.ajax('GET', '/api/webui/company/' + ticker + '/tab/' + tab, '#tab-content');
   });

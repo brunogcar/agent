@@ -15,8 +15,8 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/webui/` | Dashboard (home — market overview, no ticker required) |
-| GET | `/webui/company/{ticker}` | Company overview page (default tab: overview) |
-| GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: overview, valuation, financials, dividends, historical) |
+| GET | `/webui/company/{ticker}` | Company overview page (default tab: visao_geral) |
+| GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: visao_geral, valuation, financials, dividends, historical) |
 | GET | `/webui/macro` | Macro indicators page |
 | GET | `/webui/sync` | Data sync status page |
 | GET | `/webui/settings` | Settings page (theme, language) |
@@ -56,7 +56,7 @@ Returns all 79 valuation ratios for a ticker.
 Returns historical daily price series for Chart.js.
 
 **Parameters:**
-- `range`: `1M` | `6M` | `1A` | `5A` | `Tudo` (default: `1A`)
+- `range`: `1M` | `3M` | `6M` | `1A` | `5A` | `10A` | `Tudo` (default: `1A`)
 
 **Response:**
 ```json
@@ -98,7 +98,7 @@ Company header — returns the 3-part header HTML fragment (identity card + 4 re
 Tab content — returns the HTML fragment for a specific company tab.
 
 **Parameters:**
-- `tab`: `overview` | `valuation` | `financials` | `dividends` | `historical`
+- `tab`: `visao_geral` | `valuation` | `financials` | `dividends` | `historical`
 
 ---
 

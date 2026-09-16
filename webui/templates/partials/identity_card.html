@@ -1,0 +1,34 @@
+{# webui/templates/partials/identity_card.html — persistent identity header.
+
+Shown on ALL company tabs. Just the identity card (ticker, name, price,
+market cap, shares). The registration tables live in the Visão Geral tab.
+#}
+<div class="identity-card">
+  <div class="identity-left">
+    <div class="ticker">{{ header.ticker }}</div>
+    <div class="name">{{ header.name }}</div>
+    {% if header.trade_name and header.trade_name != header.name %}
+    <div class="trade-name">{{ header.trade_name }}</div>
+    {% endif %}
+  </div>
+  <div class="identity-right">
+    {% if header.last_close_str %}
+    <div class="metric">
+      <div class="label">Último Fechamento</div>
+      <div class="value price">R$ {{ header.last_close_str }}</div>
+    </div>
+    {% endif %}
+    {% if header.market_cap_str %}
+    <div class="metric">
+      <div class="label">Market Cap</div>
+      <div class="value">{{ header.market_cap_str }}</div>
+    </div>
+    {% endif %}
+    {% if header.total_shares_str %}
+    <div class="metric">
+      <div class="label">Total Ações</div>
+      <div class="value">{{ header.total_shares_str }}</div>
+    </div>
+    {% endif %}
+  </div>
+</div>

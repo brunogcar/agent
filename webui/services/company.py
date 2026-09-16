@@ -42,15 +42,17 @@ class CompanyService:
                 return []
             conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
-            # Match ticker prefix OR company name substring
+            # The bridge table is "ticker_map" with columns:
+            # ticker, cd_cvm, trading_name, cnpj
+            # Match ticker prefix OR trading_name substring
             rows = conn.execute(
-                """SELECT ticker, name FROM bridge
-                   WHERE UPPER(ticker) LIKE ? OR UPPER(name) LIKE ?
+                """SELECT ticker, trading_name as name FROM ticker_map
+                   WHERE UPPER(ticker) LIKE ? OR UPPER(trading_name) LIKE ?
                    ORDER BY ticker LIMIT ?""",
                 (f"{q}%", f"%{q}%", limit),
             ).fetchall()
             conn.close()
-            return [{"ticker": r["ticker"], "name": r["name"]} for r in rows]
+            return [{"ticker": r["ticker"], "name": r["name"] or ""} for r in rows]
         except Exception:
             return []
 
@@ -70,12 +72,17 @@ class CompanyService:
             return {"_error": str(e)}
 
     def price_series(self, ticker: str, years: int = 5) -> list[dict]:
-        """Historical daily price series for the price chart."""
+        """Historical daily price series for the price chart.
+
+        Accepts fractional years (0.083 = 1 month, 0.5 = 6 months, 10 = 10 years).
+        """
         try:
-            from skills.cvm.calculations.engines.price import price_series
+            from skills.cvm.calculations.engines.price import price_series as _price_series
             from datetime import date, timedelta
             date_to = date.today().isoformat()
-            date_from = (date.today() - timedelta(days=365 * years)).isoformat()
-            return price_series(ticker, date_from, date_to)
+            # Convert years to days (365.25 to account for leap years)
+            days = int(years * 365.25)
+            date_from = (date.today() - timedelta(days=days)).isoformat()
+            return _price_series(ticker, date_from, date_to)
         except Exception:
             return []

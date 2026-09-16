@@ -61,17 +61,17 @@ async def dashboard(request: Request):
 
 @router.get("/company/{ticker}", response_class=HTMLResponse)
 async def company_overview(request: Request, ticker: str):
-    """Company overview page (default tab)."""
+    """Company overview page (default tab: visao_geral)."""
     header = _company_service.header(ticker.upper())
     return templates.TemplateResponse(
         request, "pages/company.html",
-        _ctx(request, ticker=ticker.upper(), header=header, active_tab="overview"),
+        _ctx(request, ticker=ticker.upper(), header=header, active_tab="visao_geral"),
     )
 
 
 @router.get("/company/{ticker}/{tab}", response_class=HTMLResponse)
 async def company_tab(request: Request, ticker: str, tab: str):
-    """Company tab page (valuation, financials, dividends, historical)."""
+    """Company tab page (visao_geral, valuation, financials, dividends, historical)."""
     header = _company_service.header(ticker.upper())
     return templates.TemplateResponse(
         request, "pages/company.html",

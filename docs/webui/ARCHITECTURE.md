@@ -37,10 +37,11 @@ agent/
 │   │   │   └── settings.html         # Theme + language settings
 │   │   └── partials/                 # HTMX fragments (no <html> wrapper)
 │   │       ├── search_results.html   # Ticker search dropdown
-│   │       ├── company_header.html   # 3-part company header
-│   │       ├── tab_overview.html     # Overview tab content
+│   │       ├── identity_card.html    # Persistent identity header (all tabs)
+│   │       ├── tab_visao_geral.html  # Visão Geral tab (reg tables + chart)
 │   │       └── tab_valuation.html    # Valuation tab content
 │   ├── static/                       # Static assets (CSS, JS, vendor)
+│   │   ├── favicon.svg               # Teal bar-chart icon
 │   │   ├── css/app.css               # 3-layer token system + layout + components
 │   │   ├── js/app.js                 # HTMX config + chart init after swap
 │   │   ├── js/charts.js              # Chart.js factory (theme-aware)

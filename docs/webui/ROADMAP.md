@@ -27,32 +27,32 @@
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
 ### Company Tabs
-- [x] Overview — company header + price chart (range selector)
-- [x] Valuation — KPI cards (P/L, P/VPA, EV/EBITDA, ROE, ROIC, DY) + full ratios table
+- [x] Visão Geral — company header (identity card) + registration tables + activity description + price chart (7 range options)
+- [x] Valuation — full 79-metric ratios table (no KPIs)
 - [ ] Financials — DRE/BPA/BPP/DFC/DVA statement tables
 - [ ] Dividends — DPA history + dividend events
 - [ ] Historical — 5Y price + ratio charts
 
 ### Features
-- [x] Ticker search (HTMX debounced keyup)
-- [x] Company header (live from `build_company_header()`)
+- [x] Ticker search (HTMX debounced keyup, bridge.db ticker_map)
+- [x] Company header (identity card — persistent across all tabs)
+- [x] Price chart (Chart.js, 7 ranges: Tudo/10A/5A/1A/6M/3M/1M)
 - [x] Theme toggle (dark/light, FOUC prevention, localStorage + cookie)
 - [x] Language switcher (pt-BR/en-US, cookie-based)
+- [x] Sidebar collapse (◀/▶ button, icons-only mode)
+- [x] Favicon (SVG bar-chart icon)
 - [x] Sync status (freshness table, auto-refresh)
 - [x] SSE sync stream (live progress events)
+- [x] Cache-busting (?v=N on all static URLs)
 
 ---
 
-## 🔄 Next Up (v2)
+## 🔄 Next Up (v1.2)
 
 ### Company Tabs (complete the 5-tab set)
 - [ ] **Financials tab** — DRE, BPA, BPP, DFC, DVA statement tables. Period toggle (quarterly/annual). Reuse `skills/cvm/financials/` engines. This is the biggest data tab — needs period selector, statement type selector, and wide tables with frozen columns.
 - [ ] **Dividends tab** — DPA history table, annual bar chart, yield history line chart, payout trend. Reuse `data_sources/b3/dividends/` + `skills/cvm/calculations/engines/dividends.py`.
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
-
-### Price Chart (fix rendering)
-- [ ] **Chart.js init after HTMX swap** — the overview tab loads a price chart but the Chart.js initialization needs the `data-chart-type` attribute pattern + `initChartsInElement()` in `app.js`. Currently the chart data loads but doesn't render.
-- [ ] **Range selector** — Tudo/5A/1A/6M/3M/1M buttons that HTMX-swap the chart data.
 
 ### Macro Page
 - [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.

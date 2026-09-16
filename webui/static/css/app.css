@@ -71,6 +71,18 @@ a:hover { text-decoration: underline; }
   height: 100vh;
   transition: width 0.2s;
 }
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed);
+}
+.sidebar.collapsed .sidebar-header {
+  justify-content: center;
+}
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+}
+.sidebar.collapsed .collapse-btn {
+  text-align: center;
+}
 .sidebar-header {
   padding: var(--space-4);
   display: flex;
@@ -227,26 +239,71 @@ a:hover { text-decoration: underline; }
 .identity-right .metric .value { font-size: 16px; font-weight: 600; }
 .identity-right .metric .value.price { font-size: 22px; color: var(--color-brand); }
 
-.reg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-3); }
-.reg-table {
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+/* ── Visão Geral tab ── */
+.tab-visao-geral {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
-.reg-title { font-size: 11px; font-weight: 700; color: var(--color-brand); text-transform: uppercase; margin-bottom: var(--space-2); }
-.reg-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.reg-table td { padding: var(--space-1) 0; }
-.reg-table td:first-child { color: var(--color-text-sec); width: 45%; }
-.reg-table tr:not(:last-child) td { border-bottom: 1px solid var(--color-border); }
 
-.activity {
-  padding: var(--space-3) var(--space-4);
+/* Registration tables grid */
+.reg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+.reg-table {
+  padding: var(--space-4) var(--space-5);
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
-.activity-text { font-size: 12px; line-height: 1.6; }
+.reg-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-brand);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+.reg-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.reg-table td {
+  padding: var(--space-2) 0;
+  line-height: 1.5;
+}
+.reg-table td:first-child {
+  color: var(--color-text-sec);
+  width: 45%;
+  font-weight: 500;
+}
+.reg-table td:last-child {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.reg-table tr:not(:last-child) td {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Activity description card */
+.activity {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.activity-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text);
+}
 
 /* ── Company tabs ── */
 .company-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--color-border); }
@@ -276,8 +333,15 @@ a:hover { text-decoration: underline; }
 .ratios-table td:first-child { font-family: var(--font-mono); }
 
 /* ── Chart section ── */
-.chart-section { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); }
-.range-selector { display: flex; gap: var(--space-1); margin-bottom: var(--space-3); }
+.chart-section {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  padding: var(--space-4) var(--space-5);
+}
+.chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-4); }
+.range-selector { display: flex; gap: var(--space-1); }
 .range-btn {
   padding: var(--space-1) var(--space-3); background: var(--color-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius-sm); color: var(--color-text-sec); cursor: pointer; font-size: 12px;

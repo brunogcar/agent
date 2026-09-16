@@ -1,0 +1,75 @@
+{# webui/templates/partials/tab_visao_geral.html — Visão Geral tab.
+
+[WebUI v2] Chart init handled entirely by app.js via htmx:afterSettle.
+No inline <script> needed — app.js listens for HTMX swaps and auto-inits
+#price-chart when it appears in the DOM.
+#}
+<div class="tab-visao-geral">
+
+  {# ── Section 1: Registration tables (2×2 grid) ── #}
+  <div class="reg-grid">
+    <div class="reg-table">
+      <div class="reg-title">Identificação</div>
+      <table>
+        {% if header.cnpj %}<tr><td>CNPJ</td><td>{{ header.cnpj }}</td></tr>{% endif %}
+        {% if header.cd_cvm %}<tr><td>CD CVM</td><td>{{ header.cd_cvm }}</td></tr>{% endif %}
+        {% if header.isin %}<tr><td>ISIN</td><td>{{ header.isin }}</td></tr>{% endif %}
+      </table>
+    </div>
+    <div class="reg-table">
+      <div class="reg-title">Instrumento B3</div>
+      <table>
+        {% if header.market_name %}<tr><td>Mercado</td><td>{{ header.market_name }}</td></tr>{% endif %}
+        {% if header.security_category %}<tr><td>Categoria</td><td>{{ header.security_category }}</td></tr>{% endif %}
+        {% if header.b3_segment %}<tr><td>Segmento B3</td><td>{{ header.b3_segment }}</td></tr>{% endif %}
+      </table>
+    </div>
+    <div class="reg-table">
+      <div class="reg-title">Classificação</div>
+      <table>
+        {% if header.sector %}<tr><td>Setor</td><td>{{ header.sector }}</td></tr>{% endif %}
+        {% if header.fiscal_year_end %}<tr><td>Fim Exerc.</td><td>{{ header.fiscal_year_end }}</td></tr>{% endif %}
+        {% if header.uf %}<tr><td>UF</td><td>{{ header.uf }}</td></tr>{% endif %}
+        {% if header.last_synced_trimester %}<tr><td>Último ITR</td><td>{{ header.last_synced_trimester }}</td></tr>{% endif %}
+      </table>
+    </div>
+    <div class="reg-table">
+      <div class="reg-title">Governança</div>
+      <table>
+        {% if header.control_type %}<tr><td>Controle</td><td>{{ header.control_type }}</td></tr>{% endif %}
+        {% if header.listing_segment %}<tr><td>Segmento Listagem</td><td>{{ header.listing_segment }}</td></tr>{% endif %}
+        {% if header.auditor %}<tr><td>Auditor</td><td>{{ header.auditor }}</td></tr>{% endif %}
+        {% if header.website %}<tr><td>Website</td><td><a href="{{ header.website }}" target="_blank">{{ header.website }}</a></td></tr>{% endif %}
+      </table>
+    </div>
+  </div>
+
+  {# ── Section 2: Descrição da Atividade ── #}
+  {% if header.activity_description %}
+  <div class="activity">
+    <div class="reg-title">Descrição da Atividade</div>
+    <div class="activity-text">{{ header.activity_description }}</div>
+  </div>
+  {% endif %}
+
+  {# ── Section 3: Cotação Histórica ── #}
+  {# app.js detects #price-chart via htmx:afterSettle and calls loadPriceChart() #}
+  {# data-ticker + data-range tell app.js which ticker + range to load #}
+  <div class="chart-section">
+    <div class="chart-header">
+      <div class="reg-title">Cotação Histórica</div>
+      <div class="range-selector">
+        <button class="range-btn" data-range="Tudo" onclick="loadPriceChart('{{ ticker }}', 'Tudo')">Tudo</button>
+        <button class="range-btn" data-range="10A" onclick="loadPriceChart('{{ ticker }}', '10A')">10A</button>
+        <button class="range-btn" data-range="5A" onclick="loadPriceChart('{{ ticker }}', '5A')">5A</button>
+        <button class="range-btn active" data-range="1A" onclick="loadPriceChart('{{ ticker }}', '1A')">1A</button>
+        <button class="range-btn" data-range="6M" onclick="loadPriceChart('{{ ticker }}', '6M')">6M</button>
+        <button class="range-btn" data-range="3M" onclick="loadPriceChart('{{ ticker }}', '3M')">3M</button>
+        <button class="range-btn" data-range="1M" onclick="loadPriceChart('{{ ticker }}', '1M')">1M</button>
+      </div>
+    </div>
+    <div class="chart-container">
+      <canvas id="price-chart" data-ticker="{{ ticker }}" data-range="1A"></canvas>
+    </div>
+  </div>
+</div>

@@ -53,12 +53,12 @@ async def search(request: Request, q: str = Query("")):
 
 @router.get("/company/{ticker}/header", response_class=HTMLResponse)
 async def company_header_fragment(request: Request, ticker: str):
-    """Company header — HTML fragment for HTMX swap."""
+    """Identity card — HTML fragment for HTMX swap (persistent header)."""
     header = _company_service.header(ticker.upper())
     locale = _locale(request)
     return _templates.TemplateResponse(
         request,
-        "partials/company_header.html",
+        "partials/identity_card.html",
         {
             "header": header,
             "t": lambda key, **fmt: t(key, locale=locale, **fmt),
@@ -76,9 +76,18 @@ async def company_ratios(ticker: str):
 @router.get("/company/{ticker}/price-chart")
 async def company_price_chart(ticker: str, range: str = Query("1A")):
     """Price series — JSON for Chart.js."""
-    years_map = {"1M": 1/12, "6M": 0.5, "1A": 1, "5A": 5, "Tudo": 10}
-    years = years_map.get(range, 1)
-    series = _company_service.price_series(ticker.upper(), years=int(years) if years >= 1 else 1)
+    # Range → years (fractional for months)
+    range_map = {
+        "1M": 1/12,      # ~30 days
+        "3M": 0.25,      # ~91 days
+        "6M": 0.5,       # ~183 days
+        "1A": 1,         # 365 days
+        "5A": 5,         # 1825 days
+        "10A": 10,       # 3650 days
+        "Tudo": 30,      # all available data
+    }
+    years = range_map.get(range, 1)
+    series = _company_service.price_series(ticker.upper(), years=years)
     return JSONResponse({
         "labels": [p.get("date", "") for p in series],
         "prices": [p.get("close") for p in series],
@@ -90,11 +99,11 @@ async def company_tab_fragment(request: Request, ticker: str, tab: str):
     """Tab content — HTML fragment for HTMX swap."""
     locale = _locale(request)
     ticker = ticker.upper()
-    if tab == "overview":
+    if tab == "visao_geral":
         header = _company_service.header(ticker)
         return _templates.TemplateResponse(
             request,
-            "partials/tab_overview.html",
+            "partials/tab_visao_geral.html",
             {"ticker": ticker, "header": header,
              "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
         )

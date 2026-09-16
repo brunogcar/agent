@@ -5,11 +5,11 @@
   <li>
     <a href="/webui/company/{{ r.ticker }}" onclick="this.closest('.search-results').innerHTML=''">
       <span class="ticker">{{ r.ticker }}</span>
-      <span class="name">{{ r.name }}</span>
+      {% if r.name %}<span class="name">{{ r.name }}</span>{% endif %}
     </a>
   </li>
   {% endfor %}
 </ul>
-{% elif request.query_params.get('q') %}
+{% else %}
 <div class="no-results">{{ t("company.no_results") }}</div>
 {% endif %}

@@ -1,19 +1,16 @@
 {# webui/templates/base.html — main shell with sidebar + topbar.
 
-[WebUI v1] Persistent shell with:
-  - Left sidebar (global nav: Dashboard, Macro, Sync, Settings)
-  - Top bar (ticker search + theme toggle + language switcher)
-  - Main content area (HTMX-swapped)
-
-FOUC prevention: inline script in <head> sets data-theme before CSS loads.
-
-Vendor JS: HTMX + Alpine + Chart.js (local, no CDN dependency).
+[WebUI v2] Changes:
+  - Cache-busting query strings on all static URLs (prevents browser caching stale JS/CSS)
+  - Favicon link
+  - FOUC prevention
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Brazilian Financial Data{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 
   {# ── FOUC prevention: set theme before CSS loads ── #}
   <script>
@@ -27,44 +24,42 @@ Vendor JS: HTMX + Alpine + Chart.js (local, no CDN dependency).
   {# ── Theme CSS variables (inline, from theme.py) ── #}
   <style>{{ theme_css | safe }}</style>
 
-  {# ── Vendor JS (local, no CDN) ── #}
-  <script src="/static/vendor/htmx.min.js"></script>
-  <script defer src="/static/vendor/alpine.min.js"></script>
-  <script src="/static/vendor/chart.umd.min.js"></script>
+  {# ── Vendor JS (local, no CDN) — with cache-busting ── #}
+  <script src="/static/vendor/htmx.min.js?v=7"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=7"></script>
+  <script src="/static/vendor/chart.umd.min.js?v=7"></script>
 
-  {# ── App CSS + JS ── #}
-  <link rel="stylesheet" href="/static/css/app.css">
-  <script src="/static/js/app.js"></script>
-  <script src="/static/js/charts.js" defer></script>
+  {# ── App CSS ── #}
+  <link rel="stylesheet" href="/static/css/app.css?v=7">
 </head>
 <body>
   <div class="app-shell">
     {# ── Sidebar ── #}
-    <aside class="sidebar" x-data="{ collapsed: false }">
+    <aside class="sidebar" x-data="{ collapsed: false }" :class="{ 'collapsed': collapsed }">
       <div class="sidebar-header">
         <span class="logo">📊</span>
-        <span class="title" x-show="!collapsed">Agent</span>
+        <span class="title" x-show="!collapsed">WebUI</span>
       </div>
       <nav class="sidebar-nav">
         <a href="/webui" class="nav-item {{ 'active' if active_tab == 'dashboard' else '' }}">
           <span class="icon">🏠</span>
-          <span class="label">{{ t("nav.dashboard") }}</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.dashboard") }}</span>
         </a>
         <a href="/webui/macro" class="nav-item {{ 'active' if active_tab == 'macro' else '' }}">
           <span class="icon">🌎</span>
-          <span class="label">{{ t("nav.macro") }}</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.macro") }}</span>
         </a>
         <a href="/webui/sync" class="nav-item {{ 'active' if active_tab == 'sync' else '' }}">
           <span class="icon">🔄</span>
-          <span class="label">{{ t("nav.sync") }}</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.sync") }}</span>
         </a>
         <a href="/webui/settings" class="nav-item {{ 'active' if active_tab == 'settings' else '' }}">
           <span class="icon">⚙️</span>
-          <span class="label">{{ t("nav.settings") }}</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.settings") }}</span>
         </a>
       </nav>
       <div class="sidebar-footer">
-        <button class="collapse-btn" @click="collapsed = !collapsed">
+        <button class="collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? 'Expandir' : 'Recolher'">
           <span x-text="collapsed ? '▶' : '◀'"></span>
         </button>
       </div>
@@ -114,5 +109,9 @@ Vendor JS: HTMX + Alpine + Chart.js (local, no CDN dependency).
       </main>
     </div>
   </div>
+
+  {# ── App JS — at end of body so DOM exists when it runs ── #}
+  <script src="/static/js/app.js?v=7"></script>
+  <script src="/static/js/charts.js?v=7"></script>
 </body>
 </html>
