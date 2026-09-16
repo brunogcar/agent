@@ -311,9 +311,10 @@ a:hover { text-decoration: underline; }
   padding: var(--space-2) var(--space-4);
   background: none; border: none; border-bottom: 2px solid transparent;
   color: var(--color-text-sec); cursor: pointer; font-size: 13px;
+  transition: color 0.15s, border-color 0.15s;
 }
 .tab-btn:hover { color: var(--color-text); }
-.tab-btn.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+.tab-btn.active { color: var(--color-brand); border-bottom-color: var(--color-brand); font-weight: 600; }
 .tab-content { padding-top: var(--space-4); }
 
 /* ── Valuation tab ── */
@@ -342,6 +343,91 @@ a:hover { text-decoration: underline; }
 }
 .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-4); }
 .range-selector { display: flex; gap: var(--space-1); }
+
+/* ── Preço tab ── */
+.tab-preco { display: flex; flex-direction: column; gap: var(--space-5); }
+.preco-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.price-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.price-table td { padding: var(--space-2) 0; }
+.price-table td:first-child { color: var(--color-text-sec); width: 45%; }
+.price-table td.val { text-align: right; font-weight: 500; white-space: nowrap; }
+.price-table td.pct { text-align: right; font-size: 11px; min-width: 60px; }
+.price-table th { text-align: left; padding: var(--space-2) 0; border-bottom: 2px solid var(--color-border); color: var(--color-text-sec); font-size: 11px; }
+.price-table th:nth-child(2) { text-align: right; }
+.price-table th:nth-child(3) { text-align: right; }
+.price-table tr:not(:last-child) td { border-bottom: 1px solid var(--color-border); }
+.muted { color: var(--color-text-sec); }
+
+/* ── Subtab nav ── */
+.subtab-nav { display: flex; gap: 2px; border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
+.subtab-nav button {
+  padding: var(--space-2) var(--space-4);
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--color-text-sec); cursor: pointer; font-size: 13px;
+}
+.subtab-nav button:hover { color: var(--color-text); }
+.subtab-nav button.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+
+/* ── Indicadores grid ── */
+.indicators-grid { display: flex; flex-direction: column; gap: var(--space-4); }
+.range-bar { display: flex; gap: var(--space-1); padding: var(--space-2) 0; }
+
+/* ── Fibonacci grid ── */
+.fib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+.fib-swing-section {
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.fib-swing-section:last-child { border-bottom: none; }
+.fib-swing-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-brand);
+  margin-bottom: var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.fib-swing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+.fib-section {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.fib-setup.compra { border-left: 3px solid var(--color-success); }
+.fib-setup.venda { border-left: 3px solid var(--color-danger); }
+.fib-controls {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+  align-items: center;
+}
+.fib-controls label { font-size: 12px; color: var(--color-text-sec); display: flex; align-items: center; gap: 6px; }
+.fib-controls select { padding: 4px 8px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text); font-size: 12px; }
+.fib-full-table { font-size: 11px; }
+.fib-full-table th { font-size: 10px; text-transform: uppercase; color: var(--color-text-sec); padding: 4px 6px; border-bottom: 1px solid var(--color-border); }
+.fib-full-table td { padding: 3px 6px; }
+.fib-row-setup td:nth-child(4), .fib-row-setup td:nth-child(7) { color: var(--color-brand); font-weight: 500; }
+.fib-row-info td { color: var(--color-text-sec); font-style: italic; }
 .range-btn {
   padding: var(--space-1) var(--space-3); background: var(--color-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius-sm); color: var(--color-text-sec); cursor: pointer; font-size: 12px;

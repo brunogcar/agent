@@ -1,8 +1,7 @@
 {# webui/templates/partials/tab_visao_geral.html — Visão Geral tab.
 
-[WebUI v2] Chart init handled entirely by app.js via htmx:afterSettle.
-No inline <script> needed — app.js listens for HTMX swaps and auto-inits
-#price-chart when it appears in the DOM.
+[WebUI v1.2] Cotação Histórica now uses candlestick + MM20/50/100/200.
+Chart init via htmx:afterSettle in app.js (detects #price-chart canvas).
 #}
 <div class="tab-visao-geral">
 
@@ -52,24 +51,22 @@ No inline <script> needed — app.js listens for HTMX swaps and auto-inits
   </div>
   {% endif %}
 
-  {# ── Section 3: Cotação Histórica ── #}
-  {# app.js detects #price-chart via htmx:afterSettle and calls loadPriceChart() #}
-  {# data-ticker + data-range tell app.js which ticker + range to load #}
+  {# ── Section 3: Cotação Histórica (candlestick + MAs) ── #}
   <div class="chart-section">
     <div class="chart-header">
       <div class="reg-title">Cotação Histórica</div>
       <div class="range-selector">
-        <button class="range-btn" data-range="Tudo" onclick="loadPriceChart('{{ ticker }}', 'Tudo')">Tudo</button>
-        <button class="range-btn" data-range="10A" onclick="loadPriceChart('{{ ticker }}', '10A')">10A</button>
-        <button class="range-btn" data-range="5A" onclick="loadPriceChart('{{ ticker }}', '5A')">5A</button>
-        <button class="range-btn active" data-range="1A" onclick="loadPriceChart('{{ ticker }}', '1A')">1A</button>
-        <button class="range-btn" data-range="6M" onclick="loadPriceChart('{{ ticker }}', '6M')">6M</button>
-        <button class="range-btn" data-range="3M" onclick="loadPriceChart('{{ ticker }}', '3M')">3M</button>
-        <button class="range-btn" data-range="1M" onclick="loadPriceChart('{{ ticker }}', '1M')">1M</button>
+        <button class="range-btn" data-range="Tudo" onclick="loadCandlestick('{{ ticker }}', 'Tudo')">Tudo</button>
+        <button class="range-btn" data-range="10A" onclick="loadCandlestick('{{ ticker }}', '10A')">10A</button>
+        <button class="range-btn" data-range="5A" onclick="loadCandlestick('{{ ticker }}', '5A')">5A</button>
+        <button class="range-btn active" data-range="1A" onclick="loadCandlestick('{{ ticker }}', '1A')">1A</button>
+        <button class="range-btn" data-range="6M" onclick="loadCandlestick('{{ ticker }}', '6M')">6M</button>
+        <button class="range-btn" data-range="3M" onclick="loadCandlestick('{{ ticker }}', '3M')">3M</button>
+        <button class="range-btn" data-range="1M" onclick="loadCandlestick('{{ ticker }}', '1M')">1M</button>
       </div>
     </div>
     <div class="chart-container">
-      <canvas id="price-chart" data-ticker="{{ ticker }}" data-range="1A"></canvas>
+      <canvas id="price-chart" data-ticker="{{ ticker }}" data-range="1A" data-chart-type="candlestick"></canvas>
     </div>
   </div>
 </div>

@@ -68,6 +68,7 @@ agent/
 | `webui/i18n.py` | JSON i18n — `t()` function, locale negotiation, `available_locales()` |
 | `webui/theme.py` | Theme registry — `render_theme_css()`, `available_themes()` |
 | `webui/services/company.py` | Company data — wraps `build_company_header()` + `compute_all_ratios()` |
+| `webui/services/price.py` | Price data — wraps `ohlcv_series` + `compute_sma` + indicators + Bollinger + Fibonacci |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, ratios, charts, tabs |

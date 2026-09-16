@@ -51,9 +51,9 @@ Returns all 79 valuation ratios for a ticker.
 }
 ```
 
-### `GET /api/webui/company/{ticker}/price-chart?range={range}`
+### `GET /api/webui/company/{ticker}/candlestick?range={range}`
 
-Returns historical daily price series for Chart.js.
+Returns OHLCV data + moving averages for the candlestick chart.
 
 **Parameters:**
 - `range`: `1M` | `3M` | `6M` | `1A` | `5A` | `10A` | `Tudo` (default: `1A`)
@@ -61,10 +61,36 @@ Returns historical daily price series for Chart.js.
 **Response:**
 ```json
 {
-  "labels": ["2024-01-02", "2024-01-03", ...],
-  "prices": [38.50, 38.75, ...]
+  "labels": ["2024-01-02", ...],
+  "ohlc": [{"o": 48.0, "h": 49.0, "l": 47.5, "c": 48.5}, ...],
+  "body_data": [[47.5, 48.5], ...],
+  "ma20": [null, ...],
+  "ma50": [null, ...],
+  "ma100": [null, ...],
+  "ma200": [null, ...],
+  "closes": [48.5, ...]
 }
 ```
+
+### `GET /api/webui/company/{ticker}/price-data`
+
+Returns full price data for the Cotação subtab (10Y): snapshot, period returns, annual returns, histogram.
+
+### `GET /api/webui/company/{ticker}/indicators`
+
+Returns technical indicators for the Indicadores subtab (10Y): RSI, MACD, Stochastic, OBV, ADX, CCI, Williams %R.
+
+### `GET /api/webui/company/{ticker}/volatility`
+
+Returns volatility data for the Volatilidade subtab (10Y): Bollinger Bands + rolling vol (20d/60d/252d).
+
+### `GET /api/webui/company/{ticker}/volume`
+
+Returns volume data for the Volume subtab (10Y): volume bars + trade count + contracts + stats.
+
+### `GET /api/webui/company/{ticker}/fibonacci`
+
+Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w) + levels + trade setups + dividend adjustments.
 
 ---
 

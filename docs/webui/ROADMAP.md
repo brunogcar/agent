@@ -27,7 +27,8 @@
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
 ### Company Tabs
-- [x] Visão Geral — company header (identity card) + registration tables + activity description + price chart (7 range options)
+- [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, zoom/pan)
+- [x] Preço — 5 subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
 - [x] Valuation — full 79-metric ratios table (no KPIs)
 - [ ] Financials — DRE/BPA/BPP/DFC/DVA statement tables
 - [ ] Dividends — DPA history + dividend events
@@ -36,14 +37,16 @@
 ### Features
 - [x] Ticker search (HTMX debounced keyup, bridge.db ticker_map)
 - [x] Company header (identity card — persistent across all tabs)
-- [x] Price chart (Chart.js, 7 ranges: Tudo/10A/5A/1A/6M/3M/1M)
+- [x] Candlestick chart (OHLCV + MM20/50/100/200, zoom/pan, 7 ranges)
 - [x] Theme toggle (dark/light, FOUC prevention, localStorage + cookie)
 - [x] Language switcher (pt-BR/en-US, cookie-based)
 - [x] Sidebar collapse (◀/▶ button, icons-only mode)
 - [x] Favicon (SVG bar-chart icon)
 - [x] Sync status (freshness table, auto-refresh)
 - [x] SSE sync stream (live progress events)
-- [x] Cache-busting (?v=N on all static URLs)
+- [x] Cache-busting (?v=N on static URLs, ?_t= on API fetch)
+- [x] Price service (ohlcv_with_mas, price_data, indicators, volatility, volume, fibonacci)
+- [x] Chart.js zoom plugin + Hammer.js (vendored locally)
 
 ---
 

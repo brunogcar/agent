@@ -13,35 +13,42 @@
 
   {# ── Company tabs (second-tier nav) ── #}
   <nav class="company-tabs">
-    <button class="tab-btn {{ 'active' if active_tab == 'visao_geral' else '' }}"
+    <button class="tab-btn" :class="{ 'active': tab === 'visao_geral' }"
             @click="tab='visao_geral'"
             hx-get="/api/webui/company/{{ ticker }}/tab/visao_geral"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       Visão Geral
     </button>
-    <button class="tab-btn {{ 'active' if active_tab == 'valuation' else '' }}"
+    <button class="tab-btn" :class="{ 'active': tab === 'preco' }"
+            @click="tab='preco'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/preco"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      Preço
+    </button>
+    <button class="tab-btn" :class="{ 'active': tab === 'valuation' }"
             @click="tab='valuation'"
             hx-get="/api/webui/company/{{ ticker }}/tab/valuation"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       {{ t("company.valuation") }}
     </button>
-    <button class="tab-btn {{ 'active' if active_tab == 'financials' else '' }}"
+    <button class="tab-btn" :class="{ 'active': tab === 'financials' }"
             @click="tab='financials'"
             hx-get="/api/webui/company/{{ ticker }}/tab/financials"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       {{ t("company.financials") }}
     </button>
-    <button class="tab-btn {{ 'active' if active_tab == 'dividends' else '' }}"
+    <button class="tab-btn" :class="{ 'active': tab === 'dividends' }"
             @click="tab='dividends'"
             hx-get="/api/webui/company/{{ ticker }}/tab/dividends"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       {{ t("company.dividends") }}
     </button>
-    <button class="tab-btn {{ 'active' if active_tab == 'historical' else '' }}"
+    <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
             @click="tab='historical'"
             hx-get="/api/webui/company/{{ ticker }}/tab/historical"
             hx-target="#tab-content"

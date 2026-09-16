@@ -1,0 +1,39 @@
+{# webui/templates/partials/tab_preco.html — Preço tab with subtabs.
+
+[WebUI v1.2] Subtabs: Cotação + Indicadores + Volatilidade.
+#}
+<div class="tab-preco" x-data="{ subtab: 'cotacao' }">
+  {# ── Subtab nav ── #}
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'cotacao' }" @click="subtab='cotacao'">Cotação</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'indicadores' }" @click="subtab='indicadores'">Indicadores</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'volatilidade' }" @click="subtab='volatilidade'">Volatilidade</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'volume' }" @click="subtab='volume'">Volume</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'fibonacci' }" @click="subtab='fibonacci'">Fibonacci</button>
+  </nav>
+
+  {# ── Cotação subtab ── #}
+  <div x-show="subtab === 'cotacao'" id="tab-preco" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Indicadores subtab ── #}
+  <div x-show="subtab === 'indicadores'" style="display: none;" id="tab-indicadores" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Volatilidade subtab ── #}
+  <div x-show="subtab === 'volatilidade'" style="display: none;" id="tab-volatilidade" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Volume subtab ── #}
+  <div x-show="subtab === 'volume'" style="display: none;" id="tab-volume" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Fibonacci subtab ── #}
+  <div x-show="subtab === 'fibonacci'" style="display: none;" id="tab-fibonacci" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

@@ -1,13 +1,14 @@
 """webui/routes/api.py — JSON data routes + HTMX partials.
 
-[WebUI v1] Returns JSON for Chart.js + HTML fragments for HTMX swaps.
-The HTML fragments are Jinja2 partials (no <html> wrapper).
+[WebUI v1.2] Returns JSON for Chart.js + HTML fragments for HTMX swaps.
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
-  GET /api/webui/company/{ticker}/header    → company header (HTML fragment)
+  GET /api/webui/company/{ticker}/header    → identity card (HTML fragment)
   GET /api/webui/company/{ticker}/ratios    → valuation ratios (JSON)
   GET /api/webui/company/{ticker}/price-chart?range=1A  → price series (JSON)
+  GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
+  GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
 """
 from __future__ import annotations
@@ -17,10 +18,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from webui.i18n import negotiate_locale, t
 from webui.services.company import CompanyService
+from webui.services.price import PriceService
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
 
 _company_service = CompanyService()
+_price_service = PriceService()
 
 # We'll import the templates from pages.py to share the Jinja2 env
 from fastapi.templating import Jinja2Templates
@@ -94,6 +97,52 @@ async def company_price_chart(ticker: str, range: str = Query("1A")):
     })
 
 
+@router.get("/company/{ticker}/candlestick")
+async def company_candlestick(ticker: str, range: str = Query("1A")):
+    """OHLCV + moving averages — JSON for the candlestick chart."""
+    range_map = {
+        "1M": 1/12, "3M": 0.25, "6M": 0.5, "1A": 1, "5A": 5, "10A": 10, "Tudo": 30,
+    }
+    years = range_map.get(range, 1)
+    data = _price_service.ohlcv_with_mas(ticker.upper(), years=years)
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/price-data")
+async def company_price_data(ticker: str):
+    """Full price data — JSON for the Preço tab (snapshot, returns, histogram)."""
+    data = _price_service.price_data(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/indicators")
+async def company_indicators(ticker: str):
+    """Technical indicators — JSON for the Indicadores subtab (RSI, MACD, Stochastic, OBV, ADX, CCI, Williams %R)."""
+    data = _price_service.indicators(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/volatility")
+async def company_volatility(ticker: str):
+    """Volatility data — JSON for the Volatilidade subtab (Bollinger Bands + rolling vol)."""
+    data = _price_service.volatility(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/volume")
+async def company_volume(ticker: str):
+    """Volume data — JSON for the Volume subtab (volume bars + trade count + contracts)."""
+    data = _price_service.volume(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/fibonacci")
+async def company_fibonacci(ticker: str):
+    """Fibonacci data — JSON for the Fibonacci subtab (swing levels + trade setups)."""
+    data = _price_service.fibonacci(ticker.upper())
+    return JSONResponse(data)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 async def company_tab_fragment(request: Request, ticker: str, tab: str):
     """Tab content — HTML fragment for HTMX swap."""
@@ -113,6 +162,13 @@ async def company_tab_fragment(request: Request, ticker: str, tab: str):
             request,
             "partials/tab_valuation.html",
             {"ticker": ticker, "ratios": ratios,
+             "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
+        )
+    elif tab == "preco":
+        return _templates.TemplateResponse(
+            request,
+            "partials/tab_preco.html",
+            {"ticker": ticker,
              "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
         )
     else:
