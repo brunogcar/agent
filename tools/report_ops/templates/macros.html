@@ -418,7 +418,7 @@
         {% set is_neg = negative_red and val is string and (val.startswith('-') or 'R$ -' in val) %}
         {% set is_pos = positive_green and val is string and not is_neg and val != '—' and '%' in val %}
         <tr class="statement-row">
-          <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
+          <td class="statement-label" style="padding-left: 12px;" title="{{ row.get('tooltip', '') }}">{{ row.get('label', '') }}</td>
           <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>
           {% if pct is mapping %}
           <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: {{ pct.get('color', '') }};">{{ pct.get('text', '') }}</td>
@@ -440,7 +440,7 @@
         {% set is_neg = negative_red and val is string and (val.startswith('-') or 'R$ -' in val) %}
         {% set is_pos = positive_green and val is string and not is_neg and val != '—' and '%' in val %}
         <tr class="statement-row">
-          <td class="statement-label" style="padding-left: 12px;">{{ row.get('label', '') }}</td>
+          <td class="statement-label" style="padding-left: 12px;" title="{{ row.get('tooltip', '') }}">{{ row.get('label', '') }}</td>
           <td class="statement-value" style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;{% if is_neg %}color: #ef4444; font-weight: 600;{% elif is_pos %}color: #22c55e; font-weight: 600;{% endif %}">{{ val }}</td>
           {% if pct is mapping %}
           <td style="text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; color: {{ pct.get('color', '') }};">{{ pct.get('text', '') }}</td>

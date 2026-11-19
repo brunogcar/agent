@@ -364,14 +364,15 @@ a:hover { text-decoration: underline; }
 .muted { color: var(--color-text-sec); }
 
 /* ── Subtab nav ── */
-.subtab-nav { display: flex; gap: 2px; border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
-.subtab-nav button {
+/* [v1.4 fix2] .val-subnav (nested valuation pills) shares the same look */
+.subtab-nav, .val-subnav { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
+.subtab-nav button, .val-subnav button {
   padding: var(--space-2) var(--space-4);
   background: none; border: none; border-bottom: 2px solid transparent;
   color: var(--color-text-sec); cursor: pointer; font-size: 13px;
 }
-.subtab-nav button:hover { color: var(--color-text); }
-.subtab-nav button.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+.subtab-nav button:hover, .val-subnav button:hover { color: var(--color-text); }
+.subtab-nav button.active, .val-subnav button.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
 
 /* ── Financials tab ── */
 .tab-financials { display: flex; flex-direction: column; gap: var(--space-4); }
@@ -546,3 +547,86 @@ a:hover { text-decoration: underline; }
   padding: var(--space-2); background: var(--color-bg); border: 1px solid var(--color-border);
   border-radius: var(--radius-md); color: var(--color-text); font-size: 13px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   [WebUI v1.4] Valuation tab — 5 subtabs rendered from generic server
+   "section" dicts (table / two_column / ratio_grid / heatmap / chart).
+   ══════════════════════════════════════════════════════════════════════════ */
+.val-desc {
+  font-size: 12px; color: var(--color-text-sec);
+  margin: var(--space-1) 0 var(--space-3); line-height: 1.45;
+}
+.val-section { margin-bottom: var(--space-5); }
+.val-section .reg-title { margin-bottom: var(--space-2); }
+
+/* Two-column blocks (Mercado|Resultado, Balanço|Per-share) */
+.val-two-col {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--space-4); margin-bottom: var(--space-5);
+}
+.val-two-col .val-section { margin-bottom: 0; }
+@media (max-width: 720px) { .val-two-col { grid-template-columns: 1fr; } }
+
+/* Generic valuation table (also used inside collapsible category groups) */
+.val-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.val-table th {
+  text-align: left; padding: var(--space-2);
+  border-bottom: 2px solid var(--color-border);
+  color: var(--color-text-sec); font-weight: 600;
+}
+.val-table td { padding: var(--space-2); border-bottom: 1px solid var(--color-border); }
+.val-table td:first-child { color: var(--color-text-sec); }
+.val-table td.val-val, .val-table td:last-child {
+  text-align: right; font-family: var(--font-mono); white-space: nowrap;
+}
+/* [v1.4 fix1] ⓘ tooltip marker — dotted underline hints at hover help */
+.val-info {
+  color: var(--color-text-sec); font-size: 10px; cursor: help;
+  border-bottom: 1px dotted var(--color-text-sec); padding-bottom: 1px;
+}
+td[title], .kpi-card[title] { cursor: help; }
+.val-note {
+  font-size: 11px; color: var(--color-text-sec); line-height: 1.5;
+  padding-top: var(--space-2); margin-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Heatmap — server supplies per-cell bg/color inline; first col left-aligned */
+.val-heatmap td.val-heat { text-align: center; font-weight: 600; }
+.val-heatmap td.val-metric { text-align: left; }
+
+/* [v1.4 fix2] Signed-value coloring — financials parity: negatives red;
+   % green (+) / red (−) / yellow (0). Applied by valNumHtml in app.js. */
+.val-pos { color: var(--color-success); font-weight: 600; }
+.val-neg { color: var(--color-danger); font-weight: 600; }
+.val-zero { color: var(--color-warning); font-weight: 600; }
+
+/* [v1.4 fix2] Nested subtabs — Múltiplos (Preço | EBIT/EBITDA | EV |
+   Menos Comuns) and Fundamentos (Rentabilidade → Retornos | Margens …).
+   Pills share the .subtab-nav look (see the extended selectors above);
+   panes are plain blocks — sections keep their own margins (same spacing
+   as the flat Visão Geral path). */
+.val-subnav2 { border-bottom-style: dashed; }
+
+/* [v1.4 fix3] Múltiplos history charts — dashboard-style range selector
+   (Tudo/1A/6M/3M/1M, reuses .range-btn) + full-width standalone card for
+   the 5Y daily step-line charts (~1250 points need the width; the
+   comparativo bar charts keep the 2-col grid). */
+.val-range-bar { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
+.val-chart-wide { margin-bottom: var(--space-4); }
+.val-chart-wide .chart-container { height: 340px; }
+
+/* Todas as métricas — collapsible category groups */
+.val-cat {
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  margin-bottom: var(--space-3); overflow: hidden;
+}
+.val-cat summary {
+  cursor: pointer; padding: var(--space-3); font-weight: 600; font-size: 13px;
+  background: color-mix(in srgb, var(--color-text-sec) 6%, transparent);
+  user-select: none; list-style-position: inside;
+}
+.val-cat[open] summary { border-bottom: 1px solid var(--color-border); }
+.val-cat .val-table { margin: 0; }
+.val-cat .val-table tr:last-child td { border-bottom: none; }
+.val-count { color: var(--color-text-sec); font-weight: 400; font-size: 11px; }

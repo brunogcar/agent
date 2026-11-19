@@ -1,6 +1,8 @@
 """webui/routes/api.py — JSON data routes + HTMX partials.
 
 [WebUI v1.2] Returns JSON for Chart.js + HTML fragments for HTMX swaps.
+[WebUI v1.4] Valuation tab: 5 lazy JSON endpoints (one per subtab) + the
+  tab shell fragment no longer fetches ratios server-side.
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -9,6 +11,13 @@ Routes:
   GET /api/webui/company/{ticker}/price-chart?range=1A  → price series (JSON)
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
+  GET /api/webui/company/{ticker}/financials-overview   → Financeiro Visão Geral (JSON)
+  GET /api/webui/company/{ticker}/financials-statements → Demonstrações (JSON)
+  GET /api/webui/company/{ticker}/valuation-overview    → Valuation Visão Geral (JSON)
+  GET /api/webui/company/{ticker}/valuation-multiples   → Valuation Múltiplos (JSON)
+  GET /api/webui/company/{ticker}/valuation-intrinsic   → Valor Intrínseco (JSON)
+  GET /api/webui/company/{ticker}/valuation-fundamentals→ Fundamentos (JSON)
+  GET /api/webui/company/{ticker}/valuation-all         → Todas as métricas (JSON)
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
 """
 from __future__ import annotations
@@ -20,12 +29,14 @@ from webui.i18n import negotiate_locale, t
 from webui.services.company import CompanyService
 from webui.services.price import PriceService
 from webui.services.financials import FinancialsService
+from webui.services.valuation import ValuationService
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
 
 _company_service = CompanyService()
 _price_service = PriceService()
 _financials_service = FinancialsService()
+_valuation_service = ValuationService()
 
 # We'll import the templates from pages.py to share the Jinja2 env
 from fastapi.templating import Jinja2Templates
@@ -167,6 +178,41 @@ async def company_financials_statements(
     return JSONResponse(data)
 
 
+@router.get("/company/{ticker}/valuation-overview")
+async def company_valuation_overview(ticker: str):
+    """[WebUI v1.4] Valuation Visão Geral — KPIs + heatmap + radar + blocks."""
+    data = _valuation_service.overview(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/valuation-multiples")
+async def company_valuation_multiples(ticker: str):
+    """[WebUI v1.4] Valuation Múltiplos — grouped tables + comparativo + 5Y history."""
+    data = _valuation_service.multiples(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/valuation-intrinsic")
+async def company_valuation_intrinsic(ticker: str):
+    """[WebUI v1.4] Valuation Valor Intrínseco — DCF + TIR + sensitivity."""
+    data = _valuation_service.intrinsic(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/valuation-fundamentals")
+async def company_valuation_fundamentals(ticker: str):
+    """[WebUI v1.4] Valuation Fundamentos — rentabilidade, liquidez, alavancagem, eficiência, crescimento."""
+    data = _valuation_service.fundamentals(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/valuation-all")
+async def company_valuation_all(ticker: str):
+    """[WebUI v1.4] Valuation Todas as métricas — every ratio grouped by category."""
+    data = _valuation_service.all_metrics(ticker.upper())
+    return JSONResponse(data)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 async def company_tab_fragment(request: Request, ticker: str, tab: str):
     """Tab content — HTML fragment for HTMX swap."""
@@ -181,11 +227,12 @@ async def company_tab_fragment(request: Request, ticker: str, tab: str):
              "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
         )
     elif tab == "valuation":
-        ratios = _company_service.ratios(ticker)
+        # [WebUI v1.4] Shell only — subtabs fetch their own JSON endpoints
+        # lazily (valuation-overview/-multiples/-intrinsic/-fundamentals/-all).
         return _templates.TemplateResponse(
             request,
             "partials/tab_valuation.html",
-            {"ticker": ticker, "ratios": ratios,
+            {"ticker": ticker,
              "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
         )
     elif tab == "preco":

@@ -35,6 +35,8 @@ _METRIC_TOOLTIPS = {
     "working_capital": "Capital de Giro = Ativo Circulante - Passivo Circulante.",
     # leverage
     "debt_equity": "Dívida/PL = Dívida Bruta / Patrimônio Líquido.",
+    "gross_debt_equity": "Dív. Bruta/PL = Dívida Bruta / Patrimônio Líquido. Alavancagem bruta (sem descontar caixa).",
+    "financial_leverage": "Multiplicador de Alavancagem = Ativo Total / PL. Quanto do ativo é financiado por terceiros (DuPont).",
     "net_debt_ebitda": "Dív. Líq/EBITDA = (Dívida Bruta - Caixa) / EBITDA. Alavanca operacional.",
     "dl_ebit": "Dív. Líq/EBIT = (Dívida Bruta - Caixa) / EBIT.",
     "interest_coverage": "Cobertura de Juros = EBIT / Juros Líquidos Passivos.",
@@ -66,6 +68,8 @@ _METRIC_TOOLTIPS = {
     "vpa": "P/VPA = Preço / Valor Patrimonial por Ação.",
     "dpa": "Dividend Yield = Dividendo por Ação / Preço.",
     "rps": "PSR = Preço / Receita por Ação.",
+    "cgpa": "Capital de Giro por Ação = Capital de Giro / total de ações.",
+    "dbpa": "Dívida Bruta por Ação = Dívida Bruta / total de ações.",
     # tax
     "effective_tax_rate": "Taxa de Tributo Efetiva = Imposto / Lucro Antes de Impostos.",
     # [v1.13] growth metrics (also set via MetricSpec.tooltip)

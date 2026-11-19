@@ -44,7 +44,7 @@ def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
 
     # ── Block 1 left: Métricas de Mercado ──
     _MERCADO_ITEMS = [
-        ("Market Cap",         "market_cap",         "brl", ""),
+        ("Market Cap",         "market_cap",         "brl", "Market Cap = Preço × Total de Ações. Valor de mercado da empresa."),
         ("EV",                 "ev",                 "brl", "Enterprise Value = Market Cap + Dívida Líquida"),
         ("P/L",                "p_l",                "num", _get_tooltip("lpa")),
         ("P/VPA",              "p_vpa",              "num", _get_tooltip("vpa")),
@@ -54,7 +54,7 @@ def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
         ("DPA (TTM)",          "dpa",                "brl_full", "Dividendos por Ação = Dividendos pagos / total de ações"),
     ]
     mercado_rows = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
+        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec), "tooltip": tooltip}
         for label, key, spec, tooltip in _MERCADO_ITEMS
     ]
 
@@ -68,7 +68,7 @@ def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
         ("ROIC",               "roic",               "pct", _get_tooltip("roic")),
     ]
     resultado_rows = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
+        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec), "tooltip": tooltip}
         for label, key, spec, tooltip in _RESULTADO_ITEMS
     ]
 
@@ -90,7 +90,7 @@ def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
         ("Total de Ações",     "total_shares",       "int", "Total de ações outstanding (FRE)"),
     ]
     balanco_rows = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
+        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec), "tooltip": tooltip}
         for label, key, spec, tooltip in _BALANCO_ITEMS
     ]
 
@@ -102,7 +102,7 @@ def build_overview_sections(ratios_dict: dict | None) -> list[dict]:
         ("RPA",  "rps",  "brl_full", "Receita por Ação = Receita Líquida / total de ações"),
     ]
     pershare_rows = [
-        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec)}
+        {"label": label, "value": _fmt(_safe_get(ratios_dict, key), spec), "tooltip": tooltip}
         for label, key, spec, tooltip in _PERSHARE_ITEMS
     ]
 

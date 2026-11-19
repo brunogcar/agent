@@ -1289,6 +1289,434 @@ function renderFinStmtChartDef(canvas, def, labels) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ── Valuation tab [WebUI v1.4] ─────────────────────────────────────────
+// 5 lazy subtabs (Visão Geral / Múltiplos / Valor Intrínseco / Fundamentos
+// / Todas as métricas). Each fetches its own JSON endpoint ONCE
+// (panel._loaded guard); the server reuses the static dashboard's report
+// builders, so overview/multiples/intrinsic payloads are lists of generic
+// "section" dicts rendered by valSectionHtml below. Fundamentals uses a
+// grouped payload; all-metrics uses a category-grouped payload.
+// [v1.4 fix1] Tooltips on every item — KPI cards, two_column blocks,
+// table first columns, ratio grids, heatmaps and all-metrics rows show
+// the PT-BR formula on hover (ⓘ marker; title attribute).
+// [v1.4 fix2] (a) Signed-value coloring everywhere (financials parity):
+// negative numbers red; % values green (+) / red (−) / yellow (0).
+// (b) Múltiplos + Fundamentos render as NESTED subtabs (renderValGrouped):
+// Múltiplos → Preço | EBIT/EBITDA | EV | Menos Comuns; Fundamentos →
+// Rentabilidade (Retornos | Margens) | Liquidez e Alavancagem (Liquidez |
+// Endividamento) | Eficiência e Crescimento. (c) Todas as métricas:
+// all groups collapsed by default.
+// [v1.4 fix3] Múltiplos dashboard parity: the 5Y daily history charts
+// (flagged price_range_selector by the report builders) render as
+// full-width standalone cards with a Tudo/1A/6M/3M/1M range selector
+// (valChartRange slices the stashed full series client-side — no
+// refetch); dual-axis charts (y1) get their right axis; Per-share Values
+// table included in Preço.
+
+window.loadValSubtab = function(sub) {
+  var panel = document.getElementById('tab-val-' + sub);
+  if (!panel || panel._loaded) return;
+  panel._loaded = true;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  fetch('/api/webui/company/' + ticker + '/valuation-' + sub + '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { renderValSubtab(sub, panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + valEsc(err.message) + '</div>';
+    });
+};
+
+function renderValSubtab(sub, panel, data) {
+  if (data._error) { panel.innerHTML = '<div class="error">Erro: ' + valEsc(data._error) + '</div>'; return; }
+  if (sub === 'fundamentals' || sub === 'multiples') { renderValGrouped(panel, data); return; }
+  if (sub === 'all') { renderValAll(panel, data); return; }
+  // overview / intrinsic → optional KPIs + generic sections
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
+// [v1.4 fix2] Nested subtab picker for grouped payloads (Múltiplos +
+// Fundamentos). Toggles the panes that share the nav's parent scope —
+// works at both levels (top pills toggle .val-pane siblings, sub-pills
+// toggle .val-subpane siblings) because each nav only owns its own level.
+// Charts in the newly shown pane get an explicit resize() — Chart.js
+// mounted them at 0×0 while the pane was display:none.
+window.valSubNav = function(btn, targetId) {
+  var nav = btn.closest('.val-subnav');
+  if (!nav) return;
+  Array.prototype.forEach.call(nav.querySelectorAll('.subtab-btn'), function(b) {
+    b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  var scope = nav.parentNode;
+  Array.prototype.forEach.call(
+    scope.querySelectorAll(':scope > .val-pane, :scope > .val-subpane'),
+    function(p) { p.style.display = 'none'; });
+  var target = document.getElementById(targetId);
+  if (!target) return;
+  target.style.display = '';
+  Array.prototype.forEach.call(target.querySelectorAll('canvas[data-val-chart]'), function(cv) {
+    if (cv._chart) { try { cv._chart.resize(); } catch (e) { /* noop */ } }
+  });
+};
+
+// Grouped payload renderer — groups become pills; a group carrying 2+
+// subsections gets a second pill row (Retornos | Margens …). Chart configs
+// are stashed on panel._valChartCfgs exactly like the flat path, so
+// mountValCharts works unchanged.
+function renderValGrouped(panel, data) {
+  var groups = data.groups || [];
+  if (!groups.length) { panel.innerHTML = '<div class="loading">Sem dados</div>'; return; }
+  var html = '<div class="val-subnav">';
+  groups.forEach(function(g, gi) {
+    html += '<button class="subtab-btn' + (gi === 0 ? ' active' : '') +
+            '" onclick="valSubNav(this,\'val-' + panel.id + '-g' + gi + '\')">' + valEsc(g.name) + '</button>';
+  });
+  html += '</div>';
+  groups.forEach(function(g, gi) {
+    var gid = 'val-' + panel.id + '-g' + gi;
+    var subs = g.subsections || [];
+    if (subs.length > 1) {
+      html += '<div class="val-pane" id="' + gid + '"' + (gi ? ' style="display:none"' : '') + '>';
+      html += '<div class="val-subnav val-subnav2">';
+      subs.forEach(function(s, si) {
+        html += '<button class="subtab-btn' + (si === 0 ? ' active' : '') +
+                '" onclick="valSubNav(this,\'val-' + panel.id + '-g' + gi + 's' + si + '\')">' + valEsc(s.name) + '</button>';
+      });
+      html += '</div>';
+      subs.forEach(function(s, si) {
+        html += '<div class="val-subpane" id="val-' + panel.id + '-g' + gi + 's' + si + '"' +
+                (si ? ' style="display:none"' : '') + '>' +
+                valSectionsHtml(s.sections || [], panel) + '</div>';
+      });
+      html += '</div>';
+    } else {
+      var secs = subs.length ? (subs[0].sections || []) : (g.sections || []);
+      html += '<div class="val-pane" id="' + gid + '"' + (gi ? ' style="display:none"' : '') + '>' +
+              valSectionsHtml(secs, panel) + '</div>';
+    }
+  });
+  panel.innerHTML = html;
+  mountValCharts(panel);
+}
+
+// HTML-escape for server-provided strings (labels, tooltips, descriptions).
+function valEsc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// [v1.4 fix2] Signed-value coloring — financials parity. Every negative
+// number renders red; % values render green (positive) / red (negative) /
+// yellow (zero). Non-numeric strings (labels, interpretations, "—") pass
+// through untouched. Handles every apply_fmt shape: "-5,67%", "R$ -0,06",
+// "-R$ 3,50", "12,34%", "R$ 12,35 mi".
+function valNumHtml(s) {
+  var t = String(s === null || s === undefined ? '' : s).trim();
+  if (!t || t === '—') return valEsc(t);
+  // Must look numeric: optional sign, optional R$, optional sign, digit.
+  if (!/^-?\s*R?\$?\s*-?\s*\d/.test(t)) return valEsc(t);
+  var isPct = t.indexOf('%') >= 0;
+  var neg = t.charAt(0) === '-' || t.indexOf('R$ -') >= 0 || t.indexOf('-R$') >= 0;
+  var cls = '';
+  if (neg) {
+    cls = 'val-neg';
+  } else if (isPct) {
+    var n = parseFloat(t.replace(/[^\d,-]/g, '').replace(/\./g, '').replace(',', '.'));
+    cls = (isNaN(n) || n > 0) ? 'val-pos' : (n < 0 ? 'val-neg' : 'val-zero');
+  }
+  if (!cls) return valEsc(t);
+  return '<span class="' + cls + '">' + valEsc(t) + '</span>';
+}
+
+function valKpisHtml(kpis) {
+  var h = '<div class="kpi-grid">';
+  (kpis || []).forEach(function(k) {
+    var tip = k.tooltip || '';
+    h += '<div class="kpi-card"' + (tip ? ' title="' + valEsc(tip) + '"' : '') + '>' +
+         '<div class="kpi-label">' + valEsc(k.label) +
+         (tip ? ' <span class="val-info">ⓘ</span>' : '') + '</div>' +
+         '<div class="kpi-value">' + valNumHtml(k.value) + '</div></div>';
+  });
+  return h + '</div>';
+}
+
+// Sections → HTML. Consecutive chart sections are grouped into a responsive
+// grid (fin-charts-grid); chart configs are stashed on panel._valChartCfgs
+// (index → config) and mounted by mountValCharts after innerHTML is set.
+// [v1.4 fix3] History charts (price_range_selector flag from the report
+// builders — 5Y daily step-lines) render STANDALONE, full-width: ~1250
+// points need the space, and they carry the dashboard's range selector.
+function valSectionsHtml(sections, panel) {
+  var html = '';
+  var chartBuf = [];
+  var cfgs = panel._valChartCfgs = panel._valChartCfgs || {};
+
+  // One chart card — title + description + optional range-selector button
+  // row + canvas. Used both inside the grid (flushCharts) and standalone.
+  function valChartCardHtml(sec) {
+    var idx = Object.keys(cfgs).length;
+    cfgs[idx] = sec.chart_data;
+    var h = '<div class="chart-section fin-chart-card"><div class="chart-header">' +
+            '<div class="reg-title">' + valEsc(sec.title || '') + '</div></div>';
+    if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
+    if (sec.price_range_selector) {
+      h += '<div class="val-range-bar">';
+      ['Tudo','1A','6M','3M','1M'].forEach(function(r, i) {
+        h += '<button class="range-btn' + (i === 0 ? ' active' : '') +
+             '" onclick="valChartRange(this,\'' + r + '\')">' + r + '</button>';
+      });
+      h += '</div>';
+    }
+    h += '<div class="chart-container"><canvas data-val-chart="' + idx + '"></canvas></div></div>';
+    return h;
+  }
+
+  function flushCharts() {
+    if (!chartBuf.length) return '';
+    var h = '<div class="fin-charts-grid val-charts">';
+    chartBuf.forEach(function(sec) { h += valChartCardHtml(sec); });
+    chartBuf = [];
+    return h + '</div>';
+  }
+  (sections || []).forEach(function(sec) {
+    if (sec && sec.type === 'chart' && !sec.price_range_selector) { chartBuf.push(sec); return; }
+    html += flushCharts();
+    if (sec && sec.type === 'chart') {
+      html += '<div class="val-chart-wide">' + valChartCardHtml(sec) + '</div>';
+    } else {
+      html += valSectionHtml(sec);
+    }
+  });
+  html += flushCharts();
+  return html;
+}
+
+// [v1.4 fix3] Range selector on valuation history charts — mirrors the
+// static dashboard's Tudo/1A/6M/3M/1M buttons. Slices the full series
+// stashed on the canvas (cv._valFull, set in renderValChart) by trading-day
+// count (same map as the Volatilidade tab) and updates the live Chart.js
+// instance in place — instant, no refetch. Scoped via btn.closest() so it
+// works for any chart card, even across panels with colliding indices.
+window.valChartRange = function(btn, range) {
+  var card = btn.closest('.chart-section');
+  if (!card) return;
+  var cv = card.querySelector('canvas');
+  var ch = cv && cv._chart, full = cv && cv._valFull;
+  if (!ch || !full) return;
+  Array.prototype.forEach.call(btn.parentNode.querySelectorAll('.range-btn'), function(b) {
+    b.classList.toggle('active', b === btn);
+  });
+  var n = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 }[range] || 0;
+  var labels = full.labels || [];
+  if (!n || n >= labels.length) n = labels.length;
+  ch.data.labels = labels.slice(-n);
+  (ch.data.datasets || []).forEach(function(ds, i) {
+    if (full.datasets[i]) ds.data = (full.datasets[i].data || []).slice(-n);
+  });
+  ch.update();
+};
+
+// One generic section renderer — handles every section type the static
+// dashboard's report builders emit (table / two_column / ratio_grid /
+// heatmap). Chart sections are handled by valSectionsHtml's grouping.
+function valSectionHtml(sec) {
+  if (!sec) return '';
+  var t = sec.type;
+
+  if (t === 'heatmap') {
+    var h = '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
+    if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
+    h += '<table class="val-table val-heatmap"><thead><tr>';
+    (sec.columns || ['Métrica', 'Valor']).forEach(function(c) { h += '<th>' + valEsc(String(c)) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    (sec.rows || []).forEach(function(row) {
+      h += '<tr>';
+      row.forEach(function(cell, ci) {
+        if (ci === 0) {
+          h += '<td class="val-metric">' + valEsc(String(cell)) + '</td>';
+        } else if (cell && typeof cell === 'object') {
+          h += '<td class="val-heat" style="background:' + (cell.bg || 'transparent') +
+               ';color:' + (cell.color || 'inherit') + '" title="' + valEsc(cell.tooltip || '') + '">' +
+               valEsc(cell.text || '—') + '</td>';
+        } else {
+          h += '<td class="val-val">' + valEsc(String(cell)) + '</td>';
+        }
+      });
+      h += '</tr>';
+    });
+    return h + '</tbody></table></div>';
+  }
+
+  if (t === 'two_column') {
+    var h = '<div class="val-two-col">';
+    h += valBlockHtml(sec.left_title, sec.left_rows);
+    h += valBlockHtml(sec.right_title, sec.right_rows);
+    return h + '</div>';
+  }
+
+  if (t === 'ratio_grid') {
+    var h = '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
+    if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
+    (sec.categories || []).forEach(function(cat) {
+      h += '<table class="val-table"><tbody>';
+      (cat.items || []).forEach(function(item) {
+        h += '<tr><td title="' + valEsc(item.tooltip || '') + '">' + valEsc(item.label || '') +
+             (item.tooltip ? ' <span class="val-info">ⓘ</span>' : '') +
+             '</td><td class="val-val">' + valNumHtml(item.value) + '</td></tr>';
+      });
+      h += '</tbody></table>';
+    });
+    return h + '</div>';
+  }
+
+  if (t === 'table') {
+    var h = '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
+    if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
+    h += '<table class="val-table"><thead><tr>';
+    (sec.columns || []).forEach(function(c) { h += '<th>' + valEsc(String(c)) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    (sec.rows || []).forEach(function(row) {
+      h += '<tr>';
+      (row || []).forEach(function(cell, ci) {
+        if (cell && typeof cell === 'object') {
+          var tip = cell.tooltip || '';
+          h += '<td' + (ci === 0 && tip ? ' title="' + valEsc(tip) + '"' : '') + '>' +
+               valEsc(cell.text || '—') +
+               (ci === 0 && tip ? ' <span class="val-info">ⓘ</span>' : '') + '</td>';
+        } else {
+          h += '<td' + (ci > 0 ? ' class="val-val"' : '') + '>' + valNumHtml(String(cell)) + '</td>';
+        }
+      });
+      h += '</tr>';
+    });
+    h += '</tbody></table>';
+    if (sec.note) h += '<div class="val-note">' + valEsc(sec.note) + '</div>';
+    return h + '</div>';
+  }
+
+  return '';
+}
+
+function valBlockHtml(title, rows) {
+  var h = '<div class="val-section"><div class="reg-title">' + valEsc(title || '') + '</div>' +
+          '<table class="val-table"><tbody>';
+  (rows || []).forEach(function(r) {
+    var tip = r.tooltip || '';
+    h += '<tr><td' + (tip ? ' title="' + valEsc(tip) + '"' : '') + '>' + valEsc(r.label || '') +
+         (tip ? ' <span class="val-info">ⓘ</span>' : '') +
+         '</td><td class="val-val">' + valNumHtml(r.value) + '</td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
+// Fundamentos + Múltiplos share renderValGrouped above (nested subtabs).
+
+// Todas as métricas: collapsible category groups — [v1.4 fix2] ALL closed
+// by default (79 metrics is a long wall of tables; users open on demand).
+function renderValAll(panel, data) {
+  var html = '';
+  (data.groups || []).forEach(function(g) {
+    var n = (g.metrics || []).length;
+    html += '<details class="val-cat"><summary>' +
+            valEsc(g.name) + ' <span class="val-count">(' + n + ')</span></summary>';
+    html += '<table class="val-table"><tbody>';
+    (g.metrics || []).forEach(function(m) {
+      var tip = m.tooltip || '';
+      html += '<tr><td' + (tip ? ' title="' + valEsc(tip) + '"' : '') + '>' + valEsc(m.label) +
+             (tip ? ' <span class="val-info">ⓘ</span>' : '') +
+             '</td><td class="val-val">' + valNumHtml(m.value) + '</td></tr>';
+    });
+    html += '</tbody></table></details>';
+  });
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+}
+
+// Mount every chart canvas stashed during HTML build. Chart configs come
+// from the server as plain Chart.js {type, data} — options are rebuilt
+// client-side with chartTheme() so dark/light mode stays consistent (the
+// server's Jinja-oriented options, incl. function-string tooltip callbacks,
+// are intentionally discarded).
+function mountValCharts(panel) {
+  var nodes = panel.querySelectorAll('canvas[data-val-chart]');
+  Array.prototype.forEach.call(nodes, function(cv) {
+    if (cv._chart) return;
+    var idx = parseInt(cv.getAttribute('data-val-chart'), 10);
+    // Find the chart_data in the stashed configs (index → config map).
+    var cfg = (panel._valChartCfgs || {})[idx];
+    if (cfg) renderValChart(cv, cfg);
+  });
+}
+
+function renderValChart(canvas, cd) {
+  if (!cd || !cd.data) return;
+  var th = chartTheme();
+  var type = cd.type || 'bar';
+  var datasets = (cd.data.datasets || []).map(function(ds) {
+    var d = {};
+    for (var k in ds) d[k] = ds[k];
+    if (type === 'line' || d.type === 'line') {
+      if (d.fill === undefined) d.fill = false;
+      if (d.tension === undefined) d.tension = 0.3;
+      if (d.borderWidth === undefined) d.borderWidth = 2;
+    }
+    return d;
+  });
+  // [v1.4 fix3] Stash the full series for the range selector
+  // (valChartRange) — copied so chart.data mutations never touch it.
+  canvas._valFull = {
+    labels: (cd.data.labels || []).slice(),
+    datasets: (cd.data.datasets || []).map(function(ds) {
+      return { data: (ds.data || []).slice() };
+    }),
+  };
+  var options;
+  if (type === 'radar') {
+    options = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
+      scales: { r: {
+        beginAtZero: true, max: 100,
+        ticks: { stepSize: 20, color: th.text, backdropColor: 'transparent' },
+        grid: { color: th.grid }, angleLines: { color: th.grid },
+        pointLabels: { color: th.text, font: { size: 11 } }
+      } }
+    };
+  } else {
+    options = {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
+      scales: {
+        x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } },
+        y: { grid: { color: th.grid }, ticks: { color: th.text } }
+      }
+    };
+    // [v1.4 fix3] Dual-axis history charts (Múltiplos de Preço: P/L on the
+    // left axis, PSR/P/RB/P/CG/P/DB on the right) — add y1 when a dataset
+    // references it, or Chart.js fails to resolve the scale.
+    var hasY1 = datasets.some(function(d) { return d.yAxisID === 'y1'; });
+    if (hasY1) {
+      options.scales.y1 = {
+        position: 'right',
+        grid: { drawOnChartArea: false },
+        ticks: { color: th.text }
+      };
+    }
+  }
+  canvas._chart = new Chart(canvas.getContext('2d'), {
+    type: type,
+    data: { labels: cd.data.labels || [], datasets: datasets },
+    options: options
+  });
+}
+
 // ── Auto-init after HTMX settle ──
 function initApp() {
   if (typeof htmx !== 'undefined') htmx.config.includeScriptTags = true;
@@ -1308,6 +1736,10 @@ function initApp() {
     if (finVG && !finVG._initialized) { finVG._initialized = true; var t = finVG.getAttribute('data-ticker'); if (t) initFinVisaoGeral(t); }
     var finDemo = document.getElementById('tab-fin-demonstracoes');
     if (finDemo && !finDemo._initialized) { finDemo._initialized = true; var t = finDemo.getAttribute('data-ticker'); if (t) initFinDemonstracoes(t); }
+    // [WebUI v1.4] Valuation subtabs — Visão Geral loads on tab open; the
+    // others load lazily via the subtab buttons' onclick (loadValSubtab).
+    var valOverview = document.getElementById('tab-val-overview');
+    if (valOverview && !valOverview._initialized) { valOverview._initialized = true; loadValSubtab('overview'); }
     if (volumeTab && !volumeTab._initialized) { volumeTab._initialized = true; var t = volumeTab.getAttribute('data-ticker'); if (t) initVolumeTab(t); }
     if (volTab && !volTab._initialized) { volTab._initialized = true; var t = volTab.getAttribute('data-ticker'); if (t) initVolatilidadeTab(t); }
   });
