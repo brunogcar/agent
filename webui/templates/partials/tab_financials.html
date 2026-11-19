@@ -1,0 +1,29 @@
+{# webui/templates/partials/tab_financials.html — Financials tab with subtabs.
+
+[WebUI v1.3 fix 2] Subtabs: Visão Geral + Demonstrações.
+- Visão Geral: REAL Resultado TTM (ttm mode, latest quarter + Δ 1A) +
+  Margens/Balanço/Fluxo, Trajetória Anual chart (10y, from 2016, price
+  overlay), Quarterly Trend (oldest → newer), single-column WACC+DuPont+
+  Altman Z, Red Flags (server-side)
+- Demonstrações: ONE fetch per period (all 5 statements) → Completo (merged
+  BPA+BPP) / BPA / BPP / DRE / DFC / DVA with Anual/Trimestral toggle,
+  section headers, frozen Código+Descrição (fixed-layout colgroup — Código
+  84px in both period modes) and statement-specific charts per the
+  financials dashboard reference
+#}
+<div class="tab-financials" x-data="{ subtab: 'visao_geral' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'visao_geral' }" @click="subtab='visao_geral'">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'demonstracoes' }" @click="subtab='demonstracoes'">Demonstrações</button>
+  </nav>
+
+  {# ── Visão Geral subtab ── #}
+  <div x-show="subtab === 'visao_geral'" id="tab-fin-visao-geral" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Demonstrações subtab ── #}
+  <div x-show="subtab === 'demonstracoes'" style="display: none;" id="tab-fin-demonstracoes" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

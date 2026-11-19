@@ -373,7 +373,96 @@ a:hover { text-decoration: underline; }
 .subtab-nav button:hover { color: var(--color-text); }
 .subtab-nav button.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
 
-/* ── Indicadores grid ── */
+/* ── Financials tab ── */
+.tab-financials { display: flex; flex-direction: column; gap: var(--space-4); }
+/* [WebUI v1.3 fix 2] Visão Geral: consistent vertical spacing between every
+   section (Resultado grid, Trajetória Anual, Quarterly Trend, risk boxes,
+   Red Flags) — flex column + gap instead of ad-hoc margins. */
+#tab-fin-visao-geral { display: flex; flex-direction: column; gap: var(--space-5); }
+#tab-fin-visao-geral .preco-grid { margin-bottom: 0; }
+.fin-wide-table { min-width: 100%; }
+.fin-wide-table th { text-align: right; white-space: nowrap; padding: var(--space-1) var(--space-2); }
+.fin-wide-table th:first-child { text-align: left; }
+.fin-wide-table td { white-space: nowrap; padding: var(--space-1) var(--space-2); }
+/* [WebUI v1.3 fix 2] Quarterly Trend: shrink the Métrica column to its
+   content — .price-table's td:first-child width:45% was eating half the
+   table. width:1% + nowrap is the classic shrink-to-fit override. */
+.fin-trend-table th:first-child,
+.fin-trend-table td:first-child { width: 1%; white-space: nowrap; }
+/* [WebUI v1.3 fix 2] Statement-specific charts grid (per-view chart set,
+   mirroring the financials dashboard reference). */
+.fin-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.fin-charts-grid .chart-section { padding: var(--space-3) var(--space-4); }
+.fin-charts-grid .chart-container { height: 250px; }
+
+/* ── Demonstrações wide table (frozen Código + Descrição, sticky header) ──
+   [WebUI v1.3 fix 2] table-layout: fixed + <colgroup> (84px / 220px, emitted
+   by app.js together with an inline table min-width of 304px + 88px per
+   period column). Auto layout let the Código column stretch wide whenever
+   the ANNUAL table (fewer period columns) was stretched to the container
+   width — max-width on <td> is not honored reliably by auto table layout.
+   With fixed layout the browser MUST use the colgroup widths, so Código is
+   exactly 84px (fits codes like "3.05.01.02" in mono 11px) in BOTH period
+   modes; surplus width spreads only over the period columns. */
+.fin-stmt-scroll { overflow: auto; max-height: 560px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.fin-stmt-table { border-collapse: separate; border-spacing: 0; font-size: 11px; table-layout: fixed; width: 100%; }
+.fin-stmt-table th, .fin-stmt-table td {
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  padding: 3px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fin-stmt-table thead th {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--color-bg-sec);
+  color: var(--color-text-sec);
+  font-weight: 600;
+}
+.fin-stmt-table th.period-col, .fin-stmt-table td.val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fin-stmt-table td.val.neg { color: var(--color-danger); }
+.fin-stmt-table .frozen-col {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--color-bg-card);
+  width: 84px; min-width: 84px; max-width: 84px;
+  overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  text-align: left;
+}
+.fin-stmt-table .frozen-col2 {
+  position: sticky; left: 84px; z-index: 2;
+  background: var(--color-bg-card);
+  width: 220px; min-width: 220px; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+}
+.fin-stmt-table thead th.frozen-col, .fin-stmt-table thead th.frozen-col2 {
+  z-index: 4; background: var(--color-bg-sec);
+}
+.fin-stmt-table tbody tr:hover td:not(.frozen-col):not(.frozen-col2):not(.sec-fill) {
+  background: color-mix(in srgb, var(--color-bg-sec) 60%, transparent);
+}
+/* Section header rows ("— Ativo Total —") spanning the full width */
+.fin-stmt-table tr.section-row td {
+  background: var(--color-bg-sec);
+  font-weight: 600; font-style: italic;
+  color: var(--color-text);
+  border-top: 1px solid var(--color-border);
+}
+.fin-stmt-table tr.section-row td.frozen-sec {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--color-bg-sec);
+}
+.fin-stmt-table tr.section-row td.sec-fill { background: var(--color-bg-sec); }
 .indicators-grid { display: flex; flex-direction: column; gap: var(--space-4); }
 .range-bar { display: flex; gap: var(--space-1); padding: var(--space-2) 0; }
 

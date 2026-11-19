@@ -12,6 +12,8 @@
   </div>
 
   {# ── Company tabs (second-tier nav) ── #}
+  {# [WebUI v1.3 fix 2] Tab order: Visão Geral — Preço — Financeiro — Valuation
+     — Proventos — Histórico (Financeiro moved before Valuation). #}
   <nav class="company-tabs">
     <button class="tab-btn" :class="{ 'active': tab === 'visao_geral' }"
             @click="tab='visao_geral'"
@@ -27,19 +29,19 @@
             hx-swap="innerHTML">
       Preço
     </button>
-    <button class="tab-btn" :class="{ 'active': tab === 'valuation' }"
-            @click="tab='valuation'"
-            hx-get="/api/webui/company/{{ ticker }}/tab/valuation"
-            hx-target="#tab-content"
-            hx-swap="innerHTML">
-      {{ t("company.valuation") }}
-    </button>
     <button class="tab-btn" :class="{ 'active': tab === 'financials' }"
             @click="tab='financials'"
             hx-get="/api/webui/company/{{ ticker }}/tab/financials"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       {{ t("company.financials") }}
+    </button>
+    <button class="tab-btn" :class="{ 'active': tab === 'valuation' }"
+            @click="tab='valuation'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/valuation"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.valuation") }}
     </button>
     <button class="tab-btn" :class="{ 'active': tab === 'dividends' }"
             @click="tab='dividends'"

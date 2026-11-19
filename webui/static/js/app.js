@@ -1,10 +1,19 @@
 /* webui/static/js/app.js — client-side app logic.
  *
- * [WebUI v1.2] Handles:
+ * [WebUI v1.3 fix 2] Handles:
  *   - Candlestick chart (OHLCV + MM20/50/100/200) with zoom/pan — ticker first in legend
  *   - Preço tab: Cotação tables + Histograma + Início vs Fim
  *   - Indicadores subtab: RSI, MACD, Stochastic, OBV, ADX, CCI, Williams %R (with reference lines + range selector)
  *   - Volatilidade subtab: Bollinger Bands + rolling vol (with range selector)
+ *   - Financials: Visão Geral (real Resultado TTM + Trajetória Anual 10y with
+ *     price overlay + server-side Red Flags) and Demonstrações (single fetch,
+ *     merged Completo BPA+BPP, section headers, statement-specific charts)
+ *   - fix 2: Quarterly Trend oldest→newer with narrow Métrica column;
+ *     single-column WACC/DuPont/Altman boxes; per-statement charts per the
+ *     financials dashboard reference (balanço stacked abs/%, DRE trajetória +
+ *     margens, DFC fluxos + empilhado + FCO vs LL, DVA linhas); Demonstrações
+ *     table on table-layout:fixed + colgroup so Código stays 84px in BOTH
+ *     annual and quarterly modes
  *   - Auto-init charts via htmx:afterSettle
  */
 
@@ -685,6 +694,601 @@ function recalcFib() {
 
 window.recalcFib = recalcFib;
 
+// ── Financials subtab: Visão Geral ──
+window.initFinVisaoGeral = function(ticker) {
+  var tab = document.getElementById('tab-fin-visao-geral'); if (!tab) return;
+  fetch('/api/webui/company/' + ticker + '/financials-overview?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+      renderFinVisaoGeral(tab, ticker, data);
+    })
+    .catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+};
+
+function renderFinVisaoGeral(tab, ticker, data) {
+  var ttm = data.ttm || null;
+  var annual = data.annual || {};
+  var quarterly = data.quarterly || {};
+  var ratios = data.ratios || {};
+  var annualPeriods = annual.periods || [];
+  var quarterlyPeriods = quarterly.periods || [];
+  var html = '';
+
+  // ── Section 1: Resultado TTM (real trailing twelve months) + Margens ──
+  // [v1.3 fix 1] Uses the ttm mode (compute_ttm_with_engines) — the TTM window
+  // ending at the latest quarter. Falls back to the latest annual statement
+  // only when TTM can't be computed (< 4 quarters of history).
+  var isTTM = !!(ttm && ttm.metrics);
+  var m = isTTM ? ttm.metrics : ((annualPeriods[0] || {}).metrics || {});
+  var r = isTTM ? (ttm.ratios || {}) : ((annualPeriods[0] || {}).ratios || {});
+  var prevM = isTTM ? (ttm.year_ago_metrics || {}) : {};
+  var title;
+  if (isTTM) {
+    title = 'Resultado TTM — ' + (ttm.quarter || '') +
+            (ttm.period_range ? ' (' + ttm.period_range + ')' : '');
+  } else {
+    title = 'Resultado Anual — ' + ((annualPeriods[0] || {}).period || '—');
+  }
+  html += '<div class="preco-grid">';
+  html += '<div class="reg-table"><div class="reg-title">' + title + '</div><table class="price-table">';
+  html += finRowDelta('Receita Líquida', m.receita_liquida, prevM.receita_liquida);
+  html += finRowDelta('Lucro Bruto', m.lucro_bruto, prevM.lucro_bruto);
+  html += finRowDelta('EBIT', m.ebit, prevM.ebit);
+  html += finRowDelta('EBITDA', m.ebitda, prevM.ebitda);
+  html += finRowDelta('Lucro Líquido', m.lucro_liquido, prevM.lucro_liquido);
+  html += '</table></div>';
+  html += '<div class="reg-table"><div class="reg-title">Margens ' + (isTTM ? '(TTM)' : '') + '</div><table class="price-table">';
+  html += finRowPct('Margem Bruta', r.marg_bruta);
+  html += finRowPct('Margem EBITDA', r.marg_ebitda);
+  html += finRowPct('Margem Operacional (EBIT)', r.marg_ebit);
+  html += finRowPct('Margem Líquida', r.marg_liquida);
+  html += finRowPct('ROE', r.roe);
+  html += finRowPct('ROA', r.roa);
+  html += '</table></div>';
+  html += '<div class="reg-table"><div class="reg-title">Balanço Patrimonial</div><table class="price-table">';
+  html += finRow('Ativo Total', m.ativo_total, 'brl');
+  html += finRow('Caixa e Equivalentes', m.caixa, 'brl');
+  html += finRow('Dívida Bruta', m.divida_bruta, 'brl');
+  html += finRow('Dívida Líquida', numSub(m.divida_bruta, m.caixa), 'brl');
+  html += finRow('Patrimônio Líquido', m.patrimonio_liquido, 'brl');
+  html += '</table></div>';
+  html += '<div class="reg-table"><div class="reg-title">Fluxo de Caixa ' + (isTTM ? '(TTM)' : '') + '</div><table class="price-table">';
+  html += finRow('FCO (Operacional)', m.fco, 'brl');
+  html += finRow('FCI (Investimento)', m.fci, 'brl');
+  html += finRow('FCF (FCO+FCI)', numAdd(m.fco, m.fci), 'brl');
+  html += '</table></div>';
+  html += '</div>';
+
+  // ── Section 2: Trajetória Anual chart (10 years — from 2016) ──
+  if (annualPeriods.length > 0) {
+    html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">Trajetória Anual</div></div>';
+    html += '<div class="chart-container"><canvas id="fin-trend-chart"></canvas></div></div>';
+  }
+
+  // ── Section 3: Quarterly Trend table (QoQ deltas) ──
+  // [WebUI v1.3 fix 2] Service returns quarters OLDEST-FIRST — render them
+  // as-is (older → newer, left → right). The old .reverse() flipped them to
+  // newest-first. First column shrinks to content via .fin-trend-table.
+  if (quarterlyPeriods.length > 0) {
+    html += '<div class="reg-table"><div class="reg-title">Quarterly Trend</div>';
+    html += '<div style="overflow-x: auto;"><table class="price-table fin-wide-table fin-trend-table"><thead><tr><th>Métrica</th>';
+    quarterlyPeriods.forEach(function(q) {
+      html += '<th>' + (q.period || '') + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    var qMetrics = [
+      ['Receita Líquida', 'receita_liquida'],
+      ['Lucro Bruto', 'lucro_bruto'],
+      ['EBITDA', 'ebitda'],
+      ['Lucro Líquido', 'lucro_liquido'],
+    ];
+    qMetrics.forEach(function(qm) {
+      html += '<tr><td>' + qm[0] + '</td>';
+      var prev = null;
+      quarterlyPeriods.forEach(function(q) {
+        var val = (q.metrics || {})[qm[1]];
+        var delta = '';
+        if (prev !== null && val !== null && prev !== null && prev > 0) {
+          var pct = (val - prev) / prev;
+          delta = ' <span style="font-size:10px;color:' + (pct < 0 ? 'var(--color-danger)' : 'var(--color-success)') + '">' + (pct >= 0 ? '+' : '') + (pct * 100).toFixed(1).replace('.', ',') + '%</span>';
+        }
+        html += '<td class="val">' + fmtCompact(val) + delta + '</td>';
+        prev = val;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+  }
+
+  // ── Section 4: Análise de Risco — WACC + DuPont + Altman Z ──
+  // [WebUI v1.3 fix 2] Single-column tables — the old trailing Δ column was
+  // always "—" in these boxes, so it is gone (finRow1/finRowPct1 helpers).
+  html += '<div class="preco-grid">';
+  html += '<div class="reg-table"><div class="reg-title">WACC</div><table class="price-table">';
+  html += finRowPct1('WACC', ratios.wacc);
+  html += '</table></div>';
+  html += '<div class="reg-table"><div class="reg-title">DuPont ROE</div><table class="price-table">';
+  html += finRowPct1('Margem Líquida', ratios.net_margin !== undefined ? ratios.net_margin : ratios.margem_liquida);
+  html += finRow1('Giro do Ativo', ratios.asset_turnover, 'num');
+  html += finRow1('Alavancagem', ratios.financial_leverage, 'num');
+  html += finRowPct1('ROE (DuPont)', ratios.dupont);
+  html += '</table></div>';
+  html += '<div class="reg-table"><div class="reg-title">Altman Z-Score</div><table class="price-table">';
+  html += finRow1('Z-Score', ratios.altman_z, 'num');
+  var zVal = ratios.altman_z;
+  var zVerdict = zVal === null || zVal === undefined ? '—' : (zVal > 2.99 ? 'Segura' : zVal > 1.81 ? 'Zona Cinzenta' : 'Distress');
+  html += '<tr><td>Veredito</td><td class="val">' + zVerdict + '</td></tr>';
+  html += '</table></div>';
+  html += '</div>';
+
+  // ── Section 5: Red Flags (server-side consistency checks) ──
+  var rf = data.red_flags;
+  html += '<div class="reg-table"><div class="reg-title">Red Flags Contábeis' +
+          (rf && rf.has_warnings ? ' — \u26a0 atenção' : (rf ? ' — OK' : '')) + '</div>';
+  if (rf && rf.rows && rf.rows.length > 0) {
+    html += '<div style="overflow-x: auto;"><table class="price-table fin-wide-table"><thead><tr><th>Verificação</th><th>Status</th><th style="text-align:left;">Detalhe</th></tr></thead><tbody>';
+    rf.rows.forEach(function(row) {
+      var warn = String(row[1] || '').indexOf('\u26a0') >= 0;
+      html += '<tr><td>' + (row[0] || '') + '</td>';
+      html += '<td class="val" style="color:' + (warn ? 'var(--color-danger)' : 'var(--color-success)') + ';font-weight:600;">' + (row[1] || '') + '</td>';
+      html += '<td class="muted" style="text-align:left;">' + (row[2] && row[2] !== '—' ? row[2] : '—') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div class="muted" style="font-size:11px;margin-top:var(--space-2);">Cada verificação compara identidades contábeis (ex.: Ativo = Circulante + Não Circulante) com tolerância de 5%.</div>';
+  } else {
+    html += '<div class="loading">Nenhum dado contábil disponível para validação.</div>';
+  }
+  html += '</div>';
+
+  tab.innerHTML = html;
+
+  // Render Trajetória Anual chart
+  if (annualPeriods.length > 0) {
+    renderFinTrendChart(annualPeriods, data.year_end_prices || {});
+  }
+}
+
+function finRow(label, value, type) {
+  var v;
+  if (type === 'brl') v = value !== null && value !== undefined ? fmtCompact(value) : '—';
+  else v = value !== null && value !== undefined ? Number(value).toFixed(2).replace('.', ',') : '—';
+  return '<tr><td>' + label + '</td><td class="val">' + v + '</td><td class="pct">—</td></tr>';
+}
+// [v1.3 fix 1] Row with Δ 1A (latest TTM vs TTM one year ago), colored green/red.
+function finRowDelta(label, value, prev) {
+  var v = value !== null && value !== undefined ? fmtCompact(value) : '—';
+  var delta = fmtPctColored(deltaVs(value, prev));
+  return '<tr><td>' + label + '</td><td class="val">' + v + '</td><td class="pct">' + delta + '</td></tr>';
+}
+function deltaVs(v, prev) {
+  if (v === null || v === undefined || prev === null || prev === undefined || prev === 0) return null;
+  return (v - prev) / Math.abs(prev);
+}
+// None-safe numeric helpers (null propagates instead of becoming NaN).
+function numAdd(a, b) {
+  return (a === null || a === undefined || b === null || b === undefined) ? null : (a + b);
+}
+function numSub(a, b) {
+  return (a === null || a === undefined || b === null || b === undefined) ? null : (a - b);
+}
+function finRowPct(label, value) {
+  var v = value !== null && value !== undefined ? (value * 100).toFixed(2).replace('.', ',') + '%' : '—';
+  var color = value !== null && value !== undefined && value < 0 ? 'var(--color-danger)' : 'var(--color-success)';
+  return '<tr><td>' + label + '</td><td class="val" style="color:' + color + '">' + v + '</td><td class="pct">—</td></tr>';
+}
+// [WebUI v1.3 fix 2] Single-column row helpers (WACC / DuPont / Altman boxes) —
+// these tables carry no Δ, so no trailing "—" cell.
+function finRow1(label, value, type) {
+  var v;
+  if (type === 'brl') v = value !== null && value !== undefined ? fmtCompact(value) : '—';
+  else v = value !== null && value !== undefined ? Number(value).toFixed(2).replace('.', ',') : '—';
+  return '<tr><td>' + label + '</td><td class="val">' + v + '</td></tr>';
+}
+function finRowPct1(label, value) {
+  var v = value !== null && value !== undefined ? (value * 100).toFixed(2).replace('.', ',') + '%' : '—';
+  var color = value !== null && value !== undefined && value < 0 ? 'var(--color-danger)' : 'var(--color-success)';
+  return '<tr><td>' + label + '</td><td class="val" style="color:' + color + '">' + v + '</td></tr>';
+}
+
+function renderFinTrendChart(annualPeriods, yearEndPrices) {
+  var canvas = document.getElementById('fin-trend-chart');
+  if (!canvas) return;
+  var th = chartTheme();
+  var sorted = annualPeriods.slice().reverse();
+  var labels = sorted.map(function(p) { return p.period || ''; });
+  var receitas = sorted.map(function(p) { return ((p.metrics || {}).receita_liquida || 0) / 1e6; });
+  var ebitdas = sorted.map(function(p) { return ((p.metrics || {}).ebitda || 0) / 1e6; });
+  var lucros = sorted.map(function(p) { return ((p.metrics || {}).lucro_liquido || 0) / 1e6; });
+  // Price overlay: Dec-31 close per year (right axis), dashed green line.
+  var hasPrices = yearEndPrices && Object.keys(yearEndPrices).length > 0;
+  var prices = hasPrices ? labels.map(function(y) { return yearEndPrices[y] !== undefined ? yearEndPrices[y] : null; }) : [];
+  var priceShown = hasPrices && prices.some(function(p) { return p !== null && p !== undefined; });
+
+  var datasets = [
+    { label: 'Receita', data: receitas, backgroundColor: '#f59e0b', borderWidth: 0, yAxisID: 'y', order: 3 },
+    { label: 'EBITDA', data: ebitdas, backgroundColor: '#d946a0', borderWidth: 0, yAxisID: 'y', order: 3 },
+    { label: 'Lucro Líquido', data: lucros, backgroundColor: '#a855f7', borderWidth: 0, yAxisID: 'y', order: 3 }
+  ];
+  if (priceShown) {
+    datasets.push({ label: 'Preço (R$)', data: prices, type: 'line', borderColor: '#0d9488',
+      backgroundColor: '#0d9488', borderDash: [5, 5], fill: false, tension: 0.3,
+      pointRadius: 3, yAxisID: 'y1', order: 0 });
+  }
+  var scales = {
+    x: { grid: { color: th.grid }, ticks: { color: th.text } },
+    y: { grid: { color: th.grid }, ticks: { color: th.text, callback: function(v) { return 'R$ ' + Number(v).toFixed(0) + ' mi'; } },
+         title: { display: true, text: 'R$ (mi)' } }
+  };
+  if (priceShown) {
+    scales.y1 = { position: 'right', grid: { drawOnChartArea: false },
+      ticks: { color: th.text, callback: function(v) { return 'R$ ' + Number(v).toFixed(2).replace('.', ','); } },
+      title: { display: true, text: 'Preço (R$)' } };
+  }
+
+  canvas._chart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels: labels, datasets: datasets },
+    options: { responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: scales,
+      plugins: { legend: { display: true, position: 'top' } }
+    }
+  });
+}
+
+// ── Financials subtab: Demonstrações ──
+// [v1.3 fix 1] One fetch per period type (all 5 statements in a single payload);
+// switching Completo/BPA/BPP/DRE/DFC/DVA re-renders from cached data.
+// Quarterly values are STANDALONE quarters; annual = DFP years (2016+).
+window.initFinDemonstracoes = function(ticker) {
+  var tab = document.getElementById('tab-fin-demonstracoes'); if (!tab) return;
+  tab._finState = { statement: 'balanco', subview: 'completo', period: 'annual' };
+  tab._finData = {};  // {period: payload} — cached fetches
+  renderFinDemonstracoes(tab, ticker);
+};
+
+function renderFinDemonstracoes(tab, ticker) {
+  var state = tab._finState;
+  var html = '';
+
+  // Controls: statement type + subview + period toggle
+  html += '<div class="fib-controls">';
+  html += '<label>Declaração: <select id="fin-statement" onchange="updateFinDemo(\'' + ticker + '\')">';
+  html += '<option value="balanco"' + (state.statement === 'balanco' ? ' selected' : '') + '>Balanço</option>';
+  html += '<option value="dre"' + (state.statement === 'dre' ? ' selected' : '') + '>DRE</option>';
+  html += '<option value="dfc"' + (state.statement === 'dfc' ? ' selected' : '') + '>DFC</option>';
+  html += '<option value="dva"' + (state.statement === 'dva' ? ' selected' : '') + '>DVA</option>';
+  html += '</select></label>';
+
+  if (state.statement === 'balanco') {
+    html += '<label>Visão: <select id="fin-subview" onchange="updateFinDemo(\'' + ticker + '\')">';
+    html += '<option value="completo"' + (state.subview === 'completo' ? ' selected' : '') + '>Completo (BPA+BPP)</option>';
+    html += '<option value="bpa"' + (state.subview === 'bpa' ? ' selected' : '') + '>BPA — Ativo</option>';
+    html += '<option value="bpp"' + (state.subview === 'bpp' ? ' selected' : '') + '>BPP — Passivo + PL</option>';
+    html += '</select></label>';
+  }
+
+  html += '<label>Período: <select id="fin-period" onchange="updateFinDemo(\'' + ticker + '\')">';
+  html += '<option value="annual"' + (state.period === 'annual' ? ' selected' : '') + '>Anual</option>';
+  html += '<option value="quarterly"' + (state.period === 'quarterly' ? ' selected' : '') + '>Trimestral</option>';
+  html += '</select></label>';
+  html += '</div>';
+
+  html += '<div id="fin-demo-content"><div class="loading">Carregando...</div></div>';
+  tab.innerHTML = html;
+
+  // Cached fetch — one payload per period type covers all subviews.
+  if (tab._finData[state.period]) {
+    renderFinStatements(tab, ticker, tab._finData[state.period]);
+    return;
+  }
+  var periods = state.period === 'annual' ? 10 : 20;
+  fetch('/api/webui/company/' + ticker + '/financials-statements?period=' + state.period + '&periods=' + periods + '&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      tab._finData[state.period] = data;
+      renderFinStatements(tab, ticker, data);
+    })
+    .catch(function(err) {
+      document.getElementById('fin-demo-content').innerHTML = '<div class="error">Erro: ' + err.message + '</div>';
+    });
+}
+
+window.updateFinDemo = function(ticker) {
+  var tab = document.getElementById('tab-fin-demonstracoes');
+  if (!tab) return;
+  tab._finState.statement = document.getElementById('fin-statement').value;
+  var subSel = document.getElementById('fin-subview');
+  if (subSel) tab._finState.subview = subSel.value;
+  tab._finState.period = document.getElementById('fin-period').value;
+  renderFinDemonstracoes(tab, ticker);
+};
+
+function renderFinStatements(tab, ticker, data) {
+  var content = document.getElementById('fin-demo-content');
+  if (!content) return;
+  var state = tab._finState;
+  if (data._error) { content.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+
+  var labels = data.labels || [];
+  var dates = data.dates || [];
+  var stmts = data.statements || {};
+  var html = '';
+
+  var viewKey = state.statement === 'balanco' ? state.subview : state.statement;
+  var titles = {
+    completo: 'Balanço Completo — BPA + BPP',
+    bpa: 'BPA — Ativo',
+    bpp: 'BPP — Passivo + PL',
+    dre: 'DRE — Demonstração do Resultado',
+    dfc: 'DFC — Fluxo de Caixa',
+    dva: 'DVA — Valor Adicionado'
+  };
+  var periodLabel = data.period_type === 'quarterly' ? 'Comparativo Trimestral' : 'Comparativo Anual';
+
+  // [WebUI v1.3 fix 2] Statement-specific charts (reference: PETR4 financials
+  // dashboard). Each view gets its own set of charts — balanço: stacked
+  // absolute + % composition; DRE: Receita/EBITDA/Lucro + margens; DFC:
+  // grouped + stacked + FCO vs Lucro Líquido; DVA: VA Bruta/Líquida/Total
+  // lines. Series are pulled from the same statement rows the table shows.
+  var chartDefs = buildFinStmtChartDefs(viewKey, stmts);
+  if (chartDefs.length > 0) {
+    html += '<div class="fin-charts-grid">';
+    chartDefs.forEach(function(def, i) {
+      html += '<div class="chart-section fin-chart-card"><div class="chart-header"><div class="reg-title">' + def.title + '</div></div>';
+      html += '<div class="chart-container"><canvas id="fin-stmt-chart-' + i + '"></canvas></div></div>';
+    });
+    html += '</div>';
+  }
+
+  // Table (merged rows for Completo; single statement otherwise)
+  var rows;
+  if (state.statement === 'balanco') {
+    if (state.subview === 'bpa') rows = ((stmts.BPA || {}).rows || []);
+    else if (state.subview === 'bpp') rows = ((stmts.BPP || {}).rows || []);
+    else rows = (((stmts.BPA || {}).rows || []).concat(((stmts.BPP || {}).rows) || []));
+  } else {
+    rows = ((stmts[state.statement.toUpperCase()] || {}).rows || []);
+  }
+
+  if (!rows || rows.length === 0) {
+    content.innerHTML = '<div class="loading">Sem dados para ' + titles[viewKey] + '</div>';
+    return;
+  }
+
+  html += '<div class="reg-table">';
+  html += '<div class="reg-title">' + titles[viewKey] + ' — ' + periodLabel + '</div>';
+  html += '<div class="fin-stmt-scroll">';
+  // [WebUI v1.3 fix 2] table-layout: fixed + colgroup (84px Código / 220px
+  // Descrição, see app.css) — auto layout let the Código column stretch wide
+  // when the ANNUAL table (fewer columns) was stretched to the container.
+  // The inline min-width (frozen cols + 88px per period) keeps every period
+  // column wide enough for the values; extra space spreads only over periods.
+  html += '<table class="fin-stmt-table" style="min-width:' + (304 + labels.length * 88) + 'px">';
+  html += '<colgroup><col style="width:84px"><col style="width:220px"></colgroup>';
+  html += '<thead><tr>';
+  html += '<th class="frozen-col">Código</th>';
+  html += '<th class="frozen-col2">Descrição</th>';
+  // [WebUI v1.3 fix 4] Period columns flow oldest → newest (left → right).
+  labels.forEach(function(lab, i) {
+    var d = dates[i] ? fmtDate(dates[i]) : '';
+    html += '<th class="period-col" title="' + (d || lab) + '">' + lab + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  // Rows grouped by section — emit a section header row on section change.
+  var lastSection = null;
+  rows.forEach(function(row) {
+    if (row.section && row.section !== lastSection) {
+      lastSection = row.section;
+      html += '<tr class="section-row"><td colspan="2" class="frozen-sec">\u2014 ' + row.section + ' \u2014</td>';
+      labels.forEach(function() { html += '<td class="sec-fill"></td>'; });
+      html += '</tr>';
+    }
+    html += '<tr><td class="frozen-col">' + (row.codigo || '') + '</td>';
+    html += '<td class="frozen-col2" title="' + String(row.label || '').replace(/"/g, '&quot;') + '">' + (row.label || '') + '</td>';
+    (row.values || []).forEach(function(v) {
+      var cls = 'val';
+      if (v !== null && v !== undefined && v < 0) cls += ' neg';
+      html += '<td class="' + cls + '">' + fmtCompact(v) + '</td>';
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div></div>';
+  content.innerHTML = html;
+
+  chartDefs.forEach(function(def, i) {
+    var cv = document.getElementById('fin-stmt-chart-' + i);
+    if (cv) renderFinStmtChartDef(cv, def, labels);
+  });
+}
+
+// ── Statement-specific chart machinery [WebUI v1.3 fix 2] ──
+// Reference: PETR4 financials dashboard — each statement view gets its own
+// charts (types, series and colors mirror the dashboard).
+
+// Values array of a statement row, by codigo. keys = statement keys to search
+// (e.g. ['BPA','BPP']). Returns null when the account doesn't exist.
+function stmtRow(stmts, keys, code) {
+  for (var i = 0; i < keys.length; i++) {
+    var rows = ((stmts[keys[i]] || {}).rows) || [];
+    for (var j = 0; j < rows.length; j++) {
+      if (rows[j].codigo === code) return rows[j].values || [];
+    }
+  }
+  return null;
+}
+// [WebUI v1.3 fix 4] Row values are OLDEST-FIRST (service normalizes both
+// annual and quarterly) — just scale, no reversal.
+function finSer(vals, div) {
+  if (!vals) return null;
+  var d = div || 1e6;
+  return vals.map(function(v) { return (v === null || v === undefined) ? null : v / d; });
+}
+function finHasData(series) {
+  return series.some(function(s) { return s && s.some(function(v) { return v !== null && v !== undefined; }); });
+}
+// Element-wise null-propagating arithmetic (series share the label order).
+function finAdd(a, b) {
+  if (!a || !b) return null;
+  return a.map(function(v, i) { return (v === null || v === undefined || b[i] === null || b[i] === undefined) ? null : v + b[i]; });
+}
+function finRatio(num, den) {
+  if (!num || !den) return null;
+  return num.map(function(v, i) { return (v === null || v === undefined || !den[i]) ? null : v / den[i] * 100; });
+}
+// Normalize series to 100% of the per-period total (composition charts).
+function finPctStack(series) {
+  var n = series[0].data.length;
+  var totals = [];
+  for (var i = 0; i < n; i++) {
+    var t = 0, any = false;
+    series.forEach(function(s) { var v = s.data[i]; if (v !== null && v !== undefined) { t += v; any = true; } });
+    totals.push(any && t > 0 ? t : null);
+  }
+  return series.map(function(s) {
+    return { label: s.label, color: s.color, data: s.data.map(function(v, i) { return (v !== null && v !== undefined && totals[i]) ? v / totals[i] * 100 : null; }) };
+  });
+}
+
+// Chart definitions per view. Each def: {title, type, stacked, pctStacked,
+// yTitle, unit, series:[{label,data,color}], lineOverlay?}.
+function buildFinStmtChartDefs(viewKey, stmts) {
+  var defs = [];
+  function ser(code, keys, div) { return finSer(stmtRow(stmts, keys, code), div); }
+
+  if (viewKey === 'completo') {
+    var comp = [
+      { label: 'Ativo Circulante', data: ser('1.01', ['BPA']), color: '#1e3a5f' },
+      { label: 'Ativo Não Circulante', data: ser('1.02', ['BPA']), color: '#60a5fa' },
+      { label: 'Passivo Circulante', data: ser('2.01', ['BPP']), color: '#991b1b' },
+      { label: 'Passivo Não Circulante', data: ser('2.02', ['BPP']), color: '#fca5a5' },
+      { label: 'Patrimônio Líquido', data: ser('2.03', ['BPP']), color: '#22c55e' }
+    ];
+    if (finHasData(comp.map(function(s) { return s.data; }))) {
+      defs.push({ title: 'Balanço Patrimonial — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: comp });
+      defs.push({ title: 'Balanço Patrimonial — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(comp) });
+    }
+  } else if (viewKey === 'bpa') {
+    var ac = ser('1.01', ['BPA']), anc = ser('1.02', ['BPA']);
+    if (finHasData([ac, anc])) {
+      var at = [
+        { label: 'Ativo Circulante', data: ac, color: '#1e3a5f' },
+        { label: 'Ativo Não Circulante', data: anc, color: '#60a5fa' }
+      ];
+      defs.push({ title: 'Ativo — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: at });
+      defs.push({ title: 'Ativo — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(at) });
+    }
+    if (finHasData([ac])) defs.push({ title: 'Ativo Circulante', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: [{ label: 'Ativo Circulante', data: ac, color: '#1e3a5f' }] });
+    if (finHasData([anc])) defs.push({ title: 'Ativo Não Circulante', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: [{ label: 'Ativo Não Circulante', data: anc, color: '#60a5fa' }] });
+  } else if (viewKey === 'bpp') {
+    var pc = ser('2.01', ['BPP']), pnc = ser('2.02', ['BPP']), pl = ser('2.03', ['BPP']);
+    if (finHasData([pc, pnc, pl])) {
+      var pa = [
+        { label: 'Passivo Circulante', data: pc, color: '#991b1b' },
+        { label: 'Passivo Não Circulante', data: pnc, color: '#fca5a5' },
+        { label: 'Patrimônio Líquido', data: pl, color: '#22c55e' }
+      ];
+      defs.push({ title: 'Passivo + PL — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: pa });
+      defs.push({ title: 'Passivo + PL — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(pa) });
+    }
+    if (finHasData([pc])) defs.push({ title: 'Passivo Circulante', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: [{ label: 'Passivo Circulante', data: pc, color: '#991b1b' }] });
+    if (finHasData([pnc])) defs.push({ title: 'Passivo Não Circulante', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: [{ label: 'Passivo Não Circulante', data: pnc, color: '#fca5a5' }] });
+  } else if (viewKey === 'dre') {
+    var rec = ser('3.01', ['DRE']), brut = ser('3.03', ['DRE']), ebit = ser('3.05', ['DRE']), ll = ser('3.11', ['DRE']);
+    // EBITDA = EBIT + D&A (D&A from DFC indirect 6.01.01.02 / direct 6.02.01.02).
+    var da = ser('6.01.01.02', ['DFC']);
+    if (!finHasData([da])) da = ser('6.02.01.02', ['DFC']);
+    var ebitda = finAdd(ebit, da);
+    if (finHasData([rec, ebitda, ll])) {
+      defs.push({ title: 'Receita, EBITDA e Lucro — DRE', yTitle: 'R$ (mi)', unit: 'mi', series: [
+        { label: 'Receita Líquida', data: rec, color: '#f59e0b' },
+        { label: 'EBITDA', data: ebitda, color: '#d946a0' },
+        { label: 'Lucro Líquido', data: ll, color: '#a855f7' }
+      ]});
+    }
+    var mB = finRatio(brut, rec), mL = finRatio(ll, rec), mE = finRatio(ebit, rec), mEd = finRatio(ebitda, rec);
+    if (finHasData([mB, mL, mE, mEd])) {
+      defs.push({ title: 'Evolução das Margens', yTitle: 'Margem (%)', unit: 'pct', series: [
+        { label: 'Marg. Bruta', data: mB, color: '#7f1d1d' },
+        { label: 'Marg. Líquida', data: mL, color: '#be123c' },
+        { label: 'Marg. EBIT', data: mE, color: '#f9a8d4' },
+        { label: 'Marg. EBITDA', data: mEd, color: '#fbcfe8' }
+      ]});
+    }
+  } else if (viewKey === 'dfc') {
+    var fco = ser('6.01', ['DFC']), fci = ser('6.02', ['DFC']), fcf = ser('6.03', ['DFC']);
+    if (finHasData([fco, fci, fcf])) {
+      var fl = [
+        { label: 'FCO', data: fco, color: '#0891b2' },
+        { label: 'FCI', data: fci, color: '#ea580c' },
+        { label: 'FCF', data: fcf, color: '#e11d48' }
+      ];
+      defs.push({ title: 'FCO, FCI e FCF por Período', yTitle: 'R$ (mi)', unit: 'mi', series: fl });
+      defs.push({ title: 'Fluxos de Caixa Consolidados', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: fl });
+    }
+    var llD = ser('3.11', ['DRE']);
+    if (finHasData([fco, llD])) {
+      defs.push({ title: 'Divergência FCO vs Lucro Líquido', yTitle: 'R$ (mi)', unit: 'mi',
+        series: [{ label: 'FCO', data: fco, color: '#0891b2' }],
+        lineOverlay: { label: 'Lucro Líquido', data: llD, color: '#a855f7' } });
+    }
+  } else if (viewKey === 'dva') {
+    // New CVM taxonomy: 7.04 VA Bruto / 7.06 VA Líquido / 7.08 Total a
+    // Distribuir (old-taxonomy fallbacks 7.03 / 7.05 / 7.07).
+    var vaB = ser('7.04', ['DVA'], 1e9); if (!finHasData([vaB])) vaB = ser('7.03', ['DVA'], 1e9);
+    var vaL = ser('7.06', ['DVA'], 1e9); if (!finHasData([vaL])) vaL = ser('7.05', ['DVA'], 1e9);
+    var tot = ser('7.08', ['DVA'], 1e9); if (!finHasData([tot])) tot = ser('7.07', ['DVA'], 1e9);
+    if (finHasData([vaB, vaL, tot])) {
+      defs.push({ title: 'Geração de Valor Adicionado por Período', type: 'line', yTitle: 'R$ (bi)', unit: 'bi', series: [
+        { label: 'VA Bruta', data: vaB, color: '#0d9488' },
+        { label: 'VA Líquida', data: vaL, color: '#f59e0b' },
+        { label: 'Total a Distribuir', data: tot, color: '#3b82f6' }
+      ]});
+    }
+  }
+  return defs;
+}
+
+function renderFinStmtChartDef(canvas, def, labels) {
+  var th = chartTheme();
+  // [WebUI v1.3 fix 4] Labels are OLDEST-FIRST (service) — table and charts
+  // share the same left → right chronological order.
+  var chartLabels = labels;
+  var datasets = def.series.map(function(s) {
+    if (def.type === 'line') {
+      return { label: s.label, data: s.data, borderColor: s.color, backgroundColor: s.color,
+               fill: false, tension: 0.3, pointRadius: 2, borderWidth: 2 };
+    }
+    return { label: s.label, data: s.data, backgroundColor: s.color, borderWidth: 0 };
+  });
+  if (def.lineOverlay) {
+    datasets.push({ label: def.lineOverlay.label, data: def.lineOverlay.data, type: 'line',
+      borderColor: def.lineOverlay.color, backgroundColor: def.lineOverlay.color,
+      fill: false, tension: 0.3, pointRadius: 2, order: 0 });
+  }
+  var yTicks = { color: th.text };
+  if (def.unit === 'pct') yTicks.callback = function(v) { return Number(v).toFixed(0) + '%'; };
+  else if (def.unit === 'bi') yTicks.callback = function(v) { return 'R$ ' + Number(v).toFixed(1).replace('.', ',') + ' bi'; };
+  else yTicks.callback = function(v) { return 'R$ ' + Number(v).toFixed(0) + ' mi'; };
+  var y = { stacked: !!def.stacked, grid: { color: th.grid }, ticks: yTicks, title: { display: true, text: def.yTitle } };
+  if (def.pctStacked) { y.min = 0; y.max = 100; y.ticks.stepSize = 25; }
+  canvas._chart = new Chart(canvas.getContext('2d'), {
+    type: def.type === 'line' ? 'line' : 'bar',
+    data: { labels: chartLabels, datasets: datasets },
+    options: { responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: !!def.stacked, grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } },
+        y: y
+      },
+      plugins: { legend: { display: true, position: 'top' } }
+    }
+  });
+}
+
 // ── Auto-init after HTMX settle ──
 function initApp() {
   if (typeof htmx !== 'undefined') htmx.config.includeScriptTags = true;
@@ -700,6 +1304,10 @@ function initApp() {
     var volumeTab = document.getElementById('tab-volume');
     var fibTab = document.getElementById('tab-fibonacci');
     if (fibTab && !fibTab._initialized) { fibTab._initialized = true; var t = fibTab.getAttribute('data-ticker'); if (t) initFibonacciTab(t); }
+    var finVG = document.getElementById('tab-fin-visao-geral');
+    if (finVG && !finVG._initialized) { finVG._initialized = true; var t = finVG.getAttribute('data-ticker'); if (t) initFinVisaoGeral(t); }
+    var finDemo = document.getElementById('tab-fin-demonstracoes');
+    if (finDemo && !finDemo._initialized) { finDemo._initialized = true; var t = finDemo.getAttribute('data-ticker'); if (t) initFinDemonstracoes(t); }
     if (volumeTab && !volumeTab._initialized) { volumeTab._initialized = true; var t = volumeTab.getAttribute('data-ticker'); if (t) initVolumeTab(t); }
     if (volTab && !volTab._initialized) { volTab._initialized = true; var t = volTab.getAttribute('data-ticker'); if (t) initVolatilidadeTab(t); }
   });

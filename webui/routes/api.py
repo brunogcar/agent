@@ -19,11 +19,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from webui.i18n import negotiate_locale, t
 from webui.services.company import CompanyService
 from webui.services.price import PriceService
+from webui.services.financials import FinancialsService
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
 
 _company_service = CompanyService()
 _price_service = PriceService()
+_financials_service = FinancialsService()
 
 # We'll import the templates from pages.py to share the Jinja2 env
 from fastapi.templating import Jinja2Templates
@@ -143,6 +145,28 @@ async def company_fibonacci(ticker: str):
     return JSONResponse(data)
 
 
+@router.get("/company/{ticker}/financials-overview")
+async def company_financials_overview(ticker: str):
+    """Financials overview data — annual + quarterly + ratios + risk metrics."""
+    data = _financials_service.overview(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/financials-statements")
+async def company_financials_statements(
+    ticker: str,
+    period: str = Query("annual"),
+    periods: int = Query(10),
+):
+    """Financial statements — ALL 5 (BPA/BPP/DRE/DFC/DVA) in ONE payload.
+
+    [WebUI v1.3 fix 1] Single SQL pass; quarterly values are STANDALONE quarters.
+    The client switches Completo/BPA/BPP/DRE/DFC/DVA views without refetching.
+    """
+    data = _financials_service.statements(ticker.upper(), period=period, periods=periods)
+    return JSONResponse(data)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 async def company_tab_fragment(request: Request, ticker: str, tab: str):
     """Tab content — HTML fragment for HTMX swap."""
@@ -168,6 +192,13 @@ async def company_tab_fragment(request: Request, ticker: str, tab: str):
         return _templates.TemplateResponse(
             request,
             "partials/tab_preco.html",
+            {"ticker": ticker,
+             "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
+        )
+    elif tab == "financials":
+        return _templates.TemplateResponse(
+            request,
+            "partials/tab_financials.html",
             {"ticker": ticker,
              "t": lambda key, **fmt: t(key, locale=locale, **fmt)},
         )
