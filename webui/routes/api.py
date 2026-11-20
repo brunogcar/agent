@@ -35,6 +35,9 @@ Routes:
   GET /api/webui/company/{ticker}/valuation-intrinsic   → Valor Intrínseco (JSON)
   GET /api/webui/company/{ticker}/valuation-fundamentals→ Fundamentos (JSON)
   GET /api/webui/company/{ticker}/valuation-all         → Todas as métricas (JSON)
+  GET /api/webui/company/{ticker}/proventos-overview    → Proventos Visão Geral (JSON)
+  GET /api/webui/company/{ticker}/proventos-historico   → Proventos Histórico completo (JSON)
+  GET /api/webui/company/{ticker}/proventos-anual       → Proventos Anual (JSON)
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
 """
 from __future__ import annotations
@@ -49,6 +52,7 @@ from webui.services.company import CompanyService
 from webui.services.price import PriceService
 from webui.services.financials import FinancialsService
 from webui.services.valuation import ValuationService
+from webui.services.proventos import ProventosService
 from webui.templating import templates
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
@@ -57,6 +61,7 @@ _company_service = CompanyService()
 _price_service = PriceService()
 _financials_service = FinancialsService()
 _valuation_service = ValuationService()
+_proventos_service = ProventosService()
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: 4-6 letters + 1-2 digits + optional trailing letter
@@ -65,9 +70,9 @@ _valuation_service = ValuationService()
 # client JS strings. FastAPI returns 422 automatically on mismatch.
 Ticker = Annotated[str, Path(pattern=r"^[A-Za-z]{4,6}\d{1,2}[A-Za-z]?$")]
 
-# Tabs with a rendered partial (dividends/historical are future work —
-# company.html hides their buttons until they exist).
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials"}
+# Tabs with a rendered partial (historical is future work —
+# company.html hides its button until it exists). [v1.6] proventos.
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -222,6 +227,27 @@ def company_valuation_all(ticker: Ticker):
     return JSONResponse(data)
 
 
+@router.get("/company/{ticker}/proventos-overview")
+def company_proventos_overview(ticker: Ticker):
+    """[WebUI v1.6] Proventos Visão Geral — KPIs + resumo + charts."""
+    data = _proventos_service.overview(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/proventos-historico")
+def company_proventos_historico(ticker: Ticker):
+    """[WebUI v1.6] Proventos Histórico — complete event list + corporate actions."""
+    data = _proventos_service.historico(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/proventos-anual")
+def company_proventos_anual(ticker: Ticker):
+    """[WebUI v1.6] Proventos Anual — per-year aggregation + DVA declarado."""
+    data = _proventos_service.anual(ticker.upper())
+    return JSONResponse(data)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
     """Tab content — HTML fragment for HTMX swap.
@@ -256,6 +282,14 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_preco.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "proventos":
+        # [WebUI v1.6] Shell only — subtabs fetch their own JSON endpoints
+        # lazily (proventos-overview/-historico/-anual).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_proventos.html",
             {"ticker": ticker, "t": tr},
         )
     else:  # financials

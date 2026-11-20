@@ -13,9 +13,11 @@
 
   {# ── Company tabs (second-tier nav) ── #}
   {# [WebUI v1.3 fix 2] Tab order: Visão Geral — Preço — Financeiro — Valuation.
-     [WebUI v1.5] Dividends + Histórico buttons HIDDEN until their partials
-     exist (they rendered "Tab '…' not implemented yet" — the most visible
-     half-finished feature). Re-enable when the tabs ship. #}
+     [WebUI v1.5] Histórico button HIDDEN until its partial exists (it
+     rendered "Tab '…' not implemented yet"). Re-enable when it ships.
+     [WebUI v1.6] Proventos tab (dividendos + JCP + rendimentos +
+     bonificações + subscrições) — route slug "proventos", i18n label
+     company.dividends = "Proventos" (pt-BR). #}
   <nav class="company-tabs">
     <button class="tab-btn" :class="{ 'active': tab === 'visao_geral' }"
             @click="tab='visao_geral'"
@@ -45,14 +47,14 @@
             hx-swap="innerHTML">
       {{ t("company.valuation") }}
     </button>
-    {# Re-enable when implemented:
-    <button class="tab-btn" :class="{ 'active': tab === 'dividends' }"
-            @click="tab='dividends'"
-            hx-get="/api/webui/company/{{ ticker }}/tab/dividends"
+    <button class="tab-btn" :class="{ 'active': tab === 'proventos' }"
+            @click="tab='proventos'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/proventos"
             hx-target="#tab-content"
             hx-swap="innerHTML">
       {{ t("company.dividends") }}
     </button>
+    {# Re-enable when implemented:
     <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
             @click="tab='historical'"
             hx-get="/api/webui/company/{{ ticker }}/tab/historical"

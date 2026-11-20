@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.5)
+## ✅ Built (v1 → v1.6)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -35,7 +35,7 @@
 - [x] Preço — 5 lazy subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
 - [x] Financeiro — Visão Geral (TTM + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts)
 - [x] Valuation — Visão Geral / Múltiplos (nested subtabs + 5Y histories) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
-- [ ] Dividends — DPA history + dividend events (buttons hidden until shipped)
+- [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
 
 ### Features
@@ -49,7 +49,7 @@
 - [x] Sync status (freshness table with badges, auto-refresh)
 - [x] SSE sync stream (live progress events — native EventSource since v1.5)
 - [x] Per-source "Sincronizar" buttons (dedupe: one running job per source)
-- [x] Cache-busting (?v=37 on static URLs, ?_t= on API fetch)
+- [x] Cache-busting (?v=40 on static URLs, ?_t= on API fetch)
 - [x] Price service (ohlcv_with_mas, price_data, indicators, volatility, volume, fibonacci)
 - [x] Chart.js zoom plugin + Hammer.js (vendored locally)
 - [x] [v1.5] Chart lifecycle: destroy on HTMX cleanup + before re-renders (no leaks)
@@ -59,11 +59,19 @@
 
 ---
 
-## 🔄 Next Up (v1.6)
+## 🔄 Next Up (v1.7)
 
 ### Company Tabs (finish the set)
-- [ ] **Dividends tab** — DPA history table, annual bar chart, yield history line chart, payout trend. Reuse `data_sources/b3/dividends/` + `skills/cvm/calculations/engines/dividends.py`.
+
+- [ ] **Options tab**
+- [ ] **insider tab**
+- [ ] **shareholders tab**
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
+
+### Screener
+- [ ] **Sector screener** — select sector → see all companies with key metrics (P/L, DY, ROE, market cap).
+- [ ] **Filter + sort** — filter by P/L range, DY range, market cap range. Sort by any column.
+- [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
 
 ### Macro Page
 - [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.
@@ -79,15 +87,25 @@
 
 ## 🔮 Planned (v2)
 
+### Macro Page
+- [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.
+- [ ] **Focus Bulletin** — market expectations (median, high, low) for IPCA, PIB, Selic, exchange rate. Table + chart.
+- [ ] **Macro dashboard** — ribbon of key indicators on the dashboard page.
+- [ ] **acoes dashboard**
+- [ ] **dividends dashboard**
+- [ ] **fluxo dashboard**
+- [ ] **index dashboard**
+- [ ] **inflation dashboard**
+- [ ] **juros dashboard**
+- [ ] **poupanca dashboard**
+- [ ] **PETR4_index (indices ibov) dashboard**
+
+## 🔮 Planned (v3)
+
 ### Settings (auto-generated)
 - [ ] **Settings as data** — SDNext-style schema-driven settings page. Define settings as a dict (key, label, type, default, section), auto-render the form. Adding a setting = one dict entry.
 - [ ] **Theme accent color** — user-selectable accent (teal, blue, violet, orange) via CSS variable override.
 - [ ] **Sync preferences** — auto-sync on startup (on/off), stale threshold (hours), sync schedule.
-
-### Screener
-- [ ] **Sector screener** — select sector → see all companies with key metrics (P/L, DY, ROE, market cap).
-- [ ] **Filter + sort** — filter by P/L range, DY range, market cap range. Sort by any column.
-- [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
 
 ### Watchlist
 - [ ] **Saved tickers** — SQLite-stored watchlist. Add/remove from the company page.

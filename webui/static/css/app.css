@@ -620,6 +620,15 @@ a:hover { text-decoration: underline; }
 .val-table td.val-val, .val-table td:last-child {
   text-align: right; font-family: var(--font-mono); white-space: nowrap;
 }
+/* [v1.6 fix1] Header alignment matches data: numeric columns (val-val,
+   right-aligned mono) get right-aligned headers, centered columns get
+   centered headers — all-left headers over right-aligned data made the
+   wide Proventos por Ano / DVA tables read diagonally (header far from
+   its column). Heatmap headers center over the centered heat cells. */
+.val-table th.th-num { text-align: right; }
+.val-table th.th-ctr { text-align: center; }
+.val-table th { white-space: nowrap; }
+.val-heatmap th:not(:first-child) { text-align: center; }
 /* [v1.4 fix1] ⓘ tooltip marker — dotted underline hints at hover help */
 .val-info {
   color: var(--color-text-sec); font-size: 10px; cursor: help;
@@ -667,3 +676,96 @@ td[title], .kpi-card[title] { cursor: help; }
 /* [WebUI v1.5] Dashboard ribbon: cap the freshness table height (21 sources
    would stretch the dashboard) — scrolls instead. */
 .sync-ribbon { max-height: 420px; overflow-y: auto; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   [WebUI v1.6] Proventos tab — type badges, filter pills + year select,
+   sortable table headers, upcoming-payments card.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Type badge — colored pill per provento type (chart palette parity:
+   teal Dividendo / orange JCP / purple Rendimento / slate Restituição). */
+.prov-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  white-space: nowrap; cursor: default;
+}
+.prov-badge-div   { background: rgba(13, 148, 136, 0.16);  color: #0d9488; }
+.prov-badge-jcp   { background: rgba(245, 158, 11, 0.16); color: #b45309; }
+.prov-badge-rend  { background: rgba(168, 85, 247, 0.16); color: #7e22ce; }
+.prov-badge-rest  { background: rgba(100, 116, 139, 0.16); color: #475569; }
+.prov-badge-outros{ background: rgba(100, 116, 139, 0.14); color: var(--color-text-sec); }
+/* Dark theme: lift the text tones for contrast on dark surfaces. */
+[data-theme="dark"] .prov-badge-div  { color: #2dd4bf; }
+[data-theme="dark"] .prov-badge-jcp  { color: #fbbf24; }
+[data-theme="dark"] .prov-badge-rend { color: #d8b4fe; }
+[data-theme="dark"] .prov-badge-rest { color: #94a3b8; }
+
+/* "futuro" chip on rows already announced but not yet paid */
+.prov-chip {
+  display: inline-block; margin-left: 6px; padding: 1px 6px;
+  border-radius: 999px; font-size: 9px; font-weight: 600;
+  background: rgba(22, 163, 74, 0.14); color: #16a34a;
+}
+[data-theme="dark"] .prov-chip { color: #4ade80; }
+.prov-future-row td { background: rgba(22, 163, 74, 0.05); }
+
+/* Filters — type pills + year select.
+   [v1.6 fix1] Pills are self-contained themed chips now: the old markup
+   carried .subtab-btn, whose styles only apply INSIDE .subtab-nav, so
+   the filter buttons fell back to the browser default (white bg, black
+   text) and looked out of place in both themes. Active = brand tint.
+   The year select also moves to --color-bg-sec — --color-surface never
+   existed, so its background silently resolved to transparent. */
+.prov-filters {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3);
+}
+.prov-pills { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.prov-pill {
+  padding: 4px 12px; font-size: 11px; font-weight: 500; font-family: inherit;
+  border-radius: 999px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-sec); color: var(--color-text-sec);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.prov-pill:hover { color: var(--color-text); border-color: var(--color-text-sec); }
+.prov-pill.active {
+  background: var(--color-brand-dim); color: var(--color-brand);
+  border-color: var(--color-brand); font-weight: 600;
+}
+.prov-year {
+  padding: 5px 8px; font-size: 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-sec); color: var(--color-text);
+}
+
+/* Sortable headers — affordance + active state */
+.prov-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.prov-table th.sortable:hover { color: var(--color-text); }
+.prov-table th.sortable::after { content: " ⇅"; font-size: 9px; opacity: 0.45; }
+
+/* Histórico table tweaks over .val-table — dates left, badge col centered,
+   related_to not right-aligned (val-table right-aligns the last cell). */
+.prov-table td:nth-child(4) { text-align: center; }
+.prov-table td:last-child {
+  text-align: left; font-family: inherit; white-space: normal;
+}
+.prov-table-wrap { overflow-x: auto; }
+
+/* Upcoming payments card — [v1.6 fix1] --color-surface → --color-bg-sec
+   (surface never existed; the tinted background was silently dropped). */
+.prov-upcoming {
+  border: 1px solid var(--color-border); border-left: 3px solid #16a34a;
+  border-radius: var(--radius-md); padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  background: color-mix(in srgb, #16a34a 4%, var(--color-bg-sec));
+}
+.prov-upcoming .reg-title { margin-bottom: var(--space-3); }
+.prov-upcoming-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+.prov-upcoming-item { display: flex; flex-direction: column; gap: 4px; }
+.prov-upcoming-date { font-size: 13px; font-weight: 600; }
+.prov-upcoming-val { font-size: 13px; font-family: var(--font-mono); }
+.prov-upcoming-rel { font-size: 10px; color: var(--color-text-sec); }

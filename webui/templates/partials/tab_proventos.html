@@ -1,0 +1,51 @@
+{# webui/templates/partials/tab_proventos.html — Proventos tab with subtabs.
+
+[WebUI v1.6] New tab — the complete corporate-actions view (dividendos,
+JCP, rendimentos, restituições + bonificações/desdobramentos/grupamentos
++ subscrições). Replaces the hidden "dividends" stub; named "Proventos"
+because it covers more than dividendos.
+
+3 lazy subtabs (each fetches its own JSON endpoint on first click —
+loadProvSubtab in app.js; data-lazy="prov:<sub>" enables hover/focus
+prefetch like the Valuation/Preço tabs):
+
+- Visão Geral: 6 KPI cards (Yield TTM, Pago 12M, Média Anual 5A,
+  Frequência, Próximo Pagamento, Anos de Histórico) + Último/Próximo
+  pagamento two_column + Proventos por Ano (stacked) + Sazonalidade
+  mensal + Yield TTM histórico (when cotahist is available)
+- Histórico: the COMPLETE event list (the static skill dashboard showed
+  only 5 events) with type pills, year filter, sortable columns,
+  per-event yield at ex-date, upcoming-payments card + corporate
+  actions + subscriptions tables
+- Anual: per-ex-year aggregation (Eventos, Dividendos, JCP, Rendimento,
+  Total, Δ% YoY, Yield no ano) + stacked composition chart + yield
+  per year + DVA-declared table (DFP 7.08.04.*)
+
+Data: ProventosService — ISIN-deduped events from dividends.db with
+cotahist yield enrichment (graceful when price data is missing).
+Visão Geral + Anual render through the SAME generic section renderer
+as the Valuation tab (valKpisHtml/valSectionsHtml/mountValCharts);
+Histórico has a custom renderer (badges, filters, sorting).
+#}
+<div class="tab-proventos" x-data="{ subtab: 'overview' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadProvSubtab('overview')" data-lazy="prov:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'historico' }" @click="subtab='historico'" onclick="loadProvSubtab('historico')" data-lazy="prov:historico">Histórico</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'anual' }" @click="subtab='anual'" onclick="loadProvSubtab('anual')" data-lazy="prov:anual">Anual</button>
+  </nav>
+
+  {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-prov-overview" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Histórico subtab (complete list) ── #}
+  <div x-show="subtab === 'historico'" style="display: none;" id="tab-prov-historico" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Anual subtab ── #}
+  <div x-show="subtab === 'anual'" style="display: none;" id="tab-prov-anual" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

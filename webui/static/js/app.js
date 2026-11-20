@@ -1624,7 +1624,12 @@ function valSectionHtml(sec) {
     var h = '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
     if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
     h += '<table class="val-table"><thead><tr>';
-    (sec.columns || []).forEach(function(c) { h += '<th>' + valEsc(String(c)) + '</th>'; });
+    // [v1.6 fix1] Numeric columns get th-num so the header aligns with the
+    // right-aligned val-val data below it (all-left headers over right
+    // data made wide tables like Proventos por Ano / DVA read diagonally).
+    (sec.columns || []).forEach(function(c, ci) {
+      h += '<th' + (ci > 0 ? ' class="th-num"' : '') + '>' + valEsc(String(c)) + '</th>';
+    });
     h += '</tr></thead><tbody>';
     (sec.rows || []).forEach(function(row) {
       h += '<tr>';
@@ -1705,7 +1710,13 @@ function renderValChart(canvas, cd) {
   // [v1.5] Honor the server's y.beginAtZero (the liquidity/leverage charts
   // ask for it; the client used to discard ALL server options, so bars
   // floated above the baseline). Other options stay client-side (theme).
-  var srvY = (((cd.options || {}).scales || {}).y) || {};
+  // [v1.6 fix1] Honor x/y.stacked too — the Proventos composition charts
+  // (Proventos por Ano, Composição Anual, DVA por Exercício) ask for
+  // stacked bars, but the discarded option made Chart.js render them
+  // GROUPED (each type a side-by-side bar instead of one stacked column).
+  var srvScales = ((cd.options || {}).scales) || {};
+  var srvY = srvScales.y || {};
+  var srvX = srvScales.x || {};
   var datasets = (cd.data.datasets || []).map(function(ds) {
     var d = {};
     for (var k in ds) d[k] = ds[k];
@@ -1731,13 +1742,16 @@ function renderValChart(canvas, cd) {
   } else {
     var yScale = { grid: { color: th.grid }, ticks: { color: th.text } };
     if (srvY.beginAtZero) yScale.beginAtZero = true;
+    if (srvY.stacked) yScale.stacked = true;
     if (srvY.title && srvY.title.text) yScale.title = { display: true, text: srvY.title.text };
+    var xScale = { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } };
+    if (srvX.stacked) xScale.stacked = true;
     options = {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
       scales: {
-        x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } },
+        x: xScale,
         y: yScale
       }
     };
@@ -1746,6 +1760,238 @@ function renderValChart(canvas, cd) {
     type: type,
     data: { labels: cd.data.labels || [], datasets: datasets },
     options: options
+  });
+}
+
+// ── Proventos tab [WebUI v1.6] ─────────────────────────────────────────
+// 3 lazy subtabs (Visão Geral / Histórico / Anual), same loader contract
+// as the Valuation tab: pane._loaded guard set only AFTER a successful
+// render (failed subtabs stay retryable). Visão Geral + Anual render the
+// generic {kpis, sections} payload with the valuation renderer; Histórico
+// has a custom renderer — complete event list with type pills, year
+// filter, sortable columns, per-event yield at ex-date and an
+// upcoming-payments card.
+
+window.loadProvSubtab = function(sub) {
+  var panel = document.getElementById('tab-prov-' + sub);
+  if (!panel || panel._loaded) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/proventos-' + sub + '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { panel._loaded = true; renderProvSubtab(sub, panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderProvSubtab(sub, panel, data) {
+  if (data._error) { panel.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
+  if (sub === 'historico') { renderProvHistorico(panel, data); return; }
+  // overview / anual → KPI cards + generic sections (valuation renderer)
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
+// Per-share BRL with 2-4 decimals (rates like 0,0204 need the precision).
+var _provRateFmt = null;
+function provFmtRate(v) {
+  if (v === null || v === undefined) return '<span class="muted">—</span>';
+  if (!_provRateFmt) _provRateFmt = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return 'R$ ' + _provRateFmt.format(Number(v));
+}
+
+function provBadge(ev, tooltips) {
+  var tip = (tooltips || {})[ev.type] || '';
+  return '<span class="prov-badge prov-badge-' + esc(ev.type_key) + '"' +
+         (tip ? ' title="' + esc(tip) + '"' : '') + '>' + esc(ev.type) + '</span>';
+}
+
+var PROV_COLS = [
+  { key: 'ex_date',     label: 'Data Ex' },
+  { key: 'pay_date',    label: 'Pagamento' },
+  { key: 'approved_on', label: 'Aprovação' },
+  { key: 'type',        label: 'Tipo', ctr: true },
+  { key: 'rate',        label: 'Valor/Ação', num: true, tip: 'Valor por ação conforme divulgado pela B3 (JCP: valor bruto).' },
+  { key: 'yield_ex',    label: 'Yield Ex', num: true, tip: 'Yield do evento = valor por ação ÷ último fechamento ANTES da data-ex.' },
+  { key: 'related_to',  label: 'Relativo a' }
+];
+
+function provHeadHtml(panel) {
+  var st = panel._provState;
+  var h = '';
+  PROV_COLS.forEach(function(c) {
+    var arrow = '';
+    if (st.sortKey === c.key) arrow = st.sortDir > 0 ? ' ▲' : ' ▼';
+    // [v1.6 fix1] Header alignment matches the data cells: numeric columns
+    // (Valor/Ação, Yield Ex) right, Tipo centered (badge column).
+    var cls = 'sortable';
+    if (c.num) cls += ' th-num';
+    else if (c.ctr) cls += ' th-ctr';
+    h += '<th class="' + cls + '" data-prov-sort="' + c.key + '"' +
+         (c.tip ? ' title="' + esc(c.tip) + '"' : '') + '>' + esc(c.label) + arrow + '</th>';
+  });
+  return h;
+}
+
+function provRowsHtml(panel) {
+  var st = panel._provState, data = panel._provData;
+  var rows = (data.events || []).filter(function(e) {
+    if (st.type !== 'all' && e.type_key !== st.type) return false;
+    if (st.year !== 'all' && String(e.year || '') !== String(st.year)) return false;
+    return true;
+  });
+  var k = st.sortKey, dir = st.sortDir;
+  rows.sort(function(a, b) {
+    var va = a[k], vb = b[k];
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    va = (va === null || va === undefined || va === '') ? '' : String(va);
+    vb = (vb === null || vb === undefined || vb === '') ? '' : String(vb);
+    if (va === '' && vb === '') return 0;
+    if (va === '') return 1;   // empties always last, regardless of direction
+    if (vb === '') return -1;
+    return va.localeCompare(vb, 'pt-BR') * dir;
+  });
+  var h = '';
+  rows.forEach(function(e) {
+    var rowTip = e.remarks ? ' title="' + esc(e.remarks) + '"' : '';
+    h += '<tr' + (e.future ? ' class="prov-future-row"' : '') + rowTip + '>';
+    h += '<td>' + (e.ex_date ? fmtDate(e.ex_date) : '<span class="muted">—</span>') + '</td>';
+    h += '<td>' + (e.pay_date ? fmtDate(e.pay_date) : '<span class="muted">—</span>') +
+         (e.future ? ' <span class="prov-chip">futuro</span>' : '') + '</td>';
+    h += '<td>' + (e.approved_on ? fmtDate(e.approved_on) : '<span class="muted">—</span>') + '</td>';
+    h += '<td>' + provBadge(e, data.type_tooltips || {}) + '</td>';
+    h += '<td class="val-val">' + provFmtRate(e.rate) + '</td>';
+    h += '<td class="val-val">' + fmtPctColored(e.yield_ex) + '</td>';
+    h += '<td>' + esc(e.related_to || '—') + '</td>';
+    h += '</tr>';
+  });
+  if (!rows.length) h = '<tr><td colspan="7" class="muted">Nenhum evento com os filtros atuais.</td></tr>';
+  return h;
+}
+
+function provYearOptions(data, current) {
+  var h = '<option value="all"' + (String(current) === 'all' ? ' selected' : '') + '>Todos os anos</option>';
+  (data.years || []).forEach(function(y) {
+    h += '<option value="' + esc(String(y)) + '"' + (String(current) === String(y) ? ' selected' : '') + '>' + esc(String(y)) + '</option>';
+  });
+  return h;
+}
+
+function renderProvHistorico(panel, data) {
+  panel._provData = data;
+  if (!panel._provState) {
+    panel._provState = { type: 'all', year: 'all', sortKey: 'ex_date', sortDir: -1 };
+  }
+  var st = panel._provState;
+  var evs = data.events || [];
+  var upcoming = evs.filter(function(e) { return e.future; });
+  var tips = data.type_tooltips || {};
+  var html = '';
+
+  // ── Próximos pagamentos (announced, not yet paid) ──
+  if (upcoming.length) {
+    html += '<div class="prov-upcoming"><div class="reg-title">Próximos Pagamentos</div><div class="prov-upcoming-grid">';
+    upcoming.forEach(function(e) {
+      html += '<div class="prov-upcoming-item">' + provBadge(e, tips) +
+              '<div class="prov-upcoming-date">' + fmtDate(e.pay_date) + '</div>' +
+              '<div class="prov-upcoming-val">' + provFmtRate(e.rate) + '</div>' +
+              (e.related_to ? '<div class="prov-upcoming-rel">' + esc(e.related_to) + '</div>' : '') +
+              '</div>';
+    });
+    html += '</div></div>';
+  }
+
+  // ── Filtros: type pills + year select ──
+  // [v1.6 fix1] Pills render with the prov-pill class only — they used to
+  // carry subtab-btn, whose styles are scoped to .subtab-nav containers, so
+  // the buttons fell back to the browser default (white bg / black text).
+  var counts = data.counts || {}, labels = data.type_labels || {};
+  html += '<div class="prov-filters"><div class="prov-pills">';
+  html += '<button class="prov-pill' + (st.type === 'all' ? ' active' : '') + '" data-prov-type="all">Todos (' + evs.length + ')</button>';
+  Object.keys(counts).forEach(function(k) {
+    html += '<button class="prov-pill' + (st.type === k ? ' active' : '') +
+            '" data-prov-type="' + esc(k) + '">' + esc(labels[k] || k) + ' (' + counts[k] + ')</button>';
+  });
+  html += '</div><select class="prov-year" data-prov-year>' + provYearOptions(data, st.year) + '</select></div>';
+
+  // ── Main table ──
+  html += '<div class="val-section prov-table-wrap"><table class="val-table prov-table"><thead><tr>' +
+          provHeadHtml(panel) + '</tr></thead><tbody>' + provRowsHtml(panel) + '</tbody></table>' +
+          '<div class="val-note">' + evs.length + ' evento(s) · ' + provFmtRate(data.total_paid) +
+          ' por ação no total · primeiro em ' + fmtDate(data.first_date) + '</div></div>';
+
+  // ── Corporate actions (bonificações / desdobramentos / grupamentos) ──
+  var actions = data.actions || [];
+  if (actions.length) {
+    html += '<div class="val-section"><div class="reg-title">Bonificações, Desdobramentos e Grupamentos</div>' +
+            '<table class="val-table prov-table"><thead><tr><th>Data Ex</th><th>Aprovação</th><th class="th-ctr">Tipo</th><th class="th-num">Fator</th><th>ISIN Emitido</th></tr></thead><tbody>';
+    actions.forEach(function(a) {
+      html += '<tr><td>' + (a.ex_date ? fmtDate(a.ex_date) : '<span class="muted">—</span>') + '</td>' +
+              '<td>' + (a.approved_on ? fmtDate(a.approved_on) : '<span class="muted">—</span>') + '</td>' +
+              '<td>' + esc(a.label || '—') + '</td>' +
+              '<td class="val-val">' + (a.factor !== null && a.factor !== undefined ? esc(String(a.factor).replace('.', ',')) : '—') + '</td>' +
+              '<td>' + esc(a.asset_issued || '—') + '</td></tr>';
+    });
+    html += '</tbody></table><div class="val-desc">Fatores conforme divulgado pela B3 (percentual sobre a posição: 100 = desdobramento que dobra, 33,33 = bonificação de ~33%, 0,01 = grupamento 100→1).</div></div>';
+  }
+
+  // ── Subscriptions ──
+  var subs = data.subscriptions || [];
+  if (subs.length) {
+    html += '<div class="val-section"><div class="reg-title">Subscrições</div>' +
+            '<table class="val-table prov-table"><thead><tr><th>Data Ex</th><th>Aprovação</th><th class="th-num">Percentual</th><th class="th-num">Preço/Unit</th><th>Data Limite</th><th>Período</th></tr></thead><tbody>';
+    subs.forEach(function(s) {
+      html += '<tr><td>' + (s.ex_date ? fmtDate(s.ex_date) : '<span class="muted">—</span>') + '</td>' +
+              '<td>' + (s.approved_on ? fmtDate(s.approved_on) : '<span class="muted">—</span>') + '</td>' +
+              '<td class="val-val">' + (s.percentage !== null && s.percentage !== undefined ? esc(String(s.percentage).replace('.', ',')) + '%' : '—') + '</td>' +
+              '<td class="val-val">' + (s.price_unit !== null && s.price_unit !== undefined ? fmtBRL(s.price_unit) : '—') + '</td>' +
+              '<td>' + (s.subscription_date ? fmtDate(s.subscription_date) : '<span class="muted">—</span>') + '</td>' +
+              '<td>' + esc(s.trading_period || '—') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+
+  panel.innerHTML = html;
+  initProvHistoricoControls(panel);
+}
+
+// One delegated click + change listener per panel handles every control
+// (type pills, th sorting, year select) — controls are re-rendered with
+// the panel, so listeners live on the panel itself, not the nodes.
+function initProvHistoricoControls(panel) {
+  if (panel._provControls) return;
+  panel._provControls = true;
+  panel.addEventListener('click', function(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var pill = t.closest('[data-prov-type]');
+    if (pill) {
+      panel._provState.type = pill.getAttribute('data-prov-type');
+      renderProvHistorico(panel, panel._provData);
+      return;
+    }
+    var th = t.closest('th[data-prov-sort]');
+    if (th) {
+      var k = th.getAttribute('data-prov-sort');
+      var st = panel._provState;
+      if (st.sortKey === k) { st.sortDir = -st.sortDir; }
+      else { st.sortKey = k; st.sortDir = -1; }
+      renderProvHistorico(panel, panel._provData);
+    }
+  });
+  panel.addEventListener('change', function(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var sel = t.closest('[data-prov-year]');
+    if (sel) {
+      panel._provState.year = sel.value;
+      renderProvHistorico(panel, panel._provData);
+    }
   });
 }
 
@@ -1907,7 +2153,7 @@ function prefetchSubtab(e) {
   btn._prefetched = true;
   var parts = (btn.getAttribute('data-lazy') || '').split(':');
   var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
-              val: window.loadValSubtab };
+              val: window.loadValSubtab, prov: window.loadProvSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -1951,6 +2197,7 @@ function initApp() {
     loadPrecoSubtab('cotacao');
     loadFinSubtab('visao_geral');
     loadValSubtab('overview');
+    loadProvSubtab('overview');
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });

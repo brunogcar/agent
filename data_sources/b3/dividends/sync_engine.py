@@ -292,21 +292,39 @@ def _store_company_info(conn, item, ticker, now) -> int:
 
 
 def _store_cash_dividends(conn, items, ticker, now) -> int:
-    conn.execute("DELETE FROM cash_dividends WHERE ticker=?", (ticker,))
+    """[WebUI v1.6 fix1] MERGE instead of replace.
+
+    The B3 API returns only a recent window of events (~18-30 rows ≈
+    2 years). The old DELETE-all-then-INSERT wiped older events on every
+    re-sync, so dividends.db could never accumulate history and the
+    Proventos tab was stuck at the API window. Now each incoming event
+    replaces only its own prior copy (matched on the stable identity:
+    ticker + ISIN + approved_on + last_date_prior + label — corrections
+    to rate/payment_date/remarks land as updates); events that already
+    fell out of the API window are PRESERVED, so the database accumulates
+    history over time.
+    """
     count = 0
     for item in items:
         isin = (item.get("assetIssued") or "").strip()  # B3 uses assetIssued for ISIN in cash dividends
         approved = _normalize_date(item.get("approvedOn"))
         if not isin or not approved:
             continue
+        ldp = _normalize_date(item.get("lastDatePrior"))
+        label = (item.get("label") or "").strip()
+        conn.execute(
+            "DELETE FROM cash_dividends WHERE ticker=? AND isin_code=? "
+            "AND approved_on IS ? AND last_date_prior IS ? AND label IS ?",
+            (ticker, isin, approved, ldp, label),
+        )
         conn.execute(
             "INSERT INTO cash_dividends (ticker, label, isin_code, approved_on, last_date_prior, rate, related_to, payment_date, remarks, _ingested_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ticker,
-             (item.get("label") or "").strip(),
+             label,
              isin,
              approved,
-             _normalize_date(item.get("lastDatePrior")),
+             ldp,
              _parse_rate(item.get("rate")),
              (item.get("relatedTo") or "").strip(),
              _normalize_date(item.get("paymentDate")),
@@ -318,21 +336,31 @@ def _store_cash_dividends(conn, items, ticker, now) -> int:
 
 
 def _store_stock_dividends(conn, items, ticker, now) -> int:
-    conn.execute("DELETE FROM stock_dividends WHERE ticker=?", (ticker,))
+    # [v1.6 fix1] Same MERGE semantics as cash_dividends — preserve
+    # bonificações/desdobramentos/grupamentos that fell out of the API
+    # window (rare events; losing an old desdobramento is exactly the kind
+    # of history the Proventos tab needs).
     count = 0
     for item in items:
         isin = (item.get("isinCode") or item.get("assetIssued") or "").strip()
         approved = _normalize_date(item.get("approvedOn"))
         if not isin or not approved:
             continue
+        ldp = _normalize_date(item.get("lastDatePrior"))
+        label = (item.get("label") or "").strip()
+        conn.execute(
+            "DELETE FROM stock_dividends WHERE ticker=? AND isin_code=? "
+            "AND approved_on IS ? AND last_date_prior IS ? AND label IS ?",
+            (ticker, isin, approved, ldp, label),
+        )
         conn.execute(
             "INSERT INTO stock_dividends (ticker, label, isin_code, approved_on, last_date_prior, factor, asset_issued, remarks, _ingested_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ticker,
-             (item.get("label") or "").strip(),
+             label,
              isin,
              approved,
-             _normalize_date(item.get("lastDatePrior")),
+             ldp,
              _parse_rate(item.get("factor")),
              (item.get("assetIssued") or "").strip(),
              (item.get("remarks") or "").strip(),
@@ -343,21 +371,29 @@ def _store_stock_dividends(conn, items, ticker, now) -> int:
 
 
 def _store_subscriptions(conn, items, ticker, now) -> int:
-    conn.execute("DELETE FROM subscriptions WHERE ticker=?", (ticker,))
+    # [v1.6 fix1] Same MERGE semantics as cash_dividends (preserve
+    # subscriptions outside the API window).
     count = 0
     for item in items:
         isin = (item.get("isinCode") or item.get("assetIssued") or "").strip()
         approved = _normalize_date(item.get("approvedOn"))
         if not isin or not approved:
             continue
+        ldp = _normalize_date(item.get("lastDatePrior"))
+        label = (item.get("label") or "").strip()
+        conn.execute(
+            "DELETE FROM subscriptions WHERE ticker=? AND isin_code=? "
+            "AND approved_on IS ? AND last_date_prior IS ? AND label IS ?",
+            (ticker, isin, approved, ldp, label),
+        )
         conn.execute(
             "INSERT INTO subscriptions (ticker, label, isin_code, approved_on, last_date_prior, percentage, asset_issued, price_unit, subscription_date, trading_period, remarks, _ingested_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ticker,
-             (item.get("label") or "").strip(),
+             label,
              isin,
              approved,
-             _normalize_date(item.get("lastDatePrior")),
+             ldp,
              _parse_rate(item.get("percentage")),
              (item.get("assetIssued") or "").strip(),
              _parse_rate(item.get("priceUnit")),
