@@ -4,7 +4,19 @@
 <div class="page-sync">
   <h1>{{ t("sync.sources") }}</h1>
 
-  {# Freshness table (auto-refreshes via HTMX) #}
+  {# [v1.5 fix1] "Sincronizar tudo" — one POST to /api/webui/sync/all
+     (stale sources only). Placed OUTSIDE #sync-status on purpose: the
+     div's innerHTML is re-swapped every 30s by HTMX and would wipe the
+     button's disabled/"Iniciado (N fontes)" state mid-run. The click is
+     handled by the delegated .sync-all-btn listener in app.js. #}
+  <div class="sync-actions">
+    <button class="sync-btn sync-all-btn"
+            title="Sincroniza apenas as fontes desatualizadas (&gt; 24h)">Sincronizar tudo</button>
+  </div>
+
+  {# Freshness table + per-source "Sincronizar" buttons (HTML partial,
+     auto-refreshes via HTMX every 30s). [WebUI v1.5] was raw JSON swapped
+     as innerHTML — now a proper partial. #}
   <div id="sync-status"
        hx-get="/api/webui/sync/status"
        hx-trigger="load, every 30s"
@@ -13,14 +25,13 @@
     <div class="loading">{{ t("sync.checking") }}</div>
   </div>
 
-  {# SSE-powered live sync log #}
+  {# Live sync log — [WebUI v1.5] native EventSource in app.js
+     (initSyncPage). The old hx-ext="sse" markup never worked: the HTMX
+     SSE extension was never vendored, so the log stayed empty forever. #}
   <div class="sync-log-section">
     <h3>Sync Log</h3>
-    <div class="sync-log" id="sync-log"
-         hx-ext="sse"
-         sse-connect="/api/webui/sync/stream"
-         sse-swap="message">
-      <div class="loading">Aguardando eventos...</div>
+    <div class="sync-log" id="sync-log" data-sync-stream="/api/webui/sync/stream">
+      <div class="loading">Aguardando eventos…</div>
     </div>
   </div>
 </div>

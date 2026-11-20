@@ -17,6 +17,7 @@ import base64
 import json
 import sqlite3
 import sys
+import time
 from datetime import datetime
 from typing import Any
 
@@ -130,6 +131,107 @@ def sync(
         "stock_count": stock_count,
         "sub_count": sub_count,
         "synced_at": now,
+    }
+
+
+# ── Bulk sync (WebUI painel) [v1.5 fix1] ────────────────────────────────────
+
+def _tracked_tickers() -> list[str]:
+    """Tickers already tracked in dividends.db (from sync_state)."""
+    try:
+        conn = connect(read_only=True)
+        rows = conn.execute(
+            "SELECT ticker FROM sync_state ORDER BY ticker"
+        ).fetchall()
+        conn.close()
+        return [r["ticker"] for r in rows if r["ticker"]]
+    except Exception:
+        return []
+
+
+def _acoes_tickers() -> list[str]:
+    """Seed list: every B3 tradable ticker from acoes.db (~380 rows).
+
+    Used ONLY when sync_state is empty (fresh install) so the painel
+    button does something useful on day one instead of no-op'ing.
+    """
+    try:
+        from data_sources.ddm.acoes.catalog import db_path as acoes_db_path
+        p = acoes_db_path()
+        if not p.exists():
+            return []
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        rows = conn.execute("SELECT ticker FROM stocks ORDER BY ticker").fetchall()
+        conn.close()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+def sync_all(
+    force: bool = True,
+    trace_id: str = "",
+    on_progress=None,
+) -> dict:
+    """[v1.5 fix1] Re-fetch dividends for every tracked ticker.
+
+    The painel can't pass a company, and sync() without a ticker is a
+    hard error — which the old dispatch silently reported as success
+    (the row stayed "desatualizado" forever). This bulk entry point:
+
+      1. Targets = tickers in sync_state (seeded from acoes.db when the
+         table is empty).
+      2. Re-fetches each (force=True default — freshness comes from the
+         LAST sync_state row, so a no-op run must still write rows).
+      3. Reports per-ticker progress via the optional on_progress
+         callback: {"ticker", "status", "done", "total"}.
+
+    Returns {"status": "ok"|"error", "total", "ok", "errors", ...}.
+    """
+    targets = _tracked_tickers()
+    seeded = False
+    if not targets:
+        targets = _acoes_tickers()
+        seeded = bool(targets)
+
+    if not targets:
+        return {
+            "status": "ok", "total": 0, "ok": 0, "errors": 0,
+            "detail": "nenhum ticker rastreado (abra uma empresa para "
+                      "sincronizar dividends sob demanda)",
+        }
+
+    ok = errors = 0
+    # Polite spacing for big sets (first-run acoes seed ≈ 380 calls).
+    pace = 0.1 if len(targets) > 25 else 0.0
+    _progress(f"[b3_div] sync_all: {len(targets)} tickers"
+              f"{' (seeded from acoes.db)' if seeded else ''}...")
+
+    for i, tkr in enumerate(targets, 1):
+        r = sync(ticker=tkr, force=force, trace_id=trace_id)
+        st = r.get("status")
+        # "empty" (no dividend data for the ticker) is a valid answer,
+        # not a failure — the API was consulted and answered.
+        if st in ("ok", "skipped", "empty"):
+            ok += 1
+        else:
+            errors += 1
+        if on_progress is not None:
+            try:
+                on_progress({"ticker": tkr, "status": st, "done": i,
+                             "total": len(targets)})
+            except Exception:
+                pass
+        if pace and i < len(targets):
+            time.sleep(pace)
+
+    _progress(f"[b3_div] sync_all done: {ok} ok, {errors} errors")
+    return {
+        "status": "ok" if errors < len(targets) else "error",
+        "total": len(targets),
+        "ok": ok,
+        "errors": errors,
+        "seeded": seeded,
     }
 
 

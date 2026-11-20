@@ -1,0 +1,35 @@
+{# webui/templates/partials/sync_status.html — freshness table partial.
+
+[WebUI v1.5] Rendered by GET /api/webui/sync/status for BOTH consumers
+(Sync page table + Dashboard ribbon — they swap with hx-swap=innerHTML,
+so this must be HTML, not JSON). Each row: source, last sync (DD/MM/YYYY
+HH:MM), fresh/stale badge, and a "Sincronizar" button for sources in the
+sync_guard allow-list. Button clicks are handled by the delegated listener
+in app.js (initSyncStatus); live progress lands in the SSE log.
+#}
+<table class="sync-table">
+  <thead>
+    <tr><th>Fonte</th><th>Último Sync</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr data-source="{{ row.source }}">
+      <td class="sync-source">{{ row.source }}</td>
+      <td class="sync-ts">{{ row.last_sync }}</td>
+      <td>
+        <span class="badge {{ 'badge-stale' if row.stale else 'badge-fresh' }}">
+          {{ 'desatualizado' if row.stale else 'atualizado' }}
+        </span>
+      </td>
+      <td>
+        {% if row.can_sync %}
+        <button class="sync-btn" data-source="{{ row.source }}"
+                title="Sincronizar {{ row.source }}">Sincronizar</button>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

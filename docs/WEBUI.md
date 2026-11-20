@@ -19,15 +19,20 @@ Brazilian Financial Data WebUI — a live, server-rendered web interface that re
 # Launch the WebUI (default: http://127.0.0.1:8000/webui)
 python webui.py
 
-# Custom port / host
-python webui.py --port 7860 --host 0.0.0.0
+# Custom port
+python webui.py --port 7860
 
 # Dev mode (auto-reload on file change)
 python webui.py --reload
 
-# Skip startup sync check
+# Skip the startup freshness check
 python webui.py --no-sync
 ```
+
+> **Security note (v1.5):** the app is loopback-only by default. Binding a
+> non-loopback host additionally requires `WEBUI_ALLOW_LAN=1` — the mounted
+> gateway routes (`/task`, `/chat`, `/ws`) execute agent tools unauthenticated,
+> so an accidental `--host 0.0.0.0` must stay opt-in.
 
 ## Architecture
 

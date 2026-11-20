@@ -13,13 +13,9 @@ subtab later = adding sections server-side, zero client rework.
 Subtabs (one lazy endpoint each — client fetches on first click):
   - overview()     → KPI cards + heatmap + radar + Mercado/Resultado/
                      Balanço/Per-share two-column blocks
-  - multiples()    → nested subtabs (Preço | EBIT/EBITDA | EV | Menos
-                     Comuns): grouped tables + comparativo charts + the
-                     dashboard's 5Y daily history charts (P/L-LPA-P/VP-VPA,
-                     Múltiplos de Preço, Múltiplos EBIT, Múltiplos EBITDA,
-                     Preço/Balanço, Ativo/Preço e Alavancagem — with the
-                     Tudo/1A/6M/3M/1M range selector) + Per-share Values
-                     (R$) table + monthly Histórico 5Y summary chart
+  - multiples()    → grouped multiple tables (Preço/EBIT/EBITDA/EV/menos
+                     comuns) + comparativo charts + 5Y history chart
+                     (P/L, P/VP, EV/EBITDA — monthly downsampled)
   - intrinsic()    → DCF + TIR summary table + sensitivity table +
                      intrinsic-value-vs-terminal-g curve chart
   - fundamentals() → Rentabilidade (Retornos + Margens + 5Y trends) /
@@ -117,76 +113,38 @@ class ValuationService:
     # [WebUI v1.4 fix2] Section title prefix → subtab group (mirrors the
     # static dashboard's multiples split). Unmatched sections land in a
     # trailing "Outros" group so future builder sections still render.
-    # [WebUI v1.4 fix3] Routs the dashboard's history charts + per-share
-    # sections: "P/L, LPA, P/VP, VPA", "Per-share Values (R$)" and
-    # "Valores por Ação — Comparativo" → Preço; "Preço/Balanço" and
-    # "Ativo/Preço e Alavancagem" → Menos Comuns.
     _MULTIPLES_GROUPS = ["Preço", "EBIT/EBITDA", "EV", "Menos Comuns"]
 
     @classmethod
     def _multiples_group_of(cls, title: str) -> str:
         t = (title or "").lower()
-        if (t.startswith("múltiplos de preço") or t.startswith("histórico")
-                or t.startswith("p/l") or t.startswith("per-share values")
-                or t.startswith("valores por ação")):
+        if t.startswith("múltiplos de preço") or t.startswith("histórico"):
             return "Preço"
         if t.startswith("múltiplos ebit"):  # covers EBIT and EBITDA
             return "EBIT/EBITDA"
         if t.startswith("múltiplos ev"):
             return "EV"
-        if (t.startswith("múltiplos menos comuns") or t.startswith("preço/balanço")
-                or t.startswith("ativo/preço")):
+        if t.startswith("múltiplos menos comuns"):
             return "Menos Comuns"
         return "Outros"
 
     def multiples(self, ticker: str) -> dict[str, Any]:
-        """Grouped multiple tables + comparativo + 5Y history charts.
+        """Grouped multiple tables + comparativo charts + 5Y history chart.
 
         [WebUI v1.4 fix2] Payload is grouped for the client's nested
-        subtabs — Preço, EBIT/EBITDA, EV, Menos Comuns — matching the
-        static dashboard's organization.
-        [WebUI v1.4 fix3] Dashboard parity for the history charts and the
-        per-share table: Preço gets P/L-LPA-P/VP-VPA + Múltiplos de Preço
-        (5Y daily, dual-axis) plus Per-share Values (R$); EBIT/EBITDA gets
-        Múltiplos EBIT + Múltiplos EBITDA; Menos Comuns gets Preço/Balanço
-        + Ativo/Preço e Alavancagem. Sections are appended in dashboard
-        order (charts first, then tables/comparativos, then per-share),
-        so each bucket renders in the dashboard's sequence.
+        subtabs — Preço (table + comparativo chart + 5Y history),
+        EBIT/EBITDA (EBIT + EBITDA tables), EV (table + chart),
+        Menos Comuns — matching the static dashboard's organization.
         """
         tk = ticker.upper()
         try:
             from skills._base import engine_cache_scope
-            from skills.cvm.valuation.report.multiples import (
-                build_multiples_sections,
-                build_per_share_sections,
-            )
-            from skills.cvm.valuation.report import history_charts
+            from skills.cvm.valuation.report.multiples import build_multiples_sections
             with engine_cache_scope():
                 r = self._ratios(tk)
                 if "_error" in r:
                     return {"ticker": tk, "_error": r["_error"]}
-                # [v1.4 fix3] Dashboard history charts, in dashboard order.
-                # Each builder returns a 5Y daily step-line section (or None
-                # when the underlying history series is unavailable) — per
-                # builder try/except keeps one failing chart from taking
-                # down the whole subtab.
-                sections: list[dict] = []
-                for builder in (
-                    history_charts.build_pl_lpa_pvp_vpa_history_chart,
-                    history_charts.build_price_multiples_history_chart,
-                    history_charts.build_ebit_multiples_history_chart,
-                    history_charts.build_ebitda_multiples_history_chart,
-                    history_charts.build_price_to_balance_history_chart,
-                    history_charts.build_asset_to_price_history_chart,
-                ):
-                    try:
-                        sec = builder(tk)
-                    except Exception:
-                        sec = None
-                    if sec:
-                        sections.append(self._webui_chart(sec))
-                sections.extend(build_multiples_sections(r) or [])
-                sections.extend(build_per_share_sections(r) or [])
+                sections = build_multiples_sections(r) or []
                 hist = self._multiples_history(tk)
         except Exception as e:
             return {"ticker": tk, "_error": str(e)}
@@ -205,24 +163,6 @@ class ValuationService:
         if not groups:
             return {"ticker": tk, "_error": "sem dados de múltiplos"}
         return {"ticker": tk, "status": "ok", "groups": groups}
-
-    @staticmethod
-    def _webui_chart(sec: dict, range_selector: bool = True) -> dict:
-        """[v1.4 fix3] Normalize a report-builder chart section for the API.
-
-        The Jinja dashboard stashes duplicate full series (price_full_*)
-        for its server-rendered range filter; the WebUI filters client-side
-        from the main chart_data arrays, so the duplicates are dropped
-        (roughly halves the history-chart payload). The
-        price_range_selector flag is kept for the Múltiplos history charts
-        — app.js renders the Tudo/1A/6M/3M/1M button row from it — and
-        stripped for Fundamentals (range_selector=False), whose quarterly
-        step charts keep the fix2 2-col grid look (no visual change).
-        """
-        out = {k: v for k, v in sec.items() if not k.startswith("price_full")}
-        if not range_selector:
-            out.pop("price_range_selector", None)
-        return out
 
     def _multiples_history(self, tk: str, years: int = 5) -> dict | None:
         """5Y P/L + P/VP + EV/EBITDA chart section, monthly downsampled.
@@ -396,18 +336,24 @@ class ValuationService:
                 if "_error" in r:
                     return {"ticker": tk, "_error": r["_error"]}
                 prof = build_profitability_section(r) or []
-                # [v1.4 fix3] Chart normalization: strip the dashboard's
-                # price_full_* duplicates AND the range-selector flag —
-                # Fundamentos keeps the fix2 2-col grid look (quarterly
-                # step charts; the user signed off on this subtab).
-                roe_raw = build_roe_trend_chart(tk)
-                roe_trend = self._webui_chart(roe_raw, range_selector=False) if roe_raw else None
-                mar_raw = build_margin_trend_chart(tk)
-                margin_trend = self._webui_chart(mar_raw, range_selector=False) if mar_raw else None
+                roe_trend = build_roe_trend_chart(tk)
+                margin_trend = build_margin_trend_chart(tk)
                 liq_lev = build_liquidity_leverage_sections(r) or []
-                eff_grow = build_efficiency_growth_sections(r, None) or []
-                grow_charts = [self._webui_chart(c, range_selector=False)
-                               for c in (build_growth_evolution_charts(tk) or [])]
+                # [WebUI v1.5] Annual periods for the growth FALLBACK — the
+                # old build_efficiency_growth_sections(r, None) disabled it,
+                # so growth rows whose ratios keys were None stayed "—"
+                # instead of being computed from the financial statements
+                # (the static dashboard always passes the periods).
+                annual_periods: list[dict] = []
+                try:
+                    from skills.cvm.financials.modes.annual import annual as _annual
+                    _ap = _annual(company=tk, periods=5)
+                    if isinstance(_ap, dict) and _ap.get("status") == "ok":
+                        annual_periods = _ap.get("periods") or []
+                except Exception:
+                    annual_periods = []
+                eff_grow = build_efficiency_growth_sections(r, annual_periods) or []
+                grow_charts = build_growth_evolution_charts(tk) or []
         except Exception as e:
             return {"ticker": tk, "_error": str(e)}
 
@@ -587,7 +533,7 @@ class ValuationService:
     # covers registry keys via get_tooltip(key, spec)). Aliased keys point
     # at the shared registry entry that holds the matching formula.
     _MANUAL_TOOLTIPS = {
-        "price": "Preço da ação — último fechamento disponível (brapi → trades → COTAHIST).",
+        "price": "Preço da ação — último fechamento disponível (trades B3 → COTAHIST).",
         "market_cap": "Market Cap = Preço × Total de Ações. Valor de mercado da empresa.",
         "ev": "Enterprise Value = Market Cap + Dívida Líquida. Valor total da empresa.",
         "total_shares": "Total de ações outstanding (FRE/CVM).",
@@ -626,6 +572,13 @@ class ValuationService:
 
     def _spec_for(self, key: str) -> str:
         if key in self._PCT_KEYS:
+            return "pct"
+        # [WebUI v1.5] Growth/CAGR keys end in _3m/_1y/_5y (revenue_growth_3m,
+        # revenue_cagr_5y, …) — the old endswith("_growth")/("_cagr") checks
+        # NEVER matched, so "Todas as métricas" rendered 0.05 instead of
+        # 5,00% and sign coloring silently didn't apply.
+        import re
+        if re.search(r"_(growth|cagr)_(3m|1y|5y)$", key):
             return "pct"
         if key.endswith("_margin") or key.endswith("_growth") or key.endswith("_cagr"):
             return "pct"

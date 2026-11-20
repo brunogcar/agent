@@ -1,9 +1,9 @@
 """Mode: ratios -- valuation ratios combining b3 price + CVM financials.
 
 Computes valuation ratios from local data: b3 price + CVM DFP financials + FRE
-shares. Combines a 2-tier price fallback (brapi -> b3 trades) [v2.2]
-with calculations engines for TTM financials and `compute_all_ratios()` for
-the calculations-backed metrics.
+shares. Combines a 2-tier local price fallback (b3 trades -> cotahist close)
+[v2.4] with calculations engines for TTM financials and
+`compute_all_ratios()` for the calculations-backed metrics.
 
 [v1.5] REFACTOR -- calculations-backed metrics now come from compute_all_ratios().
   - Removed 25 individual metric imports (roe_at, roa_at, gross_margin_at, etc.)
@@ -19,8 +19,11 @@ the calculations-backed metrics.
 [v2.0.0] PHASE 2B REFACTOR -- data fetching now via calculations engines.
   - _get_financials_ttm() removed -> direct engine calls
   - _get_shares_outstanding() removed -> shares_at() engine
-  - _get_price() + 3 helpers KEPT in fetchers.py (brapi+investsite+b3 fallback
+  - _get_price() + helpers KEPT in fetchers.py (b3 trades + cotahist fallback
     chain not in calculations price engine, which is COTAHIST-only).
+
+[v2.4] brapi REMOVED — paid API, permanently disabled. market_cap is now
+  ALWAYS computed as price x total_shares (source "computed").
 
 Registered as "ratios" in skills.cvm.valuation._registry.MODES via the
 @register_mode decorator. Auto-discovered by __init__.py.
@@ -83,7 +86,7 @@ def ratios(company: str = "") -> dict:
     [v1.5] All calculations-backed metrics now come from compute_all_ratios().
       - Manual ratios (P/L, P/VPA, EV, PSR, DPA, Div Yield, market_cap,
         divida_liquida_ebitda) -- NOT in the calculations registry; computed
-        manually from brapi_market_cap + engines.
+        manually from market_cap (price x shares) + engines.
       - Calculations-backed ratios (ROE, ROA, ROIC, Graham Number, margins,
         turnover, liquidity, EV multiples, per-share, tax, etc.) -- ALL 37
         metrics come from compute_all_ratios(ticker, today) with no category
@@ -94,7 +97,7 @@ def ratios(company: str = "") -> dict:
       - TTM financials (earnings, revenue, ebit, da, FCO, FCI) from engines
       - Snapshot financials (PL, debt, cash, shares) from engines
       - DPA (per-share, TTM) from dividends engine
-      - Manual market-cap-based ratios use brapi_market_cap (NOT in the
+      - Manual market-cap-based ratios use price x total_shares (NOT in the
         calculations registry). [v2.2] investsite fallback removed.
 
     Returns: P/L, P/VPA, EV, P/EBIT, P/FCO, PSR, EV/EBITDA, DPA, Div Yield,
@@ -117,9 +120,9 @@ def ratios(company: str = "") -> dict:
         "sources": {},
     }
 
-    # 1. Get latest price (brapi -> b3 trades) [v2.2]
+    # 1. Get latest price (b3 trades -> cotahist) [v2.4]
     # The calculations price engine is COTAHIST-only (historical daily).
-    # _get_price gets the CURRENT price from brapi, then b3 trades.db.
+    # _get_price gets the CURRENT price from b3 trades.db, then cotahist.db.
     price_data = _get_price(ticker)
     result["sources"]["price"] = price_data
 
@@ -209,8 +212,8 @@ def ratios(company: str = "") -> dict:
     # [v1.0.9] Detect UNIT tickers
     unit_ticker = ticker.upper().endswith("11")
 
-    # [v1.0.9-v1.0.13] Market cap resolution
-    brapi_market_cap = price_data.get("market_cap")
+    # [v2.4] brapi market_cap removed (paid API). market_cap is ALWAYS
+    # price x total_shares now.
 
     # If financials are missing, partial result
     if fin_status != "ok":
@@ -218,10 +221,7 @@ def ratios(company: str = "") -> dict:
                             "price": price, "price_date": price_date,
                             "unit_ticker": unit_ticker,
                             "note": "Financials unavailable: no data from calculations engines"}
-        if brapi_market_cap is not None:
-            result["ratios"]["market_cap"] = float(brapi_market_cap)
-            result["ratios"]["market_cap_source"] = "brapi"
-        elif total_shares and total_shares > 0:
+        if total_shares and total_shares > 0:
             result["ratios"]["market_cap"] = price * total_shares
             result["ratios"]["market_cap_source"] = "computed"
         if total_shares:
@@ -251,12 +251,8 @@ def ratios(company: str = "") -> dict:
         "annual_dividends": annual_dividends,
     }
 
-    # [v1.0.9-v1.0.13] Market cap resolution
-    if brapi_market_cap is not None:
-        market_cap = float(brapi_market_cap)
-        ratios_result["market_cap"] = market_cap
-        ratios_result["market_cap_source"] = "brapi" if price_data.get("source") == "brapi" else "b3_trades"
-    elif total_shares and total_shares > 0:
+    # [v2.4] Market cap resolution — price x total_shares (brapi removed)
+    if total_shares and total_shares > 0:
         market_cap = price * total_shares
         ratios_result["market_cap"] = market_cap
         ratios_result["market_cap_source"] = "computed"
@@ -267,11 +263,9 @@ def ratios(company: str = "") -> dict:
 
     # [v2.2] investsite fallback REMOVED — investsite started forcing login
     # (token rotation), making it unreliable as an automated fallback.
-    # P/L, P/VPA, and market_cap are now ALWAYS computed from market_cap +
-    # fundamentals. For UNIT tickers where brapi returns no market_cap, we
-    # fall back to price * total_shares (the "computed" path above).
-    # The investsite-derived path (back-calculate market_cap from investsite
-    # P/L * lucro_liquido) is gone.
+    # [v2.4] brapi market_cap REMOVED — paid API. P/L, P/VPA, and market_cap
+    # are now ALWAYS computed from price x total_shares + fundamentals
+    # (the "computed" path above).
 
     # EPS + VPA (per-individual-share, informational)
     eps = _safe_div(lucro_liquido, total_shares)
@@ -322,7 +316,7 @@ def ratios(company: str = "") -> dict:
     # NOTE: this OVERRIDES some of the manual computations above for keys that
     # exist in BOTH places (ev_ebitda, p_ebit, p_fco, p_fcf, vpa, dpa). The
     # registry uses COTAHIST price * FRE shares for market cap; the manual
-    # computations above use brapi_market_cap (or price * shares fallback).
+    # computations above use price x total_shares.
     # The registry versions win (canonical implementation). Manual keys that
     # have NO registry counterpart (p_l, p_vpa, ev, psr, dividend_yield,
     # divida_liquida_ebitda, market_cap) are preserved as-is.

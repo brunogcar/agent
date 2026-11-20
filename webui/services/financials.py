@@ -23,10 +23,28 @@ skills/cvm — NOT through the MCP dispatcher.
 Provides:
   - overview(ticker) → ttm + annual + quarterly + ratios + prices + red flags
   - statements(ticker, period, periods) → all 5 statements, columnar
+
+[WebUI v1.5] HARDENING:
+  - overview() reuses the module-level CompanyService singleton (was a
+    fresh instance per call).
+  - statements() runs inside engine_cache_scope() (shares the in-memory
+    engine cache with the rest of the request).
+  - _red_flags() returns a distinct {"error": …} state instead of None on
+    failure — the UI can now tell "checked, no warnings" apart from
+    "couldn't check" (the old bare except showed a false all-clear).
+  - *_error strings are PT-BR (raw exceptions logged server-side).
 """
 from __future__ import annotations
 
+import sys
+import traceback
 from typing import Any
+
+from webui.services.company import CompanyService
+
+# Module-level singleton (overview() used to build a fresh CompanyService
+# on every call — every other service here is a module singleton too).
+_company = CompanyService()
 
 
 # Number of TTM periods to fetch (latest + 4-back gives the Δ 1A comparison).
@@ -103,11 +121,13 @@ class FinancialsService:
 
         # ── 4. Ratios (WACC / DuPont / Altman — point-in-time) ──
         try:
-            from webui.services.company import CompanyService
-            ratios = CompanyService().ratios(tk)
+            ratios = _company.ratios(tk)
             result["ratios"] = ratios if "_error" not in ratios else None
         except Exception as e:
             result["ratios"] = None
+            result["ratios_error"] = "falha ao calcular indicadores"
+            print(f"[webui] financials.overview ratios({tk}) failed: {e}\n"
+                  f"{traceback.format_exc()}", file=sys.stderr)
 
         # ── 5. Year-end prices for the Trajetória overlay ──
         # {year: close} — Dec-31 (or closest prior trading day) close.
@@ -147,6 +167,10 @@ class FinancialsService:
     @staticmethod
     def _red_flags(ticker: str, annual_result: dict | None) -> dict | None:
         """Accounting red flags via build_red_flags_section.
+
+        [WebUI v1.5] Returns {"error": …} on failure (distinct from None =
+        nothing to check) so the UI can render "verificação indisponível"
+        instead of a false "no red flags" all-clear.
 
         Fetches the 5 statements in ONE SQL pass (annual, 5 years), reshapes
         them to the dict-keyed accounts shape validate_statement_consistency
@@ -192,8 +216,10 @@ class FinancialsService:
                 "rows": rows,
                 "has_warnings": any("⚠" in str(r[1]) for r in rows if len(r) > 1),
             }
-        except Exception:
-            return None
+        except Exception as e:
+            print(f"[webui] red_flags({ticker}) failed: {e}\n"
+                  f"{traceback.format_exc()}", file=sys.stderr)
+            return {"error": "verificação indisponível"}
 
     # ── statements ──────────────────────────────────────────────────────────
 
@@ -230,22 +256,26 @@ class FinancialsService:
         tk = ticker.upper()
         period = (period or "annual").strip().lower()
         if period not in ("annual", "quarterly"):
-            return {"_error": f"period must be 'annual' or 'quarterly', got '{period}'"}
+            return {"_error": f"período inválido: use 'annual' ou 'quarterly' (recebido: '{period}')"}
 
         n = periods if periods else (10 if period == "annual" else 20)
         n = max(1, min(int(n), 40))
 
         try:
+            from skills._base import engine_cache_scope
             from skills.cvm.financials.fetchers import (
                 _fetch_all_statements_annual,
                 _fetch_all_statements_quarterly,
             )
-            if period == "quarterly":
-                data = _fetch_all_statements_quarterly(tk, 1, n)
-            else:
-                data = _fetch_all_statements_annual(tk, 1, n)
+            with engine_cache_scope():
+                if period == "quarterly":
+                    data = _fetch_all_statements_quarterly(tk, 1, n)
+                else:
+                    data = _fetch_all_statements_annual(tk, 1, n)
         except Exception as e:
-            return {"_error": str(e)}
+            print(f"[webui] statements({tk}) failed: {e}\n{traceback.format_exc()}",
+                  file=sys.stderr)
+            return {"_error": "erro ao carregar demonstrações"}
 
         if not isinstance(data, dict) or "BPA" not in data:
             err = data.get("error") if isinstance(data, dict) else None

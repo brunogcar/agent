@@ -111,6 +111,114 @@ def sync(
     }
 
 
+# ── Bulk sync (WebUI painel) [v1.5 fix1] ────────────────────────────────────
+
+def _acoes_tickers() -> list[str]:
+    """Seed list: every B3 tradable ticker from acoes.db (~380 rows).
+
+    Used ONLY when ticker_map is empty (fresh install) so the painel
+    button bootstraps the whole bridge instead of no-op'ing.
+    """
+    try:
+        import sqlite3
+        from data_sources.ddm.acoes.catalog import db_path as acoes_db_path
+        p = acoes_db_path()
+        if not p.exists():
+            return []
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        rows = conn.execute("SELECT ticker FROM stocks ORDER BY ticker").fetchall()
+        conn.close()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+def _bulk_targets() -> tuple[list[str], bool]:
+    """Tickers for the bulk sync: everything already in ticker_map,
+    seeded from acoes.db when the map is empty.
+
+    Returns (targets, seeded_from_acoes).
+    """
+    targets: list[str] = []
+    try:
+        conn = connect(read_only=True)
+        rows = conn.execute(
+            "SELECT ticker FROM ticker_map ORDER BY ticker"
+        ).fetchall()
+        conn.close()
+        targets = [r["ticker"] for r in rows if r["ticker"]]
+    except Exception:
+        targets = []
+    if targets:
+        return targets, False
+    return _acoes_tickers(), True
+
+
+def sync_all(
+    force: bool = True,
+    trace_id: str = "",
+    on_progress=None,
+) -> dict:
+    """[v1.5 fix1] Re-link every bridged ticker (WebUI painel entry point).
+
+    The painel can't pass a company, and sync() without a ticker is a
+    hard error — which the old dispatch silently reported as success
+    (the bridge row stayed "desatualizado" forever). This bulk entry
+    point:
+
+      1. Targets = every ticker in ticker_map (seeded from acoes.db when
+         the map is empty).
+      2. Re-links each with force=True (freshness reads the LAST sync_log
+         row, so a no-op run must still write rows). FCA resolution is
+         local for virtually every listed ticker, so this is seconds for
+         the full universe; only FCA misses touch the dividends API.
+      3. Reports per-ticker progress via the optional on_progress
+         callback: {"ticker", "status", "done", "total"}.
+
+    Returns {"status": "ok"|"error", "total", "linked", "errors", ...}.
+    """
+    targets, seeded = _bulk_targets()
+
+    if not targets:
+        return {
+            "status": "ok", "total": 0, "linked": 0, "skipped": 0,
+            "errors": 0,
+            "detail": "nenhum ticker para sincronizar (bridge vazio e "
+                      "acoes.db ausente)",
+        }
+
+    linked = errors = 0
+    _progress(f"[bridge] sync_all: {len(targets)} tickers"
+              f"{' (seeded from acoes.db)' if seeded else ''}...")
+
+    for i, tkr in enumerate(targets, 1):
+        r = _sync_one(tkr, force=force, trace_id=trace_id)
+        st = r.get("status")
+        if st == "ok":
+            linked += 1
+        elif st == "skipped":
+            pass  # counted below via skipped tally for parity with sync()
+        else:
+            errors += 1
+        if on_progress is not None:
+            try:
+                on_progress({"ticker": tkr, "status": st, "done": i,
+                             "total": len(targets)})
+            except Exception:
+                pass
+
+    skipped = len(targets) - linked - errors
+    _progress(f"[bridge] sync_all done: {linked} linked, {errors} errors")
+    return {
+        "status": "ok" if errors < len(targets) else "error",
+        "total": len(targets),
+        "linked": linked,
+        "skipped": skipped,
+        "errors": errors,
+        "seeded": seeded,
+    }
+
+
 # ── Per-ticker sync ──────────────────────────────────────────────────────────
 
 def _sync_one(ticker: str, force: bool, trace_id: str) -> dict:

@@ -1,20 +1,31 @@
 /* webui/static/js/app.js — client-side app logic.
  *
- * [WebUI v1.3 fix 2] Handles:
+ * [WebUI v1.5 — HARDENING] Handles:
  *   - Candlestick chart (OHLCV + MM20/50/100/200) with zoom/pan — ticker first in legend
- *   - Preço tab: Cotação tables + Histograma + Início vs Fim
- *   - Indicadores subtab: RSI, MACD, Stochastic, OBV, ADX, CCI, Williams %R (with reference lines + range selector)
- *   - Volatilidade subtab: Bollinger Bands + rolling vol (with range selector)
- *   - Financials: Visão Geral (real Resultado TTM + Trajetória Anual 10y with
- *     price overlay + server-side Red Flags) and Demonstrações (single fetch,
- *     merged Completo BPA+BPP, section headers, statement-specific charts)
- *   - fix 2: Quarterly Trend oldest→newer with narrow Métrica column;
- *     single-column WACC/DuPont/Altman boxes; per-statement charts per the
- *     financials dashboard reference (balanço stacked abs/%, DRE trajetória +
- *     margens, DFC fluxos + empilhado + FCO vs LL, DVA linhas); Demonstrações
- *     table on table-layout:fixed + colgroup so Código stays 84px in BOTH
- *     annual and quarterly modes
- *   - Auto-init charts via htmx:afterSettle
+ *     (wheel zoom requires Ctrl — plain scroll now pans the page, not the chart)
+ *   - Preço tab: Cotação tables + Histograma + Início vs Fim (5 LAZY subtabs)
+ *   - Indicadores subtab: RSI, MACD, Stochastic, OBV, ADX, CCI, Williams %R
+ *   - Volatilidade subtab: Bollinger Bands + rolling vol
+ *   - Financials: Visão Geral (TTM + Trajetória + WACC/DuPont/Altman + Red Flags)
+ *     and Demonstrações (single fetch, merged Completo BPA+BPP, per-statement
+ *     charts — Ativo and Passivo+PL composition charts are SEPARATE now:
+ *     the old 5-series stack mixed both balance sides and halved every %)
+ *   - Valuation: 5 lazy subtabs, generic section renderer (v1.4)
+ *   - Sync page: native EventSource live log + "Sincronizar" buttons (the
+ *     old hx-ext="sse" markup never worked — the HTMX SSE extension was
+ *     never vendored)
+ *
+ * v1.5 fixes (multi-LLM review round):
+ *   - pctVs sign inversion fixed (Preço "vs" columns showed the WRONG sign
+ *     and contradicted the Variação row two rows apart)
+ *   - zero renders YELLOW everywhere (% positive green / negative red / 0 yellow)
+ *   - fmtBRL has thousands separators (Intl.NumberFormat pt-BR)
+ *   - esc() on every innerHTML interpolation of server data (XSS)
+ *   - Chart.js destroy on htmx:beforeCleanupElement + before re-renders (leak)
+ *   - loadCandlestick errors render in a SIBLING node (the old path deleted
+ *     the canvas — one error killed the chart until reload) + AbortController
+ *   - Lazy subtabs: only the active one fetches (was 5 eager 10y fetches)
+ *   - includeScriptTags hack REMOVED (company page bootstraps from data attrs)
  */
 
 // Register Chart.js zoom plugin
@@ -25,35 +36,79 @@ if (typeof Chart !== 'undefined' && typeof ChartZoom !== 'undefined') {
 // ── Helpers ──
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 function fmtDate(iso) { return iso && iso.match(/^\d{4}-\d{2}-\d{2}$/) ? iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : iso; }
-function fmtBRL(v) { return v !== null && v !== undefined ? 'R$ ' + Number(v).toFixed(2).replace('.', ',') : '—'; }
+
+// [v1.5] One pt-BR BRL formatter with thousands separators ("R$ 1.234,56").
+var _brlFmt = null;
+function fmtBRL(v) {
+  if (v === null || v === undefined) return '—';
+  if (!_brlFmt) _brlFmt = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return 'R$ ' + _brlFmt.format(Number(v));
+}
+
+// [v1.5] HTML-escape for EVERY server-provided string that lands in
+// innerHTML (error messages, labels, tickers). Was valEsc (valuation-only).
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+var valEsc = esc;  // legacy alias (v1.4 renderer name)
+
 function chartTheme() { return { grid: cssVar('--chart-grid') || 'rgba(128,128,128,0.1)', text: cssVar('--chart-text') || '#888' }; }
 
-// ── Range selector helper ──
-function filterByRange(labels, datasets, range) {
-  var rangeMap = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, 'Tudo': 0 };
-  var n = rangeMap[range] || 0;
-  if (n === 0 || n >= labels.length) return { labels: labels, datasets: datasets };
-  return {
-    labels: labels.slice(-n),
-    datasets: datasets.map(function(ds) { return Object.assign({}, ds, { data: ds.data.slice(-n) }); })
-  };
+// [v1.5] Shared range map (was duplicated ×4 with drift).
+var RANGE_DAYS = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 };
+
+// [v1.5] Destroy every Chart.js instance under root (leak fix — Chart
+// keeps resize observers + rAF loops alive after the canvas is detached).
+function destroyChartsIn(root) {
+  if (!root) return;
+  var nodes = root.querySelectorAll ? Array.prototype.slice.call(root.querySelectorAll('canvas')) : [];
+  if (root.tagName === 'CANVAS') nodes.push(root);
+  nodes.forEach(function(cv) {
+    if (cv._chart) { try { cv._chart.destroy(); } catch (e) { /* noop */ } cv._chart = null; }
+  });
 }
 
 // ── Candlestick chart ──
+// [v1.5] Range buttons are data-driven (tab_visao_geral.html renders
+// #price-range-bar; one delegated listener in initApp dispatches here —
+// the old inline onclick="loadCandlestick('{{ ticker }}',…)" interpolated
+// the ticker into a JS-in-attribute context).
+var _candleAbort = null;
 window.loadCandlestick = function(ticker, range) {
   var canvas = document.getElementById('price-chart');
   if (!canvas) return;
-  document.querySelectorAll('.range-btn').forEach(function(btn) { btn.classList.toggle('active', btn.dataset.range === range); });
-  var container = canvas.parentElement;
-  container.style.opacity = '0.5';
-  fetch('/api/webui/company/' + ticker + '/candlestick?range=' + range)
+  var bar = document.getElementById('price-range-bar');
+  (bar || document).querySelectorAll('.range-btn').forEach(function(btn) { btn.classList.toggle('active', btn.dataset.range === range); });
+  var wrap = document.getElementById('price-chart-wrap') || canvas.parentElement;
+  var msg = document.getElementById('price-chart-msg');
+  if (msg) msg.innerHTML = '';
+  if (wrap) wrap.style.opacity = '0.5';
+  // [v1.5] Abort the previous range fetch — a slow 1M response used to be
+  // able to overwrite a newer 5A one (last-write-wins race).
+  if (_candleAbort) { try { _candleAbort.abort(); } catch (e) { /* noop */ } }
+  _candleAbort = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/candlestick?range=' + encodeURIComponent(range),
+        _candleAbort ? { signal: _candleAbort.signal } : undefined)
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      container.style.opacity = '1';
-      if (!data.labels || data.labels.length === 0) { container.innerHTML = '<div class="loading">Sem dados de cotação.</div>'; return; }
+      if (wrap) wrap.style.opacity = '1';
+      // [v1.5] Errors render in the SIBLING #price-chart-msg node. The old
+      // path did container.innerHTML = …, DELETING the canvas — after one
+      // error every later range click found no #price-chart until reload.
+      var text = data._error || (!data.labels || data.labels.length === 0 ? 'Sem dados de cotação.' : '');
+      if (text) {
+        if (msg) msg.innerHTML = '<div class="error">' + esc(text) + '</div>';
+        return;
+      }
       renderCandlestick(canvas, ticker, data);
     })
-    .catch(function(err) { container.style.opacity = '1'; container.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+    .catch(function(err) {
+      if (err && err.name === 'AbortError') return;
+      if (wrap) wrap.style.opacity = '1';
+      if (msg) msg.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
 };
 
 function renderCandlestick(canvas, ticker, data) {
@@ -92,7 +147,7 @@ function renderCandlestick(canvas, ticker, data) {
           label: function(ctx) { var d = ohlc[ctx.dataIndex]; if (!d) return ''; if (ctx.dataset.type === 'line') return ctx.dataset.label + ': R$ ' + Number(ctx.parsed.y).toFixed(2).replace('.', ','); return ticker + ' | O: ' + fmtBRL(d.o) + ' H: ' + fmtBRL(d.h) + ' L: ' + fmtBRL(d.l) + ' C: ' + fmtBRL(d.c); },
           title: function(i) { return fmtDate(i[0].label); }
         }},
-        zoom: { pan: { enabled: true, mode: 'x', modifierKey: 'shift' }, zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'x' } }
+        zoom: { pan: { enabled: true, mode: 'x', modifierKey: 'shift' }, zoom: { wheel: { enabled: true, speed: 0.1, modifierKey: 'ctrl' }, pinch: { enabled: true }, mode: 'x' } }
       }
     },
     plugins: [{ id: 'candleWicks', beforeDatasetsDraw: function(chart) {
@@ -108,11 +163,14 @@ function renderCandlestick(canvas, ticker, data) {
 
 // ── Preço tab (Cotação subtab) ──
 window.initPrecoTab = function(ticker) {
-  var tab = document.getElementById('tab-preco'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/price-data?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
-    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  // [v1.5 fix1] id renamed tab-preco → tab-cotacao (the pane follows the
+  // tab-<sub> convention now; loadPrecoSubtab('cotacao') looked up
+  // 'tab-cotacao' and silently no-opped → "Carregando…" forever).
+  var tab = document.getElementById('tab-cotacao'); if (!tab) return;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/price-data?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
     renderPrecoTab(tab, ticker, data);
-  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderPrecoTab(tab, ticker, data) {
@@ -155,11 +213,18 @@ function renderPrecoTab(tab, ticker, data) {
 
 function priceRow(label, value, pct) { return '<tr><td>' + label + '</td><td class="val">' + fmtBRL(value) + '</td><td class="pct">' + fmtPctColored(pct) + '</td></tr>'; }
 function pctRow(label, pct) { return '<tr><td>' + label + '</td><td class="val" colspan="2">' + fmtPctColored(pct) + '</td></tr>'; }
-function pctVs(v, current) { if (v === null || v === undefined || current === null || current === undefined || current === 0) return null; return (v - current) / current; }
-function fmtPctColored(v) { if (v === null || v === undefined) return '<span class="muted">—</span>'; var pct = (v * 100).toFixed(2).replace('.', ',') + '%'; var color = v < 0 ? 'var(--color-danger)' : 'var(--color-success)'; return '<span style="color: ' + color + '">' + pct + '</span>'; }
+function pctVs(v, current) { if (v === null || v === undefined || current === null || current === undefined || v === 0) return null; return (current - v) / v; }
+// [v1.5] pctVs FIXED — it returned (v − current)/current, i.e. the NEGATIVE
+// daily change (a stock up 10% showed −9,09% in red two rows above a green
+// +10% "Variação"). Now: change FROM the reference v TO current, divided by
+// the reference — the standard convention.
+function fmtPctColored(v) { if (v === null || v === undefined || isNaN(v)) return '<span class="muted">—</span>'; var pct = (v * 100).toFixed(2).replace('.', ',') + '%'; var color = v < 0 ? 'var(--color-danger)' : (v > 0 ? 'var(--color-success)' : 'var(--color-warning)'); return '<span style="color: ' + color + '">' + pct + '</span>'; }
+// [v1.5] Zero renders YELLOW now (v1.4 spec: % positive green / negative
+// red / zero yellow) — it was green, contradicting the Valuation tab.
 
 function renderHistogram(hist) {
   var canvas = document.getElementById('histogram-chart'); if (!canvas) return; var th = chartTheme();
+  if (canvas._chart) canvas._chart.destroy();
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: 'bar',
     data: { labels: hist.bins.map(function(b) { return b.label; }), datasets: [{ label: 'Frequência', data: hist.bins.map(function(b) { return b.count; }), backgroundColor: hist.bins.map(function(b) { return b.color; }), borderWidth: 0 }] },
@@ -169,6 +234,7 @@ function renderHistogram(hist) {
 
 function renderInicioFim(ar) {
   var canvas = document.getElementById('inicio-fim-chart'); if (!canvas) return; var th = chartTheme();
+  if (canvas._chart) canvas._chart.destroy();
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels: ar.map(function(a) { return String(a.year); }), datasets: [
@@ -182,10 +248,10 @@ function renderInicioFim(ar) {
 // ── Indicadores subtab ──
 window.initIndicadoresTab = function(ticker) {
   var tab = document.getElementById('tab-indicadores'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/indicators?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
-    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/indicators?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
     renderIndicadoresTab(tab, ticker, data);
-  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderIndicadoresTab(tab, ticker, data) {
@@ -236,7 +302,7 @@ function renderIndicadoresTab(tab, ticker, data) {
 function renderIndicatorCharts(data, range) {
   var th = chartTheme();
   var dates = data.dates || [];
-  var n = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 }[range] ?? 252;
+  var n = RANGE_DAYS[range] ?? 252;
   if (n === 0 || n >= dates.length) n = dates.length;
   var d = dates.slice(-n);
 
@@ -341,10 +407,10 @@ function renderIndicatorCharts(data, range) {
 // ── Volatilidade subtab ──
 window.initVolatilidadeTab = function(ticker) {
   var tab = document.getElementById('tab-volatilidade'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/volatility?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
-    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/volatility?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
     renderVolatilidadeTab(tab, ticker, data);
-  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderVolatilidadeTab(tab, ticker, data) {
@@ -376,7 +442,7 @@ function renderVolatilidadeTab(tab, ticker, data) {
 
 function renderVolatilityCharts(data, range, ticker) {
   var th = chartTheme(); var dates = data.dates || [];
-  var n = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 }[range] ?? 252;
+  var n = RANGE_DAYS[range] ?? 252;
   if (n === 0 || n >= dates.length) n = dates.length;
   var d = dates.slice(-n);
   function slice(arr) { return arr ? arr.slice(-n) : []; }
@@ -439,10 +505,10 @@ function renderVolatilityCharts(data, range, ticker) {
 // ── Volume subtab ──
 window.initVolumeTab = function(ticker) {
   var tab = document.getElementById('tab-volume'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/volume?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
-    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/volume?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
     renderVolumeTab(tab, ticker, data);
-  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderVolumeTab(tab, ticker, data) {
@@ -497,7 +563,7 @@ function fmtCompact(v) {
 
 function renderVolumeCharts(data, range, ticker) {
   var th = chartTheme(); var dates = data.dates || [];
-  var n = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 }[range] ?? 252;
+  var n = RANGE_DAYS[range] ?? 252;
   if (n === 0 || n >= dates.length) n = dates.length;
   var d = dates.slice(-n);
   function slice(arr) { return arr ? arr.slice(-n) : []; }
@@ -564,10 +630,10 @@ function renderVolumeCharts(data, range, ticker) {
 // ── Fibonacci subtab ──
 window.initFibonacciTab = function(ticker) {
   var tab = document.getElementById('tab-fibonacci'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/fibonacci?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
-    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/fibonacci?_t=' + Date.now()).then(function(r) { return r.json(); }).then(function(data) {
+    if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
     renderFibonacciTab(tab, ticker, data);
-  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+  }).catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderFibonacciTab(tab, ticker, data) {
@@ -697,13 +763,13 @@ window.recalcFib = recalcFib;
 // ── Financials subtab: Visão Geral ──
 window.initFinVisaoGeral = function(ticker) {
   var tab = document.getElementById('tab-fin-visao-geral'); if (!tab) return;
-  fetch('/api/webui/company/' + ticker + '/financials-overview?_t=' + Date.now())
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/financials-overview?_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+      if (data._error) { tab.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
       renderFinVisaoGeral(tab, ticker, data);
     })
-    .catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + err.message + '</div>'; });
+    .catch(function(err) { tab.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>'; });
 };
 
 function renderFinVisaoGeral(tab, ticker, data) {
@@ -823,16 +889,20 @@ function renderFinVisaoGeral(tab, ticker, data) {
   html += '</div>';
 
   // ── Section 5: Red Flags (server-side consistency checks) ──
+  // [v1.5] rf.error = the check itself failed (distinct from "no rows") —
+  // the UI now says "verificação indisponível" instead of a false all-clear.
   var rf = data.red_flags;
   html += '<div class="reg-table"><div class="reg-title">Red Flags Contábeis' +
-          (rf && rf.has_warnings ? ' — \u26a0 atenção' : (rf ? ' — OK' : '')) + '</div>';
-  if (rf && rf.rows && rf.rows.length > 0) {
+          (rf && rf.error ? '' : (rf && rf.has_warnings ? ' — \u26a0 atenção' : (rf ? ' — OK' : ''))) + '</div>';
+  if (rf && rf.error) {
+    html += '<div class="error" style="margin:0;">' + esc(rf.error) + '</div>';
+  } else if (rf && rf.rows && rf.rows.length > 0) {
     html += '<div style="overflow-x: auto;"><table class="price-table fin-wide-table"><thead><tr><th>Verificação</th><th>Status</th><th style="text-align:left;">Detalhe</th></tr></thead><tbody>';
     rf.rows.forEach(function(row) {
       var warn = String(row[1] || '').indexOf('\u26a0') >= 0;
-      html += '<tr><td>' + (row[0] || '') + '</td>';
-      html += '<td class="val" style="color:' + (warn ? 'var(--color-danger)' : 'var(--color-success)') + ';font-weight:600;">' + (row[1] || '') + '</td>';
-      html += '<td class="muted" style="text-align:left;">' + (row[2] && row[2] !== '—' ? row[2] : '—') + '</td></tr>';
+      html += '<tr><td>' + esc(row[0] || '') + '</td>';
+      html += '<td class="val" style="color:' + (warn ? 'var(--color-danger)' : 'var(--color-success)') + ';font-weight:600;">' + esc(row[1] || '') + '</td>';
+      html += '<td class="muted" style="text-align:left;">' + esc(row[2] && row[2] !== '—' ? row[2] : '—') + '</td></tr>';
     });
     html += '</tbody></table></div>';
     html += '<div class="muted" style="font-size:11px;margin-top:var(--space-2);">Cada verificação compara identidades contábeis (ex.: Ativo = Circulante + Não Circulante) com tolerância de 5%.</div>';
@@ -874,8 +944,10 @@ function numSub(a, b) {
 }
 function finRowPct(label, value) {
   var v = value !== null && value !== undefined ? (value * 100).toFixed(2).replace('.', ',') + '%' : '—';
-  var color = value !== null && value !== undefined && value < 0 ? 'var(--color-danger)' : 'var(--color-success)';
-  return '<tr><td>' + label + '</td><td class="val" style="color:' + color + '">' + v + '</td><td class="pct">—</td></tr>';
+  // [v1.5] zero → yellow (was green — inconsistent with the v1.4 spec).
+  var color = value === null || value === undefined ? '' :
+    (value < 0 ? 'var(--color-danger)' : (value > 0 ? 'var(--color-success)' : 'var(--color-warning)'));
+  return '<tr><td>' + label + '</td><td class="val"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</td><td class="pct">—</td></tr>';
 }
 // [WebUI v1.3 fix 2] Single-column row helpers (WACC / DuPont / Altman boxes) —
 // these tables carry no Δ, so no trailing "—" cell.
@@ -887,14 +959,17 @@ function finRow1(label, value, type) {
 }
 function finRowPct1(label, value) {
   var v = value !== null && value !== undefined ? (value * 100).toFixed(2).replace('.', ',') + '%' : '—';
-  var color = value !== null && value !== undefined && value < 0 ? 'var(--color-danger)' : 'var(--color-success)';
-  return '<tr><td>' + label + '</td><td class="val" style="color:' + color + '">' + v + '</td></tr>';
+  // [v1.5] zero → yellow (was green).
+  var color = value === null || value === undefined ? '' :
+    (value < 0 ? 'var(--color-danger)' : (value > 0 ? 'var(--color-success)' : 'var(--color-warning)'));
+  return '<tr><td>' + label + '</td><td class="val"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</td></tr>';
 }
 
 function renderFinTrendChart(annualPeriods, yearEndPrices) {
   var canvas = document.getElementById('fin-trend-chart');
   if (!canvas) return;
   var th = chartTheme();
+  if (canvas._chart) canvas._chart.destroy();
   var sorted = annualPeriods.slice().reverse();
   var labels = sorted.map(function(p) { return p.period || ''; });
   var receitas = sorted.map(function(p) { return ((p.metrics || {}).receita_liquida || 0) / 1e6; });
@@ -954,7 +1029,7 @@ function renderFinDemonstracoes(tab, ticker) {
 
   // Controls: statement type + subview + period toggle
   html += '<div class="fib-controls">';
-  html += '<label>Declaração: <select id="fin-statement" onchange="updateFinDemo(\'' + ticker + '\')">';
+  html += '<label>Declaração: <select id="fin-statement" onchange="updateFinDemo()">';
   html += '<option value="balanco"' + (state.statement === 'balanco' ? ' selected' : '') + '>Balanço</option>';
   html += '<option value="dre"' + (state.statement === 'dre' ? ' selected' : '') + '>DRE</option>';
   html += '<option value="dfc"' + (state.statement === 'dfc' ? ' selected' : '') + '>DFC</option>';
@@ -962,14 +1037,14 @@ function renderFinDemonstracoes(tab, ticker) {
   html += '</select></label>';
 
   if (state.statement === 'balanco') {
-    html += '<label>Visão: <select id="fin-subview" onchange="updateFinDemo(\'' + ticker + '\')">';
+    html += '<label>Visão: <select id="fin-subview" onchange="updateFinDemo()">';
     html += '<option value="completo"' + (state.subview === 'completo' ? ' selected' : '') + '>Completo (BPA+BPP)</option>';
     html += '<option value="bpa"' + (state.subview === 'bpa' ? ' selected' : '') + '>BPA — Ativo</option>';
     html += '<option value="bpp"' + (state.subview === 'bpp' ? ' selected' : '') + '>BPP — Passivo + PL</option>';
     html += '</select></label>';
   }
 
-  html += '<label>Período: <select id="fin-period" onchange="updateFinDemo(\'' + ticker + '\')">';
+  html += '<label>Período: <select id="fin-period" onchange="updateFinDemo()">';
   html += '<option value="annual"' + (state.period === 'annual' ? ' selected' : '') + '>Anual</option>';
   html += '<option value="quarterly"' + (state.period === 'quarterly' ? ' selected' : '') + '>Trimestral</option>';
   html += '</select></label>';
@@ -984,20 +1059,25 @@ function renderFinDemonstracoes(tab, ticker) {
     return;
   }
   var periods = state.period === 'annual' ? 10 : 20;
-  fetch('/api/webui/company/' + ticker + '/financials-statements?period=' + state.period + '&periods=' + periods + '&_t=' + Date.now())
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/financials-statements?period=' + state.period + '&periods=' + periods + '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
       tab._finData[state.period] = data;
       renderFinStatements(tab, ticker, data);
     })
     .catch(function(err) {
-      document.getElementById('fin-demo-content').innerHTML = '<div class="error">Erro: ' + err.message + '</div>';
+      document.getElementById('fin-demo-content').innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
     });
 }
 
-window.updateFinDemo = function(ticker) {
+// [v1.5] updateFinDemo reads the ticker from the panel's data-ticker
+// attribute — the old onchange="updateFinDemo('<ticker>')" interpolated the
+// ticker into an inline JS handler (B77; safe now that routes validate the
+// ticker, but the pattern is gone anyway).
+window.updateFinDemo = function() {
   var tab = document.getElementById('tab-fin-demonstracoes');
   if (!tab) return;
+  var ticker = tab.getAttribute('data-ticker') || '';
   tab._finState.statement = document.getElementById('fin-statement').value;
   var subSel = document.getElementById('fin-subview');
   if (subSel) tab._finState.subview = subSel.value;
@@ -1009,7 +1089,9 @@ function renderFinStatements(tab, ticker, data) {
   var content = document.getElementById('fin-demo-content');
   if (!content) return;
   var state = tab._finState;
-  if (data._error) { content.innerHTML = '<div class="error">Erro: ' + data._error + '</div>'; return; }
+  if (data._error) { content.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
+  // [v1.5] Kill the previous view's charts before re-render (leak fix).
+  destroyChartsIn(content);
 
   var labels = data.labels || [];
   var dates = data.dates || [];
@@ -1086,8 +1168,8 @@ function renderFinStatements(tab, ticker, data) {
       labels.forEach(function() { html += '<td class="sec-fill"></td>'; });
       html += '</tr>';
     }
-    html += '<tr><td class="frozen-col">' + (row.codigo || '') + '</td>';
-    html += '<td class="frozen-col2" title="' + String(row.label || '').replace(/"/g, '&quot;') + '">' + (row.label || '') + '</td>';
+    html += '<tr><td class="frozen-col">' + esc(row.codigo || '') + '</td>';
+    html += '<td class="frozen-col2" title="' + esc(row.label || '') + '">' + esc(row.label || '') + '</td>';
     (row.values || []).forEach(function(v) {
       var cls = 'val';
       if (v !== null && v !== undefined && v < 0) cls += ' neg';
@@ -1160,16 +1242,28 @@ function buildFinStmtChartDefs(viewKey, stmts) {
   function ser(code, keys, div) { return finSer(stmtRow(stmts, keys, code), div); }
 
   if (viewKey === 'completo') {
-    var comp = [
-      { label: 'Ativo Circulante', data: ser('1.01', ['BPA']), color: '#1e3a5f' },
-      { label: 'Ativo Não Circulante', data: ser('1.02', ['BPA']), color: '#60a5fa' },
-      { label: 'Passivo Circulante', data: ser('2.01', ['BPP']), color: '#991b1b' },
-      { label: 'Passivo Não Circulante', data: ser('2.02', ['BPP']), color: '#fca5a5' },
-      { label: 'Patrimônio Líquido', data: ser('2.03', ['BPP']), color: '#22c55e' }
-    ];
-    if (finHasData(comp.map(function(s) { return s.data; }))) {
-      defs.push({ title: 'Balanço Patrimonial — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: comp });
-      defs.push({ title: 'Balanço Patrimonial — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(comp) });
+    // [WebUI v1.5] Ativo and Passivo+PL are SEPARATE chart pairs. The old
+    // 5-series stack mixed BOTH balance sides (AC+ANC+PC+PNC+PL = 2× Ativo),
+    // so every % Composição segment rendered at HALF its true share and the
+    // absolute bars reached 2× company size.
+    var ac = ser('1.01', ['BPA']), anc = ser('1.02', ['BPA']);
+    var pc = ser('2.01', ['BPP']), pnc = ser('2.02', ['BPP']), plc = ser('2.03', ['BPP']);
+    if (finHasData([ac, anc])) {
+      var at = [
+        { label: 'Ativo Circulante', data: ac, color: '#1e3a5f' },
+        { label: 'Ativo Não Circulante', data: anc, color: '#60a5fa' }
+      ];
+      defs.push({ title: 'Ativo — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: at });
+      defs.push({ title: 'Ativo — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(at) });
+    }
+    if (finHasData([pc, pnc, plc])) {
+      var pa = [
+        { label: 'Passivo Circulante', data: pc, color: '#991b1b' },
+        { label: 'Passivo Não Circulante', data: pnc, color: '#fca5a5' },
+        { label: 'Patrimônio Líquido', data: plc, color: '#22c55e' }
+      ];
+      defs.push({ title: 'Passivo + PL — Absoluto', stacked: true, yTitle: 'R$ (mi)', unit: 'mi', series: pa });
+      defs.push({ title: 'Passivo + PL — % Composição', stacked: true, pctStacked: true, yTitle: '%', unit: 'pct', series: finPctStack(pa) });
     }
   } else if (viewKey === 'bpa') {
     var ac = ser('1.01', ['BPA']), anc = ser('1.02', ['BPA']);
@@ -1254,6 +1348,7 @@ function buildFinStmtChartDefs(viewKey, stmts) {
 
 function renderFinStmtChartDef(canvas, def, labels) {
   var th = chartTheme();
+  if (canvas._chart) { try { canvas._chart.destroy(); } catch (e) { /* noop */ } }
   // [WebUI v1.3 fix 4] Labels are OLDEST-FIRST (service) — table and charts
   // share the same left → right chronological order.
   var chartLabels = labels;
@@ -1307,29 +1402,27 @@ function renderFinStmtChartDef(canvas, def, labels) {
 // Rentabilidade (Retornos | Margens) | Liquidez e Alavancagem (Liquidez |
 // Endividamento) | Eficiência e Crescimento. (c) Todas as métricas:
 // all groups collapsed by default.
-// [v1.4 fix3] Múltiplos dashboard parity: the 5Y daily history charts
-// (flagged price_range_selector by the report builders) render as
-// full-width standalone cards with a Tudo/1A/6M/3M/1M range selector
-// (valChartRange slices the stashed full series client-side — no
-// refetch); dual-axis charts (y1) get their right axis; Per-share Values
-// table included in Preço.
 
 window.loadValSubtab = function(sub) {
   var panel = document.getElementById('tab-val-' + sub);
   if (!panel || panel._loaded) return;
-  panel._loaded = true;
   var ticker = panel.getAttribute('data-ticker');
   if (!ticker) return;
-  fetch('/api/webui/company/' + ticker + '/valuation-' + sub + '?_t=' + Date.now())
+  // [v1.5] _loaded is set only AFTER a successful render — the old code set
+  // it before the fetch, so a failed subtab could never be retried.
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/valuation-' + sub + '?_t=' + Date.now())
     .then(function(r) { return r.json(); })
-    .then(function(data) { renderValSubtab(sub, panel, data); })
+    .then(function(data) { panel._loaded = true; renderValSubtab(sub, panel, data); })
     .catch(function(err) {
-      panel.innerHTML = '<div class="error">Erro: ' + valEsc(err.message) + '</div>';
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
     });
 };
 
 function renderValSubtab(sub, panel, data) {
-  if (data._error) { panel.innerHTML = '<div class="error">Erro: ' + valEsc(data._error) + '</div>'; return; }
+  if (data._error) { panel.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>'; return; }
+  // [v1.5] Fresh chart-config stash per render — indices used to keep
+  // growing across re-renders of the same panel (stale configs leaked).
+  panel._valChartCfgs = {};
   if (sub === 'fundamentals' || sub === 'multiples') { renderValGrouped(panel, data); return; }
   if (sub === 'all') { renderValAll(panel, data); return; }
   // overview / intrinsic → optional KPIs + generic sections
@@ -1372,6 +1465,7 @@ window.valSubNav = function(btn, targetId) {
 function renderValGrouped(panel, data) {
   var groups = data.groups || [];
   if (!groups.length) { panel.innerHTML = '<div class="loading">Sem dados</div>'; return; }
+  panel._valChartCfgs = {};
   var html = '<div class="val-subnav">';
   groups.forEach(function(g, gi) {
     html += '<button class="subtab-btn' + (gi === 0 ? ' active' : '') +
@@ -1405,12 +1499,8 @@ function renderValGrouped(panel, data) {
   mountValCharts(panel);
 }
 
-// HTML-escape for server-provided strings (labels, tooltips, descriptions).
-function valEsc(s) {
-  return String(s === null || s === undefined ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
+// esc()/valEsc live in the helpers section at the top of this file
+// (v1.4 defined valEsc here; v1.5 renamed it esc and aliased valEsc).
 
 // [v1.4 fix2] Signed-value coloring — financials parity. Every negative
 // number renders red; % values render green (positive) / red (negative) /
@@ -1450,78 +1540,32 @@ function valKpisHtml(kpis) {
 // Sections → HTML. Consecutive chart sections are grouped into a responsive
 // grid (fin-charts-grid); chart configs are stashed on panel._valChartCfgs
 // (index → config) and mounted by mountValCharts after innerHTML is set.
-// [v1.4 fix3] History charts (price_range_selector flag from the report
-// builders — 5Y daily step-lines) render STANDALONE, full-width: ~1250
-// points need the space, and they carry the dashboard's range selector.
 function valSectionsHtml(sections, panel) {
   var html = '';
   var chartBuf = [];
   var cfgs = panel._valChartCfgs = panel._valChartCfgs || {};
-
-  // One chart card — title + description + optional range-selector button
-  // row + canvas. Used both inside the grid (flushCharts) and standalone.
-  function valChartCardHtml(sec) {
-    var idx = Object.keys(cfgs).length;
-    cfgs[idx] = sec.chart_data;
-    var h = '<div class="chart-section fin-chart-card"><div class="chart-header">' +
-            '<div class="reg-title">' + valEsc(sec.title || '') + '</div></div>';
-    if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
-    if (sec.price_range_selector) {
-      h += '<div class="val-range-bar">';
-      ['Tudo','1A','6M','3M','1M'].forEach(function(r, i) {
-        h += '<button class="range-btn' + (i === 0 ? ' active' : '') +
-             '" onclick="valChartRange(this,\'' + r + '\')">' + r + '</button>';
-      });
-      h += '</div>';
-    }
-    h += '<div class="chart-container"><canvas data-val-chart="' + idx + '"></canvas></div></div>';
-    return h;
-  }
-
   function flushCharts() {
     if (!chartBuf.length) return '';
     var h = '<div class="fin-charts-grid val-charts">';
-    chartBuf.forEach(function(sec) { h += valChartCardHtml(sec); });
+    chartBuf.forEach(function(sec) {
+      var idx = Object.keys(cfgs).length;
+      cfgs[idx] = sec.chart_data;
+      h += '<div class="chart-section fin-chart-card"><div class="chart-header">' +
+           '<div class="reg-title">' + valEsc(sec.title || '') + '</div></div>';
+      if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
+      h += '<div class="chart-container"><canvas data-val-chart="' + idx + '"></canvas></div></div>';
+    });
     chartBuf = [];
     return h + '</div>';
   }
   (sections || []).forEach(function(sec) {
-    if (sec && sec.type === 'chart' && !sec.price_range_selector) { chartBuf.push(sec); return; }
+    if (sec && sec.type === 'chart') { chartBuf.push(sec); return; }
     html += flushCharts();
-    if (sec && sec.type === 'chart') {
-      html += '<div class="val-chart-wide">' + valChartCardHtml(sec) + '</div>';
-    } else {
-      html += valSectionHtml(sec);
-    }
+    html += valSectionHtml(sec);
   });
   html += flushCharts();
   return html;
 }
-
-// [v1.4 fix3] Range selector on valuation history charts — mirrors the
-// static dashboard's Tudo/1A/6M/3M/1M buttons. Slices the full series
-// stashed on the canvas (cv._valFull, set in renderValChart) by trading-day
-// count (same map as the Volatilidade tab) and updates the live Chart.js
-// instance in place — instant, no refetch. Scoped via btn.closest() so it
-// works for any chart card, even across panels with colliding indices.
-window.valChartRange = function(btn, range) {
-  var card = btn.closest('.chart-section');
-  if (!card) return;
-  var cv = card.querySelector('canvas');
-  var ch = cv && cv._chart, full = cv && cv._valFull;
-  if (!ch || !full) return;
-  Array.prototype.forEach.call(btn.parentNode.querySelectorAll('.range-btn'), function(b) {
-    b.classList.toggle('active', b === btn);
-  });
-  var n = { '1M': 21, '3M': 63, '6M': 126, '1A': 252, '5A': 1260, '10A': 2520, 'Tudo': 0 }[range] || 0;
-  var labels = full.labels || [];
-  if (!n || n >= labels.length) n = labels.length;
-  ch.data.labels = labels.slice(-n);
-  (ch.data.datasets || []).forEach(function(ds, i) {
-    if (full.datasets[i]) ds.data = (full.datasets[i].data || []).slice(-n);
-  });
-  ch.update();
-};
 
 // One generic section renderer — handles every section type the static
 // dashboard's report builders emit (table / two_column / ratio_grid /
@@ -1658,6 +1702,10 @@ function renderValChart(canvas, cd) {
   if (!cd || !cd.data) return;
   var th = chartTheme();
   var type = cd.type || 'bar';
+  // [v1.5] Honor the server's y.beginAtZero (the liquidity/leverage charts
+  // ask for it; the client used to discard ALL server options, so bars
+  // floated above the baseline). Other options stay client-side (theme).
+  var srvY = (((cd.options || {}).scales || {}).y) || {};
   var datasets = (cd.data.datasets || []).map(function(ds) {
     var d = {};
     for (var k in ds) d[k] = ds[k];
@@ -1668,14 +1716,6 @@ function renderValChart(canvas, cd) {
     }
     return d;
   });
-  // [v1.4 fix3] Stash the full series for the range selector
-  // (valChartRange) — copied so chart.data mutations never touch it.
-  canvas._valFull = {
-    labels: (cd.data.labels || []).slice(),
-    datasets: (cd.data.datasets || []).map(function(ds) {
-      return { data: (ds.data || []).slice() };
-    }),
-  };
   var options;
   if (type === 'radar') {
     options = {
@@ -1689,26 +1729,18 @@ function renderValChart(canvas, cd) {
       } }
     };
   } else {
+    var yScale = { grid: { color: th.grid }, ticks: { color: th.text } };
+    if (srvY.beginAtZero) yScale.beginAtZero = true;
+    if (srvY.title && srvY.title.text) yScale.title = { display: true, text: srvY.title.text };
     options = {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
       scales: {
         x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } },
-        y: { grid: { color: th.grid }, ticks: { color: th.text } }
+        y: yScale
       }
     };
-    // [v1.4 fix3] Dual-axis history charts (Múltiplos de Preço: P/L on the
-    // left axis, PSR/P/RB/P/CG/P/DB on the right) — add y1 when a dataset
-    // references it, or Chart.js fails to resolve the scale.
-    var hasY1 = datasets.some(function(d) { return d.yAxisID === 'y1'; });
-    if (hasY1) {
-      options.scales.y1 = {
-        position: 'right',
-        grid: { drawOnChartArea: false },
-        ticks: { color: th.text }
-      };
-    }
   }
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: type,
@@ -1718,33 +1750,233 @@ function renderValChart(canvas, cd) {
 }
 
 // ── Auto-init after HTMX settle ──
-function initApp() {
-  if (typeof htmx !== 'undefined') htmx.config.includeScriptTags = true;
-  document.body.addEventListener('htmx:responseError', function(evt) { console.error('HTMX error:', evt.detail); });
-  document.body.addEventListener('htmx:afterSettle', function(evt) {
-    var canvas = document.getElementById('price-chart');
-    if (canvas && !canvas._initialized) { canvas._initialized = true; var t = canvas.getAttribute('data-ticker'); var r = canvas.getAttribute('data-range') || '1A'; if (t) loadCandlestick(t, r); }
-    var precoTab = document.getElementById('tab-preco');
-    if (precoTab && !precoTab._initialized) { precoTab._initialized = true; var t = precoTab.getAttribute('data-ticker'); if (t) initPrecoTab(t); }
-    var indTab = document.getElementById('tab-indicadores');
-    if (indTab && !indTab._initialized) { indTab._initialized = true; var t = indTab.getAttribute('data-ticker'); if (t) initIndicadoresTab(t); }
-    var volTab = document.getElementById('tab-volatilidade');
-    var volumeTab = document.getElementById('tab-volume');
-    var fibTab = document.getElementById('tab-fibonacci');
-    if (fibTab && !fibTab._initialized) { fibTab._initialized = true; var t = fibTab.getAttribute('data-ticker'); if (t) initFibonacciTab(t); }
-    var finVG = document.getElementById('tab-fin-visao-geral');
-    if (finVG && !finVG._initialized) { finVG._initialized = true; var t = finVG.getAttribute('data-ticker'); if (t) initFinVisaoGeral(t); }
-    var finDemo = document.getElementById('tab-fin-demonstracoes');
-    if (finDemo && !finDemo._initialized) { finDemo._initialized = true; var t = finDemo.getAttribute('data-ticker'); if (t) initFinDemonstracoes(t); }
-    // [WebUI v1.4] Valuation subtabs — Visão Geral loads on tab open; the
-    // others load lazily via the subtab buttons' onclick (loadValSubtab).
-    var valOverview = document.getElementById('tab-val-overview');
-    if (valOverview && !valOverview._initialized) { valOverview._initialized = true; loadValSubtab('overview'); }
-    if (volumeTab && !volumeTab._initialized) { volumeTab._initialized = true; var t = volumeTab.getAttribute('data-ticker'); if (t) initVolumeTab(t); }
-    if (volTab && !volTab._initialized) { volTab._initialized = true; var t = volTab.getAttribute('data-ticker'); if (t) initVolatilidadeTab(t); }
+// ── Lazy subtab loaders [WebUI v1.5] ─────────────────────────────────────
+// Only the ACTIVE subtab fetches on tab open; the others fetch on first
+// click (the old afterSettle hook fired ALL fetches eagerly — 5 parallel
+// 10-year OHLCV computations, 4 of them for panels nobody opened).
+window.loadPrecoSubtab = function(sub) {
+  var el = document.getElementById('tab-' + sub);
+  if (!el || el._loaded) return;
+  var t = el.getAttribute('data-ticker');
+  if (!t) return;
+  el._loaded = true;
+  var fns = { cotacao: initPrecoTab, indicadores: initIndicadoresTab,
+              volatilidade: initVolatilidadeTab, volume: initVolumeTab,
+              fibonacci: initFibonacciTab };
+  if (fns[sub]) fns[sub](t);
+};
+
+window.loadFinSubtab = function(sub) {
+  var el = document.getElementById(sub === 'visao_geral' ? 'tab-fin-visao-geral' : 'tab-fin-demonstracoes');
+  if (!el || el._loaded) return;
+  var t = el.getAttribute('data-ticker');
+  if (!t) return;
+  el._loaded = true;
+  if (sub === 'visao_geral') initFinVisaoGeral(t); else initFinDemonstracoes(t);
+};
+
+// ── Sync page: native EventSource live log [WebUI v1.5] ─────────────────
+// The old markup used hx-ext="sse" — but the HTMX SSE extension was never
+// vendored, so the live log never received a single event. Native
+// EventSource needs no extension and auto-reconnects.
+function initSyncPage() {
+  var log = document.getElementById('sync-log');
+  if (!log || log._es) return;
+  var url = log.getAttribute('data-sync-stream');
+  if (!url || typeof EventSource === 'undefined') return;
+  log._es = true;
+  log.innerHTML = '';
+  var es = new EventSource(url);
+  es.onmessage = function(evt) {
+    try { appendSyncLog(log, JSON.parse(evt.data)); } catch (e) { /* ignore */ }
+  };
+  es.onerror = function() { /* EventSource auto-reconnects (retry: 3000) */ };
+}
+
+function appendSyncLog(log, d) {
+  var placeholder = log.querySelector('.loading');
+  if (placeholder) placeholder.remove();
+  var ev = d.event || 'sync';
+  var msgs = { 'sync.started': 'sincronização iniciada',
+               'sync.completed': 'sincronização concluída',
+               'sync.failed': 'sincronização FALHOU' };
+  var line = document.createElement('div');
+  line.className = 'sync-line sync-ev-' + ev.replace('.', '-');
+  var ts = new Date().toLocaleTimeString('pt-BR');
+  // [v1.5 fix1] Events may carry a ready-made message (bulk per-ticker
+  // progress: "PETR4: ok (12/380)") — prefer it over the generic labels.
+  if (d.message) {
+    line.textContent = '[' + ts + '] ' + (d.source ? d.source + ': ' : '') + d.message;
+  } else {
+    line.textContent = '[' + ts + '] ' + (d.source || d.job_id || '') +
+                       ': ' + (msgs[ev] || ev) + (d.status ? ' (' + d.status + ')' : '');
+  }
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+  // Refresh the freshness table right after a job finishes.
+  if ((ev === 'sync.completed' || ev === 'sync.failed') && typeof htmx !== 'undefined') {
+    var st = document.getElementById('sync-status');
+    if (st) htmx.ajax('GET', '/api/webui/sync/status', '#sync-status');
+  }
+}
+
+// ── Sync buttons: delegated POST (partial renders them on both the Sync
+// page and the Dashboard ribbon) ─────────────────────────────────────────
+function initSyncButtons() {
+  document.body.addEventListener('click', function(e) {
+    // [v1.5 fix1] "Sincronizar tudo" — one POST, stale sources only.
+    var allBtn = e.target && e.target.closest ? e.target.closest('.sync-all-btn') : null;
+    if (allBtn) {
+      if (allBtn.disabled) return;
+      allBtn.disabled = true;
+      var origAll = allBtn.textContent;
+      allBtn.textContent = 'Sincronizando…';
+      fetch('/api/webui/sync/all', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (res && res._error) { allBtn.textContent = 'Erro'; return; }
+          var n = res && res.started ? res.started.length : 0;
+          allBtn.textContent = n > 0
+            ? 'Iniciado (' + n + ' fonte' + (n > 1 ? 's' : '') + ')'
+            : 'Tudo atualizado';
+          setTimeout(function() { try { allBtn.disabled = false; allBtn.textContent = origAll; } catch (err) { /* noop */ } }, 30000);
+        })
+        .catch(function() { allBtn.disabled = false; allBtn.textContent = origAll; });
+      return;
+    }
+    var btn = e.target && e.target.closest ? e.target.closest('.sync-btn') : null;
+    if (!btn) return;
+    var source = btn.getAttribute('data-source');
+    if (!source || btn.disabled) return;
+    btn.disabled = true;
+    var original = btn.textContent;
+    btn.textContent = 'Sincronizando…';
+    fetch('/api/webui/sync/' + encodeURIComponent(source), { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(job) {
+        if (job && job._error) { btn.textContent = 'Erro'; return; }
+        btn.textContent = job && job.already_running ? 'Em andamento' : 'Iniciado';
+        // The 30s HTMX refresh re-renders the table (fresh buttons); this
+        // timeout is just a safety net if the page sits idle.
+        setTimeout(function() { try { btn.disabled = false; btn.textContent = original; } catch (err) { /* noop */ } }, 30000);
+      })
+      .catch(function() { btn.disabled = false; btn.textContent = original; });
   });
+}
+
+// ── Company page bootstrap [WebUI v1.5] ─────────────────────────────────
+// Replaces the old inline <script> in company.html that interpolated the
+// ticker into a JS string (and needed htmx.config.includeScriptTags=true
+// to even run — that flag also disabled HTMX's script sandbox, so it's
+// gone). #tab-content carries data-ticker + data-active-tab now.
+function initCompanyPage() {
+  var tc = document.getElementById('tab-content');
+  if (!tc || tc._booted) return;
+  var ticker = tc.getAttribute('data-ticker');
+  if (!ticker) return;
+  tc._booted = true;
+  var tab = tc.getAttribute('data-active-tab') || 'visao_geral';
+  if (typeof htmx !== 'undefined') {
+    htmx.ajax('GET',
+      '/api/webui/company/' + encodeURIComponent(ticker) + '/tab/' + encodeURIComponent(tab),
+      '#tab-content');
+  }
+}
+
+// ── Candlestick range bar: one delegated listener ────────────────────────
+function initPriceRangeBar() {
+  document.body.addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest ? e.target.closest('#price-range-bar .range-btn') : null;
+    if (!btn) return;
+    var bar = document.getElementById('price-range-bar');
+    if (!bar) return;
+    var ticker = bar.getAttribute('data-ticker');
+    var range = btn.getAttribute('data-range');
+    if (ticker && range) loadCandlestick(ticker, range);
+  });
+}
+
+// ── Hover/focus prefetch for lazy subtabs [WebUI v1.5 fix1] ───────────────
+// Subtab buttons carry data-lazy="<family>:<sub>" (preco/fin/val). Pointer
+// intent (mouseover) or keyboard focus starts the fetch ~300ms before the
+// click lands — the lazy model keeps its cold-start savings, the user
+// stops seeing a "Carregando…" flash on every first click.
+function prefetchSubtab(e) {
+  var btn = e.target && e.target.closest ? e.target.closest('[data-lazy]') : null;
+  if (!btn || btn._prefetched) return;
+  btn._prefetched = true;
+  var parts = (btn.getAttribute('data-lazy') || '').split(':');
+  var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
+              val: window.loadValSubtab };
+  var fn = fns[parts[0]];
+  if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
+}
+
+// ── Auto-init after HTMX settle ──
+function initApp() {
+  // [v1.5] htmx.config.includeScriptTags = true is GONE — it disabled
+  // HTMX's script sandbox (injected <script> tags in swapped content ran;
+  // combined with the old reflected-XSS paths that was zero-click XSS).
+  // The company page now bootstraps from data attributes (initCompanyPage).
+
+  // Chart lifecycle: destroy Chart.js instances in every element HTMX is
+  // about to remove (tab switches used to leak them — resize observers +
+  // rAF loops kept running on detached canvases).
+  document.body.addEventListener('htmx:beforeCleanupElement', function(evt) {
+    destroyChartsIn(evt.target);
+  });
+
+  // Failed HTMX swaps now show a message in the target (the old handler
+  // only console.error'd — the identity card spun "Carregando…" forever
+  // when /header 500'd).
+  document.body.addEventListener('htmx:responseError', function(evt) {
+    console.error('HTMX error:', evt.detail);
+    var tgt = evt.detail && evt.detail.target;
+    if (tgt && tgt.innerHTML !== undefined) {
+      var code = evt.detail.xhr ? evt.detail.xhr.status : 0;
+      tgt.innerHTML = '<div class="error">Falha ao carregar' + (code ? ' (HTTP ' + code + ')' : '') + '.</div>';
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSettle', function() {
+    // Candlestick (Visão Geral tab)
+    var canvas = document.getElementById('price-chart');
+    if (canvas && !canvas._initialized) {
+      canvas._initialized = true;
+      var t = canvas.getAttribute('data-ticker');
+      var r = canvas.getAttribute('data-range') || '1A';
+      if (t) loadCandlestick(t, r);
+    }
+    // First (active) subtab of each tab — the rest load on click.
+    loadPrecoSubtab('cotacao');
+    loadFinSubtab('visao_geral');
+    loadValSubtab('overview');
+    // Sync page (full page load or HTMX navigation)
+    initSyncPage();
+  });
+
+  initPriceRangeBar();
+  initSyncButtons();
+  initCompanyPage();
+  initSyncPage();
+
+  // [v1.5 fix1] Hover/focus prefetch for lazy subtabs — the fetch starts
+  // when the pointer heads toward the button (~300ms before the click),
+  // so first-click latency shrinks without v1.4's eager 5-fetch burst.
+  // Buttons carry data-lazy="<family>:<sub>"; the loaders are idempotent
+  // (_loaded guard on the pane), so a hover that never turns into a click
+  // costs one request that lands in the pane early.
+  document.body.addEventListener('mouseover', prefetchSubtab);
+  document.body.addEventListener('focusin', prefetchSubtab);
+
+  // Full page load with the chart already in the DOM (no HTMX settle).
   var canvas = document.getElementById('price-chart');
-  if (canvas && !canvas._initialized) { canvas._initialized = true; var t = canvas.getAttribute('data-ticker'); var r = canvas.getAttribute('data-range') || '1A'; if (t) loadCandlestick(t, r); }
+  if (canvas && !canvas._initialized) {
+    canvas._initialized = true;
+    var t = canvas.getAttribute('data-ticker');
+    var r = canvas.getAttribute('data-range') || '1A';
+    if (t) loadCandlestick(t, r);
+  }
 }
 
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', initApp); } else { initApp(); }

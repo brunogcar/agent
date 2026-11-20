@@ -192,6 +192,14 @@ a:hover { text-decoration: underline; }
   color: var(--color-text); text-decoration: none; font-size: 13px;
 }
 .dropdown a:hover { background: var(--color-brand-dim); }
+/* [WebUI v1.5] switcher items are BUTTONS now (theme/lang) — same look. */
+.dropdown button.dropdown-item {
+  display: block; width: 100%; text-align: left;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text); font-size: 13px;
+  background: transparent; border: none; cursor: pointer;
+}
+.dropdown button.dropdown-item:hover { background: var(--color-brand-dim); }
 .theme-switcher, .lang-switcher { position: relative; }
 
 /* ── Content area ── */
@@ -534,6 +542,39 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-md); padding: var(--space-3); height: 200px;
   overflow-y: auto; font-family: var(--font-mono); font-size: 12px;
 }
+/* [WebUI v1.5] Freshness table + badges + Sync-now buttons + SSE log lines */
+.sync-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sync-table th {
+  text-align: left; padding: var(--space-2) var(--space-3);
+  color: var(--color-text-sec); font-weight: 600; font-size: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.sync-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); }
+.sync-table tr:last-child td { border-bottom: none; }
+.sync-source { font-family: var(--font-mono); font-weight: 600; }
+.sync-ts { color: var(--color-text-sec); }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-fresh { background: rgba(34,197,94,0.15); color: #22c55e; }
+.badge-stale { background: rgba(239,68,68,0.15); color: #ef4444; }
+.sync-btn {
+  padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: var(--color-bg-card);
+  color: var(--color-text); font-size: 12px; cursor: pointer;
+}
+.sync-btn:hover:not(:disabled) { border-color: var(--color-brand); }
+.sync-btn:disabled { opacity: 0.6; cursor: default; }
+/* [v1.5 fix1] "Sincronizar tudo" — slightly larger than the per-row
+   buttons, sits above the freshness table (outside the HTMX-swapped div). */
+.sync-actions { margin-bottom: var(--space-4); }
+.sync-all-btn { padding: 6px 14px; font-size: 13px; font-weight: 600; }
+.sync-line { padding: 2px 0; color: var(--color-text-sec); }
+.sync-line.sync-ev-sync-completed { color: #22c55e; }
+.sync-line.sync-ev-sync-failed { color: #ef4444; }
+.sync-line.sync-ev-sync-progress { color: var(--color-text-sec); opacity: 0.85; }
+#price-chart-msg .error { padding: var(--space-2) 0; }
 .placeholder { color: var(--color-text-sec); font-style: italic; padding: var(--space-5); }
 .error { color: var(--color-danger); padding: var(--space-3); }
 
@@ -608,14 +649,6 @@ td[title], .kpi-card[title] { cursor: help; }
    as the flat Visão Geral path). */
 .val-subnav2 { border-bottom-style: dashed; }
 
-/* [v1.4 fix3] Múltiplos history charts — dashboard-style range selector
-   (Tudo/1A/6M/3M/1M, reuses .range-btn) + full-width standalone card for
-   the 5Y daily step-line charts (~1250 points need the width; the
-   comparativo bar charts keep the 2-col grid). */
-.val-range-bar { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-3); }
-.val-chart-wide { margin-bottom: var(--space-4); }
-.val-chart-wide .chart-container { height: 340px; }
-
 /* Todas as métricas — collapsible category groups */
 .val-cat {
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
@@ -630,3 +663,7 @@ td[title], .kpi-card[title] { cursor: help; }
 .val-cat .val-table { margin: 0; }
 .val-cat .val-table tr:last-child td { border-bottom: none; }
 .val-count { color: var(--color-text-sec); font-weight: 400; font-size: 11px; }
+
+/* [WebUI v1.5] Dashboard ribbon: cap the freshness table height (21 sources
+   would stretch the dashboard) — scrolls instead. */
+.sync-ribbon { max-height: 420px; overflow-y: auto; }

@@ -4,6 +4,16 @@
   - Cache-busting query strings on all static URLs (prevents browser caching stale JS/CSS)
   - Favicon link
   - FOUC prevention
+[WebUI v1.5] HARDENING:
+  - ?v=38 (static asset version bump)
+  - charts.js script tag REMOVED (dead file — WebUICharts was never called)
+  - FOUC script reads ONLY the server-rendered cookie value (the old
+    localStorage read was never written anywhere — a stale value could
+    override the selected theme; cookie is the single source of truth)
+  - Theme + language switchers are BUTTONS now (the old <a href="?theme=">
+    navigated with a query param the server ignores — dead URL state)
+  - Sidebar collapse persists in localStorage (was reset on every page load)
+  - Search input has an aria-label
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -12,11 +22,11 @@
   <title>{% block title %}Brazilian Financial Data{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 
-  {# ── FOUC prevention: set theme before CSS loads ── #}
+  {# ── FOUC prevention: cookie is the single source of truth (server renders
+     data-theme from it); nothing writes localStorage anymore ── #}
   <script>
     (function() {
-      var saved = localStorage.getItem('webui_theme');
-      if (!saved) saved = document.documentElement.getAttribute('data-theme') || 'dark';
+      var saved = document.documentElement.getAttribute('data-theme') || 'dark';
       document.documentElement.setAttribute('data-theme', saved);
     })();
   </script>
@@ -25,19 +35,21 @@
   <style>{{ theme_css | safe }}</style>
 
   {# ── Vendor JS (local, no CDN) — with cache-busting ── #}
-  <script src="/static/vendor/htmx.min.js?v=36"></script>
-  <script defer src="/static/vendor/alpine.min.js?v=36"></script>
-  <script src="/static/vendor/chart.umd.min.js?v=36"></script>
-  <script src="/static/vendor/hammer.min.js?v=36"></script>
-  <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=36"></script>
+  <script src="/static/vendor/htmx.min.js?v=38"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=38"></script>
+  <script src="/static/vendor/chart.umd.min.js?v=38"></script>
+  <script src="/static/vendor/hammer.min.js?v=38"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=38"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=36">
+  <link rel="stylesheet" href="/static/css/app.css?v=38">
 </head>
 <body>
   <div class="app-shell">
     {# ── Sidebar ── #}
-    <aside class="sidebar" x-data="{ collapsed: false }" :class="{ 'collapsed': collapsed }">
+    <aside class="sidebar"
+           x-data="{ collapsed: localStorage.getItem('webui_sidebar') === '1' }"
+           :class="{ 'collapsed': collapsed }">
       <div class="sidebar-header">
         <span class="logo">📊</span>
         <span class="title" x-show="!collapsed">WebUI</span>
@@ -61,7 +73,9 @@
         </a>
       </nav>
       <div class="sidebar-footer">
-        <button class="collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? 'Expandir' : 'Recolher'">
+        <button class="collapse-btn" aria-label="Recolher ou expandir menu lateral"
+                @click="collapsed = !collapsed; localStorage.setItem('webui_sidebar', collapsed ? '1' : '0')"
+                :title="collapsed ? 'Expandir' : 'Recolher'">
           <span x-text="collapsed ? '▶' : '◀'"></span>
         </button>
       </div>
@@ -73,6 +87,7 @@
       <header class="topbar">
         <div class="search-box">
           <input type="text"
+                 aria-label="Buscar ticker"
                  placeholder="{{ t('company.search_placeholder') }}"
                  hx-get="/api/webui/search"
                  hx-trigger="keyup changed delay:300ms"
@@ -82,24 +97,28 @@
           <div id="search-results" class="search-results"></div>
         </div>
         <div class="topbar-actions">
-          {# Theme toggle #}
+          {# Theme toggle — button sets the cookie + reloads (charts sample
+             colors at render time, so a live switch would leave them with
+             the old palette). [v1.5] was <a href="?theme="> — dead param. #}
           <div class="theme-switcher" x-data="{ open: false }">
-            <button @click="open = !open" class="icon-btn">🎨</button>
+            <button @click="open = !open" class="icon-btn" aria-label="Trocar tema">🎨</button>
             <div x-show="open" class="dropdown" @click.outside="open = false">
               {% for th in themes %}
-              <a href="?theme={{ th.id }}"
-                 onclick="document.cookie='webui_theme={{ th.id }};path=/;max-age=31536000'; document.documentElement.setAttribute('data-theme','{{ th.id }}'); this.closest('.dropdown').previousElementSibling.click();">
+              <button class="dropdown-item"
+                      onclick="document.cookie='webui_theme={{ th.id }};path=/;max-age=31536000'; location.reload();">
                 {{ th.name }}
-              </a>
+              </button>
               {% endfor %}
             </div>
           </div>
-          {# Language switcher #}
+          {# Language switcher — same button pattern (no href navigation) #}
           <div class="lang-switcher" x-data="{ open: false }">
-            <button @click="open = !open" class="icon-btn">🌐 {{ locale }}</button>
+            <button @click="open = !open" class="icon-btn" aria-label="Trocar idioma">🌐 {{ locale }}</button>
             <div x-show="open" class="dropdown" @click.outside="open = false">
-              <a href="?lang=pt-BR" onclick="document.cookie='webui_locale=pt-BR;path=/;max-age=31536000'; location.reload();">Português (BR)</a>
-              <a href="?lang=en-US" onclick="document.cookie='webui_locale=en-US;path=/;max-age=31536000'; location.reload();">English (US)</a>
+              <button class="dropdown-item"
+                      onclick="document.cookie='webui_locale=pt-BR;path=/;max-age=31536000'; location.reload();">Português (BR)</button>
+              <button class="dropdown-item"
+                      onclick="document.cookie='webui_locale=en-US;path=/;max-age=31536000'; location.reload();">English (US)</button>
             </div>
           </div>
         </div>
@@ -113,7 +132,6 @@
   </div>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=36"></script>
-  <script src="/static/js/charts.js?v=36"></script>
+  <script src="/static/js/app.js?v=38"></script>
 </body>
 </html>

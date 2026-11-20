@@ -12,8 +12,10 @@
   </div>
 
   {# ── Company tabs (second-tier nav) ── #}
-  {# [WebUI v1.3 fix 2] Tab order: Visão Geral — Preço — Financeiro — Valuation
-     — Proventos — Histórico (Financeiro moved before Valuation). #}
+  {# [WebUI v1.3 fix 2] Tab order: Visão Geral — Preço — Financeiro — Valuation.
+     [WebUI v1.5] Dividends + Histórico buttons HIDDEN until their partials
+     exist (they rendered "Tab '…' not implemented yet" — the most visible
+     half-finished feature). Re-enable when the tabs ship. #}
   <nav class="company-tabs">
     <button class="tab-btn" :class="{ 'active': tab === 'visao_geral' }"
             @click="tab='visao_geral'"
@@ -43,6 +45,7 @@
             hx-swap="innerHTML">
       {{ t("company.valuation") }}
     </button>
+    {# Re-enable when implemented:
     <button class="tab-btn" :class="{ 'active': tab === 'dividends' }"
             @click="tab='dividends'"
             hx-get="/api/webui/company/{{ ticker }}/tab/dividends"
@@ -57,20 +60,15 @@
             hx-swap="innerHTML">
       {{ t("company.historical") }}
     </button>
+    #}
   </nav>
 
   {# ── Tab content (HTMX-swapped) ── #}
-  <div id="tab-content" class="tab-content">
+  {# [WebUI v1.5] data-ticker/data-tab drive the initial load — the old
+     inline <script> interpolated the ticker into a JS string (XSS surface,
+     and it required htmx.config.includeScriptTags=true to even run). #}
+  <div id="tab-content" class="tab-content" data-ticker="{{ ticker }}" data-active-tab="{{ active_tab }}">
     <div class="loading">{{ t("common.loading") }}</div>
   </div>
 </div>
-
-<script>
-  // Load the active tab on page load
-  document.addEventListener('DOMContentLoaded', function() {
-    var tab = '{{ active_tab }}' || 'visao_geral';
-    var ticker = '{{ ticker }}';
-    htmx.ajax('GET', '/api/webui/company/' + ticker + '/tab/' + tab, '#tab-content');
-  });
-</script>
 {% endblock %}

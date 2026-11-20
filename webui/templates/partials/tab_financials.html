@@ -10,11 +10,15 @@
   section headers, frozen Código+Descrição (fixed-layout colgroup — Código
   84px in both period modes) and statement-specific charts per the
   financials dashboard reference
+
+[WebUI v1.5 fix1] data-lazy="fin:<sub>" on the subtab buttons enables
+hover/focus prefetch (app.js) — the fetch starts when the pointer
+heads toward the button instead of on click.
 #}
 <div class="tab-financials" x-data="{ subtab: 'visao_geral' }">
   <nav class="subtab-nav">
-    <button class="subtab-btn" :class="{ 'active': subtab === 'visao_geral' }" @click="subtab='visao_geral'">Visão Geral</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'demonstracoes' }" @click="subtab='demonstracoes'">Demonstrações</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'visao_geral' }" @click="subtab='visao_geral'" onclick="loadFinSubtab('visao_geral')" data-lazy="fin:visao_geral">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'demonstracoes' }" @click="subtab='demonstracoes'" onclick="loadFinSubtab('demonstracoes')" data-lazy="fin:demonstracoes">Demonstrações</button>
   </nav>
 
   {# ── Visão Geral subtab ── #}

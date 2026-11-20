@@ -1,19 +1,28 @@
 {# webui/templates/partials/tab_preco.html — Preço tab with subtabs.
 
 [WebUI v1.2] Subtabs: Cotação + Indicadores + Volatilidade.
+[WebUI v1.5] Subtabs are LAZY now: only the active subtab fetches on tab
+open; the others fetch on first click via loadPrecoSubtab (the old
+afterSettle hook fired ALL five fetches eagerly — 5 parallel 10-year
+OHLCV computations, 4 of them for panels the user never opened).
+[WebUI v1.5 fix1] Cotação pane id RENAMED tab-preco → tab-cotacao: the
+lazy loader looks up getElementById('tab-' + sub) and the old id made
+the DEFAULT subtab (the only one that never gets a click) spin on
+"Carregando…" forever. data-lazy="preco:<sub>" enables hover prefetch
+(app.js) so first clicks feel instant without v1.4's eager burst.
 #}
 <div class="tab-preco" x-data="{ subtab: 'cotacao' }">
   {# ── Subtab nav ── #}
   <nav class="subtab-nav">
-    <button class="subtab-btn" :class="{ 'active': subtab === 'cotacao' }" @click="subtab='cotacao'">Cotação</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'indicadores' }" @click="subtab='indicadores'">Indicadores</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'volatilidade' }" @click="subtab='volatilidade'">Volatilidade</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'volume' }" @click="subtab='volume'">Volume</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'fibonacci' }" @click="subtab='fibonacci'">Fibonacci</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'cotacao' }" @click="subtab='cotacao'" onclick="loadPrecoSubtab('cotacao')" data-lazy="preco:cotacao">Cotação</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'indicadores' }" @click="subtab='indicadores'" onclick="loadPrecoSubtab('indicadores')" data-lazy="preco:indicadores">Indicadores</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'volatilidade' }" @click="subtab='volatilidade'" onclick="loadPrecoSubtab('volatilidade')" data-lazy="preco:volatilidade">Volatilidade</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'volume' }" @click="subtab='volume'" onclick="loadPrecoSubtab('volume')" data-lazy="preco:volume">Volume</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'fibonacci' }" @click="subtab='fibonacci'" onclick="loadPrecoSubtab('fibonacci')" data-lazy="preco:fibonacci">Fibonacci</button>
   </nav>
 
-  {# ── Cotação subtab ── #}
-  <div x-show="subtab === 'cotacao'" id="tab-preco" data-ticker="{{ ticker }}">
+  {# ── Cotação subtab (id follows the tab-<sub> convention now) ── #}
+  <div x-show="subtab === 'cotacao'" id="tab-cotacao" data-ticker="{{ ticker }}">
     <div class="loading">{{ t("common.loading") }}</div>
   </div>
 

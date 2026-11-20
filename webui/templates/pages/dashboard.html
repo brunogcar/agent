@@ -5,7 +5,8 @@
   <h1>{{ t("nav.dashboard") }}</h1>
   <p class="subtitle">Brazilian Financial Data</p>
 
-  {# Sync status ribbon #}
+  {# Sync status ribbon — [WebUI v1.5] HTML partial (was raw JSON painted
+     into the page). Scrollable so the full source table fits. #}
   <div class="sync-ribbon"
        hx-get="/api/webui/sync/status"
        hx-trigger="load, every 30s"

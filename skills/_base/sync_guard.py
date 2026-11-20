@@ -104,8 +104,7 @@ _SYNC_REGISTRY: dict[str, tuple[str, str, KwargsFn]] = {
                      lambda cy, py, co, ti: {"year": cy, "force": False, "trace_id": ti}),
     "b3_dividends": ("data_sources.b3.dividends.sync_engine", "sync",
                      lambda cy, py, co, ti: {"force": True, "trace_id": ti}),
-    "brapi":        ("data_sources.b3.brapi.sync_engine", "sync_tickers",
-                     lambda cy, py, co, ti: {"force": True}),
+    # [WebUI v1.5] "brapi" entry REMOVED — paid API, permanently disabled.
     # [new commit] BCB SGS sync — REQUIRED_SOURCES in historical includes "sgs"
     # but sync_map had no entry, so every dashboard run failed the sgs sync
     # silently with "unknown source 'sgs'". This meant Selic/CDI/IPCA data
@@ -448,6 +447,18 @@ def _trigger_sync(source: str, company: str | None = None, trace_id: str = "") -
         kwargs = kwargs_fn(current_year, prev_year, company, trace_id)
         print(f"  [sync] Force-syncing {source} (kwargs: {kwargs})...", flush=True)
         result = sync_fn(**kwargs)
+        # [v1.5 fix1] Engine-level failures must NOT surface as "ok".
+        # Engines signal errors by RETURNING {"status": "error", ...}
+        # (e.g. bridge/b3_dividends called without a ticker) — the old
+        # code wrapped any non-raising return in {"status": "ok"}, so the
+        # WebUI painel reported "completed" for syncs that wrote nothing,
+        # and ensure_fresh counted them as synced.
+        inner = result.get("status") if isinstance(result, dict) else None
+        if inner == "error":
+            print(f"  [sync] {source} done (engine error: "
+                  f"{result.get('error', '?')}).", flush=True)
+            return {"status": "error", "source": source, "result": result,
+                    "error": str(result.get("error", "sync failed"))}
         print(f"  [sync] {source} done.", flush=True)
         return {"status": "ok", "source": source, "result": result}
     except Exception as e:

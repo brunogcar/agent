@@ -125,12 +125,6 @@ def get_freshness() -> dict[str, str]:
         result["b3_dividends"] = ""
 
     try:
-        from data_sources.b3.brapi.catalog import db_path as brapi_path
-        result["brapi"] = _check_db_freshness(brapi_path())
-    except Exception:
-        result["brapi"] = ""
-
-    try:
         from data_sources.b3.cotahist.catalog import db_path as cotahist_path
         cp = cotahist_path()
         if cp.exists():

@@ -188,7 +188,12 @@ def build_company_header(company: str) -> dict:
             if isin_row:
                 header["isin"] = isin_row["isin"] or ""
             close_row = conn.execute(
-                "SELECT close FROM cotahist WHERE symbol=? ORDER BY refdate DESC LIMIT 1",
+                # [WebUI v1.5] Aligned with valuation fetchers._get_price_cotahist:
+                # market_type=10 (equity spot PVista) + close>0, so an odd
+                # market-type record can't become the identity-card price.
+                "SELECT close FROM cotahist "
+                "WHERE symbol=? AND market_type=10 AND close IS NOT NULL AND close>0 "
+                "ORDER BY refdate DESC LIMIT 1",
                 (ticker,),
             ).fetchone()
             if close_row and close_row["close"] is not None:

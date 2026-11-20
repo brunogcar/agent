@@ -1,6 +1,6 @@
 """webui.py — Single-process WebUI entry point.
 
-[WebUI v1] One command boots the whole thing:
+[WebUI v1.5] One command boots the whole thing:
     python webui.py
 
 Architecture (per LLM review consensus):
@@ -20,11 +20,16 @@ they're unaffected.
 Usage:
     python webui.py                      # default port 8000, host 127.0.0.1
     python webui.py --port 7860          # custom port
-    python webui.py --host 0.0.0.0       # LAN access
     python webui.py --reload             # dev mode (auto-restart on file change)
+    python webui.py --no-sync            # skip the startup freshness CHECK
+
+Security note [v1.5]: the app is loopback-only by default. To bind a
+non-loopback host (--host 0.0.0.0) you must ALSO set WEBUI_ALLOW_LAN=1 —
+the gateway routes (/task, /chat, /ws) run agent tools unauthenticated.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -63,11 +68,22 @@ def main() -> None:
     except Exception as e:
         print(f"[startup] WARNING: WAL setup failed: {e}", file=sys.stderr)
 
-    # ── Launch ──────────────────────────────────────────────────────────────
-    print(f"[startup] WebUI on http://{args.host}:{args.port}", file=sys.stderr)
-    print(f"[startup] Docs:   http://{args.host}:{args.port}/docs", file=sys.stderr)
-    print(f"[startup] WebUI:  http://{args.host}:{args.port}/webui", file=sys.stderr)
-    print(f"[startup] Sync on startup: {'disabled' if args.no_sync else 'enabled'}", file=sys.stderr)
+    # ── Launch ────────────────────────────────────────────────────────────────
+    # [WebUI v1.5] --no-sync must reach create_app(), but uvicorn factory
+    # mode (factory=True + import string) can't take arguments — and with
+    # --reload the app runs in a child process. An env var is the one channel
+    # that survives both. Consumer: webui/app.py::lifespan.
+    if args.no_sync:
+        os.environ["WEBUI_NO_SYNC"] = "1"
+    display_host = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
+    if args.host not in ("127.0.0.1", "localhost", "::1") and os.environ.get("WEBUI_ALLOW_LAN") != "1":
+        print("[startup] WARNING: non-loopback bind requires WEBUI_ALLOW_LAN=1 — "
+              "TrustedHostMiddleware will reject requests. The gateway routes "
+              "(/task, /chat, /ws) run agent tools unauthenticated.", file=sys.stderr)
+    print(f"[startup] WebUI on http://{display_host}:{args.port}", file=sys.stderr)
+    print(f"[startup] Docs:   http://{display_host}:{args.port}/docs", file=sys.stderr)
+    print(f"[startup] WebUI:  http://{display_host}:{args.port}/webui", file=sys.stderr)
+    print(f"[startup] Startup freshness check: {'disabled' if args.no_sync else 'enabled'}", file=sys.stderr)
 
     uvicorn.run(
         "webui.app:create_app",

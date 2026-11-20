@@ -7,32 +7,29 @@ only loads when actually opened:
 
 - Visão Geral: KPI cards + Heatmap de Valoração (green/yellow/red) +
   Radar (6 dimensions, 0-100) + Mercado/Resultado | Balanço/Per-share blocks
-- Múltiplos: [v1.4 fix2] nested subtabs — Preço | EBIT/EBITDA | EV |
-  Menos Comuns. [v1.4 fix3] dashboard parity: Preço carries the 5Y daily
-  history charts (P/L-LPA-P/VP-VPA + Múltiplos de Preço, dual-axis) plus
-  the Per-share Values (R$) table; EBIT/EBITDA carries the Múltiplos EBIT
-  and Múltiplos EBITDA history charts; Menos Comuns carries Preço/Balanço
-  and Ativo/Preço e Alavancagem. History charts render full-width with the
-  Tudo/1A/6M/3M/1M range selector (client-side slicing — no refetch).
+- Múltiplos: grouped tables with Interpretação (Preço, EBIT, EBITDA, EV,
+  Menos Comuns) + comparativo bar charts + Histórico 5Y (P/L, P/VP, EV/EBITDA)
 - Valor Intrínseco: DCF + TIR summary + sensitivity table (5 cenários) +
   intrinsic-value-vs-terminal-g curve with market-implied g marker
-- Fundamentos: [v1.4 fix2] nested subtabs — Rentabilidade (Retornos |
-  Margens) | Liquidez e Alavancagem (Liquidez | Endividamento) |
-  Eficiência e Crescimento (with 3M/1A/5A evolution charts)
-- Todas as métricas: every ratio grouped by category (collapsed by
-  default), PT-BR labels, correct per-share values (lpa/vpa/dpa/rps —
-  see webui/services/valuation.py)
+- Fundamentos: Rentabilidade (Retornos + Margens + 5Y trends) | Liquidez e
+  Alavancagem | Eficiência e Crescimento (with 3M/1A/5A evolution charts)
+- Todas as métricas: every ratio grouped by category, PT-BR labels, correct
+  per-share values (lpa/vpa/dpa/rps — see webui/services/valuation.py)
 
 Data: ValuationService — reuses the static dashboard's report builders as
 JSON pass-throughs; rendered client-side by ONE generic section renderer.
+
+[WebUI v1.5 fix1] data-lazy="val:<sub>" on the subtab buttons enables
+hover/focus prefetch (app.js) — the fetch starts when the pointer
+heads toward the button instead of on click.
 #}
 <div class="tab-valuation" x-data="{ subtab: 'overview' }">
   <nav class="subtab-nav">
-    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadValSubtab('overview')">Visão Geral</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'multiples' }" @click="subtab='multiples'" onclick="loadValSubtab('multiples')">Múltiplos</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'intrinsic' }" @click="subtab='intrinsic'" onclick="loadValSubtab('intrinsic')">Valor Intrínseco</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'fundamentals' }" @click="subtab='fundamentals'" onclick="loadValSubtab('fundamentals')">Fundamentos</button>
-    <button class="subtab-btn" :class="{ 'active': subtab === 'all' }" @click="subtab='all'" onclick="loadValSubtab('all')">Todas as métricas</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadValSubtab('overview')" data-lazy="val:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'multiples' }" @click="subtab='multiples'" onclick="loadValSubtab('multiples')" data-lazy="val:multiples">Múltiplos</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'intrinsic' }" @click="subtab='intrinsic'" onclick="loadValSubtab('intrinsic')" data-lazy="val:intrinsic">Valor Intrínseco</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'fundamentals' }" @click="subtab='fundamentals'" onclick="loadValSubtab('fundamentals')" data-lazy="val:fundamentals">Fundamentos</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'all' }" @click="subtab='all'" onclick="loadValSubtab('all')" data-lazy="val:all">Todas as métricas</button>
   </nav>
 
   {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}

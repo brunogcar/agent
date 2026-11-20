@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1)
+## ✅ Built (v1 → v1.5)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -14,46 +14,54 @@
 - [x] SQLite WAL mode for concurrent read/write
 - [x] Service layer between routes and calculation engines
 - [x] Direct engine imports (bypasses MCP dispatcher)
-- [x] SSE for sync progress (not WebSocket)
+- [x] SSE for sync progress (not WebSocket) — working end-to-end since v1.5
 - [x] CSS variables 3-layer theme system (JSON theme files)
 - [x] JSON i18n (not gettext)
 - [x] Vendored JS (HTMX + Alpine + Chart.js, no CDN)
+- [x] [v1.5] Ticker regex validation at every company route (422 on garbage)
+- [x] [v1.5] TrustedHostMiddleware loopback-only (LAN = `WEBUI_ALLOW_LAN=1`)
+- [x] [v1.5] Threadpool route handlers (plain `def` — event loop never blocks)
+- [x] [v1.5] Shared Jinja env (`webui/templating.py`, `__file__`-relative)
 
 ### Pages
-- [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon
-- [x] Company (`/webui/company/{ticker}`) — header + 5 tabs
+- [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
+- [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
 - [x] Macro (`/webui/macro`) — placeholder
-- [x] Sync (`/webui/sync`) — freshness table + SSE log
+- [x] Sync (`/webui/sync`) — freshness table + Sincronizar buttons + live SSE log
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
 ### Company Tabs
-- [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, zoom/pan)
-- [x] Preço — 5 subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
-- [x] Valuation — full 79-metric ratios table (no KPIs)
-- [ ] Financials — DRE/BPA/BPP/DFC/DVA statement tables
-- [ ] Dividends — DPA history + dividend events
-- [ ] Historical — 5Y price + ratio charts
+- [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, Ctrl+wheel zoom)
+- [x] Preço — 5 lazy subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
+- [x] Financeiro — Visão Geral (TTM + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts)
+- [x] Valuation — Visão Geral / Múltiplos (nested subtabs + 5Y histories) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
+- [ ] Dividends — DPA history + dividend events (buttons hidden until shipped)
+- [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
 
 ### Features
-- [x] Ticker search (HTMX debounced keyup, bridge.db ticker_map)
+- [x] Ticker search (HTMX debounced keyup, wildcard-escaped, relevance-ranked since v1.5)
 - [x] Company header (identity card — persistent across all tabs)
-- [x] Candlestick chart (OHLCV + MM20/50/100/200, zoom/pan, 7 ranges)
-- [x] Theme toggle (dark/light, FOUC prevention, localStorage + cookie)
-- [x] Language switcher (pt-BR/en-US, cookie-based)
-- [x] Sidebar collapse (◀/▶ button, icons-only mode)
+- [x] Candlestick chart (OHLCV + MM20/50/100/200, Ctrl+wheel zoom, Shift+drag pan, 7 ranges)
+- [x] Theme toggle (dark/light, cookie is the single source of truth)
+- [x] Language switcher (pt-BR/en-US — shell only; content is pt-BR)
+- [x] Sidebar collapse (persists in localStorage since v1.5) + current-page highlight
 - [x] Favicon (SVG bar-chart icon)
-- [x] Sync status (freshness table, auto-refresh)
-- [x] SSE sync stream (live progress events)
-- [x] Cache-busting (?v=N on static URLs, ?_t= on API fetch)
+- [x] Sync status (freshness table with badges, auto-refresh)
+- [x] SSE sync stream (live progress events — native EventSource since v1.5)
+- [x] Per-source "Sincronizar" buttons (dedupe: one running job per source)
+- [x] Cache-busting (?v=37 on static URLs, ?_t= on API fetch)
 - [x] Price service (ohlcv_with_mas, price_data, indicators, volatility, volume, fibonacci)
 - [x] Chart.js zoom plugin + Hammer.js (vendored locally)
+- [x] [v1.5] Chart lifecycle: destroy on HTMX cleanup + before re-renders (no leaks)
+- [x] [v1.5] Lazy subtabs everywhere (Preço/Financeiro/Valuation — active subtab only)
+- [x] [v1.5] Shared 60s-TTL OHLCV cache (4 Preço subtabs = 1 DB scan)
+- [x] [v1.5] pt-BR number formatting (Intl.NumberFormat, thousands separators)
 
 ---
 
-## 🔄 Next Up (v1.2)
+## 🔄 Next Up (v1.6)
 
-### Company Tabs (complete the 5-tab set)
-- [ ] **Financials tab** — DRE, BPA, BPP, DFC, DVA statement tables. Period toggle (quarterly/annual). Reuse `skills/cvm/financials/` engines. This is the biggest data tab — needs period selector, statement type selector, and wide tables with frozen columns.
+### Company Tabs (finish the set)
 - [ ] **Dividends tab** — DPA history table, annual bar chart, yield history line chart, payout trend. Reuse `data_sources/b3/dividends/` + `skills/cvm/calculations/engines/dividends.py`.
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
 
@@ -62,14 +70,14 @@
 - [ ] **Focus Bulletin** — market expectations (median, high, low) for IPCA, PIB, Selic, exchange rate. Table + chart.
 - [ ] **Macro dashboard** — ribbon of key indicators on the dashboard page.
 
-### Sync Page
-- [ ] **Sync trigger buttons** — per-source "Sync now" button that POSTs to `/api/webui/sync/{source}` and shows progress via SSE.
-- [ ] **Sync all stale** — bulk button that syncs all stale sources in parallel.
-- [ ] **Sync log** — last 10 sync operations with timestamps + row counts.
+### Polish
+- [ ] **i18n honesty pass** — externalize app.js strings via a `window.I18N` dump OR document pt-BR as the content language and keep en-US for the shell.
+- [ ] **Accessibility** — `role=tab`/`aria-selected` on tab buttons, aria-labels on charts, keyboard nav on the search dropdown (blur/Escape dismissal).
+- [ ] **Mobile** — sidebar hamburger, `overflow-x` on wide tables, touch pan on charts.
 
 ---
 
-## 🔮 Planned (v3)
+## 🔮 Planned (v2)
 
 ### Settings (auto-generated)
 - [ ] **Settings as data** — SDNext-style schema-driven settings page. Define settings as a dict (key, label, type, default, section), auto-render the form. Adding a setting = one dict entry.

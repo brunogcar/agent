@@ -3,31 +3,39 @@
 [WebUI v1] Returns full HTML pages. HTMX swaps fragments via the /api/webui/*
 endpoints in api.py.
 
+[WebUI v1.5] HARDENING:
+  - active_tab is now set for EVERY page (dashboard/macro/sync/settings) —
+    the sidebar never highlighted the current page before. Company pages
+    validate the tab path segment (unknown → redirect to visao_geral).
+  - The dead eager header() calls are GONE: company_overview/company_tab
+    used to compute the full company header (FCA/CAD/COTAHIST/B3 queries)
+    and pass it into a context company.html never rendered — every page
+    load paid the cost twice for nothing. The identity card fetches its
+    own fragment via HTMX.
+  - Handlers are plain `def` (threadpool) — see api.py.
+  - One shared Jinja env from webui/templating.py (was CWD-relative ×2).
+
 Routes:
   GET /webui                      → dashboard (home, no ticker)
   GET /webui/company/{ticker}     → company overview
-  GET /webui/company/{ticker}/{tab}  → company tab (valuation, financials, etc.)
+  GET /webui/company/{ticker}/{tab}  → company tab (visao_geral/preco/financials/valuation)
   GET /webui/macro                → macro page
   GET /webui/sync                 → sync status page
   GET /webui/settings             → settings page
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from webui.i18n import negotiate_locale, t
 from webui.theme import available_themes, render_all_themes_css
-from webui.services.company import CompanyService
-from webui.services.sync import SyncService
+from webui.templating import templates
 
 router = APIRouter(prefix="/webui", tags=["webui-pages"])
-templates = Jinja2Templates(directory="webui/templates")
 
-# Service singletons (created once, reused)
-_company_service = CompanyService()
-_sync_service = SyncService()
+# Tabs that have a page shell (must match api.py's _ALLOWED_TABS).
+_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation"}
 
 
 def _ctx(request: Request, **extra) -> dict:
@@ -46,52 +54,65 @@ def _ctx(request: Request, **extra) -> dict:
         "theme_css": render_all_themes_css(),
         "t": lambda key, **fmt: t(key, locale=locale, **fmt),
         "_": lambda key, **fmt: t(key, locale=locale, **fmt),
-        "company_service": _company_service,
-        "sync_service": _sync_service,
     }
     ctx.update(extra)
     return ctx
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+def dashboard(request: Request):
     """Home dashboard — market overview, no ticker required."""
-    return templates.TemplateResponse(request, "pages/dashboard.html", _ctx(request))
+    return templates.TemplateResponse(
+        request, "pages/dashboard.html", _ctx(request, active_tab="dashboard"),
+    )
 
 
 @router.get("/company/{ticker}", response_class=HTMLResponse)
-async def company_overview(request: Request, ticker: str):
-    """Company overview page (default tab: visao_geral)."""
-    header = _company_service.header(ticker.upper())
+def company_overview(request: Request, ticker: str):
+    """Company overview page (default tab: visao_geral).
+
+    [WebUI v1.5] No eager header() — the identity card fetches its own
+    fragment via HTMX (hx-trigger="load"); computing it here doubled the
+    FCA/CAD/COTAHIST/B3 query cost per page load for a context value
+    company.html never rendered.
+    """
     return templates.TemplateResponse(
         request, "pages/company.html",
-        _ctx(request, ticker=ticker.upper(), header=header, active_tab="visao_geral"),
+        _ctx(request, ticker=ticker.upper(), active_tab="visao_geral"),
     )
 
 
 @router.get("/company/{ticker}/{tab}", response_class=HTMLResponse)
-async def company_tab(request: Request, ticker: str, tab: str):
-    """Company tab page (visao_geral, valuation, financials, dividends, historical)."""
-    header = _company_service.header(ticker.upper())
+def company_tab(request: Request, ticker: str, tab: str):
+    """Company tab page (visao_geral, preco, financials, valuation)."""
+    if tab not in _PAGE_TABS:
+        # Unknown tab → redirect to the default (Jinja escapes everything,
+        # but there's no page shell for arbitrary tab names anyway).
+        return RedirectResponse(
+            url=f"/webui/company/{ticker.upper()}", status_code=302,
+        )
     return templates.TemplateResponse(
         request, "pages/company.html",
-        _ctx(request, ticker=ticker.upper(), header=header, active_tab=tab),
+        _ctx(request, ticker=ticker.upper(), active_tab=tab),
     )
 
 
 @router.get("/macro", response_class=HTMLResponse)
-async def macro_page(request: Request):
-    return templates.TemplateResponse(request, "pages/macro.html", _ctx(request))
+def macro_page(request: Request):
+    return templates.TemplateResponse(
+        request, "pages/macro.html", _ctx(request, active_tab="macro"),
+    )
 
 
 @router.get("/sync", response_class=HTMLResponse)
-async def sync_page(request: Request):
-    freshness = _sync_service.freshness()
+def sync_page(request: Request):
     return templates.TemplateResponse(
-        request, "pages/sync.html", _ctx(request, freshness=freshness),
+        request, "pages/sync.html", _ctx(request, active_tab="sync"),
     )
 
 
 @router.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
-    return templates.TemplateResponse(request, "pages/settings.html", _ctx(request))
+def settings_page(request: Request):
+    return templates.TemplateResponse(
+        request, "pages/settings.html", _ctx(request, active_tab="settings"),
+    )
