@@ -42,11 +42,15 @@ import traceback
 from typing import Any, Callable
 
 from webui.adapters.contract import error_payload, validate_payload
-from webui.services.company import CompanyService
-from webui.services.financials import FinancialsService
-from webui.services.price import PriceService
-from webui.services.proventos import ProventosService
-from webui.services.valuation import ValuationService
+
+# NOTE: the service classes are imported INSIDE _register_builtins(), not
+# at module level — a service that builds payloads through contract.py
+# ("from webui.adapters.contract import …", the documented v1.8 recipe)
+# would otherwise create a circular import: registry → service →
+# webui.adapters.<contract> → webui.adapters.__init__ → registry (partial).
+# Lazy imports keep the v1.7 promise: adding a tab touches only the
+# register() block below, and services stay free to use the contract
+# builders at module level.
 
 # Bound method produced lazily by a loader — (ticker, **params) -> payload.
 AdapterFn = Callable[..., dict[str, Any]]
@@ -74,6 +78,22 @@ class _Entry:
 
 
 _REGISTRY: dict[str, _Entry] = {}
+_builtins_registered = False
+
+
+def _ensure_builtins() -> None:
+    """Register the built-in adapters on first use (dispatch/has/keys).
+
+    Deliberately lazy: builtin registration imports every service module,
+    and services import contract builders from this package — eager
+    registration at import time would create a circular import (service →
+    webui.adapters.__init__ → registry → service, partially initialized).
+    """
+    global _builtins_registered
+    if _builtins_registered:
+        return
+    _builtins_registered = True
+    _register_builtins()
 
 # ── memoized service singletons (shared with webui/routes/api.py) ──────────
 _singletons: dict[type, Any] = {}
@@ -110,11 +130,13 @@ def register(key: str, loader: Callable[[], AdapterFn], *,
 
 def adapter_keys() -> list[str]:
     """All registered keys (sorted)."""
+    _ensure_builtins()
     return sorted(_REGISTRY.keys())
 
 
 def adapters_info() -> list[dict[str, Any]]:
     """Registry snapshot for diagnostics (preflight + docs)."""
+    _ensure_builtins()
     return [
         {"key": e.key, "family": e.family, "label": e.label,
          "generic": e.generic}
@@ -123,6 +145,7 @@ def adapters_info() -> list[dict[str, Any]]:
 
 
 def has(key: str) -> bool:
+    _ensure_builtins()
     return key in _REGISTRY
 
 
@@ -140,6 +163,10 @@ def dispatch(key: str, ticker: str, **params: Any) -> dict[str, Any]:
     ignored by the client renderer).
     """
     entry = _REGISTRY.get(key)
+    if entry is None:
+        # Late (post-boot) register() calls — check the builtins too.
+        _ensure_builtins()
+        entry = _REGISTRY.get(key)
     if entry is None:
         return error_payload(ticker, f"subtab desconhecida: {key}")
     tk = (ticker or "").upper()
@@ -196,6 +223,15 @@ def _bind(cls: type, method: str) -> Callable[[], AdapterFn]:
 
 
 def _register_builtins() -> None:
+    # Lazy service imports (see the NOTE above the class imports at the
+    # top of this module — circular-import containment).
+    from webui.services.company import CompanyService
+    from webui.services.financials import FinancialsService
+    from webui.services.options import OptionsService
+    from webui.services.price import PriceService
+    from webui.services.proventos import ProventosService
+    from webui.services.valuation import ValuationService
+
     # Valuation — all 5 subtabs render through the generic renderer.
     register("valuation:overview", _bind(ValuationService, "overview"),
              family="valuation", label="Valuation — Visão Geral")
@@ -242,5 +278,17 @@ def _register_builtins() -> None:
              family="financials", label="Financeiro — Demonstrações",
              generic=False)
 
-
-_register_builtins()
+    # [v1.8] Opções — the reorganized options dashboard (reference:
+    # skills/b3/options static report + PETR4_options_dashboard.html).
+    # chain/activity/iv accept a maturity passthrough param (the pill bar
+    # refetches /sections/<key>?maturity=YYYY-MM-DD).
+    register("options:overview", _bind(OptionsService, "overview"),
+             family="options", label="Opções — Visão Geral")
+    register("options:chain", _bind(OptionsService, "chain"),
+             family="options", label="Opções — Cadeia")
+    register("options:activity", _bind(OptionsService, "activity"),
+             family="options", label="Opções — Volume & Exercícios")
+    register("options:iv", _bind(OptionsService, "iv"),
+             family="options", label="Opções — Vol. Implícita")
+    register("options:positions", _bind(OptionsService, "positions"),
+             family="options", label="Opções — Posições")

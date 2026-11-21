@@ -2029,8 +2029,12 @@ function valSectionHtml(sec) {
     // [v1.6 fix1] Numeric columns get th-num so the header aligns with the
     // right-aligned val-val data below it (all-left headers over right
     // data made wide tables like Proventos por Ano / DVA read diagonally).
+    // [v1.8] Sections carrying `sortable` render click-sortable headers
+    // (initValTableSort — the Opções chain/position tables).
     (sec.columns || []).forEach(function(c, ci) {
-      h += '<th' + (ci > 0 ? ' class="th-num"' : '') + '>' + valEsc(String(c)) + '</th>';
+      var cls = (ci > 0 ? 'th-num' : '');
+      if (sec.sortable) cls += ' val-sortable';
+      h += '<th' + (cls ? ' class="' + cls.trim() + '"' : '') + '>' + valEsc(String(c)) + '</th>';
     });
     h += '</tr></thead><tbody>';
     (sec.rows || []).forEach(function(row) {
@@ -2087,6 +2091,18 @@ function renderValAll(panel, data) {
     html += '</tbody></table></details>';
   });
   panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+}
+
+// [v1.8 fix1] True when EVERY x label is an ISO YYYY-MM-DD string
+// (empty / non-string / mixed axes → false). renderValChart uses this to
+// decide whether the x-axis is a date axis worth formatting as dd/mm/yyyy.
+function _isoDateLabels(labels) {
+  if (!labels || !labels.length) return false;
+  for (var i = 0; i < labels.length; i++) {
+    if (typeof labels[i] !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(labels[i])) return false;
+  }
+  return true;
 }
 
 // Mount every chart canvas stashed during HTML build. Chart configs come
@@ -2160,10 +2176,25 @@ function renderValChart(canvas, cd) {
     if (srvX.stacked) xScale.stacked = true;
     // [v1.7.2] x-axis title too (the history charts label it "Data").
     if (srvX.title && srvX.title.text) xScale.title = { display: true, text: srvX.title.text };
+    // [v1.8 fix1] Date axes render in BR format: when EVERY x label is an
+    // ISO date (P/C Ratio + Exercícios charts, and the v1.7.2 valuation
+    // history charts all ship ISO labels), ticks and tooltip titles are
+    // formatted dd/mm/yyyy — the same fmtDate convention as every
+    // hardcoded chart config in this file. Labels stay ISO in the payload
+    // (valChartRange slices them); non-date axes (strikes, tickers, years)
+    // are untouched.
+    var dateAxis = _isoDateLabels(cd.data.labels);
+    if (dateAxis) {
+      xScale.ticks.callback = function(v) { return fmtDate(this.getLabelForValue(v)); };
+    }
+    var plugins = { legend: { display: true, position: 'top', labels: { color: th.text } } };
+    if (dateAxis) {
+      plugins.tooltip = { callbacks: { title: function(i) { return fmtDate(i[0].label); } } };
+    }
     options = {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
+      plugins: plugins,
       scales: {
         x: xScale,
         y: yScale
@@ -2614,6 +2645,151 @@ function initFinPeriodPills() {
   });
 }
 
+// ── Opções tab [WebUI v1.8] ────────────────────────────────────────────────
+// 5 lazy subtabs (Visão Geral / Cadeia / Volume & Exercícios / Vol.
+// Implícita / Posições) over the generic /sections/options:<sub> endpoint.
+// Payloads are the v1.7 FLAT contract ({kpis, sections}) + two options-
+// specific extra keys: `maturities` (future expiries) + `active_maturity`
+// — when present, renderOptSubtab draws the maturity pill bar and pill
+// clicks refetch with ?maturity=YYYY-MM-DD (server-side filter; the chain
+// is too big to ship every expiry at once). Everything else renders
+// through the SAME generic renderer as Valuation/Proventos (valKpisHtml +
+// valSectionsHtml + mountValCharts).
+window.loadOptSubtab = function(sub, maturity) {
+  var panel = document.getElementById('tab-opt-' + sub);
+  if (!panel) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  if (panel._loading) return;
+  // _loaded guard only applies to the initial lazy load — a maturity pill
+  // click passes maturity explicitly and forces the refetch.
+  if (panel._loaded && !maturity) return;
+  panel._loading = true;
+  var url = '/api/webui/company/' + encodeURIComponent(ticker) +
+            '/sections/options:' + encodeURIComponent(sub);
+  if (maturity) url += '?maturity=' + encodeURIComponent(maturity);
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      panel._loading = false;
+      panel._loaded = true;   // set only after a successful render
+      renderOptSubtab(sub, panel, data);
+    })
+    .catch(function(err) {
+      panel._loading = false;
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderOptSubtab(sub, panel, data) {
+  if (data._error) {
+    panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    return;
+  }
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  if (data.maturities && data.maturities.length) {
+    html += optMatBarHtml(data.maturities, data.active_maturity, sub);
+  }
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
+// Maturity pill bar — "Vencimento: 18/09/26 · 16/10/26 …". Refetches the
+// subtab server-side (chain/activity/iv are maturity-scoped; the others
+// don't carry maturities in the payload, so no bar is drawn for them).
+function optMatBarHtml(maturities, active, sub) {
+  var h = '<div class="opt-mat-bar" data-opt-sub="' + esc(sub) + '">' +
+          '<span class="opt-mat-label">Vencimento:</span>';
+  (maturities || []).forEach(function(m) {
+    var lbl = m;
+    var parts = String(m).split('-');       // 2026-09-18 → 18/09/26
+    if (parts.length === 3) lbl = parts[2] + '/' + parts[1] + '/' + parts[0].slice(2);
+    h += '<button type="button" class="prov-pill' +
+         (m === active ? ' active' : '') +
+         '" data-maturity="' + esc(m) + '" onclick="optMat(this)">' + esc(lbl) + '</button>';
+  });
+  return h + '</div>';
+}
+
+window.optMat = function(btn) {
+  var bar = btn.closest('.opt-mat-bar');
+  if (!bar) return;
+  var sub = bar.getAttribute('data-opt-sub');
+  var maturity = btn.getAttribute('data-maturity');
+  if (!sub || !maturity) return;
+  Array.prototype.forEach.call(bar.querySelectorAll('.prov-pill'), function(b) {
+    b.classList.toggle('active', b === btn);
+  });
+  loadOptSubtab(sub, maturity);
+};
+
+// ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
+// Server table sections can carry `sortable: true` (extra key the contract
+// ignores — same mechanism as pair_with_next). Those tables render their
+// headers as .val-sortable buttons; ONE delegated listener reorders the
+// tbody rows by the clicked column, parsing PT-BR formatted cells
+// ("R$ 1.234,56" → 1234.56, "4,19%" → 4.19, dates — ISO, dd/mm/yyyy and
+// dd/mm/yy — chronologically, "-" always last). Benefits every tab that
+// marks a table sortable, not just Opções.
+function _valSortKey(cell) {
+  var el = cell.querySelector ? cell : null;
+  var text = (el ? el.textContent : String(cell)).trim();
+  if (!text || text === '-' || text === '—') return null;
+  var m = String(text).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return {num: Date.parse(m[0]) / 1e13, str: m[0], isNum: true};
+  // [v1.8 fix1] BR dates (tables render dd/mm/yyyy since the fix; the
+  // maturity pills / heatmap headers use the 2-digit year). Reordered to
+  // ISO so Date.parse sorts them chronologically — a plain string compare
+  // would put "01/12/2026" before "05/01/2024" (day-first isn't sortable).
+  var br = String(text).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return {num: Date.parse(br[3] + '-' + br[2] + '-' + br[1]) / 1e13, str: text, isNum: true};
+  var br2 = String(text).match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
+  if (br2) return {num: Date.parse('20' + br2[3] + '-' + br2[2] + '-' + br2[1]) / 1e13, str: text, isNum: true};
+  var s = text.replace(/^R\$\s*/, '').replace(/%/g, '').replace(/\s/g, '');
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d+,\d+$/.test(s)) s = s.replace(',', '.');
+  else if (/^-?\d+(\.\d+)?$/.test(s)) { /* already plain */ }
+  else return {str: text, isNum: false};
+  var n = parseFloat(s);
+  return isNaN(n) ? {str: text, isNum: false} : {num: n, str: text, isNum: true};
+}
+
+function initValTableSort() {
+  document.body.addEventListener('click', function(e) {
+    var th = e.target && e.target.closest
+      ? e.target.closest('th.val-sortable') : null;
+    if (!th) return;
+    var table = th.closest('table');
+    if (!table || !table.tBodies.length) return;
+    var col = Array.prototype.indexOf.call(th.parentNode.children, th);
+    if (col < 0) return;
+    var dir = (table.getAttribute('data-sort-col') === String(col) &&
+               table.getAttribute('data-sort-dir') === 'asc') ? -1 : 1;
+    table.setAttribute('data-sort-col', String(col));
+    table.setAttribute('data-sort-dir', dir > 0 ? 'asc' : 'desc');
+    var tbody = table.tBodies[0];
+    var rows = Array.prototype.slice.call(tbody.rows);
+    rows.sort(function(a, b) {
+      var ka = _valSortKey(a.cells[col]);
+      var kb = _valSortKey(b.cells[col]);
+      if (ka === null && kb === null) return 0;
+      if (ka === null) return 1;    // empties always last
+      if (kb === null) return -1;
+      if (ka.isNum && kb.isNum) return (ka.num - kb.num) * dir;
+      return ka.str.localeCompare(kb.str, 'pt-BR') * dir;
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+    Array.prototype.forEach.call(th.parentNode.children, function(h) {
+      var base = h.textContent.replace(/\s*[▲▼]\s*$/, '');
+      if (h === th) base += dir > 0 ? ' ▲' : ' ▼';
+      h.textContent = base;
+    });
+  });
+}
+
 // ── Hover/focus prefetch for lazy subtabs [WebUI v1.5 fix1] ───────────────
 // Subtab buttons carry data-lazy="<family>:<sub>" (preco/fin/val). Pointer
 // intent (mouseover) or keyboard focus starts the fetch ~300ms before the
@@ -2625,7 +2801,8 @@ function prefetchSubtab(e) {
   btn._prefetched = true;
   var parts = (btn.getAttribute('data-lazy') || '').split(':');
   var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
-              val: window.loadValSubtab, prov: window.loadProvSubtab };
+              val: window.loadValSubtab, prov: window.loadProvSubtab,
+              opt: window.loadOptSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -2670,6 +2847,9 @@ function initApp() {
     loadFinSubtab('visao_geral');
     loadValSubtab('overview');
     loadProvSubtab('overview');
+    // [v1.8] Opções — first subtab of the options tab (loads on settle,
+    // same pattern as the other lazy tabs; the shell no-ops elsewhere).
+    loadOptSubtab('overview');
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });
@@ -2677,6 +2857,7 @@ function initApp() {
   initPriceRangeBar();
   initSyncButtons();
   initFinPeriodPills();
+  initValTableSort();
   initCompanyPage();
   initSyncPage();
 

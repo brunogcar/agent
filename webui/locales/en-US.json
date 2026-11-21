@@ -15,7 +15,8 @@
     "valuation": "Valuation",
     "financials": "Financials",
     "dividends": "Proventos",
-    "historical": "Historical"
+    "historical": "Historical",
+    "options": "Options"
   },
   "sync": {
     "checking": "Checking sources...",

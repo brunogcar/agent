@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.7.1)
+## ✅ Built (v1 → v1.8 fix1)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -40,6 +40,7 @@
 - [x] Valuation — Visão Geral / Múltiplos (nested subtabs + per-group 5Y history charts + side-by-side layout since v1.7.2) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
 - [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
 - [x] **[v1.7.2] Múltiplos parity** — Preço (P/L,LPA,P/VP,VPA + Múltiplos de Preço dual-axis histories | Múltiplos + Per-share tables | Comparativos), EBIT/EBITDA (EBIT + EBITDA history charts | tables), Menos Comuns (Preço/Balanço + Ativo/Preço histories + table); Tudo/10A/…/1M range bar on every history chart (client-side filter).
+- [x] **[v1.8] Opções** — the static options dashboard reorganized: Visão Geral (6 KPIs + dual-axis P/C Ratio + Últimas Observações | Resumo CALL vs PUT + OI walls), Cadeia (maturity pill bar + Calls | Puts side by side, top-30 by volume, sortable), Volume & Exercícios (merged), Vol. Implícita (smile + term-structure heatmap capped to ±25% spot × 8 expiries), Posições (CALL/PUT split, top-50 by OI, sortable). Same data layer as the skill's static report; maturity pills refetch server-side; generic table click-sort added to the shared renderer. **[fix1]** Datas no padrão brasileiro: dd/mm/yyyy nas tabelas (Data/Vencimento) e refs de texto; eixos + tooltips de TODOS os gráficos com labels ISO (P/C, Exercícios e os históricos 5A do Valuation) formatados pelo `renderValChart`; colunas de data ordenáveis cronologicamente (`_valSortKey` parseia dd/mm/yy[yy]).
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
 
 ### Features
@@ -53,7 +54,7 @@
 - [x] Sync status (freshness table with badges, auto-refresh)
 - [x] SSE sync stream (live progress events — native EventSource since v1.5)
 - [x] Per-source "Sincronizar" buttons (dedupe: one running job per source)
-- [x] Cache-busting (?v=40 on static URLs, ?_t= on API fetch)
+- [x] Cache-busting (?v=46 on static URLs, ?_t= on API fetch)
 - [x] Price service (ohlcv_with_mas, price_data, indicators, volatility, volume, fibonacci)
 - [x] Chart.js zoom plugin + Hammer.js (vendored locally)
 - [x] [v1.5] Chart lifecycle: destroy on HTMX cleanup + before re-renders (no leaks)
@@ -69,7 +70,7 @@
 ### v1.8 — Feature wave (built on the v1.7 adapter registry)
 
 #### Company Tabs
-- [ ] **Options tab**
+- [x] **Options tab** — shipped (see Built). The recipe held: service + register() + shell partial + loader, zero api.py endpoint edits (only the maturity passthrough param).
 - [ ] **Insider tab**
 - [ ] **Shareholders tab**
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.

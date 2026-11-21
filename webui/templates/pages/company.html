@@ -54,6 +54,15 @@
             hx-swap="innerHTML">
       {{ t("company.dividends") }}
     </button>
+    {# [WebUI v1.8] Opções tab — the reorganized options dashboard
+       (reference: PETR4_options_dashboard.html / skills/b3/options). #}
+    <button class="tab-btn" :class="{ 'active': tab === 'options' }"
+            @click="tab='options'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/options"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.options") }}
+    </button>
     {# Re-enable when implemented:
     <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
             @click="tab='historical'"

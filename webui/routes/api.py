@@ -98,7 +98,8 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 
 # Tabs with a rendered partial (historical is future work —
 # company.html hides its button until it exists). [v1.6] proventos.
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos"}
+# [v1.8] options.
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -150,13 +151,15 @@ def company_header_fragment(request: Request, ticker: Ticker):
 @router.get("/company/{ticker}/sections/{key}")
 def company_sections(ticker: Ticker, key: str,
                      period: str = Query("annual"),
-                     periods: int = Query(10)):
+                     periods: int = Query(10),
+                     maturity: str = Query("")):
     """[v1.7] Generic subtab endpoint — dispatches ANY registered adapter.
 
     Key format "<family>:<sub>" (e.g. valuation:overview,
     proventos:anual, financials:demonstracoes). Params are passed through
     to the adapter (period/periods matter only for financials:
-    demonstracoes; every other adapter ignores them).
+    demonstracoes; maturity only for the [v1.8] options chain/activity/iv
+    subtabs; every other adapter ignores them).
 
     Unknown/malformed keys → 404 PT-BR plain text (never reflected into
     HTML). Registered keys: webui.adapters.registry.adapter_keys().
@@ -165,7 +168,8 @@ def company_sections(ticker: Ticker, key: str,
         return PlainTextResponse(
             f"Subtab '{key}' não encontrada.", status_code=404
         )
-    data = dispatch(key, ticker.upper(), period=period, periods=periods)
+    data = dispatch(key, ticker.upper(), period=period, periods=periods,
+                    maturity=maturity)
     return JSONResponse(data)
 
 
@@ -338,6 +342,15 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_proventos.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "options":
+        # [WebUI v1.8] Shell only — subtabs fetch through the generic
+        # /sections/options:<sub> endpoint (overview/chain/activity/iv/
+        # positions), chain/activity/iv with a maturity passthrough.
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_options.html",
             {"ticker": ticker, "t": tr},
         )
     else:  # financials

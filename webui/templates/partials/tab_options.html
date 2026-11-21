@@ -1,0 +1,62 @@
+{# webui/templates/partials/tab_options.html — Opções tab with subtabs.
+
+[WebUI v1.8] The B3 options view — a reorganized take on the static
+PETR4_options_dashboard.html (6 flat tabs → 5 subtabs organized around
+questions, not queries):
+
+- Visão Geral: 6 KPI cards (Spot / Próx. Vencimento / OI Total / P/C
+  Ratio / Call-Put OI / Cobertura) + Put/Call Ratio 90 pregões chart
+  (dual-axis + range bar) + Últimas Observações paired with Resumo CALL
+  vs PUT + the OI walls chart.
+- Cadeia: maturity pills (every future expiry — the static dashboard
+  locked the nearest one) + Calls | Puts tables side by side (top 30 by
+  volume, sortable) + ticker convention reference at the bottom.
+- Volume & Exercícios: volume by strike chart (maturity selector) paired
+  with the exercise chart + per-strike detail + últimos exercícios.
+- Vol. Implícita: IV smile (Black-Scholes, spot + Selic caption) + IV
+  table + term-structure heatmap capped to strikes near spot × nearest
+  8 expiries (the static 615×291 wall was unreadable).
+- Posições: OI walls + coverage KPIs + CALL/PUT position tables (top 50
+  by OI, sortable, side by side).
+
+Data: OptionsService (webui/services/options.py) over the same query
+layer as the skill's static dashboard (cotahist_derivatives +
+derivatives.db + instruments.db + SGS Selic). All subtabs render through
+the generic section renderer (loadOptSubtab → valKpisHtml /
+valSectionsHtml / mountValCharts in app.js); the maturity pill bar
+refetches /sections/options:<sub>?maturity=YYYY-MM-DD.
+#}
+<div class="tab-options" x-data="{ subtab: 'overview' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadOptSubtab('overview')" data-lazy="opt:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'chain' }" @click="subtab='chain'" onclick="loadOptSubtab('chain')" data-lazy="opt:chain">Cadeia</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'activity' }" @click="subtab='activity'" onclick="loadOptSubtab('activity')" data-lazy="opt:activity">Volume &amp; Exercícios</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'iv' }" @click="subtab='iv'" onclick="loadOptSubtab('iv')" data-lazy="opt:iv">Vol. Implícita</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'positions' }" @click="subtab='positions'" onclick="loadOptSubtab('positions')" data-lazy="opt:positions">Posições</button>
+  </nav>
+
+  {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-opt-overview" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Cadeia (maturity pills — server refetch) ── #}
+  <div x-show="subtab === 'chain'" style="display: none;" id="tab-opt-chain" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Volume & Exercícios ── #}
+  <div x-show="subtab === 'activity'" style="display: none;" id="tab-opt-activity" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Vol. Implícita ── #}
+  <div x-show="subtab === 'iv'" style="display: none;" id="tab-opt-iv" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Posições ── #}
+  <div x-show="subtab === 'positions'" style="display: none;" id="tab-opt-positions" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

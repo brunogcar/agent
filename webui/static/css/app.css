@@ -711,6 +711,23 @@ a:hover { text-decoration: underline; }
 .val-pair-grid .val-section { margin-bottom: 0; }
 .val-range-bar { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-2) 0; }
 
+/* [WebUI v1.8] Opções — maturity pill bar (chain/activity/iv): reuses the
+   prov-pill chips with a muted label; wraps on narrow screens (B3 lists
+   monthlies + weeklies, the server caps at the nearest 12). */
+.opt-mat-bar {
+  display: flex; align-items: center; gap: var(--space-1);
+  flex-wrap: wrap; margin: 0 0 var(--space-3);
+}
+.opt-mat-label {
+  color: var(--color-text-sec); font-size: 12px;
+  font-weight: 600; margin-right: var(--space-1);
+}
+/* [WebUI v1.8] Click-sortable table headers (generic tables with
+   `sortable: true` — the Opções chain/position tables): cursor + hover,
+   same accent as the proventos sortable headers. */
+.val-table th.val-sortable { cursor: pointer; user-select: none; }
+.val-table th.val-sortable:hover { color: var(--color-accent); }
+
 /* Generic valuation table (also used inside collapsible category groups) */
 .val-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .val-table th {
