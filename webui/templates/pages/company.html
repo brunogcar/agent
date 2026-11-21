@@ -63,6 +63,16 @@
             hx-swap="innerHTML">
       {{ t("company.options") }}
     </button>
+    {# [WebUI v1.9] Acionistas tab — FRE posição acionária + free float +
+       DFP estrutura patrimonial (reference: PETR4_shareholders_dashboard
+       .html / skills/cvm/shareholders). #}
+    <button class="tab-btn" :class="{ 'active': tab === 'shareholders' }"
+            @click="tab='shareholders'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/shareholders"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.shareholders") }}
+    </button>
     {# Re-enable when implemented:
     <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
             @click="tab='historical'"

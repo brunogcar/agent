@@ -1,0 +1,54 @@
+{# webui/templates/partials/tab_shareholders.html — Acionistas tab with subtabs.
+
+[WebUI v1.9] The CVM shareholders view — a reorganized take on the static
+PETR4_shareholders_dashboard.html (4 flat tabs → 4 subtabs organized around
+questions; the static Overview duplicated the identity card + price chart
+the WebUI already renders above the tabs):
+
+- Visão Geral: 6 KPI cards (% Free Float / Total Acionistas / PL Total /
+  Capital Social / Ações Totais / Maior Acionista) + evolução do free float
+  (line) + evolução de acionistas (stacked) + Mercado|Patrimônio blocks +
+  top-5 preview table.
+- Posição Acionária: full FRE table (Acionista | CPF/CNPJ | Tipo | % ON |
+  % PN | % Total | Qtde Total | Controlador, sortable — the static showed
+  only the top-5 % Total, hiding that FRE percentages are per class) +
+  top-5 doughnut with remainder slice.
+- Free Float: KPIs + evolution charts + the ALL-periods table (the static
+  shipped a single-row snapshot).
+- Estrutura Patrimonial: BPP 2.03.* components (KPIs + composition bar +
+  PL/Capital evolution line + all-exercises table) + FRE capital social
+  (share counts per class, valor, aprovação).
+
+Data: ShareholdersService (webui/services/shareholders.py) over the same
+query layer as the skill's static dashboard (fre.db + dfp.db). All subtabs
+render through the generic section renderer (loadShSubtab → valKpisHtml /
+valSectionsHtml / mountValCharts in app.js) via /sections/shareholders:<sub>.
+#}
+<div class="tab-shareholders" x-data="{ subtab: 'overview' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadShSubtab('overview')" data-lazy="sh:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'holders' }" @click="subtab='holders'" onclick="loadShSubtab('holders')" data-lazy="sh:holders">Posição Acionária</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'free_float' }" @click="subtab='free_float'" onclick="loadShSubtab('free_float')" data-lazy="sh:free_float">Free Float</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'equity' }" @click="subtab='equity'" onclick="loadShSubtab('equity')" data-lazy="sh:equity">Estrutura Patrimonial</button>
+  </nav>
+
+  {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-sh-overview" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Posição Acionária ── #}
+  <div x-show="subtab === 'holders'" style="display: none;" id="tab-sh-holders" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Free Float ── #}
+  <div x-show="subtab === 'free_float'" style="display: none;" id="tab-sh-free_float" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Estrutura Patrimonial ── #}
+  <div x-show="subtab === 'equity'" style="display: none;" id="tab-sh-equity" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

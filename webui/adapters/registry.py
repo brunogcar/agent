@@ -230,6 +230,7 @@ def _register_builtins() -> None:
     from webui.services.options import OptionsService
     from webui.services.price import PriceService
     from webui.services.proventos import ProventosService
+    from webui.services.shareholders import ShareholdersService
     from webui.services.valuation import ValuationService
 
     # Valuation — all 5 subtabs render through the generic renderer.
@@ -292,3 +293,16 @@ def _register_builtins() -> None:
              family="options", label="Opções — Vol. Implícita")
     register("options:positions", _bind(OptionsService, "positions"),
              family="options", label="Opções — Posições")
+
+    # [v1.9] Acionistas — the reorganized shareholders dashboard (reference:
+    # skills/cvm/shareholders static report + PETR4_shareholders_dashboard
+    # .html). All four subtabs are FLAT payloads → generic renderer.
+    register("shareholders:overview", _bind(ShareholdersService, "overview"),
+             family="shareholders", label="Acionistas — Visão Geral")
+    register("shareholders:holders", _bind(ShareholdersService, "holders"),
+             family="shareholders", label="Acionistas — Posição Acionária")
+    register("shareholders:free_float",
+             _bind(ShareholdersService, "free_float"),
+             family="shareholders", label="Acionistas — Free Float")
+    register("shareholders:equity", _bind(ShareholdersService, "equity"),
+             family="shareholders", label="Acionistas — Estrutura Patrimonial")
