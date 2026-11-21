@@ -2218,6 +2218,10 @@ function renderValChart(canvas, cd) {
       if (s.ticks && s.ticks.maxTicksLimit) sc.ticks.maxTicksLimit = s.ticks.maxTicksLimit;
       options.scales[k] = sc;
     });
+    // [v1.9] Honor the server's cutout (doughnut/pie hole — the Acionistas
+    // top-5 doughnut ships "60%"; Chart.js defaults to 0 = solid pie).
+    // Harmless for every other type (Chart.js ignores cutout elsewhere).
+    if ((cd.options || {}).cutout) options.cutout = cd.options.cutout;
   }
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: type,
@@ -2726,6 +2730,41 @@ window.optMat = function(btn) {
   loadOptSubtab(sub, maturity);
 };
 
+// ── Acionistas tab [WebUI v1.9] ────────────────────────────────────────
+// 4 lazy subtabs (Visão Geral / Posição Acionária / Free Float /
+// Estrutura Patrimonial) over the generic /sections/shareholders:<sub>
+// endpoint — the v1.7 recipe: service + register() + shell partial + this
+// loader. Payloads are the FLAT contract ({kpis, sections}); everything
+// renders through the SAME generic renderer as Valuation/Proventos/Opções
+// (valKpisHtml + valSectionsHtml + mountValCharts). No pills/maturity
+// passthrough here — FRE data is annual, nothing is refetched client-side.
+window.loadShSubtab = function(sub) {
+  var panel = document.getElementById('tab-sh-' + sub);
+  if (!panel || panel._loaded) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) +
+        '/sections/shareholders:' + encodeURIComponent(sub) + '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { panel._loaded = true; renderShSubtab(panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderShSubtab(panel, data) {
+  if (data._error) {
+    panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    return;
+  }
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
 // ignores — same mechanism as pair_with_next). Those tables render their
@@ -2802,7 +2841,7 @@ function prefetchSubtab(e) {
   var parts = (btn.getAttribute('data-lazy') || '').split(':');
   var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
               val: window.loadValSubtab, prov: window.loadProvSubtab,
-              opt: window.loadOptSubtab };
+              opt: window.loadOptSubtab, sh: window.loadShSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -2850,6 +2889,8 @@ function initApp() {
     // [v1.8] Opções — first subtab of the options tab (loads on settle,
     // same pattern as the other lazy tabs; the shell no-ops elsewhere).
     loadOptSubtab('overview');
+    // [v1.9] Acionistas — first subtab of the shareholders tab.
+    loadShSubtab('overview');
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });

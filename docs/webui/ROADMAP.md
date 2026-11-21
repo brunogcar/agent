@@ -41,6 +41,7 @@
 - [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
 - [x] **[v1.7.2] Múltiplos parity** — Preço (P/L,LPA,P/VP,VPA + Múltiplos de Preço dual-axis histories | Múltiplos + Per-share tables | Comparativos), EBIT/EBITDA (EBIT + EBITDA history charts | tables), Menos Comuns (Preço/Balanço + Ativo/Preço histories + table); Tudo/10A/…/1M range bar on every history chart (client-side filter).
 - [x] **[v1.8] Opções** — the static options dashboard reorganized: Visão Geral (6 KPIs + dual-axis P/C Ratio + Últimas Observações | Resumo CALL vs PUT + OI walls), Cadeia (maturity pill bar + Calls | Puts side by side, top-30 by volume, sortable), Volume & Exercícios (merged), Vol. Implícita (smile + term-structure heatmap capped to ±25% spot × 8 expiries), Posições (CALL/PUT split, top-50 by OI, sortable). Same data layer as the skill's static report; maturity pills refetch server-side; generic table click-sort added to the shared renderer. **[fix1]** Datas no padrão brasileiro: dd/mm/yyyy nas tabelas (Data/Vencimento) e refs de texto; eixos + tooltips de TODOS os gráficos com labels ISO (P/C, Exercícios e os históricos 5A do Valuation) formatados pelo `renderValChart`; colunas de data ordenáveis cronologicamente (`_valSortKey` parseia dd/mm/yy[yy]).
+- [x] **[v1.9] Acionistas** — the static shareholders dashboard reorganized: Visão Geral (6 KPIs + evolução do free float + evolução de acionistas PF/PJ/Inst. empilhados + Mercado|Patrimônio blocks + top-5 preview), Posição Acionária (tabela completa com % ON \| % PN \| % Total lado a lado + CPF/CNPJ mascarado, sortable, cap 60 + doughnut top-5 com disambiguação de nomes duplicados e fatia de remanescente clamped), Free Float (7 KPIs + os dois charts de evolução + tabela de TODOS os períodos — o estático mostrava uma única linha), Estrutura Patrimonial (6 KPIs BPP + Composição bar + Evolução PL/Capital line + tabela de todos os exercícios em BRL compacto + Capital Social FRE). Same data layer as the skill's static report (fre.db + dfp.db); degradação por fonte; `renderValChart` honra cutout do server (doughnut).
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
 
 ### Features
@@ -72,7 +73,6 @@
 #### Company Tabs
 - [x] **Options tab** — shipped (see Built). The recipe held: service + register() + shell partial + loader, zero api.py endpoint edits (only the maturity passthrough param).
 - [ ] **Insider tab**
-- [ ] **Shareholders tab**
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
 
 #### Screener

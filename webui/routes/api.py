@@ -98,8 +98,8 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 
 # Tabs with a rendered partial (historical is future work —
 # company.html hides its button until it exists). [v1.6] proventos.
-# [v1.8] options.
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options"}
+# [v1.8] options. [v1.9] shareholders.
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options", "shareholders"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -351,6 +351,15 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_options.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "shareholders":
+        # [WebUI v1.9] Shell only — subtabs fetch through the generic
+        # /sections/shareholders:<sub> endpoint (overview/holders/
+        # free_float/equity).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_shareholders.html",
             {"ticker": ticker, "t": tr},
         )
     else:  # financials
