@@ -41,5 +41,12 @@
     "close": "Fechar",
     "save": "Salvar",
     "cancel": "Cancelar"
+  },
+  "preflight": {
+    "title": "Diagnóstico do Sistema",
+    "rerun": "Verificar novamente",
+    "ok": "ok",
+    "warnings": "avisos",
+    "failures": "falhas"
   }
 }

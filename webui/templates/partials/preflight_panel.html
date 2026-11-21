@@ -1,0 +1,36 @@
+{# webui/templates/partials/preflight_panel.html — pre-flight checks card.
+
+[v1.7] Rendered by GET /api/webui/preflight/panel for the Sync page.
+One card per group; one row per check (status dot + label + detail +
+hint). Checks run per request — the panel reflects the CURRENT state,
+so it doubles as a post-sync verification ("did the DB appear / fill?").
+
+Content is PT-BR by convention (same as sync_status.html — the content
+language is pt-BR; en-US covers the shell only).
+#}
+<div class="preflight-panel" data-preflight-status="{{ report.status }}">
+  <div class="preflight-head">
+    <span class="pf-dot pf-{{ report.status }}"></span>
+    <span class="pf-title">Diagnóstico do Sistema</span>
+    <span class="pf-summary {{ 'pf-sum-ok' if report.status == 'ok' else ('pf-sum-warn' if report.status == 'warn' else 'pf-sum-fail') }}">
+      {{ report.summary.ok }} ok · {{ report.summary.warn }} avisos · {{ report.summary.fail }} falhas
+    </span>
+    <button class="sync-btn pf-rerun" title="Executa as verificações novamente">Verificar novamente</button>
+  </div>
+  <div class="pf-meta">memory_db: {{ report.memory_root }} · {{ report.duration_ms }} ms</div>
+
+  {% for group in report.groups %}
+  <div class="pf-group">
+    <div class="pf-group-title">{{ group.name }}</div>
+    <div class="pf-rows">
+      {% for c in group.checks %}
+      <div class="pf-row pf-row-{{ c.status }}" title="{{ c.hint or '' }}">
+        <span class="pf-dot pf-{{ c.status }}"></span>
+        <span class="pf-label">{{ c.label }}</span>
+        <span class="pf-detail">{{ c.detail }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>

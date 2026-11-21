@@ -1,0 +1,13 @@
+{# webui/templates/partials/preflight_banner.html — dashboard one-liner.
+
+[v1.7] Rendered by GET /api/webui/preflight/banner for the Dashboard
+(below the freshness ribbon). One line: worst status + counts + link to
+the full panel on the Sync page. Loads once per page view (checks don't
+change on a 30s cadence; the Sync page re-runs them on every visit).
+#}
+<a class="preflight-banner pf-{{ report.status }}" href="/webui/sync"
+   title="Diagnóstico completo na página Sync — memory_db: {{ report.memory_root }}">
+  <span class="pf-dot pf-{{ report.status }}"></span>
+  <span class="pf-banner-text">{%- if report.status == 'ok' -%}Diagnóstico: tudo certo ({{ report.summary.ok }} verificações){%- elif report.status == 'warn' -%}Diagnóstico: {{ report.summary.warn }} aviso{{ 's' if report.summary.warn != 1 }} — ver detalhes{%- else -%}Diagnóstico: {{ report.summary.fail }} falha{{ 's' if report.summary.fail != 1 }} — ver detalhes{%- endif -%}</span>
+  <span class="pf-banner-link">Sync →</span>
+</a>

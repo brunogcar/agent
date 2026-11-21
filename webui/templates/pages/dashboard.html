@@ -15,6 +15,18 @@
     <span class="loading">{{ t("sync.checking") }}</span>
   </div>
 
+  {# [v1.7] Pre-flight banner — one-line system diagnosis (DBs, schema,
+     WAL, vendor assets, adapters, config) linking to the Sync page for
+     the full panel. Loads once per view — checks don't change on a 30s
+     cadence and each run re-probes every DB. #}
+  <div class="preflight-banner-slot"
+       hx-get="/api/webui/preflight/banner"
+       hx-trigger="load"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <span class="loading">Diagnóstico…</span>
+  </div>
+
   {# Quick links #}
   <div class="quick-links">
     <a href="/webui/company/PETR4" class="quick-card">

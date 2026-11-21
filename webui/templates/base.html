@@ -14,7 +14,7 @@
     navigated with a query param the server ignores — dead URL state)
   - Sidebar collapse persists in localStorage (was reset on every page load)
   - Search input has an aria-label
-[WebUI v1.6 fix1] ?v=40 (Proventos tab fixes — see CHANGELOG)
+[WebUI v1.6 fix1] ?v=41 (Proventos tab fixes — see CHANGELOG)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -36,14 +36,14 @@
   <style>{{ theme_css | safe }}</style>
 
   {# ── Vendor JS (local, no CDN) — with cache-busting ── #}
-  <script src="/static/vendor/htmx.min.js?v=40"></script>
-  <script defer src="/static/vendor/alpine.min.js?v=40"></script>
-  <script src="/static/vendor/chart.umd.min.js?v=40"></script>
-  <script src="/static/vendor/hammer.min.js?v=40"></script>
-  <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=40"></script>
+  <script src="/static/vendor/htmx.min.js?v=41"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=41"></script>
+  <script src="/static/vendor/chart.umd.min.js?v=41"></script>
+  <script src="/static/vendor/hammer.min.js?v=41"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=41"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=40">
+  <link rel="stylesheet" href="/static/css/app.css?v=41">
 </head>
 <body>
   <div class="app-shell">
@@ -133,6 +133,6 @@
   </div>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=40"></script>
+  <script src="/static/js/app.js?v=41"></script>
 </body>
 </html>

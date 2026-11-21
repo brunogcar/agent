@@ -574,6 +574,70 @@ a:hover { text-decoration: underline; }
 .sync-line.sync-ev-sync-completed { color: #22c55e; }
 .sync-line.sync-ev-sync-failed { color: #ef4444; }
 .sync-line.sync-ev-sync-progress { color: var(--color-text-sec); opacity: 0.85; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   [v1.7] Pre-flight diagnostics — Sync page panel + Dashboard banner.
+   Status colors follow the app tokens (#22c55e green / #ef4444 red /
+   var(--color-warning) amber — same palette as the sync badges).
+   ══════════════════════════════════════════════════════════════════════════ */
+.preflight-panel {
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.preflight-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.pf-title { font-weight: 600; font-size: 14px; }
+.pf-summary { font-size: 12px; color: var(--color-text-sec); }
+.pf-sum-ok { color: #22c55e; }
+.pf-sum-warn { color: var(--color-warning); }
+.pf-sum-fail { color: #ef4444; }
+.pf-rerun { margin-left: auto; }
+.pf-meta {
+  font-size: 11px; color: var(--color-text-sec); font-family: var(--font-mono);
+  margin-top: var(--space-1);
+}
+.pf-group { margin-top: var(--space-4); }
+.pf-group-title {
+  font-size: 12px; font-weight: 600; color: var(--color-text-sec);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-1); border-bottom: 1px solid var(--color-border);
+}
+.pf-row {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: 3px 0; font-size: 12px;
+}
+.pf-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  align-self: center;
+}
+.pf-ok { background: #22c55e; }
+.pf-warn { background: var(--color-warning); }
+.pf-fail { background: #ef4444; }
+.pf-label { min-width: 260px; }
+.pf-detail { color: var(--color-text-sec); font-family: var(--font-mono); font-size: 11px; }
+.pf-row-fail .pf-label { color: #ef4444; }
+@media (max-width: 720px) {
+  .pf-label { min-width: 0; }
+  .pf-row { flex-wrap: wrap; }
+}
+
+/* Dashboard banner — one line, links to the Sync panel */
+.preflight-banner-slot { margin: var(--space-3) 0; }
+.preflight-banner {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md); text-decoration: none;
+  font-size: 13px; border: 1px solid var(--color-border);
+  background: var(--color-bg-card); color: var(--color-text);
+  transition: border-color 0.15s ease;
+}
+.preflight-banner:hover { border-color: var(--color-brand); }
+.preflight-banner.pf-ok { border-left: 3px solid #22c55e; }
+.preflight-banner.pf-warn { border-left: 3px solid var(--color-warning); }
+.preflight-banner.pf-fail { border-left: 3px solid #ef4444; }
+.pf-banner-text { flex: 1; }
+.pf-banner-link { color: var(--color-brand); font-size: 12px; font-weight: 600; }
 #price-chart-msg .error { padding: var(--space-2) 0; }
 .placeholder { color: var(--color-text-sec); font-style: italic; padding: var(--space-5); }
 .error { color: var(--color-danger); padding: var(--space-3); }

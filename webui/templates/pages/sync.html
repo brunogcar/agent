@@ -4,6 +4,18 @@
 <div class="page-sync">
   <h1>{{ t("sync.sources") }}</h1>
 
+  {# [v1.7] Pre-flight diagnostics — DB existence/schema/WAL/rows, sync
+     coverage, system, adapter registry, config. Runs per request (cheap);
+     the card doubles as post-sync verification. The "Verificar novamente"
+     button re-fetches via the delegated .pf-rerun listener in app.js. #}
+  <div id="preflight-panel"
+       hx-get="/api/webui/preflight/panel"
+       hx-trigger="load"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <div class="loading">Executando diagnóstico…</div>
+  </div>
+
   {# [v1.5 fix1] "Sincronizar tudo" — one POST to /api/webui/sync/all
      (stale sources only). Placed OUTSIDE #sync-status on purpose: the
      div's innerHTML is re-swapped every 30s by HTMX and would wipe the

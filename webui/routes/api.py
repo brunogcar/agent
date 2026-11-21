@@ -18,10 +18,20 @@
     since v1.2).
   - One shared Jinja env (webui/templating.py) resolved from __file__.
   - `range` validated against the map (unknown → _error, not silent 1A).
+[v1.7] Service singletons come from webui.adapters.registry.service()
+  (memoized — the adapters registry dispatches through the SAME
+  instances, so PriceService's 60s-TTL OHLCV cache is shared). New
+  generic endpoint /company/{ticker}/sections/{key} dispatches any
+  registered adapter — the per-family endpoints below remain as
+  stable aliases (existing client loaders keep working; new tabs use
+  the generic path).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
   GET /api/webui/company/{ticker}/header    → identity card (HTML fragment)
+  GET /api/webui/company/{ticker}/sections/{key} → ANY registered subtab
+        adapter (key = "<family>:<sub>", e.g. valuation:overview,
+        financials:demonstracoes?period=quarterly) [v1.7]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)
@@ -42,11 +52,13 @@ Routes:
 """
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from webui.adapters.registry import dispatch, has as adapter_has
 from webui.i18n import negotiate_locale, t
 from webui.services.company import CompanyService
 from webui.services.price import PriceService
@@ -57,11 +69,19 @@ from webui.templating import templates
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
 
-_company_service = CompanyService()
-_price_service = PriceService()
-_financials_service = FinancialsService()
-_valuation_service = ValuationService()
-_proventos_service = ProventosService()
+# [v1.7] Singletons via the adapters registry factory — the generic
+# /sections/{key} dispatch path binds the SAME instances (one PriceService
+# = one shared OHLCV cache, as intended since v1.5).
+def _svc(cls):
+    from webui.adapters.registry import service
+    return service(cls)
+
+
+_company_service = _svc(CompanyService)
+_price_service = _svc(PriceService)
+_financials_service = _svc(FinancialsService)
+_valuation_service = _svc(ValuationService)
+_proventos_service = _svc(ProventosService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: 4-6 letters + 1-2 digits + optional trailing letter
@@ -69,6 +89,12 @@ _proventos_service = ProventosService()
 # garbage never reaches the engines, SQL LIKE patterns, Jinja contexts or
 # client JS strings. FastAPI returns 422 automatically on mismatch.
 Ticker = Annotated[str, Path(pattern=r"^[A-Za-z]{4,6}\d{1,2}[A-Za-z]?$")]
+
+# [v1.7] Adapter key validation — "<family>:<sub>" (colon is a legal path
+# character, RFC 3986). Checked BEFORE dispatch; unknown keys get a 404
+# PT-BR plain-text message (same pattern as the tab route — never reflect
+# the raw param into HTML).
+_ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 
 # Tabs with a rendered partial (historical is future work —
 # company.html hides its button until it exists). [v1.6] proventos.
@@ -119,6 +145,28 @@ def company_header_fragment(request: Request, ticker: Ticker):
         "partials/identity_card.html",
         {"header": header, "t": _tr(request)},
     )
+
+
+@router.get("/company/{ticker}/sections/{key}")
+def company_sections(ticker: Ticker, key: str,
+                     period: str = Query("annual"),
+                     periods: int = Query(10)):
+    """[v1.7] Generic subtab endpoint — dispatches ANY registered adapter.
+
+    Key format "<family>:<sub>" (e.g. valuation:overview,
+    proventos:anual, financials:demonstracoes). Params are passed through
+    to the adapter (period/periods matter only for financials:
+    demonstracoes; every other adapter ignores them).
+
+    Unknown/malformed keys → 404 PT-BR plain text (never reflected into
+    HTML). Registered keys: webui.adapters.registry.adapter_keys().
+    """
+    if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
+        return PlainTextResponse(
+            f"Subtab '{key}' não encontrada.", status_code=404
+        )
+    data = dispatch(key, ticker.upper(), period=period, periods=periods)
+    return JSONResponse(data)
 
 
 def _range_years(range_: str) -> float:

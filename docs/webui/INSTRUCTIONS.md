@@ -34,6 +34,10 @@
 
 13. **Never rewrite the report design system.** The WebUI reuses CSS variables, macros, and Chart.js patterns from `tools/report_ops/templates/`. Share the design system, don't duplicate it.
 
+14. **Never add a per-subtab API route for a new tab (v1.7+).** New subtabs are registered in `webui/adapters/registry.py` and served by the ONE generic endpoint `GET /api/webui/company/{ticker}/sections/{key}`. Adding a route per subtab is the pattern v1.7 replaced.
+
+15. **Never invent a new payload shape for the generic renderer.** Payloads rendered by the generic section renderer MUST satisfy `webui/adapters/contract.py` (flat `{kpis, sections}` / grouped `{groups}` / error `{_error}`; section types: chart, table, two_column, ratio_grid, heatmap). The dispatcher validates and logs violations — build sections with the `contract.py` helpers instead of hand-rolling dicts.
+
 ---
 
 ### ALWAYS DO
@@ -57,3 +61,9 @@
 9. **Always use `PRAGMA journal_mode=WAL` on SQLite connections.** The startup `db_wal.py` sets this persistently, but if you open a new connection manually, set WAL + `busy_timeout=5000`.
 
 10. **Always run `python webui.py` to test.** Not `uvicorn webui.app:create_app`. The entry point sets up sys.path, runs WAL setup, and configures uvicorn correctly.
+
+11. **Always add a new tab through the adapter registry (v1.7+).** The recipe: (1) a service method returning a contract payload — use the `contract.py` builders (`chart_section`, `table_section`, `kpi`, …); (2) ONE `register("options:overview", _bind(OptionsService, "overview"), family="options", label="…")` call in `webui/adapters/registry.py`; (3) a tab shell partial + a client loader fetching `/api/webui/company/{ticker}/sections/options:overview`. Register with `generic=False` only when the subtab has its own client renderer (like Preço/Financeiro do).
+
+12. **Always get service instances from `webui.adapters.registry.service(cls)`.** It's the memoized singleton factory — routes and adapters share ONE instance (PriceService carries the shared OHLCV cache). Constructing `PriceService()` directly duplicates the cache.
+
+13. **Always check the pre-flight panel when data seems missing.** `/webui/sync` shows the Diagnóstico do Sistema card (DB existence, schema, WAL, row counts, adapter registry). `GET /api/webui/preflight/` returns the same report as JSON for scripting.

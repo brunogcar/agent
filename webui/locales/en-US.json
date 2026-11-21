@@ -41,5 +41,12 @@
     "close": "Close",
     "save": "Save",
     "cancel": "Cancel"
+  },
+  "preflight": {
+    "title": "System Diagnostics",
+    "rerun": "Run again",
+    "ok": "ok",
+    "warnings": "warnings",
+    "failures": "failures"
   }
 }

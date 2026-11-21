@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-09-16 (v1)
+Last updated: 2026-11-21 (v1.7 — adapter dispatch endpoint + pre-flight routes)
 
 ---
 
@@ -16,7 +16,7 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 |--------|------|-------------|
 | GET | `/webui/` | Dashboard (home — market overview, no ticker required) |
 | GET | `/webui/company/{ticker}` | Company overview page (default tab: visao_geral) |
-| GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: visao_geral, valuation, financials, dividends, historical) |
+| GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: visao_geral, preco, financials, valuation, proventos) |
 | GET | `/webui/macro` | Macro indicators page |
 | GET | `/webui/sync` | Data sync status page |
 | GET | `/webui/settings` | Settings page (theme, language) |
@@ -34,22 +34,27 @@ All HTML routes accept:
 
 Return JSON. Used by Chart.js and programmatic clients.
 
-### `GET /api/webui/company/{ticker}/ratios`
+### `GET /api/webui/company/{ticker}/sections/{key}`
 
-Returns all 79 valuation ratios for a ticker.
+[v1.7] **Generic subtab endpoint** — dispatches ANY adapter registered in `webui/adapters/registry.py`. This is the canonical endpoint for new tabs; the per-family endpoints below are stable aliases over the same service methods.
 
-**Response:**
+**Parameters:**
+- `key`: `"<family>:<sub>"` — one of `valuation:overview|multiples|intrinsic|fundamentals|all`, `proventos:overview|historico|anual`, `preco:cotacao|indicadores|volatilidade|volume|fibonacci`, `financials:overview|demonstracoes`
+- `period`: `annual` (default) | `quarterly` — only used by `financials:demonstracoes`
+- `periods`: number of periods (default 10 annual / 20 quarterly) — only used by `financials:demonstracoes`
+
+**Response:** a contract payload (`webui/adapters/contract.py`):
 ```json
 {
-  "p_l": 16.54,
-  "p_vpa": 1.45,
-  "ev_ebitda": 2.80,
-  "roe": 0.3119,
-  "roic": 0.1680,
-  "dividend_yield": 0.1075,
-  ...
+  "ticker": "PETR4", "status": "ok",
+  "kpis": [{"label": "P/L", "value": "6,54", "tooltip": "…"}],
+  "sections": [
+    {"type": "table", "title": "…", "columns": ["Métrica", "Valor"], "rows": [["…", "…"]]},
+    {"type": "chart", "title": "…", "chart_data": {"type": "line", "data": {"labels": […], "datasets": […]}}}
+  ]
 }
 ```
+Error shape: `{"ticker": "PETR4", "_error": "mensagem PT-BR"}` (HTTP 200 — the client renders the message). Unknown/malformed keys → 404 plain text.
 
 ### `GET /api/webui/company/{ticker}/candlestick?range={range}`
 
@@ -92,6 +97,49 @@ Returns volume data for the Volume subtab (10Y): volume bars + trade count + con
 
 Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w) + levels + trade setups + dividend adjustments.
 
+### Lazy subtab endpoints (aliases of `/sections/{key}`)
+
+Each family also has dedicated endpoints over the same service methods — `financials-overview`, `financials-statements`, `valuation-overview|-multiples|-intrinsic|-fundamentals|-all`, `proventos-overview|-historico|-anual`. Same payloads as `/sections/{key}`; kept for the existing client loaders.
+
+---
+
+## Pre-flight Routes
+
+[v1.7] System health checks surfaced in the UI. Cheap (file stats, SQLite pragmas, `MAX(rowid)` probes) — run per request, no side effects (never creates directories).
+
+### `GET /api/webui/preflight/`
+
+Full report — JSON.
+
+**Response:**
+```json
+{
+  "status": "warn",
+  "generated_at": "2026-11-21T10:00:00",
+  "duration_ms": 137,
+  "memory_root": "D:/mcp/agent/memory_db",
+  "summary": {"ok": 31, "warn": 4, "fail": 1, "total": 36},
+  "groups": [
+    {"id": "bancos", "name": "Bancos de Dados", "checks": [
+      {"id": "db:dfp", "label": "dfp.db (cvm)", "status": "ok",
+       "detail": "1.4 GB · 12,3 mi linhas"}
+    ]},
+    {"id": "dados", "name": "Sincronizações", "checks": […]},
+    {"id": "sistema", "name": "Sistema", "checks": […]},
+    {"id": "adapters", "name": "Adapters", "checks": […]},
+    {"id": "configuracao", "name": "Configuração", "checks": […]}
+  ]
+}
+```
+
+### `GET /api/webui/preflight/panel`
+
+Grouped checks card — HTML partial (Sync page, `hx-trigger="load"`).
+
+### `GET /api/webui/preflight/banner`
+
+One-line summary with link to `/webui/sync` — HTML partial (Dashboard).
+
 ---
 
 ## HTMX Partial Routes
@@ -124,7 +172,7 @@ Company header — returns the 3-part header HTML fragment (identity card + 4 re
 Tab content — returns the HTML fragment for a specific company tab.
 
 **Parameters:**
-- `tab`: `visao_geral` | `valuation` | `financials` | `dividends` | `historical`
+- `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `proventos`
 
 ---
 
@@ -132,9 +180,7 @@ Tab content — returns the HTML fragment for a specific company tab.
 
 ### `GET /api/webui/sync/status`
 
-Returns freshness status for all data sources.
-
-**Response:**
+Returns freshness status for all data sources — HTML partial (Sync page table + Dashboard ribbon). `/api/webui/sync/status.json` returns the JSON shape:
 ```json
 {
   "dfp": { "last_sync": "2026-09-15T10:30:00", "stale": false, "status": "fresh" },
@@ -143,12 +189,16 @@ Returns freshness status for all data sources.
 }
 ```
 
+### `POST /api/webui/sync/all`
+
+Triggers background syncs for every STALE source (fresh within 24h skipped). One job per source, deduped.
+
 ### `POST /api/webui/sync/{source}`
 
 Triggers a background sync for one data source. Returns immediately with a job_id.
 
 **Parameters:**
-- `source`: One of `dfp`, `itr`, `fca`, `fre`, `cad`, `cotahist`, `brapi`, `sgs`, etc.
+- `source`: any key from the sync_guard registry — `dfp`, `itr`, `fca`, `fre`, `cad`, `bridge`, `cotahist`, `b3_dividends`, `sgs`, `focus`, `ddm-*`, `b3-api-*`, etc.
 
 **Response:**
 ```json
@@ -197,7 +247,7 @@ The WebUI app also mounts the existing gateway routes, so the agent's MCP-to-HTT
 
 ## Service Layer Contract
 
-Routes never import skill engines directly. All data access goes through `webui/services/`.
+Routes never import skill engines directly. All data access goes through `webui/services/`. Since v1.7 the service singletons are owned by `webui/adapters/registry.service()` (memoized factory shared by routes and the adapter dispatch path).
 
 ### `CompanyService`
 
@@ -216,9 +266,17 @@ class SyncService:
     def freshness(self) -> dict[str, dict]
     def subscribe(self) -> asyncio.Queue
     def unsubscribe(self, q: asyncio.Queue) -> None
-    def trigger_sync(self, source: str) -> str  # returns job_id
+    def trigger_sync(self, source: str) -> dict  # job dict (deduped)
+    def trigger_sync_all(self, stale_only: bool = True) -> dict
     def job_status(self, job_id: str) -> dict | None
     def all_jobs(self) -> list[dict]
+```
+
+### `PreflightService` (v1.7)
+
+```python
+class PreflightService:
+    def run(self) -> dict  # {status, summary, groups: [{id, name, checks: [...]}]}
 ```
 
 ---

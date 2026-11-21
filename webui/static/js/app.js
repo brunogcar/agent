@@ -1410,7 +1410,9 @@ window.loadValSubtab = function(sub) {
   if (!ticker) return;
   // [v1.5] _loaded is set only AFTER a successful render — the old code set
   // it before the fetch, so a failed subtab could never be retried.
-  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/valuation-' + sub + '?_t=' + Date.now())
+  // [v1.7] Fetches through the generic adapter endpoint (/sections/<key>)
+  // — same payload, now dispatched + contract-checked by the registry.
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/sections/valuation:' + sub + '?_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) { panel._loaded = true; renderValSubtab(sub, panel, data); })
     .catch(function(err) {
@@ -1777,7 +1779,9 @@ window.loadProvSubtab = function(sub) {
   if (!panel || panel._loaded) return;
   var ticker = panel.getAttribute('data-ticker');
   if (!ticker) return;
-  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/proventos-' + sub + '?_t=' + Date.now())
+  // [v1.7] Generic adapter endpoint (/sections/proventos:<sub>) — same
+  // payload via the registry dispatch path.
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) + '/sections/proventos:' + sub + '?_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) { panel._loaded = true; renderProvSubtab(sub, panel, data); })
     .catch(function(err) {
@@ -2070,6 +2074,18 @@ function appendSyncLog(log, d) {
 // page and the Dashboard ribbon) ─────────────────────────────────────────
 function initSyncButtons() {
   document.body.addEventListener('click', function(e) {
+    // [v1.7] Pre-flight "Verificar novamente" — re-run the diagnostics
+    // panel via HTMX (the button lives INSIDE the swapped panel, so the
+    // listener must be delegated like the sync buttons).
+    var rerun = e.target && e.target.closest ? e.target.closest('.pf-rerun') : null;
+    if (rerun) {
+      var host = document.getElementById('preflight-panel');
+      if (host && typeof htmx !== 'undefined') {
+        host.innerHTML = '<div class="loading">Executando diagnóstico…</div>';
+        htmx.ajax('GET', '/api/webui/preflight/panel', '#preflight-panel');
+      }
+      return;
+    }
     // [v1.5 fix1] "Sincronizar tudo" — one POST, stale sources only.
     var allBtn = e.target && e.target.closest ? e.target.closest('.sync-all-btn') : null;
     if (allBtn) {

@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.6)
+## ✅ Built (v1 → v1.7)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -22,12 +22,14 @@
 - [x] [v1.5] TrustedHostMiddleware loopback-only (LAN = `WEBUI_ALLOW_LAN=1`)
 - [x] [v1.5] Threadpool route handlers (plain `def` — event loop never blocks)
 - [x] [v1.5] Shared Jinja env (`webui/templating.py`, `__file__`-relative)
+- [x] **[v1.7] Adapter contract + registry** — `webui/adapters/` formalizes the section-payload pattern (Valuation v1.4 / Proventos v1.6): every lazy subtab is registered under a `"<family>:<sub>"` key and served by ONE generic endpoint (`GET /api/webui/company/{ticker}/sections/{key}`). Contract validation at dispatch time (violations logged + `_contract_violations` attached). Memoized service singletons shared by routes and dispatch (one PriceService = one OHLCV cache). All 15 existing subtabs registered; per-family endpoints remain as aliases.
+- [x] **[v1.7] Pre-flight checks** — `PreflightService` + `/api/webui/preflight` (JSON) + `/panel` (Sync page card: Diagnóstico do Sistema, with "Verificar novamente") + `/banner` (Dashboard one-liner). Per-DB existence/size/expected-schema/WAL/`MAX(rowid)` row sanity (26 DBs across cvm/b3/bcb/ddm), sync coverage, vendor assets, Python/disk/write access, adapter registry integrity, launch config. Side-effect free (resolves the memory root without mkdir).
 
 ### Pages
 - [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
 - [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
 - [x] Macro (`/webui/macro`) — placeholder
-- [x] Sync (`/webui/sync`) — freshness table + Sincronizar buttons + live SSE log
+- [x] Sync (`/webui/sync`) — freshness table + pre-flight panel (v1.7) + Sincronizar buttons + live SSE log
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
 ### Company Tabs
@@ -56,24 +58,32 @@
 - [x] [v1.5] Lazy subtabs everywhere (Preço/Financeiro/Valuation — active subtab only)
 - [x] [v1.5] Shared 60s-TTL OHLCV cache (4 Preço subtabs = 1 DB scan)
 - [x] [v1.5] pt-BR number formatting (Intl.NumberFormat, thousands separators)
+- [x] [v1.7] Valuation + Proventos loaders fetch through the generic `/sections/{key}` endpoint (adapter dispatch path)
 
 ---
 
-## 🔄 Next Up (v1.7)
+## 🔄 Next Up
 
-### Company Tabs (finish the set)
+### v1.7.1 — Data fix
+- [ ] **Quarterly balanços (trimestral)** — Demonstrações > `Período: trimestral` shows all 4 quarters of each year with the same balance-sheet values. Root cause: BPA/BPP ITR rows are snapshots (`DT_INI_EXERC` empty) so `compute_meses` stamps them all `meses=12` — quarter-end balances collide in one bucket and `_snap()` carries the year-end value forward. Fix in the CVM layer (query/migration re-key on `data_fim_exerc`) + audit every snapshot consumer (bpa/bpp engines' `meses IN (3,6,9)` ITR lookups, TTM balances, Altman Z, red flags, Valuation > Fundamentos).
 
+### v1.7.2 — Valuation gap fill
+- [ ] **Preço / EBIT-EBITDA / Menos Comuns subtabs** — add the missing charts/tables vs the static dashboard reference.
+
+### v1.8 — Feature wave (built on the v1.7 adapter registry)
+
+#### Company Tabs
 - [ ] **Options tab**
-- [ ] **insider tab**
-- [ ] **shareholders tab**
+- [ ] **Insider tab**
+- [ ] **Shareholders tab**
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
 
-### Screener
+#### Screener
 - [ ] **Sector screener** — select sector → see all companies with key metrics (P/L, DY, ROE, market cap).
 - [ ] **Filter + sort** — filter by P/L range, DY range, market cap range. Sort by any column.
 - [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
 
-### Macro Page
+#### Macro Page
 - [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.
 - [ ] **Focus Bulletin** — market expectations (median, high, low) for IPCA, PIB, Selic, exchange rate. Table + chart.
 - [ ] **Macro dashboard** — ribbon of key indicators on the dashboard page.

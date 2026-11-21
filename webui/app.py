@@ -113,10 +113,11 @@ def create_app() -> FastAPI:
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # ── WebUI routes ─────────────────────────────────────────────────────────
-    from webui.routes import pages, api, sync
+    from webui.routes import pages, api, sync, preflight
     app.include_router(pages.router)
     app.include_router(api.router)
     app.include_router(sync.router)
+    app.include_router(preflight.router)  # [v1.7] pre-flight checks
 
     # ── Existing gateway routes (optional — mount if available) ─────────────
     # This brings /chat, /task, /ws, /health onto the same app so the WebUI

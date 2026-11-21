@@ -4,7 +4,7 @@
 
 > File map, design decisions, and data flow for the Brazilian Financial Data WebUI.
 
-Last updated: 2026-09-16 (v1 — initial vertical slice)
+Last updated: 2026-11-21 (v1.7 — adapter contract + registry + pre-flight checks)
 
 ---
 
@@ -18,37 +18,54 @@ agent/
 ├── webui/                            # WebUI package
 │   ├── __init__.py                   # Package marker
 │   ├── app.py                        # FastAPI app factory (mounts routes + static + gateway)
+│   ├── templating.py                 # ONE shared Jinja2Templates env (__file__-relative)
+│   ├── adapters/                     # [v1.7] Section payload contract + subtab registry
+│   │   ├── contract.py               # Payload/section shapes + builders + validation
+│   │   └── registry.py               # "<family>:<sub>" registry + dispatch() + service singletons
 │   ├── i18n.py                       # JSON-based i18n (t() function, locale negotiation)
 │   ├── theme.py                      # CSS variable theme registry (JSON theme files)
 │   ├── routes/                       # HTTP route modules
 │   │   ├── pages.py                  # HTML page routes (/webui/*)
 │   │   ├── api.py                    # JSON + HTMX partial routes (/api/webui/*)
-│   │   └── sync.py                   # SSE sync progress (/api/webui/sync/*)
+│   │   ├── sync.py                   # SSE sync progress (/api/webui/sync/*)
+│   │   └── preflight.py              # [v1.7] Pre-flight checks (/api/webui/preflight/*)
 │   ├── services/                     # Service layer (ONLY place that imports skills)
 │   │   ├── company.py                # Company header + ratios + price series
-│   │   └── sync.py                   # Freshness check + background sync + SSE pub/sub
+│   │   ├── price.py                  # Preço tab (OHLCV, indicators, volatility, volume, Fibonacci)
+│   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch)
+│   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
+│   │   ├── proventos.py              # Proventos tab (dividends.db + yield at ex-date)
+│   │   ├── sync.py                   # Freshness check + background sync + SSE pub/sub
+│   │   └── preflight.py              # [v1.7] Pre-flight checklist (DBs, system, adapters, config)
 │   ├── templates/                    # Jinja2 templates
 │   │   ├── base.html                 # Shell: sidebar + topbar + content area
 │   │   ├── pages/                    # Full HTML pages (extend base.html)
-│   │   │   ├── dashboard.html        # Home (market overview)
+│   │   │   ├── dashboard.html        # Home (market overview + pre-flight banner)
 │   │   │   ├── company.html          # Company view (header + tabs)
 │   │   │   ├── macro.html            # Macro indicators
-│   │   │   ├── sync.html             # Sync status + SSE log
+│   │   │   ├── sync.html             # Sync status + pre-flight panel + SSE log
 │   │   │   └── settings.html         # Theme + language settings
 │   │   └── partials/                 # HTMX fragments (no <html> wrapper)
 │   │       ├── search_results.html   # Ticker search dropdown
 │   │       ├── identity_card.html    # Persistent identity header (all tabs)
+│   │       ├── sync_status.html      # Freshness table (Sync page + Dashboard ribbon)
+│   │       ├── preflight_panel.html  # [v1.7] Grouped checks card (Sync page)
+│   │       ├── preflight_banner.html # [v1.7] One-line diagnosis (Dashboard)
 │   │       ├── tab_visao_geral.html  # Visão Geral tab (reg tables + chart)
-│   │       └── tab_valuation.html    # Valuation tab content
+│   │       ├── tab_preco.html        # Preço tab shell (5 lazy subtabs)
+│   │       ├── tab_financials.html   # Financeiro tab shell (2 lazy subtabs)
+│   │       ├── tab_valuation.html    # Valuation tab shell (5 lazy subtabs)
+│   │       └── tab_proventos.html    # Proventos tab shell (3 lazy subtabs)
 │   ├── static/                       # Static assets (CSS, JS, vendor)
 │   │   ├── favicon.svg               # Teal bar-chart icon
 │   │   ├── css/app.css               # 3-layer token system + layout + components
-│   │   ├── js/app.js                 # HTMX config + chart init after swap
-│   │   ├── js/charts.js              # Chart.js factory (theme-aware)
+│   │   ├── js/app.js                 # Tab/subtab loaders + generic section renderer + chart lifecycle
 │   │   └── vendor/                   # Vendored JS (local, no CDN)
 │   │       ├── htmx.min.js           # HTMX 2.0 (50 KB)
 │   │       ├── alpine.min.js         # Alpine.js 3.x (44 KB)
-│   │       └── chart.umd.min.js      # Chart.js 4.4 (205 KB)
+│   │       ├── chart.umd.min.js      # Chart.js 4.4 (205 KB)
+│   │       ├── hammer.min.js         # Hammer.js (touch gestures for chart zoom)
+│   │       └── chartjs-plugin-zoom.min.js  # Zoom plugin (Ctrl+wheel, Shift+drag)
 │   ├── themes/                       # Theme JSON files
 │   │   ├── dark.json                 # Dark theme tokens
 │   │   └── light.json                # Light theme tokens
@@ -65,18 +82,24 @@ agent/
 | `webui.py` | Entry point — parses CLI args, runs WAL setup, launches uvicorn |
 | `core/db_wal.py` | Sets `PRAGMA journal_mode=WAL` on every SQLite DB at startup |
 | `webui/app.py` | FastAPI app factory — mounts routes, static files, existing gateway |
+| `webui/adapters/contract.py` | [v1.7] Section payload contract — shapes, builders, validation |
+| `webui/adapters/registry.py` | [v1.7] Subtab adapter registry + `dispatch()` + memoized service singletons |
 | `webui/i18n.py` | JSON i18n — `t()` function, locale negotiation, `available_locales()` |
 | `webui/theme.py` | Theme registry — `render_theme_css()`, `available_themes()` |
 | `webui/services/company.py` | Company data — wraps `build_company_header()` + `compute_all_ratios()` |
 | `webui/services/price.py` | Price data — wraps `ohlcv_series` + `compute_sma` + indicators + Bollinger + Fibonacci |
+| `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch |
+| `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
+| `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
+| `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
-| `webui/routes/api.py` | JSON + HTMX partials — search, header, ratios, charts, tabs |
+| `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
+| `webui/routes/preflight.py` | [v1.7] Pre-flight endpoints — JSON report + panel/banner partials |
 | `webui/templates/base.html` | Shell — sidebar, topbar, FOUC prevention, vendor JS |
 | `webui/static/css/app.css` | 3-layer CSS: primitives (from theme JSON) → semantic → component |
-| `webui/static/js/app.js` | HTMX `afterSwap` listener — inits charts in swapped content |
-| `webui/static/js/charts.js` | Chart.js factory — theme-aware via CSS variables |
+| `webui/static/js/app.js` | Tab/subtab loaders + generic section renderer + Chart.js lifecycle |
 
 ---
 
@@ -186,6 +209,30 @@ class CompanyService:
 - No CDN availability dependency
 - Faster page load (no external DNS lookup)
 
+### 10. Adapter Contract + Registry (v1.7)
+
+**Decision:** Every lazy subtab payload is produced by an adapter registered in `webui/adapters/registry.py` under a `"<family>:<sub>"` key, and served by ONE generic endpoint (`GET /api/webui/company/{ticker}/sections/{key}`). Generic-renderer payloads are validated against `webui/adapters/contract.py` at dispatch time.
+
+**Rationale:**
+- The pattern already existed ad hoc (Valuation v1.4, Proventos v1.6: report builders → section dicts → ONE client renderer). v1.7 makes it the explicit contract so the v1.8 wave (Options, Insider, Shareholders, Historical, Macro, dashboards) plugs in without new API routes or client renderer code
+- Contract violations surface in the server log with `_contract_violations` attached to the payload — visible during development, non-breaking in production (the client ignores unknown keys)
+- Service singletons are owned by `registry.service()` (memoized factory) — routes and dispatch share ONE PriceService, so the 60s-TTL OHLCV cache is never duplicated
+- Custom-renderer payloads (Preço, Financeiro, Proventos Histórico) register with `generic=False`: same dispatch path, no contract validation (their shape belongs to their client renderer)
+
+**Adding a v1.8 tab:**
+1. Service method returning a contract payload (use `contract.py` builders)
+2. ONE `register("options:overview", …)` call in `registry.py`
+3. Tab shell partial + client loader → `/api/webui/company/{ticker}/sections/options:overview`
+
+### 11. Pre-flight Checks Surfaced in the UI (v1.7)
+
+**Decision:** `webui/services/preflight.py` runs a checklist on demand (DB existence + expected schema + WAL + `MAX(rowid)` row sanity per DB, sync coverage, vendor assets, Python version, disk space, write access, adapter registry integrity, launch config) and surfaces it as a Sync-page panel + Dashboard banner.
+
+**Rationale:**
+- Errors used to surface deep inside engines ("FileNotFoundError: dfp.db — Run sync first" mid-dashboard). The pre-flight panel shows the same diagnosis on ONE page, before things break at render time
+- Checks are cheap (file stats, pragmas, `MAX(rowid)` — never `COUNT(*)`, which full-scans multi-GB tables) and side-effect free (the memory root is resolved WITHOUT mkdir, so a missing DB never leaves empty domain folders behind)
+- The panel doubles as post-sync verification ("did the DB appear / fill?")
+
 ---
 
 ## Data Flow
@@ -226,6 +273,23 @@ Browser
   │    │
   │    ▼
   │  Jinja2 partial → HTML fragment → HTMX swaps into #tab-content
+  │
+  ├─ GET /api/webui/company/PETR4/sections/valuation:overview  (lazy subtab JSON)
+  │    │
+  │    ▼
+  │  routes/api.py → company_sections()
+  │    │
+  │    ▼
+  │  adapters/registry.py → dispatch("valuation:overview", "PETR4")
+  │    │      (contract validation, error containment)
+  │    ▼
+  │  services/valuation.py → ValuationService.overview()
+  │    │
+  │    ▼
+  │  skills/cvm/valuation/report/* → section dicts
+  │    │
+  │    ▼
+  │  JSON → app.js renderValSubtab (generic renderer)
   │
   └─ GET /api/webui/sync/stream  (SSE)
        │
