@@ -696,6 +696,21 @@ a:hover { text-decoration: underline; }
 .val-two-col .val-section { margin-bottom: 0; }
 @media (max-width: 720px) { .val-two-col { grid-template-columns: 1fr; } }
 
+/* ── [v1.7.2] Múltiplos: paired tables + history chart range bar ──────────
+   val-pair-grid: two table sections side by side (Múltiplos de Preço |
+   Per-share Values, EBIT | EBITDA) — the auto-fit minmax collapses to one
+   column on narrow screens. val-range-bar: the Tudo/10A/…/1M chips above
+   the 5Y history charts (reuses .range-btn from the candlestick bar). */
+.val-pair-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+  margin-bottom: var(--space-5);
+}
+.val-pair-grid .val-section { margin-bottom: 0; }
+.val-range-bar { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-2) 0; }
+
 /* Generic valuation table (also used inside collapsible category groups) */
 .val-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .val-table th {

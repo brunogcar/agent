@@ -37,8 +37,9 @@
 - [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, Ctrl+wheel zoom)
 - [x] Preço — 5 lazy subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
 - [x] Financeiro — Visão Geral (TTM + **Conversão da Receita em Lucro waterfall [v1.7.1]** — Anual/Trimestral toggle, client-derived from the overview payload + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts; **quarterly balanço shows real Mar/Jun/Sep period-end values since the v1.7.1 re-key**)
-- [x] Valuation — Visão Geral / Múltiplos (nested subtabs + 5Y histories) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
+- [x] Valuation — Visão Geral / Múltiplos (nested subtabs + per-group 5Y history charts + side-by-side layout since v1.7.2) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
 - [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
+- [x] **[v1.7.2] Múltiplos parity** — Preço (P/L,LPA,P/VP,VPA + Múltiplos de Preço dual-axis histories | Múltiplos + Per-share tables | Comparativos), EBIT/EBITDA (EBIT + EBITDA history charts | tables), Menos Comuns (Preço/Balanço + Ativo/Preço histories + table); Tudo/10A/…/1M range bar on every history chart (client-side filter).
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
 
 ### Features
@@ -64,9 +65,6 @@
 ---
 
 ## 🔄 Next Up
-
-### v1.7.2 — Valuation gap fill
-- [ ] **Preço / EBIT-EBITDA / Menos Comuns subtabs** — add the missing charts/tables vs the static dashboard reference.
 
 ### v1.8 — Feature wave (built on the v1.7 adapter registry)
 

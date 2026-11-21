@@ -30,7 +30,7 @@ divida_liquida_ebitda).
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 
@@ -113,127 +113,200 @@ class ValuationService:
     # [WebUI v1.4 fix2] Section title prefix → subtab group (mirrors the
     # static dashboard's multiples split). Unmatched sections land in a
     # trailing "Outros" group so future builder sections still render.
+    # [v1.7.2] New prefixes: the per-group history chart titles
+    # ("P/L, LPA, …", "Preço/Balanço", "Ativo/Preço …") and the per-share
+    # sections, so leftover bucketing still routes them correctly.
     _MULTIPLES_GROUPS = ["Preço", "EBIT/EBITDA", "EV", "Menos Comuns"]
 
     @classmethod
     def _multiples_group_of(cls, title: str) -> str:
         t = (title or "").lower()
-        if t.startswith("múltiplos de preço") or t.startswith("histórico"):
+        if (t.startswith("múltiplos de preço") or t.startswith("histórico")
+                or t.startswith("p/l, lpa") or t.startswith("valores por ação")
+                or t.startswith("per-share")):
             return "Preço"
         if t.startswith("múltiplos ebit"):  # covers EBIT and EBITDA
             return "EBIT/EBITDA"
         if t.startswith("múltiplos ev"):
             return "EV"
-        if t.startswith("múltiplos menos comuns"):
+        if (t.startswith("múltiplos menos comuns") or t.startswith("preço/balanço")
+                or t.startswith("ativo/preço")):
             return "Menos Comuns"
         return "Outros"
 
     def multiples(self, ticker: str) -> dict[str, Any]:
-        """Grouped multiple tables + comparativo charts + 5Y history chart.
+        """Grouped multiple tables + comparativo charts + 5Y history charts.
 
-        [WebUI v1.4 fix2] Payload is grouped for the client's nested
-        subtabs — Preço (table + comparativo chart + 5Y history),
-        EBIT/EBITDA (EBIT + EBITDA tables), EV (table + chart),
-        Menos Comuns — matching the static dashboard's organization.
+        [WebUI v1.4 fix2] Payload grouped for the client's nested subtabs
+        — Preço (table + comparativo chart + 5Y history), EBIT/EBITDA
+        (EBIT + EBITDA tables), EV (table + chart), Menos Comuns —
+        matching the static dashboard's organization.
+        [WebUI v1.7.2] Static-dashboard parity for the missing pieces:
+        the per-group 5Y HISTORY charts (Preço: "P/L, LPA, P/VP, VPA" +
+        "Múltiplos de Preço" dual-axis; EBIT/EBITDA: "Múltiplos EBIT" +
+        "Múltiplos EBITDA"; Menos Comuns: "Preço/Balanço" +
+        "Ativo/Preço e Alavancagem") AND the Per-share Values (R$) table
+        + Valores por Ação — Comparativo chart (build_per_share_sections
+        — was missing from the WebUI payload entirely). Layout pairing is
+        explicit (see _assemble_multiples_groups); the old monthly-
+        downsampled "Histórico 5 Anos" chart is GONE (superseded — every
+        metric it showed now has a richer per-group history chart, and
+        the reference dashboard has no such chart).
         """
         tk = ticker.upper()
         try:
             from skills._base import engine_cache_scope
-            from skills.cvm.valuation.report.multiples import build_multiples_sections
+            from skills.cvm.valuation.report.multiples import (
+                build_multiples_sections, build_per_share_sections)
             with engine_cache_scope():
                 r = self._ratios(tk)
                 if "_error" in r:
                     return {"ticker": tk, "_error": r["_error"]}
                 sections = build_multiples_sections(r) or []
-                hist = self._multiples_history(tk)
+                per_share = build_per_share_sections(r) or []
+                hists = self._multiples_history_charts(tk)
         except Exception as e:
             return {"ticker": tk, "_error": str(e)}
 
-        if hist:
-            sections.append(hist)
-
-        buckets: dict[str, list[dict]] = {g: [] for g in self._MULTIPLES_GROUPS}
-        for s in sections:
-            buckets.setdefault(self._multiples_group_of(s.get("title", "")), []).append(s)
-
-        order = list(self._MULTIPLES_GROUPS)
-        if buckets.get("Outros"):
-            order.append("Outros")
-        groups = [{"name": g, "sections": buckets[g]} for g in order if buckets.get(g)]
+        groups = self._assemble_multiples_groups(sections, per_share, hists)
         if not groups:
             return {"ticker": tk, "_error": "sem dados de múltiplos"}
         return {"ticker": tk, "status": "ok", "groups": groups}
 
-    def _multiples_history(self, tk: str, years: int = 5) -> dict | None:
-        """5Y P/L + P/VP + EV/EBITDA chart section, monthly downsampled.
+    # The 6 per-group history builders (skills/cvm/valuation/report/
+    # history_charts.py). Each returns None when the company lacks history
+    # for that metric family — dropped per chart, the rest still renders.
+    _HISTORY_CHART_BUILDERS = (
+        ("pl_lpa", "build_pl_lpa_pvp_vpa_history_chart"),
+        ("price_multiples", "build_price_multiples_history_chart"),
+        ("ebit", "build_ebit_multiples_history_chart"),
+        ("ebitda", "build_ebitda_multiples_history_chart"),
+        ("price_balance", "build_price_to_balance_history_chart"),
+        ("asset_price", "build_asset_to_price_history_chart"),
+    )
 
-        Daily series come from the calculations history functions
-        (lpa_history carries `pe`, vpa_history carries `pvpa`,
-        ev_ebitda_history carries `ev_ebitda`). Downsampled to one point
-        per month (the LAST trading day of each month) to keep the JSON
-        payload small (~60 points per series).
+    def _multiples_history_charts(self, tk: str) -> dict[str, dict]:
+        """5Y history chart sections per group (static dashboard parity).
+
+        The builders also emit `price_full_labels` / `price_full_datasets`
+        / `price_full_data` — full-array duplicates the static dashboard's
+        filterPriceChart needs because it MUTATES chart_data. The WebUI
+        client filters from chart_data itself (valChartRange keeps its own
+        full copy at mount), so those keys are STRIPPED here — roughly
+        halving the JSON payload for these charts.
+        `price_range_selector` stays as the flag that renders the
+        Tudo/10A/…/1M bar client-side.
         """
+        out: dict[str, dict] = {}
         try:
-            from skills.cvm.calculations.metrics.lpa import lpa_history
-            from skills.cvm.calculations.metrics.vpa import vpa_history
-            from skills.cvm.calculations.metrics.ev_ebitda import ev_ebitda_history
+            from skills.cvm.valuation.report import history_charts
         except ImportError:
-            return None
-
-        today = date.today()
-        d_from = (today - timedelta(days=365 * years)).isoformat()
-        d_to = today.isoformat()
-
-        try:
-            pe = {p["date"]: p.get("pe")
-                  for p in lpa_history(tk, d_from, d_to) if p.get("date")}
-            pvpa = {p["date"]: p.get("pvpa")
-                    for p in vpa_history(tk, d_from, d_to) if p.get("date")}
-        except Exception:
-            return None
-        try:
-            eve = {p["date"]: p.get("ev_ebitda")
-                   for p in ev_ebitda_history(tk, d_from, d_to) if p.get("date")}
-        except Exception:
-            eve = {}
-
-        if not pe and not pvpa and not eve:
-            return None
-
-        # Monthly downsample: last available date per YYYY-MM bucket.
-        by_month: dict[str, str] = {}
-        for d in sorted(set(pe) | set(pvpa) | set(eve)):
-            by_month[d[:7]] = d
-        kept = [by_month[m] for m in sorted(by_month)]
-        labels = [d[5:7] + "/" + d[2:4] for d in kept]  # MM/YY
-
-        colors = {"P/L": "#f59e0b", "P/VP": "#d946a0", "EV/EBITDA": "#a855f7"}
-        datasets: list[dict] = []
-        for label, src in (("P/L", pe), ("P/VP", pvpa), ("EV/EBITDA", eve)):
-            if not src:
+            return out
+        for key, fn_name in self._HISTORY_CHART_BUILDERS:
+            fn = getattr(history_charts, fn_name, None)
+            if fn is None:
                 continue
-            datasets.append({
-                "label": label,
-                "data": [src.get(d) for d in kept],
-                "borderColor": colors[label],
-                "backgroundColor": colors[label],
-                "fill": False, "tension": 0.2, "pointRadius": 0,
-                "pointHoverRadius": 4, "borderWidth": 2,
-            })
+            try:
+                sec = fn(tk)
+            except Exception:
+                sec = None
+            if not sec:
+                continue
+            for k in ("price_full_labels", "price_full_datasets", "price_full_data"):
+                sec.pop(k, None)
+            out[key] = sec
+        return out
 
-        return {
-            "type": "chart",
-            "title": "Histórico 5 Anos — P/L, P/VP, EV/EBITDA",
-            "description": (
-                "Evolução mensal dos múltiplos (5 anos). Responde: 'está "
-                "barato vs a própria história?' — compare o valor atual "
-                "com a faixa histórica de cada múltiplo."
-            ),
-            "chart_data": {
-                "type": "line",
-                "data": {"labels": labels, "datasets": datasets},
-            },
-        }
+    @classmethod
+    def _assemble_multiples_groups(
+        cls,
+        sections: list[dict],
+        per_share: list[dict],
+        hists: dict[str, dict],
+    ) -> list[dict]:
+        """Explicit per-group section order — the reference layout.
+
+        Preço:        [P/L,LPA,P/VP,VPA chart | Múltiplos de Preço chart]
+                      [Múltiplos de Preço table | Per-share Values table]
+                      [Preço Comparativo chart | Valores por Ação chart]
+        EBIT/EBITDA:  [Múltiplos EBIT chart | Múltiplos EBITDA chart]
+                      [Múltiplos EBIT table | Múltiplos EBITDA table]
+        EV:           [EV table] [EV Comparativo chart]
+        Menos Comuns: [Preço/Balanço chart | Ativo/Preço chart] [table]
+
+        Charts pair automatically client-side (consecutive chart sections
+        flow into the 2-col fin-charts-grid); TABLE pairs carry
+        `pair_with_next` on the first table so the client's val-pair-grid
+        renders them side by side. Missing builders (None) degrade
+        gracefully — pairs simply render unpaired. Any section the
+        explicit takes didn't claim keeps the old prefix bucketing (the
+        EV table + comparativo land there).
+        """
+        def take(secs: list[dict], title: str) -> dict | None:
+            for i, s in enumerate(secs):
+                if (s.get("title") or "") == title:
+                    return secs.pop(i)
+            return None
+
+        preco: list[dict] = []
+        for key in ("pl_lpa", "price_multiples"):
+            if hists.get(key):
+                preco.append(hists[key])
+        tbl = take(sections, "Múltiplos de Preço")
+        ps_tbl = take(per_share, "Per-share Values (R$)")
+        if tbl and ps_tbl:
+            tbl["pair_with_next"] = True
+        if tbl:
+            preco.append(tbl)
+        if ps_tbl:
+            preco.append(ps_tbl)
+        comp = take(sections, "Múltiplos de Preço — Comparativo")
+        vpa_comp = take(per_share, "Valores por Ação — Comparativo")
+        if comp:
+            preco.append(comp)
+        if vpa_comp:
+            preco.append(vpa_comp)
+
+        ebit_group: list[dict] = []
+        for key in ("ebit", "ebitda"):
+            if hists.get(key):
+                ebit_group.append(hists[key])
+        ebit_tbl = take(sections, "Múltiplos EBIT")
+        ebitda_tbl = take(sections, "Múltiplos EBITDA")
+        if ebit_tbl and ebitda_tbl:
+            ebit_tbl["pair_with_next"] = True
+        if ebit_tbl:
+            ebit_group.append(ebit_tbl)
+        if ebitda_tbl:
+            ebit_group.append(ebitda_tbl)
+
+        menos: list[dict] = []
+        for key in ("price_balance", "asset_price"):
+            if hists.get(key):
+                menos.append(hists[key])
+        mc_tbl = take(sections, "Múltiplos Menos Comuns")
+        if mc_tbl:
+            menos.append(mc_tbl)
+
+        # Leftovers → prefix bucketing (EV table + EV comparativo today;
+        # future builder sections stay visible instead of vanishing).
+        buckets: dict[str, list[dict]] = {g: [] for g in cls._MULTIPLES_GROUPS}
+        buckets["Outros"] = []
+        for s in sections + per_share:
+            buckets.setdefault(cls._multiples_group_of(s.get("title", "")), []).append(s)
+        preco.extend(buckets.pop("Preço"))
+        ebit_group.extend(buckets.pop("EBIT/EBITDA"))
+        ev_group = buckets.pop("EV", [])
+        menos.extend(buckets.pop("Menos Comuns"))
+        outros = buckets.pop("Outros", [])
+
+        groups: list[dict] = []
+        for name, secs in (("Preço", preco), ("EBIT/EBITDA", ebit_group),
+                           ("EV", ev_group), ("Menos Comuns", menos),
+                           ("Outros", outros)):
+            if secs:
+                groups.append({"name": name, "sections": secs})
+        return groups
 
     # ── subtab 3: Valor Intrínseco ──────────────────────────────────────────
 

@@ -1876,6 +1876,13 @@ function valKpisHtml(kpis) {
 // Sections → HTML. Consecutive chart sections are grouped into a responsive
 // grid (fin-charts-grid); chart configs are stashed on panel._valChartCfgs
 // (index → config) and mounted by mountValCharts after innerHTML is set.
+// [v1.7.2] (a) `pair_with_next` on a non-chart section renders it + the
+// NEXT section side by side (val-pair-grid) — the Múltiplos table pairs
+// (Múltiplos de Preço | Per-share Values, EBIT | EBITDA). (b) chart
+// sections carrying `price_range_selector` (the 5Y history charts) get a
+// Tudo/10A/…/1M range bar; the filter runs client-side from chart_data
+// itself (valChartRange), so the server doesn't ship the duplicate
+// price_full_* arrays the static dashboard's filter needs.
 function valSectionsHtml(sections, panel) {
   var html = '';
   var chartBuf = [];
@@ -1889,19 +1896,78 @@ function valSectionsHtml(sections, panel) {
       h += '<div class="chart-section fin-chart-card"><div class="chart-header">' +
            '<div class="reg-title">' + valEsc(sec.title || '') + '</div></div>';
       if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
-      h += '<div class="chart-container"><canvas data-val-chart="' + idx + '"></canvas></div></div>';
+      if (sec.price_range_selector) h += valRangeBarHtml();
+      h += '<div class="chart-container"><canvas data-val-chart="' + idx + '"' +
+           (sec.price_range_selector ? ' data-val-range="1"' : '') +
+           '></canvas></div></div>';
     });
     chartBuf = [];
     return h + '</div>';
   }
-  (sections || []).forEach(function(sec) {
-    if (sec && sec.type === 'chart') { chartBuf.push(sec); return; }
+  var secs = sections || [];
+  for (var i = 0; i < secs.length; i++) {
+    var sec = secs[i];
+    if (sec && sec.type === 'chart') { chartBuf.push(sec); continue; }
     html += flushCharts();
+    var nxt = secs[i + 1];
+    if (sec && sec.pair_with_next && nxt && nxt.type !== 'chart') {
+      html += '<div class="val-pair-grid">' + valSectionHtml(sec) + valSectionHtml(nxt) + '</div>';
+      i++;  // the paired section is consumed
+      continue;
+    }
     html += valSectionHtml(sec);
-  });
+  }
   html += flushCharts();
   return html;
 }
+
+// [v1.7.2] Range bar for the 5Y history charts (Tudo/10A/5A/1A/6M/3M/1M) —
+// same .range-btn chips as the candlestick bar, scoped per chart card.
+function valRangeBarHtml() {
+  var ranges = [['all', 'Tudo'], ['10y', '10A'], ['5y', '5A'], ['1y', '1A'],
+                ['6m', '6M'], ['3m', '3M'], ['1m', '1M']];
+  var h = '<div class="val-range-bar">';
+  ranges.forEach(function(r, i) {
+    h += '<button type="button" class="range-btn' + (i === 0 ? ' active' : '') +
+         '" data-range="' + r[0] + '" onclick="valChartRange(this)">' + r[1] + '</button>';
+  });
+  return h + '</div>';
+}
+
+// [v1.7.2] Client-side range filter for the history charts. The full data
+// lives on the canvas (cv._valFull, stashed at mount) — clicking a range
+// slices labels + every dataset from the full copy and updates the chart
+// in place (no refetch). Labels are ISO dates, so lexicographic compare
+// finds the range start. Stale series shorter than the requested range
+// degrade to the last point instead of an empty chart.
+window.valChartRange = function(btn) {
+  var card = btn.closest('.chart-section');
+  if (!card) return;
+  var cv = card.querySelector('canvas');
+  if (!cv || !cv._chart || !cv._valFull) return;
+  var range = btn.getAttribute('data-range');
+  var full = cv._valFull;
+  var start = 0;
+  if (range !== 'all') {
+    var months = { '10y': 120, '5y': 60, '1y': 12, '6m': 6, '3m': 3, '1m': 1 }[range] || 0;
+    var cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
+    var iso = cutoff.toISOString().slice(0, 10);
+    for (var i = 0; i < full.labels.length; i++) {
+      if (String(full.labels[i]) >= iso) { start = i; break; }
+    }
+    if (start >= full.labels.length) start = Math.max(0, full.labels.length - 1);
+  }
+  var chart = cv._chart;
+  chart.data.labels = full.labels.slice(start);
+  chart.data.datasets.forEach(function(ds, di) {
+    if (full.data[di]) ds.data = full.data[di].slice(start);
+  });
+  chart.update('none');
+  Array.prototype.forEach.call(btn.parentNode.querySelectorAll('.range-btn'), function(b) {
+    b.classList.toggle('active', b === btn);
+  });
+};
 
 // One generic section renderer — handles every section type the static
 // dashboard's report builders emit (table / two_column / ratio_grid /
@@ -2035,7 +2101,17 @@ function mountValCharts(panel) {
     var idx = parseInt(cv.getAttribute('data-val-chart'), 10);
     // Find the chart_data in the stashed configs (index → config map).
     var cfg = (panel._valChartCfgs || {})[idx];
-    if (cfg) renderValChart(cv, cfg);
+    if (!cfg) return;
+    // [v1.7.2] Range-filterable charts: keep a full copy of labels + each
+    // dataset's data BEFORE mounting (valChartRange slices from it, the
+    // mounted chart is what gets mutated).
+    if (cv.getAttribute('data-val-range') === '1' && cfg && cfg.data) {
+      cv._valFull = {
+        labels: (cfg.data.labels || []).slice(),
+        data: (cfg.data.datasets || []).map(function(d) { return (d.data || []).slice(); })
+      };
+    }
+    renderValChart(cv, cfg);
   });
 }
 
@@ -2082,6 +2158,8 @@ function renderValChart(canvas, cd) {
     if (srvY.title && srvY.title.text) yScale.title = { display: true, text: srvY.title.text };
     var xScale = { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } };
     if (srvX.stacked) xScale.stacked = true;
+    // [v1.7.2] x-axis title too (the history charts label it "Data").
+    if (srvX.title && srvX.title.text) xScale.title = { display: true, text: srvX.title.text };
     options = {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -2091,6 +2169,24 @@ function renderValChart(canvas, cd) {
         y: yScale
       }
     };
+    // [v1.7.2] Server-defined secondary axes (y1/y2/…): the Múltiplos
+    // history charts are dual-axis (P/L and P/CG on the left; PSR, P/RB
+    // and P/DB on the right). Datasets carrying yAxisID would otherwise
+    // reference a scale Chart.js never built. Each server axis gets theme
+    // defaults + position / title / beginAtZero / grid.drawOnChartArea.
+    Object.keys(srvScales).forEach(function(k) {
+      if (k === 'x' || k === 'y' || options.scales[k]) return;
+      var s = srvScales[k] || {};
+      var grid = { color: th.grid };
+      if (s.grid && s.grid.drawOnChartArea === false) grid.drawOnChartArea = false;
+      var sc = { grid: grid, ticks: { color: th.text } };
+      if (s.position) sc.position = s.position;
+      if (s.beginAtZero) sc.beginAtZero = true;
+      if (s.stacked) sc.stacked = true;
+      if (s.title && s.title.text) sc.title = { display: true, text: s.title.text };
+      if (s.ticks && s.ticks.maxTicksLimit) sc.ticks.maxTicksLimit = s.ticks.maxTicksLimit;
+      options.scales[k] = sc;
+    });
   }
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: type,
