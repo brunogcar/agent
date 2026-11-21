@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.7)
+## ✅ Built (v1 → v1.7.1)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -24,6 +24,7 @@
 - [x] [v1.5] Shared Jinja env (`webui/templating.py`, `__file__`-relative)
 - [x] **[v1.7] Adapter contract + registry** — `webui/adapters/` formalizes the section-payload pattern (Valuation v1.4 / Proventos v1.6): every lazy subtab is registered under a `"<family>:<sub>"` key and served by ONE generic endpoint (`GET /api/webui/company/{ticker}/sections/{key}`). Contract validation at dispatch time (violations logged + `_contract_violations` attached). Memoized service singletons shared by routes and dispatch (one PriceService = one OHLCV cache). All 15 existing subtabs registered; per-family endpoints remain as aliases.
 - [x] **[v1.7] Pre-flight checks** — `PreflightService` + `/api/webui/preflight` (JSON) + `/panel` (Sync page card: Diagnóstico do Sistema, with "Verificar novamente") + `/banner` (Dashboard one-liner). Per-DB existence/size/expected-schema/WAL/`MAX(rowid)` row sanity (26 DBs across cvm/b3/bcb/ddm), sync coverage, vendor assets, Python/disk/write access, adapter registry integrity, launch config. Side-effect free (resolves the memory root without mkdir).
+- [x] **[v1.7.1] ITR snapshot re-key** — quarterly balanços fixed at the DATA layer: the sync engine re-keys each filing's BPA/BPP rows into the quarter bucket reported by its own flow rows (fiscal-year filers included; Dec filings stay 12); existing DBs migrate via `python -m tools.migrations.rekey_itr_snapshots --apply` (batched UPDATE + WAL checkpoint + engine-cache wipe — fingerprints don't change with a re-key). `PRAGMA user_version=2` is the marker; the pre-flight itr.db row warns "re-key pendente" until it runs. Zero query-layer changes — every consumer (`_snap`, bpa/bpp engines, TTM balances, Altman Z, liquidity ratios, Valuation > Fundamentos) was already written for the correct semantics and heals as soon as the data is re-keyed.
 
 ### Pages
 - [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
@@ -35,7 +36,7 @@
 ### Company Tabs
 - [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, Ctrl+wheel zoom)
 - [x] Preço — 5 lazy subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
-- [x] Financeiro — Visão Geral (TTM + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts)
+- [x] Financeiro — Visão Geral (TTM + **Conversão da Receita em Lucro waterfall [v1.7.1]** — Anual/Trimestral toggle, client-derived from the overview payload + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts; **quarterly balanço shows real Mar/Jun/Sep period-end values since the v1.7.1 re-key**)
 - [x] Valuation — Visão Geral / Múltiplos (nested subtabs + 5Y histories) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
 - [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
@@ -63,9 +64,6 @@
 ---
 
 ## 🔄 Next Up
-
-### v1.7.1 — Data fix
-- [ ] **Quarterly balanços (trimestral)** — Demonstrações > `Período: trimestral` shows all 4 quarters of each year with the same balance-sheet values. Root cause: BPA/BPP ITR rows are snapshots (`DT_INI_EXERC` empty) so `compute_meses` stamps them all `meses=12` — quarter-end balances collide in one bucket and `_snap()` carries the year-end value forward. Fix in the CVM layer (query/migration re-key on `data_fim_exerc`) + audit every snapshot consumer (bpa/bpp engines' `meses IN (3,6,9)` ITR lookups, TTM balances, Altman Z, red flags, Valuation > Fundamentos).
 
 ### v1.7.2 — Valuation gap fill
 - [ ] **Preço / EBIT-EBITDA / Menos Comuns subtabs** — add the missing charts/tables vs the static dashboard reference.

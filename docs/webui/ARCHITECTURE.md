@@ -92,7 +92,8 @@ agent/
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
-| `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config |
+| `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
+| `tools/migrations/rekey_itr_snapshots.py` | [v1.7.1] One-time ITR snapshot re-key for DBs synced before v1.7.1 (dry-run + `--apply`: batched rowid UPDATEs, WAL checkpoint, engine-cache wipe) |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
@@ -232,6 +233,24 @@ class CompanyService:
 - Errors used to surface deep inside engines ("FileNotFoundError: dfp.db — Run sync first" mid-dashboard). The pre-flight panel shows the same diagnosis on ONE page, before things break at render time
 - Checks are cheap (file stats, pragmas, `MAX(rowid)` — never `COUNT(*)`, which full-scans multi-GB tables) and side-effect free (the memory root is resolved WITHOUT mkdir, so a missing DB never leaves empty domain folders behind)
 - The panel doubles as post-sync verification ("did the DB appear / fill?")
+
+### 12. Data Re-key Over Query-Layer Patching (v1.7.1)
+
+**Decision:** The quarterly-balanços bug (ITR BPA/BPP snapshots all stamped `meses=12`, quarter buckets 3/6/9 empty, every consumer carrying year-end values forward) was fixed by re-keying the DATA — the sync engine re-keys each filing's snapshots into the bucket its own flow rows report, and existing DBs run `tools/migrations/rekey_itr_snapshots --apply` — with ZERO changes to the query layer.
+
+**Rationale:**
+- Every consumer (`fetchers._snap`, `_get_snapshot_value`, the bpa/* + bpp/* engines' `meses IN (3,6,9)` lookups) was already written for the correct semantics — patching them to work around mis-keyed data would have doubled the code paths and left the DB wrong
+- The filing's flow rows (DRE/DFC/DVA have DT_INI_EXERC) are the ground truth for its period — deriving the bucket from them handles fiscal-year filers (May/Aug/Nov quarter ends) for free, where a calendar-month mapping would mis-bucket
+- `PRAGMA user_version=2` marks a re-keyed DB (sync sets it, migration sets it, pre-flight warns until it sees it); the migration also wipes the engine cache because fingerprints (MAX(versao)+MAX(data_fim_exerc)) don't change with a re-key — cached engine results would keep serving the collapsed balances
+
+### 13. Client-Derived Visualizations When the Payload Already Has the Data (v1.7.1)
+
+**Decision:** The Financeiro "Conversão da Receita em Lucro" waterfall (with its Anual/Trimestral toggle) is derived entirely client-side from the `financials:overview` payload (annual periods newest-first, quarterly standalone oldest-first) — no new endpoint, no adapter registration, instant toggle.
+
+**Rationale:**
+- The overview payload already carries every anchor (3.01/3.03/3.05/3.06/3.11 per period); a server round-trip per toggle would add latency + a route for zero new data
+- Deltas are computed from the DRE subtotals (Custos = Receita − Lucro Bruto), so the chart needs no per-line code presence and degrades gracefully when a subtotal is missing
+- The card lives inside a custom-rendered subtab (financials:overview, `generic=False`), so this doesn't bypass the adapter contract — new TABS still go through the registry
 
 ---
 

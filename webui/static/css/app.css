@@ -409,6 +409,30 @@ a:hover { text-decoration: underline; }
 .fin-charts-grid .chart-section { padding: var(--space-3) var(--space-4); }
 .fin-charts-grid .chart-container { height: 250px; }
 
+/* ── [v1.7.1] DRE waterfall card (Financeiro > Visão Geral) ──
+   Reuses .prov-pill for the Anual/Trimestral toggle (self-contained chip,
+   not scoped to the Proventos tab). */
+.fin-wf-card .chart-header { gap: var(--space-3); flex-wrap: wrap; }
+.fin-wf-card .chart-container { height: 340px; }
+.fin-wf-period { color: var(--color-text-sec); font-weight: 400; font-size: 0.9em; }
+.fin-wf-note { font-size: 11px; margin-top: var(--space-3); }
+
+/* ── [v1.7.1 fix1] Trajetória + Tendência shared Anual/Trimestral toggle ──
+   Same pill pattern as the waterfall card — the pills on BOTH cards drive
+   ONE state (tab._finPeriod), so the two cards always show the same period
+   type (like the Demonstrações Período control). */
+.fin-traj-card .chart-header { gap: var(--space-3); flex-wrap: wrap; }
+.fin-traj-card .chart-container { height: 340px; }
+.fin-trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.fin-trend-head .reg-title { margin-bottom: 0; }
+
 /* ── Demonstrações wide table (frozen Código + Descrição, sticky header) ──
    [WebUI v1.3 fix 2] table-layout: fixed + <colgroup> (84px / 220px, emitted
    by app.js together with an inline table min-width of 304px + 88px per

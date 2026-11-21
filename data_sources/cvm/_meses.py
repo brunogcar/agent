@@ -16,6 +16,19 @@ WHAT meses MEANS
 BPA/BPP (balance sheet) rows have DT_INI_EXERC="" (empty) because they are
 point-in-time snapshots, not period flows. For these, meses defaults to 12.
 
+[v1.7.1] THE SNAPSHOT COROLLARY (and the quarterly-balanços bug): the 12
+above is only correct for ANNUAL (DFP) filings. An ITR quarter filing
+(Mar/Jun/Sep period end) also stores its BPA/BPP snapshots with meses=12 —
+so all four quarters of snapshot data collide in the same (year → 12)
+bucket and the quarter buckets 3/6/9 that consumers query stay empty.
+The ITR sync engine therefore runs a post-parse re-key: each filing whose
+flow rows (DRE/DFC/DVA, which DO have DT_INI_EXERC) report a 3/6/9-month
+period has its snapshot rows moved into the matching quarter bucket —
+the flow months of the filing, not the calendar month of DT_FIM_EXERC,
+drive the bucket (fiscal-year filers with quarter ends in May/Aug/Nov are
+handled by the same rule). Existing DBs are fixed by
+``python -m tools.migrations.rekey_itr_snapshots --apply``.
+
 FLOW VS SNAPSHOT
 ----------------
   Flow statements (DRE, DFC, DVA, DMPL) have DT_INI_EXERC != "".
@@ -43,7 +56,9 @@ def compute_meses(dt_ini: str, dt_fim: str) -> int:
 
     Returns:
         Number of months (inclusive). Values: 3, 6, 9, 12, 15, or other.
-        Returns 12 for empty dt_ini (BPA/BPP snapshots).
+        Returns 12 for empty dt_ini (BPA/BPP snapshots — see the module
+        docstring's [v1.7.1] corollary: the ITR sync engine re-keys quarter
+        filings' snapshots into buckets 3/6/9 after parsing).
         Returns 0 for invalid dates (caller should drop these rows).
 
     Examples:

@@ -66,4 +66,6 @@
 
 12. **Always get service instances from `webui.adapters.registry.service(cls)`.** It's the memoized singleton factory — routes and adapters share ONE instance (PriceService carries the shared OHLCV cache). Constructing `PriceService()` directly duplicates the cache.
 
-13. **Always check the pre-flight panel when data seems missing.** `/webui/sync` shows the Diagnóstico do Sistema card (DB existence, schema, WAL, row counts, adapter registry). `GET /api/webui/preflight/` returns the same report as JSON for scripting.
+13. **Always check the pre-flight panel when data seems missing.** `/webui/sync` shows the Diagnóstico do Sistema card (DB existence, schema, WAL, row counts, adapter registry). `GET /api/webui/preflight/` returns the same report as JSON for scripting. A "re-key pendente" warn on itr.db means the DB predates v1.7.1 — run `python -m tools.migrations.rekey_itr_snapshots --apply` (close the WebUI first; the migration wipes the engine cache and restart makes in-memory caches die).
+
+14. **Always re-key snapshot semantics from the filing's flow rows, never the calendar month.** A BPA/BPP row has no period of its own — its bucket comes from the DRE/DFC rows of the same filing (see `data_sources/cvm/_meses.py`'s snapshot corollary and Design Decision 12). Calendar-month mappings silently mis-bucket fiscal-year filers (May/Aug/Nov quarter ends).

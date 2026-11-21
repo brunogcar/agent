@@ -804,67 +804,82 @@ function renderFinVisaoGeral(tab, ticker, data) {
   html += finRowDelta('EBITDA', m.ebitda, prevM.ebitda);
   html += finRowDelta('Lucro Líquido', m.lucro_liquido, prevM.lucro_liquido);
   html += '</table></div>';
+  // [v1.7.1 fix1] Margens: single-column rows — the trailing Δ column was
+  // always "—" (margins are ratios, Δ vs year-ago isn't shown), so it's gone
+  // (finRowPct1, same as the WACC/DuPont/Altman boxes).
   html += '<div class="reg-table"><div class="reg-title">Margens ' + (isTTM ? '(TTM)' : '') + '</div><table class="price-table">';
-  html += finRowPct('Margem Bruta', r.marg_bruta);
-  html += finRowPct('Margem EBITDA', r.marg_ebitda);
-  html += finRowPct('Margem Operacional (EBIT)', r.marg_ebit);
-  html += finRowPct('Margem Líquida', r.marg_liquida);
-  html += finRowPct('ROE', r.roe);
-  html += finRowPct('ROA', r.roa);
+  html += finRowPct1('Margem Bruta', r.marg_bruta);
+  html += finRowPct1('Margem EBITDA', r.marg_ebitda);
+  html += finRowPct1('Margem Operacional (EBIT)', r.marg_ebit);
+  html += finRowPct1('Margem Líquida', r.marg_liquida);
+  html += finRowPct1('ROE', r.roe);
+  html += finRowPct1('ROA', r.roa);
   html += '</table></div>';
+  // [v1.7.1 fix1] Balanço: Δ column now real — latest TTM (4-quarter average
+  // snapshot) vs TTM one year ago, same semantics as the Resultado table.
   html += '<div class="reg-table"><div class="reg-title">Balanço Patrimonial</div><table class="price-table">';
-  html += finRow('Ativo Total', m.ativo_total, 'brl');
-  html += finRow('Caixa e Equivalentes', m.caixa, 'brl');
-  html += finRow('Dívida Bruta', m.divida_bruta, 'brl');
-  html += finRow('Dívida Líquida', numSub(m.divida_bruta, m.caixa), 'brl');
-  html += finRow('Patrimônio Líquido', m.patrimonio_liquido, 'brl');
+  html += finRowDelta('Ativo Total', m.ativo_total, prevM.ativo_total);
+  html += finRowDelta('Caixa e Equivalentes', m.caixa, prevM.caixa);
+  html += finRowDelta('Dívida Bruta', m.divida_bruta, prevM.divida_bruta);
+  html += finRowDelta('Dívida Líquida', numSub(m.divida_bruta, m.caixa), numSub(prevM.divida_bruta, prevM.caixa));
+  html += finRowDelta('Patrimônio Líquido', m.patrimonio_liquido, prevM.patrimonio_liquido);
   html += '</table></div>';
+  // [v1.7.1 fix1] Fluxo de Caixa: same Δ 1A treatment as Resultado/Balanço
+  // (was a hardcoded "—" placeholder column).
   html += '<div class="reg-table"><div class="reg-title">Fluxo de Caixa ' + (isTTM ? '(TTM)' : '') + '</div><table class="price-table">';
-  html += finRow('FCO (Operacional)', m.fco, 'brl');
-  html += finRow('FCI (Investimento)', m.fci, 'brl');
-  html += finRow('FCF (FCO+FCI)', numAdd(m.fco, m.fci), 'brl');
+  html += finRowDelta('FCO (Operacional)', m.fco, prevM.fco);
+  html += finRowDelta('FCI (Investimento)', m.fci, prevM.fci);
+  html += finRowDelta('FCF (FCO+FCI)', numAdd(m.fco, m.fci), numAdd(prevM.fco, prevM.fci));
   html += '</table></div>';
   html += '</div>';
 
-  // ── Section 2: Trajetória Anual chart (10 years — from 2016) ──
-  if (annualPeriods.length > 0) {
-    html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">Trajetória Anual</div></div>';
-    html += '<div class="chart-container"><canvas id="fin-trend-chart"></canvas></div></div>';
+  // ── Section 1.5: Conversão da Receita em Lucro (DRE waterfall) ──
+  // [v1.7.1] Client-derived from the payloads already loaded (annual =
+  // newest DFP year, quarterly = newest standalone quarter) — the
+  // Anual/Trimestral pills re-derive instantly, no refetch. Deltas are
+  // computed from the DRE subtotals (Custos = Receita − Lucro Bruto, …),
+  // so no reliance on per-line code presence or sign conventions.
+  // [v1.7.1 fix2] These pills now drive the SAME shared state as the
+  // Trajetória chart and the Tendência table (tab._finPeriod) — clicking
+  // Anual/Trimestral here switches all THREE cards together.
+  var hasWf = (annualPeriods.length > 0) || (quarterlyPeriods.length > 0);
+  if (hasWf) {
+    html += '<div class="chart-section fin-wf-card">';
+    html += '<div class="chart-header"><div class="reg-title">Conversão da Receita em Lucro' +
+            ' <span id="fin-wf-period" class="fin-wf-period"></span>' +
+            ' <span class="val-info" title="Cada barra de dedução é derivada da diferença entre os subtotais da DRE (ex.: Custos = Receita − Lucro Bruto). Impostos e Outros = residual (IR/CSLL, participações, equivalência e itens não recorrentes).">ⓘ</span></div>';
+    html += '<div class="prov-pills fin-wf-pills">';
+    html += '<button type="button" class="prov-pill" data-wf-mode="anual">Anual</button>';
+    html += '<button type="button" class="prov-pill" data-wf-mode="trimestral">Trimestral</button>';
+    html += '</div></div>';
+    html += '<div class="chart-container"><canvas id="fin-waterfall-chart" aria-label="Cascata da DRE: da receita líquida ao lucro líquido"></canvas></div>';
+    html += '<div class="muted fin-wf-note">Anual = último exercício anual (DFP) · Trimestral = último trimestre isolado. Barras vermelhas reduzem o resultado, verdes somam.</div>';
+    html += '</div>';
   }
 
-  // ── Section 3: Quarterly Trend table (QoQ deltas) ──
-  // [WebUI v1.3 fix 2] Service returns quarters OLDEST-FIRST — render them
-  // as-is (older → newer, left → right). The old .reverse() flipped them to
-  // newest-first. First column shrinks to content via .fin-trend-table.
-  if (quarterlyPeriods.length > 0) {
-    html += '<div class="reg-table"><div class="reg-title">Quarterly Trend</div>';
-    html += '<div style="overflow-x: auto;"><table class="price-table fin-wide-table fin-trend-table"><thead><tr><th>Métrica</th>';
-    quarterlyPeriods.forEach(function(q) {
-      html += '<th>' + (q.period || '') + '</th>';
-    });
-    html += '</tr></thead><tbody>';
-    var qMetrics = [
-      ['Receita Líquida', 'receita_liquida'],
-      ['Lucro Bruto', 'lucro_bruto'],
-      ['EBITDA', 'ebitda'],
-      ['Lucro Líquido', 'lucro_liquido'],
-    ];
-    qMetrics.forEach(function(qm) {
-      html += '<tr><td>' + qm[0] + '</td>';
-      var prev = null;
-      quarterlyPeriods.forEach(function(q) {
-        var val = (q.metrics || {})[qm[1]];
-        var delta = '';
-        if (prev !== null && val !== null && prev !== null && prev > 0) {
-          var pct = (val - prev) / prev;
-          delta = ' <span style="font-size:10px;color:' + (pct < 0 ? 'var(--color-danger)' : 'var(--color-success)') + '">' + (pct >= 0 ? '+' : '') + (pct * 100).toFixed(1).replace('.', ',') + '%</span>';
-        }
-        html += '<td class="val">' + fmtCompact(val) + delta + '</td>';
-        prev = val;
-      });
-      html += '</tr>';
-    });
-    html += '</tbody></table></div></div>';
+  // ── Section 2: Trajetória chart — Anual | Trimestral ──
+  // [v1.7.1 fix1] The card now renders when EITHER dataset exists and gets
+  // the same Anual/Trimestral toggle as the Tendência table below. The toggle
+  // is client-side only (annual + quarterly payloads are already on the page).
+  // [v1.7.1 fix2] The pills share ONE state (tab._finPeriod) with the DRE
+  // waterfall above — ALL THREE cards always show the same period type.
+  var hasTraj = (annualPeriods.length > 0) || (quarterlyPeriods.length > 0);
+  if (hasTraj) {
+    html += '<div class="chart-section fin-traj-card">';
+    html += '<div class="chart-header"><div class="reg-title" id="fin-traj-title">Trajetória</div>' + finPeriodPillsHtml() + '</div>';
+    html += '<div class="chart-container"><canvas id="fin-trend-chart" aria-label="Trajetória: receita, EBITDA e lucro por período"></canvas></div></div>';
+  }
+
+  // ── Section 3: Tendência table — Anual | Trimestral ──
+  // [v1.7.1 fix1] Was "Quarterly Trend" (quarterly-only, English title).
+  // Now PT-BR and driven by the same shared toggle: Anual = 10 DFP years with
+  // YoY deltas, Trimestral = 8 standalone quarters with QoQ deltas (as before).
+  // [v1.7.1 fix2] Also follows the waterfall pills (shared tab._finPeriod).
+  if (hasTraj) {
+    html += '<div class="reg-table fin-trend-card">';
+    html += '<div class="fin-trend-head"><div class="reg-title" id="fin-trend-title">Tendência</div>' + finPeriodPillsHtml() + '</div>';
+    html += '<div id="fin-trend-table-wrap"></div>';
+    html += '</div>';
   }
 
   // ── Section 4: Análise de Risco — WACC + DuPont + Altman Z ──
@@ -913,18 +928,226 @@ function renderFinVisaoGeral(tab, ticker, data) {
 
   tab.innerHTML = html;
 
-  // Render Trajetória Anual chart
-  if (annualPeriods.length > 0) {
-    renderFinTrendChart(annualPeriods, data.year_end_prices || {});
+  // [v1.7.1 fix2] ONE shared Anual/Trimestral state (tab._finPeriod) now
+  // drives ALL THREE period cards: the DRE waterfall, the Trajetória chart
+  // and the Tendência table. v1.7.1/fix1 kept the waterfall on a separate
+  // tab._wf state, so its pills didn't move the other two cards (user
+  // report: toggling "Conversão da Receita em Lucro" left Trajetória/
+  // Tendência behind). Default = Anual when DFP years exist, Trimestral
+  // otherwise; every pill group stays in sync via syncFinPeriodPills.
+  tab._finPeriod = {
+    annual: annualPeriods, quarterly: quarterlyPeriods,
+    yearEndPrices: data.year_end_prices || {},
+    mode: annualPeriods.length > 0 ? 'anual' : 'trimestral'
+  };
+  syncFinPeriodPills(tab);
+  if (hasWf) renderFinWaterfall(tab);
+  if (hasTraj) {
+    renderFinTrajChart(tab);
+    renderFinTrendTable(tab);
   }
 }
 
-function finRow(label, value, type) {
-  var v;
-  if (type === 'brl') v = value !== null && value !== undefined ? fmtCompact(value) : '—';
-  else v = value !== null && value !== undefined ? Number(value).toFixed(2).replace('.', ',') : '—';
-  return '<tr><td>' + label + '</td><td class="val">' + v + '</td><td class="pct">—</td></tr>';
+// ── [v1.7.1] DRE waterfall: Receita → Lucro Líquido ──
+// Floating-bar Chart.js waterfall with dashed carry-level connectors. All
+// data comes from the overview payload (annual periods arrive NEWEST-first,
+// quarterly OLDEST-first — the pickers below respect that).
+
+function finWfPick(tab) {
+  // Returns {metrics, period_label} for the active mode, or null.
+  // [v1.7.1 fix2] Reads the shared tab._finPeriod state (was tab._wf) so
+  // the waterfall always follows the same Anual/Trimestral mode as the
+  // Trajetória chart and the Tendência table.
+  var st = tab._finPeriod;
+  if (!st) return null;
+  if (st.mode === 'trimestral') {
+    var qs = st.quarterly || [];
+    if (!qs.length) return null;
+    var q = qs[qs.length - 1];  // oldest-first → last = newest
+    return { metrics: q.metrics || {}, period_label: String(q.period || '') };
+  }
+  var as = st.annual || [];
+  if (!as.length) return null;
+  var a = as[0];               // newest-first → first = newest
+  return { metrics: a.metrics || {}, period_label: String(a.period || '') };
 }
+
+function finWfSteps(m) {
+  // Build the bar chain from the DRE subtotals. Anchors (totals) come from
+  // reported codes 3.01/3.03/3.05/3.11; deltas are derived differences, so
+  // the chart degrades gracefully when a subtotal is missing (the chain
+  // skips that anchor and merges the label).
+  // Each step: {label, lo, hi (render span), kind, delta (signed change),
+  //             land (running level AFTER the bar — drives the connectors)}.
+  function has(v) { return v !== null && v !== undefined && isFinite(v); }
+  var rec = m.receita_liquida, lb = m.lucro_bruto, ebit = m.ebit,
+      rf = m.resultado_financeiro, ll = m.lucro_liquido;
+  if (!has(rec)) return null;
+
+  function span(start, land, label) {
+    var d = land - start;
+    return { label: label, lo: Math.min(start, land), hi: Math.max(start, land),
+             kind: d < 0 ? 'down' : 'up', delta: d, land: land };
+  }
+  function total(label, val, kind) {
+    return { label: label, lo: Math.min(val, 0), hi: Math.max(val, 0),
+             kind: kind || 'total', delta: null, val: val, land: val };
+  }
+
+  var steps = [total('Receita Líquida', rec)];
+  var level = rec;  // running level
+  if (has(lb)) {
+    steps.push(span(level, lb, 'Custos (CPV)'));
+    steps.push(total('Lucro Bruto', lb));
+    level = lb;
+  }
+  if (has(ebit)) {
+    steps.push(span(level, ebit, has(lb) ? 'Despesas Operacionais'
+                                         : 'Custos + Despesas Oper.'));
+    steps.push(total('EBIT', ebit));
+    level = ebit;
+  }
+  if (has(ll)) {
+    if (has(ebit) && has(rf)) {
+      var ebt = ebit + rf;
+      steps.push(span(level, ebt, 'Resultado Financeiro'));
+      steps.push(span(ebt, ll, 'Impostos e Outros'));
+    } else if (has(ebit)) {
+      steps.push(span(level, ll, 'Financeiro, Impostos e Outros'));
+    } else {
+      steps.push(span(level, ll, 'Custos, Despesas e Impostos'));
+    }
+    steps.push(total('Lucro Líquido', ll, 'final'));
+  }
+
+  steps.carries = steps.map(function(s) { return s.land; });
+  return steps;
+}
+
+function finWfFmt(v) {
+  // Compact pt-BR BRL for axis ticks and tooltips.
+  var a = Math.abs(v), sign = v < 0 ? '−' : '';
+  function n(x) { return x.toFixed(x >= 100 ? 0 : 1).replace('.', ','); }
+  if (a >= 1e12) return sign + 'R$ ' + n(a / 1e12) + ' tri';
+  if (a >= 1e9)  return sign + 'R$ ' + n(a / 1e9) + ' bi';
+  if (a >= 1e6)  return sign + 'R$ ' + n(a / 1e6) + ' mi';
+  if (a >= 1e3)  return sign + 'R$ ' + n(a / 1e3) + ' mil';
+  return sign + 'R$ ' + n(a);
+}
+
+// Dashed carry-level connectors between consecutive bars.
+var finWfConnectorPlugin = {
+  id: 'finWfConnectors',
+  afterDatasetsDraw: function(chart) {
+    var carries = chart.$wfCarries;
+    if (!carries) return;
+    var meta = chart.getDatasetMeta(0);
+    if (!meta || !meta.data || meta.data.length < 2) return;
+    var ctx = chart.ctx, yScale = chart.scales.y;
+    ctx.save();
+    ctx.strokeStyle = chartTheme().text;
+    ctx.globalAlpha = 0.55;
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    for (var i = 0; i < meta.data.length - 1 && i < carries.length - 1; i++) {
+      var el = meta.data[i], next = meta.data[i + 1];
+      if (!el || !next || el.x === undefined) continue;
+      var y = yScale.getPixelForValue(carries[i]);
+      ctx.beginPath();
+      ctx.moveTo(el.x + (el.width || 0) / 2, y);
+      ctx.lineTo(next.x - (next.width || 0) / 2, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+};
+
+function renderFinWaterfall(tab) {
+  var canvas = document.getElementById('fin-waterfall-chart');
+  if (!canvas) return;
+  var picked = finWfPick(tab);
+  var steps = picked ? finWfSteps(picked.metrics) : null;
+  var periodEl = document.getElementById('fin-wf-period');
+
+  if (!steps || !steps.length) {
+    if (periodEl) periodEl.textContent = '';
+    if (canvas._chart) { canvas._chart.destroy(); canvas._chart = null; }
+    canvas.replaceWith((function() {
+      var d = document.createElement('div');
+      d.className = 'loading'; d.id = 'fin-waterfall-chart';
+      d.textContent = 'Sem dados de DRE para esta visão.';
+      return d;
+    })());
+    return;
+  }
+  if (periodEl) periodEl.textContent = '— ' + picked.period_label;
+
+  // The no-data path replaces the canvas with a message div (same id) —
+  // rebuild a canvas before rendering when toggling back to a mode with data.
+  if (canvas.tagName !== 'CANVAS') {
+    var c = document.createElement('canvas');
+    c.id = 'fin-waterfall-chart';
+    c.setAttribute('aria-label', 'Cascata da DRE: da receita líquida ao lucro líquido');
+    canvas.replaceWith(c);
+    canvas = c;
+  }
+
+  var th = chartTheme();
+  var COLORS = { total: '#0d9488', final: '#0f766e', down: '#e11d48', up: '#22c55e' };
+  var data = steps.map(function(s) { return [s.lo, s.hi]; });
+  var colors = steps.map(function(s) { return COLORS[s.kind] || COLORS.total; });
+
+  if (canvas._chart) canvas._chart.destroy();
+  var chart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: steps.map(function(s) { return s.label; }),
+      datasets: [{
+        label: 'DRE',
+        data: data,
+        backgroundColor: colors,
+        borderWidth: 0,
+        barPercentage: 0.62,
+        categoryPercentage: 0.82
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              var s = steps[ctx.dataIndex];
+              if (!s) return '';
+              if (s.kind === 'total' || s.kind === 'final') {
+                return ' ' + s.label + ': ' + finWfFmt(s.val);
+              }
+              return ' ' + s.label + ': ' + (s.delta <= 0 ? '−' : '+') +
+                     finWfFmt(Math.abs(s.delta));
+            }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: th.grid }, ticks: { color: th.text, maxRotation: 40,
+              minRotation: 0, autoSkip: false, font: { size: 11 } } },
+        y: { grid: { color: th.grid }, ticks: { color: th.text,
+              callback: function(v) { return finWfFmt(v); } } }
+      }
+    },
+    plugins: [finWfConnectorPlugin]
+  });
+  chart.$wfCarries = steps.carries;
+  canvas._chart = chart;
+}
+
+// [v1.7.1 fix1] finRow/finRowPct removed — every Visão Geral table now
+// either carries a REAL Δ (finRowDelta: Resultado/Balanço/Fluxo de Caixa) or
+// is single-column (finRow1/finRowPct1: Margens, WACC, DuPont, Altman). The
+// old finRow/finRowPct hardcoded a "—" placeholder in the third cell.
+
 // [v1.3 fix 1] Row with Δ 1A (latest TTM vs TTM one year ago), colored green/red.
 function finRowDelta(label, value, prev) {
   var v = value !== null && value !== undefined ? fmtCompact(value) : '—';
@@ -942,15 +1165,8 @@ function numAdd(a, b) {
 function numSub(a, b) {
   return (a === null || a === undefined || b === null || b === undefined) ? null : (a - b);
 }
-function finRowPct(label, value) {
-  var v = value !== null && value !== undefined ? (value * 100).toFixed(2).replace('.', ',') + '%' : '—';
-  // [v1.5] zero → yellow (was green — inconsistent with the v1.4 spec).
-  var color = value === null || value === undefined ? '' :
-    (value < 0 ? 'var(--color-danger)' : (value > 0 ? 'var(--color-success)' : 'var(--color-warning)'));
-  return '<tr><td>' + label + '</td><td class="val"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</td><td class="pct">—</td></tr>';
-}
-// [WebUI v1.3 fix 2] Single-column row helpers (WACC / DuPont / Altman boxes) —
-// these tables carry no Δ, so no trailing "—" cell.
+// [WebUI v1.3 fix 2] Single-column row helpers (Margens / WACC / DuPont /
+// Altman boxes) — these tables carry no Δ, so no trailing "—" cell.
 function finRow1(label, value, type) {
   var v;
   if (type === 'brl') v = value !== null && value !== undefined ? fmtCompact(value) : '—';
@@ -965,18 +1181,53 @@ function finRowPct1(label, value) {
   return '<tr><td>' + label + '</td><td class="val"' + (color ? ' style="color:' + color + '"' : '') + '>' + v + '</td></tr>';
 }
 
-function renderFinTrendChart(annualPeriods, yearEndPrices) {
+function renderFinTrajChart(tab) {
+  // [v1.7.1 fix1] Trajetória bars (Receita/EBITDA/Lucro) for the shared
+  // Anual | Trimestral mode. Anual adds the Dec-31 price overlay (right
+  // axis); Trimestral has no quarterly price series in the payload, so the
+  // overlay is simply omitted. No-data mode mirrors the waterfall card
+  // (canvas ↔ message div swap, same id).
+  var st = tab._finPeriod; if (!st) return;
   var canvas = document.getElementById('fin-trend-chart');
   if (!canvas) return;
+  var titleEl = document.getElementById('fin-traj-title');
+  var periods, yearEndPrices = null;
+  if (st.mode === 'trimestral') {
+    periods = st.quarterly || [];                  // already oldest-first
+    if (titleEl) titleEl.textContent = 'Trajetória Trimestral';
+  } else {
+    periods = (st.annual || []).slice().reverse(); // newest-first → oldest-first
+    if (titleEl) titleEl.textContent = 'Trajetória Anual';
+    yearEndPrices = st.yearEndPrices;
+  }
+
+  if (!periods.length) {
+    if (canvas._chart) { canvas._chart.destroy(); canvas._chart = null; }
+    canvas.replaceWith((function() {
+      var d = document.createElement('div');
+      d.className = 'loading'; d.id = 'fin-trend-chart';
+      d.textContent = 'Sem dados de trajetória para esta visão.';
+      return d;
+    })());
+    return;
+  }
+  // Rebuild the canvas when toggling back from a no-data swap.
+  if (canvas.tagName !== 'CANVAS') {
+    var c = document.createElement('canvas');
+    c.id = 'fin-trend-chart';
+    c.setAttribute('aria-label', 'Trajetória: receita, EBITDA e lucro por período');
+    canvas.replaceWith(c);
+    canvas = c;
+  }
+
   var th = chartTheme();
   if (canvas._chart) canvas._chart.destroy();
-  var sorted = annualPeriods.slice().reverse();
-  var labels = sorted.map(function(p) { return p.period || ''; });
-  var receitas = sorted.map(function(p) { return ((p.metrics || {}).receita_liquida || 0) / 1e6; });
-  var ebitdas = sorted.map(function(p) { return ((p.metrics || {}).ebitda || 0) / 1e6; });
-  var lucros = sorted.map(function(p) { return ((p.metrics || {}).lucro_liquido || 0) / 1e6; });
-  // Price overlay: Dec-31 close per year (right axis), dashed green line.
-  var hasPrices = yearEndPrices && Object.keys(yearEndPrices).length > 0;
+  var labels = periods.map(function(p) { return p.period || ''; });
+  var receitas = periods.map(function(p) { return ((p.metrics || {}).receita_liquida || 0) / 1e6; });
+  var ebitdas = periods.map(function(p) { return ((p.metrics || {}).ebitda || 0) / 1e6; });
+  var lucros = periods.map(function(p) { return ((p.metrics || {}).lucro_liquido || 0) / 1e6; });
+  // Price overlay (Anual only): Dec-31 close per year (right axis), dashed.
+  var hasPrices = !!(yearEndPrices && Object.keys(yearEndPrices).length > 0);
   var prices = hasPrices ? labels.map(function(y) { return yearEndPrices[y] !== undefined ? yearEndPrices[y] : null; }) : [];
   var priceShown = hasPrices && prices.some(function(p) { return p !== null && p !== undefined; });
 
@@ -1010,6 +1261,75 @@ function renderFinTrendChart(annualPeriods, yearEndPrices) {
       plugins: { legend: { display: true, position: 'top' } }
     }
   });
+}
+
+function renderFinTrendTable(tab) {
+  // [v1.7.1 fix1] Tendência table for the shared Anual | Trimestral mode.
+  // Rows are the same 4 flow metrics; deltas are vs the previous column
+  // (YoY in Anual, QoQ in Trimestral). Quarters arrive oldest-first; annual
+  // periods arrive newest-first and are flipped.
+  var st = tab._finPeriod; if (!st) return;
+  var wrap = document.getElementById('fin-trend-table-wrap');
+  if (!wrap) return;
+  var titleEl = document.getElementById('fin-trend-title');
+  var periods = st.mode === 'trimestral' ? (st.quarterly || [])
+                                            : (st.annual || []).slice().reverse();
+  if (titleEl) titleEl.textContent = st.mode === 'trimestral' ? 'Tendência Trimestral' : 'Tendência Anual';
+  if (!periods.length) {
+    wrap.innerHTML = '<div class="loading">Sem dados para esta visão.</div>';
+    return;
+  }
+  var html = '<div style="overflow-x: auto;"><table class="price-table fin-wide-table fin-trend-table"><thead><tr><th>Métrica</th>';
+  periods.forEach(function(p) {
+    html += '<th>' + (p.period || '') + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+  var qMetrics = [
+    ['Receita Líquida', 'receita_liquida'],
+    ['Lucro Bruto', 'lucro_bruto'],
+    ['EBITDA', 'ebitda'],
+    ['Lucro Líquido', 'lucro_liquido'],
+  ];
+  qMetrics.forEach(function(qm) {
+    html += '<tr><td>' + qm[0] + '</td>';
+    var prev = null;
+    periods.forEach(function(p) {
+      var val = (p.metrics || {})[qm[1]];
+      var delta = '';
+      if (prev !== null && val !== null && prev !== null && prev > 0) {
+        var pct = (val - prev) / prev;
+        delta = ' <span style="font-size:10px;color:' + (pct < 0 ? 'var(--color-danger)' : 'var(--color-success)') + '">' + (pct >= 0 ? '+' : '') + (pct * 100).toFixed(1).replace('.', ',') + '%</span>';
+      }
+      html += '<td class="val">' + fmtCompact(val) + delta + '</td>';
+      prev = val;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+function finPeriodPillsHtml() {
+  // Shared Anual/Trimestral pills — used by BOTH the Trajetória card and the
+  // Tendência table. No 'active' class here; syncFinPeriodPills() sets it
+  // right after the pane renders (default mode comes from the data).
+  return '<div class="prov-pills fin-period-pills">' +
+         '<button type="button" class="prov-pill" data-fp-mode="anual">Anual</button>' +
+         '<button type="button" class="prov-pill" data-fp-mode="trimestral">Trimestral</button>' +
+         '</div>';
+}
+
+function syncFinPeriodPills(tab) {
+  // [v1.7.1 fix2] Syncs EVERY Anual/Trimestral pill group on the pane — the
+  // waterfall pills (.fin-wf-pills, data-wf-mode) AND the Trajetória/
+  // Tendência pills (.fin-period-pills, data-fp-mode) — so all three cards
+  // always show the same active mode.
+  Array.prototype.forEach.call(
+    tab.querySelectorAll('.fin-period-pills .prov-pill, .fin-wf-pills .prov-pill'),
+    function(p) {
+      var m = p.getAttribute('data-fp-mode') || p.getAttribute('data-wf-mode');
+      p.classList.toggle('active', m === tab._finPeriod.mode);
+    });
 }
 
 // ── Financials subtab: Demonstrações ──
@@ -1222,10 +1542,24 @@ function finRatio(num, den) {
   return num.map(function(v, i) { return (v === null || v === undefined || !den[i]) ? null : v / den[i] * 100; });
 }
 // Normalize series to 100% of the per-period total (composition charts).
+// [v1.7.1 fix1] Null-tolerant: the finHasData guards in buildFinStmtChartDefs
+// use ANY-series semantics, but this helper indexed series[0].data directly —
+// a company missing one composition code (e.g. no 2.01/2.02 breakdown while
+// 2.03 exists) crashed the whole Demonstrações pane with "Cannot read
+// properties of null (reading 'length')". Missing series now join as
+// all-null so the chart renders the present ones.
 function finPctStack(series) {
-  var n = series[0].data.length;
+  var n = 0, i;
+  for (i = 0; i < series.length; i++) {
+    if (series[i] && series[i].data) { n = series[i].data.length; break; }
+  }
+  if (!n) return series;
+  series = series.map(function(s) {
+    return { label: s.label, color: s.color,
+             data: (s && s.data) ? s.data : new Array(n).fill(null) };
+  });
   var totals = [];
-  for (var i = 0; i < n; i++) {
+  for (i = 0; i < n; i++) {
     var t = 0, any = false;
     series.forEach(function(s) { var v = s.data[i]; if (v !== null && v !== undefined) { t += v; any = true; } });
     totals.push(any && t > 0 ? t : null);
@@ -2158,6 +2492,32 @@ function initPriceRangeBar() {
   });
 }
 
+// ── [v1.7.1 fix2] Unified Anual/Trimestral pills — ONE delegated listener ─
+// for ALL THREE cards: the DRE waterfall (.fin-wf-pills, data-wf-mode) and
+// the Trajetória + Tendência pair (.fin-period-pills, data-fp-mode). Both
+// pill groups drive the SAME tab._finPeriod state, so clicking Anual or
+// Trimestral on ANY card switches the waterfall, the Trajetória chart and
+// the Tendência table together (pure client-side, payloads cached on
+// tab._finPeriod). v1.7.1/fix1 had two separate listeners/states — the
+// waterfall pills ignored the other two cards and vice versa.
+function initFinPeriodPills() {
+  document.body.addEventListener('click', function(e) {
+    var pill = e.target && e.target.closest
+      ? e.target.closest('.fin-wf-pills .prov-pill, .fin-period-pills .prov-pill')
+      : null;
+    if (!pill || pill.classList.contains('active')) return;
+    var mode = pill.getAttribute('data-fp-mode') || pill.getAttribute('data-wf-mode');
+    if (!mode) return;
+    var tab = pill.closest('#tab-fin-visao-geral');
+    if (!tab || !tab._finPeriod) return;
+    tab._finPeriod.mode = mode;
+    syncFinPeriodPills(tab);
+    renderFinWaterfall(tab);
+    renderFinTrajChart(tab);
+    renderFinTrendTable(tab);
+  });
+}
+
 // ── Hover/focus prefetch for lazy subtabs [WebUI v1.5 fix1] ───────────────
 // Subtab buttons carry data-lazy="<family>:<sub>" (preco/fin/val). Pointer
 // intent (mouseover) or keyboard focus starts the fetch ~300ms before the
@@ -2220,6 +2580,7 @@ function initApp() {
 
   initPriceRangeBar();
   initSyncButtons();
+  initFinPeriodPills();
   initCompanyPage();
   initSyncPage();
 

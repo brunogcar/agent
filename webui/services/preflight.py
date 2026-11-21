@@ -56,7 +56,11 @@ _MIN_FREE_GB = 2           # syncs download CVM ZIPs (hundreds of MB)
 
 # ── DB inventory ─────────────────────────────────────────────────────────────
 # (domain, file, sync source key, PT-BR label, expected tables, rows table,
-#  core?) — core DBs fail the panel when missing; feature DBs only warn.
+#  core?, rekey?) — core DBs fail the panel when missing; feature DBs only
+#  warn. rekey=True → the DB carries a user_version marker that must be
+#  >= _REKEY_VERSION (see tools/migrations/rekey_itr_snapshots.py).
+
+_REKEY_VERSION = 2  # ITR snapshot re-key marker [v1.7.1]
 
 def _db_inventory() -> list[dict[str, Any]]:
     return [
@@ -68,7 +72,7 @@ def _db_inventory() -> list[dict[str, Any]]:
         dict(domain="cvm", file="itr.db", source="itr",
              label="ITR — demonstrações trimestrais",
              tables=["empresas", "contas", "sync_state"],
-             rows_table="contas", core=True),
+             rows_table="contas", core=True, rekey=True),
         dict(domain="cvm", file="fre.db", source="fre",
              label="FRE — formulário de referência",
              tables=["documentos", "posicao_acionaria", "sync_state"],
@@ -233,10 +237,11 @@ class PreflightService:
             size = "?"
         parts.append(size)
 
-        # Schema + rows + WAL through ONE read-only connection.
+        # Schema + rows + WAL + re-key marker through ONE read-only connection.
         missing_main: list[str] = []
         wal = ""
         rows_txt = ""
+        rekey_pending = False
         try:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3)
             try:
@@ -254,6 +259,9 @@ class PreflightService:
                         f"SELECT MAX(rowid) FROM {spec['rows_table']}"
                     ).fetchone()
                     rows_txt = _fmt_rows(r[0] if r else None)
+                if spec.get("rekey"):
+                    uv = conn.execute("PRAGMA user_version").fetchone()
+                    rekey_pending = bool(uv and uv[0] < _REKEY_VERSION)
             finally:
                 conn.close()
         except sqlite3.Error as e:
@@ -271,6 +279,12 @@ class PreflightService:
                 f"{size} · tabelas ausentes: {', '.join(missing_main)}",
                 hint="esquema divergente — re-sincronize a fonte "
                      f"'{spec['source']}'")
+        if rekey_pending:
+            return self._check(
+                cid, label, _WARN, " · ".join(parts) + " · re-key pendente",
+                hint="balanços trimestrais exibem valores de fim de ano — "
+                     "rode `python -m tools.migrations.rekey_itr_snapshots "
+                     "--apply` (veja CHANGELOG v1.7.1)")
         if rows_txt == "0":
             return self._check(
                 cid, label, _WARN,

@@ -10,6 +10,17 @@ Same fixes as DFP sync_engine.py:
   4. ORDEM_EXERC filter (ÚLTIMO + PENÚLTIMO for 2009)
   5. VERSAO dedup
   6. data_ini_exerc stored
+
+[v1.7.1] 7. Snapshot re-key pass: BPA/BPP rows (DT_INI_EXERC="") get
+    meses=12 from compute_meses() even when they belong to a Mar/Jun/Sep
+    ITR filing. After the year's CSVs are stored, every filing whose flow
+    rows (DRE/DFC/DVA — which DO have DT_INI_EXERC) report a 3/6/9-month
+    period has its snapshot rows re-keyed into the matching quarter bucket.
+    This is what every consumer (financials fetchers._snap, the bpa/* and
+    bpp/* calculation engines) expects: quarter buckets 3/6/9 hold the
+    period-end balances. PRAGMA user_version is bumped to 2 as a marker
+    (pre-flight warns when an existing itr.db predates the re-key — see
+    tools/migrations/rekey_itr_snapshots.py for the one-time bulk fix).
 """
 
 from __future__ import annotations
@@ -148,6 +159,9 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str, 
     row_count = 0
     empresa_cache: dict[str, int] = {}
     versao_cache: dict[str, int] = {}
+    # [v1.7.1] (empresa_id, dt_fim) → flow meses (3/6/9) seen in this ZIP.
+    # Populated from DRE/DFC/DVA rows; drives the snapshot re-key pass.
+    filing_period: dict[tuple[int, str], int] = {}
     # [v1.2] Track which (empresa_id, dt_fim) periods have been cleared in this
     # sync run. Prevents ghost rows: if a restated filing (VERSAO=2) has fewer
     # rows than the original (VERSAO=1), INSERT OR REPLACE won't delete the
@@ -182,11 +196,57 @@ def _parse_and_store(conn: sqlite3.Connection, raw: bytes, year: int, tid: str, 
             for row in reader:
                 file_rows += _process_row(
                     conn, row, year, empresa_cache, versao_cache, cleared_periods,
+                    filing_period,
                 )
             row_count += file_rows
             _log(f"  {file_rows:,} rows stored")
 
+    # [v1.7.1] Re-key this year's BPA/BPP snapshots into their filing's
+    # quarter bucket, then mark the DB (pre-flight reads the marker).
+    rekeyed = _rekey_snapshots(conn, filing_period)
+    conn.commit()
+    conn.execute("PRAGMA user_version = 2")
+    if rekeyed:
+        _log(f"  re-keyed {rekeyed:,} BPA/BPP snapshot rows to their filing's quarter")
+
     return row_count
+
+
+def _rekey_snapshots(
+    conn: sqlite3.Connection,
+    filing_period: dict[tuple[int, str], int],
+) -> int:
+    """[v1.7.1] Re-key ITR BPA/BPP snapshot rows to their filing's quarter.
+
+    compute_meses() returns 12 for snapshot rows (DT_INI_EXERC is empty —
+    a snapshot has no period). With every quarter's snapshots parked at
+    meses=12, the (year, meses) buckets collided (Q1/Q2/Q3 overwrote each
+    other) and every consumer looking for quarter buckets 3/6/9 found
+    nothing — fetchers._snap() and the bpa/* + bpp/* engines carried
+    year-end values forward, so quarterly balance sheets rendered as
+    Dec-31 of the prior year.
+
+    The filing's own flow rows define the period: a filing whose DRE/DFC
+    covers 3/6/9 months is that quarter's filing, so its BPA/BPP rows
+    belong in the same bucket. Fiscal-year filers (quarter-ends in
+    May/Aug/Nov) are handled for free — the flow months, not the calendar
+    month of data_fim_exerc, drive the bucket. Snapshots of Dec-31 ITR
+    filings (no 3/6/9 flow) correctly stay at meses=12.
+
+    Idempotent: only rows still at meses=12 are touched, so re-runs and
+    re-syncs (force) are free. Scoped to the filings seen in this run.
+    """
+    total = 0
+    for (emp_id, dt_fim), meses in filing_period.items():
+        cur = conn.execute(
+            """UPDATE contas SET meses = ?
+               WHERE id_empresa = ? AND data_fim_exerc = ?
+                 AND data_ini_exerc = '' AND meses = 12""",
+            (meses, emp_id, dt_fim),
+        )
+        if cur.rowcount and cur.rowcount > 0:
+            total += cur.rowcount
+    return total
 
 
 def _process_row(
@@ -196,6 +256,7 @@ def _process_row(
     empresa_cache: dict[str, int],
     versao_cache: dict[str, int],
     cleared_periods: set[str],
+    filing_period: dict[tuple[int, str], int],
 ) -> int:
     """Process a single CSV row. Returns 1 if stored, 0 if skipped."""
     # [v1.2.1] Normalize CNPJ to 14 digits (was raw formatted "33.000.167/0001-01")
@@ -286,6 +347,13 @@ def _process_row(
             (empresa_id, dt_fim),
         )
         cleared_periods.add(period_key)
+
+    # [v1.7.1] Record the filing's flow period (3/6/9 months) so the
+    # post-parse re-key can move this filing's BPA/BPP snapshots into the
+    # matching quarter bucket. setdefault: all flow statements of one
+    # filing share the period; first one wins on any disagreement.
+    if dt_ini and meses in (3, 6, 9):
+        filing_period.setdefault((empresa_id, dt_fim), meses)
 
     # Upsert conta
     conn.execute(
