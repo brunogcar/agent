@@ -1,5 +1,24 @@
 # DDM Juros Skill — Changelog
 
+## v2 — 2026-11-22 (shipped with WebUI v1.16)
+
+### Fixed — window phrasing (PT-BR)
+
+- `modes/dashboard.py` — `months=0` / `compare_months=0` (the DEFAULTS,
+  "all available data") rendered "…Ultimos 0 meses." in the Evolução
+  mensal chart description and "Comparativo - indice do mes (ultimos 0
+  meses)" as the Comparativo title. New `_window_text(months)` helper:
+  0 → "todo o histórico disponível", N > 0 → "últimos N meses" (the
+  inflation skill's v3.1 fix, mirrored).
+
+### Docs
+
+- `docs/skills/ddm/JUROS.md` refreshed: the Comparativo window (was
+  "last 24 months" — the default is all available data since the v1
+  params), `REQUIRED_SOURCES = ["ddm-juros"]` (the Sync guard section
+  still described the pre-split `["ddm"]` entry and inflation's
+  sync_all) and the WebUI v1.16 Juros family note.
+
 ## v1.0 — 2025-01
 
 Initial release. Mirrors `ddm/inflation` skill pattern, adapted for the

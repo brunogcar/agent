@@ -2888,11 +2888,11 @@ function renderMacroSubtab(panel, data) {
 // Family subtab loaders over the TICKER-LESS generic /mercado/sections/
 // <family>:<sub> endpoint — same v1.11 macro recipe (market-wide payload,
 // no ticker segment, FLAT contract, generic renderer). The page carries
-// one more level than macro: FAMILY pills (focus v1.12, fluxo v1.13;
-// dividends/índices/inflação/juros join later). The per-family loaders
-// only differ by the family key, so ONE factory builds them (pane id
-// tab-<family>-<sub>, endpoint key <family>:<sub>) — the v1.13 fluxo
-// family was a one-line addition.
+// one more level than macro: FAMILY pills (focus v1.12, fluxo v1.13,
+// índices v1.14, inflação v1.15, juros v1.16; dividends joins later).
+// The per-family loaders only differ by the family key, so ONE factory
+// builds them (pane id tab-<family>-<sub>, endpoint key <family>:<sub>)
+// — the v1.13 fluxo family was a one-line addition.
 function mercadoLoader(family) {
   return function(sub) {
     var panel = document.getElementById('tab-' + family + '-' + sub);
@@ -2926,6 +2926,7 @@ window.loadFocusSubtab = mercadoLoader('focus');   // [v1.12] Boletim Focus
 window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
 window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
 window.loadInflacaoSubtab = mercadoLoader('inflacao'); // [v1.15] índices de preços
+window.loadJurosSubtab = mercadoLoader('juros'); // [v1.16] taxas de juros
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -3032,7 +3033,8 @@ function prefetchSubtab(e) {
               opt: window.loadOptSubtab, sh: window.loadShSubtab,
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
               foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
-              ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab };
+              ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab,
+              jur: window.loadJurosSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }

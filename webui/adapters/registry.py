@@ -367,8 +367,9 @@ def _register_builtins() -> None:
     # DDM dashboards (reference: skills/ddm/focus static report +
     # focus_dashboard.html; market-level data from dadosdemercado.com.br).
     # Focus family first (Boletim Focus — the weekly expectations
-    # bulletin, 3 time windows × 4 reference years); dividends, índices,
-    # fluxo, inflação and juros join as later families. Ticker-less FLAT
+    # bulletin, 3 time windows × 4 reference years); índices (v1.14),
+    # fluxo (v1.13), inflação (v1.15) and juros (v1.16) joined as later
+    # families; dividends is the remaining one. Ticker-less FLAT
     # payloads served by the dedicated GET /api/webui/macro-style
     # endpoint /api/webui/mercado/sections/{key}. Data: DDM focus.db
     # through the same query engine the skill's modes use.
@@ -449,3 +450,23 @@ def _register_builtins() -> None:
              family="inflacao", label="Mercado — Inflação: IPCA")
     register("inflacao:inpc", _bind(InflationService, "inpc"),
              family="inflacao", label="Mercado — Inflação: INPC")
+
+    # [v1.16] Mercado — Juros family (the Brazilian interest rates from
+    # dadosdemercado.com.br; reference: skills/ddm/juros static report +
+    # juros_dashboard.html). The static's 4 flat tabs (Selic, Meta Selic
+    # and CDI each with Histórico + Matriz subtabs, plus a Comparativo
+    # tab) become 4 subtabs: the comparison lands on the overview (the
+    # static's overlay was the LAST tab) and each rate's Histórico +
+    # Matriz merge into ONE subtab. Ticker-less FLAT payloads served by
+    # the same GET /api/webui/mercado/sections/{key} endpoint as the
+    # other families. Data: ddm juros.db through the same query engine
+    # the skill's modes use.
+    from webui.services.juros import JurosService
+    register("juros:overview", _bind(JurosService, "overview"),
+             family="juros", label="Mercado — Juros: Visão Geral")
+    register("juros:selic", _bind(JurosService, "selic"),
+             family="juros", label="Mercado — Juros: Selic")
+    register("juros:meta_selic", _bind(JurosService, "meta_selic"),
+             family="juros", label="Mercado — Juros: Meta Selic")
+    register("juros:cdi", _bind(JurosService, "cdi"),
+             family="juros", label="Mercado — Juros: CDI")

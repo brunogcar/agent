@@ -41,7 +41,9 @@ Each per-index tab uses `type:"subtabs"` with 2 subtabs:
   min/max (low rates in red, high rates in green, midpoint in white).
 
 The Comparativo tab shows a single overlay chart (3 datasets, one per
-index) of the daily rate over the last 24 months. It has **no tables**.
+index) of the daily rate — the default window is `compare_months=0`
+(**all available data**, rendered as "todo o histórico disponível" since
+v2). It has **no tables**.
 
 ## Why derived (not raw)?
 
@@ -97,14 +99,9 @@ dashed `media_no_ano` line in the Histórico chart.
 
 ## Sync guard
 
-`REQUIRED_SOURCES = ["ddm"]` — the route wrapper checks the freshness of
-the `ddm` source before each dispatch and triggers a force-sync if stale
-(this currently triggers `ddm/inflation`'s sync_all). A separate
-`skills/_base._trigger_sync.sync_map["ddm-juros"]` entry calls
-`data_sources.ddm.juros.sync_engine.sync_all(force=True)` and is available
-for explicit invocation via `_trigger_sync("ddm-juros")` (e.g. for manual
-sync flows or tests).
-
+`REQUIRED_SOURCES = ["ddm-juros"]` — the route wrapper checks the
+freshness of the `ddm-juros` source before each dispatch and triggers a
+force-sync (`data_sources.ddm.juros.sync_engine.sync_all`) if stale.
 Tests bypass via `CVM_SKIP_SYNC=1` or `skip_sync=True` per-call.
 
 ## Files (5)
@@ -128,3 +125,8 @@ Tests bypass via `CVM_SKIP_SYNC=1` or `skip_sync=True` per-call.
 - [`ddm/juros/ROADMAP.md`](ddm/juros/ROADMAP.md) — backlog.
 - [`../../data_sources/ddm/juros/API.md`](../../data_sources/ddm/juros/API.md)
   — underlying data source API.
+- **WebUI v1.16** — the `/webui/mercado` Juros family
+  (`webui/services/juros.py`) reorganizes this dashboard: the Comparativo
+  overlay is promoted to the landing view (the static's LAST tab) and the
+  per-index Histórico + Matriz subtabs merge into ONE; the matrix is
+  computed from `juros.db` (the live-fetch `monthly_matrix` stays here).

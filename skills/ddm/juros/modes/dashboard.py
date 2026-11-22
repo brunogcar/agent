@@ -1,5 +1,11 @@
 """Mode: dashboard -- 4-tab DDM juros dashboard with subtabs.
 
+[v2] Window phrasing fix: months=0 / compare_months=0 (the defaults,
+"all available data") used to render "Ultimos 0 meses." in the chart
+description and "Comparativo - indice do mes (ultimos 0 meses)" in the
+Comparativo title — now "todo o histórico disponível" (the _window_text
+helper; the inflation skill's v3.1 fix, mirrored here).
+
 Tabs:
   1. Selic       (group: Indices) - subtabs: Historico + Matriz
   2. Meta Selic  (group: Indices) - same
@@ -55,6 +61,14 @@ def _safe_call(fn, **kwargs):
         return {"status": "error", "error": str(e)}
 
 
+def _window_text(months: int) -> str:
+    """[v2] Human window phrase: 0 → "todo o histórico disponível"
+    (the default rendered "últimos 0 meses" — a PT-BR bug)."""
+    if months and months > 0:
+        return f"últimos {months} meses"
+    return "todo o histórico disponível"
+
+
 def _build_historico_subtab(slug: str, name: str,
                              months: int) -> tuple[list[dict], list[dict]]:
     """Build the Historico subtab for one index.
@@ -103,7 +117,7 @@ def _build_historico_subtab(slug: str, name: str,
             slug=slug,
             description=(f"Indice do mes (% a.a.), media no ano (%) e "
                          f"media 12 meses (%) para {name}. "
-                         f"Ultimos {months} meses."),
+                         f"{_window_text(months).capitalize()}."),
         ))
         sections.append(build_table_section(
             "Histórico mensal",
@@ -198,7 +212,7 @@ def _build_comparativo_tab(months: int = 0) -> dict:
         }
 
     sections = [build_overlay_chart_section(
-        f"Comparativo - indice do mes (ultimos {months} meses)",
+        f"Comparativo - indice do mes ({_window_text(months)})",
         series,
         description=("Sobreposicao do indice do mes (% a.a.) para Selic, "
                      "Meta Selic e CDI. Permite comparar a trajetoria "

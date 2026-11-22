@@ -39,6 +39,8 @@
   composition family: overview + IBOV/SMLL/BDRX/IFIX/IDIV).
 [v1.15] inflacao:* joins the mercado endpoint (4 subtabs — the DDM
   price-index family: overview + IGP-M/IPCA/INPC).
+[v1.16] juros:* joins the mercado endpoint (4 subtabs — the DDM
+  interest-rate family: overview + Selic/Meta Selic/CDI).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -53,7 +55,8 @@ Routes:
         (ticker-less; focus: overview/inflacao/atividade/juros/cambio/
         externo/fiscal; fluxo: overview/mensal/anual/por_investidor;
         indices: overview/ibov/smll/bdrx/ifix/idiv; inflacao: overview/
-        igpm/ipca/inpc) [v1.12, v1.13, v1.14, v1.15]
+        igpm/ipca/inpc; juros: overview/selic/meta_selic/cdi)
+        [v1.12, v1.13, v1.14, v1.15, v1.16]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)

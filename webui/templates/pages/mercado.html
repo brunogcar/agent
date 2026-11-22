@@ -12,8 +12,9 @@ one level deeper):
   (Boletim Focus — the weekly expectations bulletin); v1.13 added Fluxo
   (the B3 investment flow by investor type); v1.14 added Índices (B3 index
   compositions — IBOV/SMLL/BDRX/IFIX/IDIV, from the B3 indexProxy API);
-  v1.15 adds Inflação (the Brazilian price indices — IGP-M, IPCA e INPC);
-  dividends and juros join as later families (hidden until shipped — the
+  v1.15 added Inflação (the Brazilian price indices — IGP-M, IPCA e INPC);
+  v1.16 adds Juros (the Brazilian interest rates — Selic, Meta Selic e
+  CDI); dividends joins as a later family (hidden until shipped — the
   company page's Historical-button precedent).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
@@ -58,13 +59,26 @@ one level deeper):
     12m) + o histórico completo + a matriz ano × mês em heatmap (as
     duas sub-abas do estático, mescladas).
 
+- Juros subtabs (level 2, v1.16): the static juros_dashboard.html
+  reorganized — its 4 flat tabs (Selic, Meta Selic e CDI each with
+  Histórico + Matriz subtabs, plus a Comparativo tab) become 4 subtabs:
+
+  - Visão Geral: KPIs + a taxa efetiva e a média 12m dos TRÊS índices
+    em dois charts (o Comparativo do estático, promovido a visão de
+    chegada) + a tabela comparativa Mês × taxa.
+  - Selic/Meta Selic/CDI: a evolução mensal (taxa + média no ano +
+    média 12m) + o histórico completo + a matriz ano × mês em heatmap
+    (as duas sub-abas do estático, mescladas — SEM coluna 'Ano':
+    taxas, não acumulados).
+
 Every subtab loads lazily through the ticker-less generic endpoint
 /api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
-loadFluxoSubtab / loadIndicesSubtab / loadInflacaoSubtab in app.js) and
-renders through the SAME generic renderer as every tab since v1.8
-(valKpisHtml + valSectionsHtml + mountValCharts). Data: DDM focus.db +
-fluxo.db + inflation.db — sincronize as fontes ddm-focus / ddm-fluxo /
-ddm-inflation na página Sincronização; índices: b3-index (B3 indexProxy).
+loadFluxoSubtab / loadIndicesSubtab / loadInflacaoSubtab /
+loadJurosSubtab in app.js) and renders through the SAME generic renderer
+as every tab since v1.8 (valKpisHtml + valSectionsHtml + mountValCharts).
+Data: DDM focus.db + fluxo.db + inflation.db + juros.db — sincronize as
+fontes ddm-focus / ddm-fluxo / ddm-inflation / ddm-juros na página
+Sincronização; índices: b3-index (B3 indexProxy).
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -75,10 +89,11 @@ ddm-inflation na página Sincronização; índices: b3-index (B3 indexProxy).
       externas e públicas, por ano de referência, o fluxo diário de
       investimento na B3 por tipo de investidor, a composição dos índices
       B3 (IBOV, SMLL, BDRX, IFIX e IDIV — todos os constituintes em
-      doughnut e tabela) e a trajetória dos índices de preços (IGP-M, IPCA
-      e INPC — variação mensal, acumulados e a matriz ano × mês).
-      Famílias: Focus, Fluxo, Índices e Inflação; em breve: dividendos e
-      juros.
+      doughnut e tabela), a trajetória dos índices de preços (IGP-M, IPCA
+      e INPC — variação mensal, acumulados e a matriz ano × mês) e as
+      taxas de juros (Selic, Meta Selic e CDI — taxa efetiva, médias e a
+      matriz ano × mês). Famílias: Focus, Fluxo, Índices, Inflação e
+      Juros; em breve: dividendos.
     </p>
   </div>
 
@@ -104,7 +119,12 @@ ddm-inflation na página Sincronização; índices: b3-index (B3 indexProxy).
             @click="family='inflacao'; subtab='overview'"
             onclick="loadInflacaoSubtab('overview')"
             data-lazy="inf:overview">Inflação</button>
-    {# v1.16+: Dividendos, Juros — hidden until shipped (the company
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'juros' }"
+            @click="family='juros'; subtab='overview'"
+            onclick="loadJurosSubtab('overview')"
+            data-lazy="jur:overview">Juros</button>
+    {# v1.17+: Dividendos — hidden until shipped (the company
        page's Historical-button precedent). #}
   </nav>
 
@@ -254,6 +274,36 @@ ddm-inflation na página Sincronização; índices: b3-index (B3 indexProxy).
 
     {# ── INPC ── #}
     <div x-show="subtab === 'inpc'" style="display: none;" id="tab-inflacao-inpc">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Juros family panel [v1.16] ── #}
+  <div x-show="family === 'juros'" style="display: none;" id="family-juros">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas dos Juros">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadJurosSubtab('overview')" data-lazy="jur:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'selic' }" @click="subtab='selic'" onclick="loadJurosSubtab('selic')" data-lazy="jur:selic">Selic</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'meta_selic' }" @click="subtab='meta_selic'" onclick="loadJurosSubtab('meta_selic')" data-lazy="jur:meta_selic">Meta Selic</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'cdi' }" @click="subtab='cdi'" onclick="loadJurosSubtab('cdi')" data-lazy="jur:cdi">CDI</button>
+    </nav>
+
+    {# ── Visão Geral ── #}
+    <div x-show="subtab === 'overview'" id="tab-juros-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Selic ── #}
+    <div x-show="subtab === 'selic'" style="display: none;" id="tab-juros-selic">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Meta Selic ── #}
+    <div x-show="subtab === 'meta_selic'" style="display: none;" id="tab-juros-meta_selic">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── CDI ── #}
+    <div x-show="subtab === 'cdi'" style="display: none;" id="tab-juros-cdi">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>
