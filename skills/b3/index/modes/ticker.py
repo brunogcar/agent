@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from skills.b3.index._registry import register_mode
+from skills.b3.index.helpers import format_pct
 
 from data_sources.b3.index.query_engine import ticker_search
 
@@ -28,7 +29,7 @@ def ticker(ticker: str = "", **kwargs) -> dict:
             "title": f"{ticker} em Indices B3",
             "columns": ["Indice", "Nome", "Part. %", "Rank", "Data Ref."],
             "rows": [[i["index"], i["name"],
-                      f"{i['participation']:.3f}%" if i.get("participation") else "-",
+                      format_pct(i.get("participation")),
                       i.get("rank", "-"), i.get("ref_date", "")]
                      for i in indices],
         }]

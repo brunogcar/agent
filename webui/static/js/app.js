@@ -2191,6 +2191,32 @@ function renderValChart(canvas, cd) {
     if (dateAxis) {
       plugins.tooltip = { callbacks: { title: function(i) { return fmtDate(i[0].label); } } };
     }
+    // [v1.14] Honor the server's plugins.legend (display/position) — the
+    // Índices composition doughnuts ship legend off (78-136 slices would
+    // be a wall of legend labels; the full table below is the legend).
+    // Same cutout/stacked precedent: default stays exactly as before for
+    // every chart that does not ask.
+    var srvLegend = (((cd.options || {}).plugins) || {}).legend;
+    if (srvLegend && typeof srvLegend === 'object') {
+      if (typeof srvLegend.display === 'boolean') plugins.legend.display = srvLegend.display;
+      if (typeof srvLegend.position === 'string') plugins.legend.position = srvLegend.position;
+    }
+    // [v1.14] Honor the server's tooltipUnit — a JSON-safe way to give
+    // pie/doughnut tooltips a suffix with pt-BR value formatting (the
+    // composition doughnuts ship "%"; the raw Chart.js tooltip would
+    // show "VALE3: 10.886" with an EN dot and no unit). Values format
+    // through toLocaleString('pt-BR') — same numerics as every table.
+    var tUnit = (cd.options || {}).tooltipUnit;
+    if (tUnit && typeof tUnit === 'string') {
+      plugins.tooltip = plugins.tooltip || {};
+      plugins.tooltip.callbacks = plugins.tooltip.callbacks || {};
+      plugins.tooltip.callbacks.label = function(ctx) {
+        var v = ctx.parsed !== undefined ? ctx.parsed : ctx.raw;
+        var num = (typeof v === 'number' && isFinite(v))
+          ? v.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) : v;
+        return (ctx.label ? ctx.label + ': ' : '') + num + tUnit;
+      };
+    }
     options = {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -2875,6 +2901,7 @@ function renderMercadoSubtab(panel, data) {
 
 window.loadFocusSubtab = mercadoLoader('focus');   // [v1.12] Boletim Focus
 window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
+window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -2980,7 +3007,8 @@ function prefetchSubtab(e) {
               val: window.loadValSubtab, prov: window.loadProvSubtab,
               opt: window.loadOptSubtab, sh: window.loadShSubtab,
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
-              foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab };
+              foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
+              ind: window.loadIndicesSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -3038,6 +3066,9 @@ function initApp() {
     // [v1.12] Mercado — first subtab of the Focus family (same no-op
     // guard — only the /webui/mercado page carries the pane).
     loadFocusSubtab('overview');
+    // [v1.13/v1.14] Fluxo/Índices — NOT booted eagerly (fluxo precedent:
+    // only the first family boots; the others load on family-pill click,
+    // with the data-lazy hover prefetch hiding the latency).
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });
@@ -3054,6 +3085,8 @@ function initApp() {
   loadMacroSubtab('overview');
   // [v1.12] Mercado — same for /webui/mercado (Focus family first).
   loadFocusSubtab('overview');
+  // [v1.13/v1.14] Fluxo/Índices boot on family-pill click only (the
+  // mercadoLoader pane guard no-ops them everywhere else).
 
   // [v1.5 fix1] Hover/focus prefetch for lazy subtabs — the fetch starts
   // when the pointer heads toward the button (~300ms before the click),

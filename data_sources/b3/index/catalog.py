@@ -5,7 +5,7 @@ URL: https://sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioD
 Payload: {"language":"en-us","pageNumber":1,"pageSize":200,"index":"IBOV","segment":"1"}
 
 Indices update quarterly (4 times/year) but the API always returns the
-CURRENT composition. This catalog stores ALL available indices (26) but
+CURRENT composition. This catalog stores ALL available indices (25) but
 only 5 are marked active for sync. More can be activated by setting
 active=1 in INDEX_CATALOG.
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 API_BASE = "https://sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay"
 
-# All 26 B3 indices. active=True marks the 5 we sync by default.
+# All 25 B3 indices. active=True marks the 5 we sync by default.
 # Tuple: (name, description, active)
 INDEX_CATALOG: dict[str, tuple[str, str, bool]] = {
     "IBOV":   ("Indice Bovespa", "Principal indice do mercado acionario brasileiro", True),

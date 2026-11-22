@@ -35,6 +35,8 @@
   families).
 [v1.13] fluxo:* joins the mercado endpoint (4 subtabs — the B3
   investment flow family).
+[v1.14] indices:* joins the mercado endpoint (6 subtabs — the B3 index
+  composition family: overview + IBOV/SMLL/BDRX/IFIX/IDIV).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -47,8 +49,9 @@ Routes:
         retorno_real/focus/curva) [v1.11]
   GET /api/webui/mercado/sections/{key}     → mercado page subtabs
         (ticker-less; focus: overview/inflacao/atividade/juros/cambio/
-        externo/fiscal; fluxo: overview/mensal/anual/por_investidor)
-        [v1.12, v1.13]
+        externo/fiscal; fluxo: overview/mensal/anual/por_investidor;
+        indices: overview/ibov/smll/bdrx/ifix/idiv)
+        [v1.12, v1.13, v1.14]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)

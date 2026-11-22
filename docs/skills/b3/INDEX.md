@@ -7,6 +7,7 @@ The `index` skill combines B3 INDEX (composition + history) + B3 API instruments
 **Key characteristics:**
 - **5 active indices** — IBOV (Ibovespa), SMLL (Small Cap), BDRX (BDRs), IFIX (FIIs), IDIV (Dividendos). 26 catalogued.
 - **Three analytical modes** — dashboard (single-index deep dive), compare (side-by-side multi-index), ticker (reverse-lookup: which indices contain a given ticker + weight).
+- **Full-composition views (v1.1)** — the dashboard's chart is a doughnut with ALL constituents (was a top-15 bar) and its table lists EVERY row (was capped at 20); numerics are PT-BR ("10,886%", "3.535.764.048") and B3's padded specs collapse ("ON NM"). Rendered in the WebUI as the Mercado/Índices family (v1.14).
 - **Modular file structure (v1.0)** — `_registry.py` + `modes/` (3 files: dashboard, compare, ticker) + `helpers.py` + `report.py`. `__init__.py` auto-discovers modes via importlib (same pattern as `tools/git_ops/actions/`).
 - **Read-only** — no sync. Calls INDEX query engines directly.
 - **Sync guard integration (v1.0)** — `__init__.py` declares `REQUIRED_SOURCES = ["index"]` + passes it to `make_route()`. The `route()` wrapper calls `ensure_fresh()` before dispatch — force-syncs `index.db` if older than 24h.

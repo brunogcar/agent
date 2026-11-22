@@ -30,11 +30,12 @@ def build_index_tab(index_code: str, index_data: dict) -> dict:
 
     sections = [
         build_chart_section(
-            f"{name} - Top 15 Constituintes",
+            f"{name} — Composicao",
             constituents,
-            f"Composicao em {ref_date} - {len(constituents)} constituintes",
+            f"Composicao em {ref_date} - {len(constituents)} constituintes "
+            "(fatia por participacao; tooltip identifica cada uma)",
         ),
-        build_constituent_table(constituents, limit=20),
+        build_constituent_table(constituents),
     ]
 
     return {

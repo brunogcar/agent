@@ -405,3 +405,27 @@ def _register_builtins() -> None:
     register("fluxo:por_investidor",
              _bind(FluxoService, "por_investidor"),
              family="fluxo", label="Mercado — Fluxo: Por Investidor")
+
+    # [v1.14] Mercado — Índices family (B3 index compositions from the
+    # indexProxy API; reference: skills/b3/index static report +
+    # index_dashboard.html). The static's 6 flat tabs (Resumo + 5
+    # per-index tabs, chart capped at the top 15 and table at 20) become
+    # 6 subtabs: the overview gains the cross-index presence view and
+    # each index gets the FULL doughnut + the complete table. Ticker-less
+    # FLAT payloads served by the same
+    # GET /api/webui/mercado/sections/{key} endpoint as the other
+    # families. Data: b3 index.db through the same query engine the
+    # skill's modes use.
+    from webui.services.indexes import IndexesService
+    register("indices:overview", _bind(IndexesService, "overview"),
+             family="indices", label="Mercado — Índices: Visão Geral")
+    register("indices:ibov", _bind(IndexesService, "ibov"),
+             family="indices", label="Mercado — Índices: IBOV")
+    register("indices:smll", _bind(IndexesService, "smll"),
+             family="indices", label="Mercado — Índices: SMLL")
+    register("indices:bdrx", _bind(IndexesService, "bdrx"),
+             family="indices", label="Mercado — Índices: BDRX")
+    register("indices:ifix", _bind(IndexesService, "ifix"),
+             family="indices", label="Mercado — Índices: IFIX")
+    register("indices:idiv", _bind(IndexesService, "idiv"),
+             family="indices", label="Mercado — Índices: IDIV")

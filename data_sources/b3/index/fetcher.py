@@ -138,7 +138,9 @@ def fetch_index(index_code: str, force: bool = False) -> dict:
         constituents.append({
             "ticker": ticker,
             "company_name": (r.get("asset") or "").strip(),
-            "type": (r.get("type") or "").strip(),
+            # [v1.1] B3 pads the spec ("ON      NM") — collapse the
+            # internal whitespace at fetch time so stored rows are clean.
+            "type": " ".join((r.get("type") or "").split()),
             "theorical_qty": _parse_int(r.get("theoricalQty")),
             "participation": _parse_float(r.get("part")),
         })

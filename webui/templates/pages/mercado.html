@@ -8,11 +8,12 @@ data), next to Macro (realized BCB SGS indicators). Two levels, the company
 page's tab/subtab architecture on a standalone page (macro.html pattern,
 one level deeper):
 
-- FAMILY pills (level 1): the DDM dashboard families. v1.12 shipped Focus
-  (Boletim Focus — the weekly expectations bulletin); v1.13 adds Fluxo
-  (the B3 investment flow by investor type); dividends, índices, inflação
-  and juros join as later families (hidden until shipped — the company
-  page's Historical-button precedent).
+- FAMILY pills (level 1): the dashboard families. v1.12 shipped Focus
+  (Boletim Focus — the weekly expectations bulletin); v1.13 added Fluxo
+  (the B3 investment flow by investor type); v1.14 adds Índices (B3 index
+  compositions — IBOV/SMLL/BDRX/IFIX/IDIV, from the B3 indexProxy API);
+  dividends, inflação and juros join as later families (hidden until
+  shipped — the company page's Historical-button precedent).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
   tabs) become 7 question-driven subtabs:
@@ -36,12 +37,22 @@ one level deeper):
   - Por Investidor: o chart diário verde/vermelho por sinal, um por tipo
     (os 4 do estático + Outros).
 
+- Índices subtabs (level 2, v1.14): the static index_dashboard.html
+  reorganized — its 6 flat tabs (Resumo + 5 per-index tabs, chart capped
+  at the top 15 and table at 20) become 6 subtabs:
+
+  - Visão Geral: KPIs + índices sincronizados + presença em 2+ índices
+    (o cruzamento que o estático não tinha).
+  - IBOV/SMLL/BDRX/IFIX/IDIV: KPIs + o doughnut com TODOS os
+    constituintes + o doughnut por tipo de ativo + a tabela completa.
+
 Every subtab loads lazily through the ticker-less generic endpoint
 /api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
-loadFluxoSubtab in app.js) and renders through the SAME generic renderer
-as every tab since v1.8 (valKpisHtml + valSectionsHtml + mountValCharts).
-Data: DDM focus.db + fluxo.db — sincronize as fontes ddm-focus / ddm-fluxo
-na página Sincronização.
+loadFluxoSubtab / loadIndicesSubtab in app.js) and renders through the
+SAME generic renderer as every tab since v1.8 (valKpisHtml +
+valSectionsHtml + mountValCharts). Data: DDM focus.db + fluxo.db —
+sincronize as fontes ddm-focus / ddm-fluxo na página Sincronização;
+índices: b3-index (B3 indexProxy).
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -49,9 +60,11 @@ na página Sincronização.
     <p class="macro-subtitle">
       Dados de mercado (dadosdemercado.com.br) — expectativas semanais do
       Boletim Focus para inflação, atividade, juros, câmbio e as contas
-      externas e públicas, por ano de referência, e o fluxo diário de
-      investimento na B3 por tipo de investidor. Famílias: Focus e Fluxo;
-      em breve: dividendos, índices, inflação e juros.
+      externas e públicas, por ano de referência, o fluxo diário de
+      investimento na B3 por tipo de investidor e a composição dos índices
+      B3 (IBOV, SMLL, BDRX, IFIX e IDIV — todos os constituintes em
+      doughnut e tabela). Famílias: Focus, Fluxo e Índices; em breve:
+      dividendos, inflação e juros.
     </p>
   </div>
 
@@ -67,7 +80,12 @@ na página Sincronização.
             @click="family='fluxo'; subtab='overview'"
             onclick="loadFluxoSubtab('overview')"
             data-lazy="flx:overview">Fluxo</button>
-    {# v1.14+: Dividendos, Índices, Inflação, Juros — hidden until
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'indices' }"
+            @click="family='indices'; subtab='overview'"
+            onclick="loadIndicesSubtab('overview')"
+            data-lazy="ind:overview">Índices</button>
+    {# v1.15+: Dividendos, Inflação, Juros — hidden until
        shipped (the company page's Historical-button precedent). #}
   </nav>
 
@@ -145,6 +163,48 @@ na página Sincronização.
 
     {# ── Por Investidor ── #}
     <div x-show="subtab === 'por_investidor'" style="display: none;" id="tab-fluxo-por_investidor">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Índices family panel [v1.14] ── #}
+  <div x-show="family === 'indices'" style="display: none;" id="family-indices">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas dos Índices">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadIndicesSubtab('overview')" data-lazy="ind:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'ibov' }" @click="subtab='ibov'" onclick="loadIndicesSubtab('ibov')" data-lazy="ind:ibov">IBOV</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'smll' }" @click="subtab='smll'" onclick="loadIndicesSubtab('smll')" data-lazy="ind:smll">SMLL</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'bdrx' }" @click="subtab='bdrx'" onclick="loadIndicesSubtab('bdrx')" data-lazy="ind:bdrx">BDRX</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'ifix' }" @click="subtab='ifix'" onclick="loadIndicesSubtab('ifix')" data-lazy="ind:ifix">IFIX</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'idiv' }" @click="subtab='idiv'" onclick="loadIndicesSubtab('idiv')" data-lazy="ind:idiv">IDIV</button>
+    </nav>
+
+    {# ── Visão Geral ── #}
+    <div x-show="subtab === 'overview'" id="tab-indices-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── IBOV ── #}
+    <div x-show="subtab === 'ibov'" style="display: none;" id="tab-indices-ibov">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── SMLL ── #}
+    <div x-show="subtab === 'smll'" style="display: none;" id="tab-indices-smll">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── BDRX ── #}
+    <div x-show="subtab === 'bdrx'" style="display: none;" id="tab-indices-bdrx">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── IFIX ── #}
+    <div x-show="subtab === 'ifix'" style="display: none;" id="tab-indices-ifix">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── IDIV ── #}
+    <div x-show="subtab === 'idiv'" style="display: none;" id="tab-indices-idiv">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>
