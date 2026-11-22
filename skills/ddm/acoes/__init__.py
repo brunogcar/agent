@@ -52,9 +52,13 @@ MANIFEST = {
     "description": (
         "DDM Acoes dashboard - 1 tab: Acoes. Shows KPIs (total stocks, "
         "most traded, biggest gainer, biggest loser) + a sortable stocks "
-        "table (Ticker | Nome | Negocios | Ultima (R$) | Variacao). "
-        "Click column headers to sort asc/desc. Default sort: Negocios DESC. "
-        "Negative variation values render in red. Data source: "
+        "table (Ticker | Nome | Negocios | Ultima (R$) | Variacao) + the "
+        "price-distribution bar chart (22 colored ranges) + [v2] the "
+        "EVOLUTION of the distribution over time (2 stacked-area charts "
+        "over the daily snapshots accumulated in stocks_history - % do "
+        "total 100% empilhado + numero absoluto por faixa). Click column "
+        "headers to sort asc/desc. Default sort: Negocios DESC. Negative "
+        "variation values render in red. Data source: "
         "data_sources/ddm/acoes/ (read-only queries against acoes.db)."
     ),
     "source":  "data_sources/ddm/acoes/ (read-only)",

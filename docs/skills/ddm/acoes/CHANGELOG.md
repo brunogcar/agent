@@ -1,5 +1,71 @@
 # DDM Acoes Skill — Changelog
 
+## v2 — 2026-11-22 (shipped with WebUI v1.17)
+
+The EVOLUTION release: the /acoes page is a live quote table with NO
+history (unlike inflation/juros/poupanca, whose pages carry full series),
+so the only way to chart the price distribution over time is to
+accumulate one snapshot per sync ourselves. The data source now stores
+that history (`stocks_history`) and the dashboard charts it.
+
+### Added — evolution store (data layer)
+
+- `data_sources/ddm/acoes/catalog.py` — new `stocks_history` table (PK
+  `(ref_date, ticker)` + index on `ref_date`; created by the same
+  `CREATE TABLE IF NOT EXISTS` on every sync — the whole migration for
+  pre-v2 DBs).
+- `data_sources/ddm/acoes/sync_engine.py` — every `sync_all()` appends
+  the day's rows to `stocks_history` (same-day re-syncs REPLACE that
+  day's snapshot, a new day ADDS one), inside the SAME transaction as
+  the main stocks INSERT (the new `extra_write_fn` hook in
+  `data_sources/ddm/_base/sync_base.py`). The FIRST sync after
+  upgrading a pre-v2 DB also preserves the previous `stocks` snapshot
+  (read before the full-refresh DELETE) — the evolution starts with the
+  data the user already has.
+- `data_sources/ddm/acoes/query_engine.py` — `price_history(limit)`:
+  every stored snapshot's prices grouped by ref_date (ASC; `limit` is
+  per-DATE). Empty history is NOT an error (callers fall back to the
+  current snapshot).
+- `data_sources/ddm/acoes/__init__.py` — new `history` mode (exposes
+  `price_history` through the data_source dispatcher).
+- `data_sources/ddm/acoes/status_reporter.py` — `history_rows` +
+  `history_dates` in the status dict.
+
+### Added — evolution charts (dashboard)
+
+- `skills/ddm/acoes/helpers.py` — `distribution_snapshots(dates,
+  prices_by_date)`: buckets every snapshot into the shared 22-range
+  palette (counts + shares that sum to EXACTLY 100 per date — the
+  rounding drift rides the largest band). Used by the skill's static
+  dashboard AND the WebUI Ações family (one bucketing, no forked
+  numerics). Also `_format_data` (ISO → dd/mm/aaaa).
+- `skills/ddm/acoes/report.py` — `build_evolution_sections`: TWO
+  stacked-area charts over the snapshot dates — % do total (100%
+  stacked, the reference-chart style) + nº de ações (absolute) — one
+  dataset per range in the palette's color, lowest prices at the
+  bottom, `interaction: nearest` (a 22-band index tooltip would be a
+  wall), both with the Tudo/10A/…/1M range selector.
+  `build_history_note_section`: <2 snapshots degrade to a text note
+  explaining how the history accumulates.
+- `skills/ddm/acoes/modes/dashboard.py` — evolution after the stocks
+  table; empty history falls back to the CURRENT snapshot as the first
+  point (exactly what the next sync preserves).
+
+### Fixed — PT-BR + stale counts
+
+- Every user-facing string now carries proper PT-BR accents ("Ações",
+  "Distribuição de Preços", "Negócios", "Última (R$)", "Variação",
+  "Número de Ações"…) — the juros/inflation statics always did; the
+  acoes v1 strings were ASCII-fied.
+- Stale "16 colored bars" docstrings/descriptions → 22 ranges (the
+  palette's v2 added the 100–300+ blue tail); `skills/_price_colors.py`
+  path references → `skills/_colors/price.py` (migrated module).
+
+### Docs
+
+- `docs/skills/ddm/ACOES.md` refreshed (22 ranges + new module path +
+  the stocks_history evolution section + the WebUI v1.17 note).
+
 ## v1.0 — 2025-01
 
 Initial release. 1-tab dashboard with sortable stocks table + price-

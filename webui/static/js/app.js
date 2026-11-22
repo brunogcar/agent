@@ -2190,6 +2190,11 @@ function renderValChart(canvas, cd) {
     var yScale = { grid: { color: th.grid }, ticks: { color: th.text } };
     if (srvY.beginAtZero) yScale.beginAtZero = true;
     if (srvY.stacked) yScale.stacked = true;
+    // [v1.17] y.max too — the Ações 100% stacked area sums to exactly
+    // 100.00 per date, but float dust (8.87 + 9.14 + … = 100.00000000000001)
+    // makes the auto-nice axis jump to 120 and leave dead space on top;
+    // the server pins it.
+    if (typeof srvY.max === 'number') yScale.max = srvY.max;
     if (srvY.title && srvY.title.text) yScale.title = { display: true, text: srvY.title.text };
     var xScale = { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } };
     if (srvX.stacked) xScale.stacked = true;
@@ -2249,6 +2254,20 @@ function renderValChart(canvas, cd) {
         y: yScale
       }
     };
+    // [v1.17] Honor the server's interaction (mode/intersect) — same
+    // opt-in pattern as beginAtZero (v1.5) / stacked (v1.6 fix1) /
+    // legend + tooltipUnit (v1.14). The Ações evolution charts ship
+    // {mode: 'nearest'} so hovering the 22 stacked bands reads the
+    // band under the cursor instead of a wall of 22 tooltip rows
+    // (index mode remains the default for every other chart).
+    var srvInteraction = ((cd.options || {}).interaction) || null;
+    if (srvInteraction && typeof srvInteraction === 'object' &&
+        typeof srvInteraction.mode === 'string') {
+      options.interaction = { mode: srvInteraction.mode };
+      if (typeof srvInteraction.intersect === 'boolean') {
+        options.interaction.intersect = srvInteraction.intersect;
+      }
+    }
     // [v1.7.2] Server-defined secondary axes (y1/y2/…): the Múltiplos
     // history charts are dual-axis (P/L and P/CG on the left; PSR, P/RB
     // and P/DB on the right). Datasets carrying yAxisID would otherwise
@@ -2889,10 +2908,10 @@ function renderMacroSubtab(panel, data) {
 // <family>:<sub> endpoint — same v1.11 macro recipe (market-wide payload,
 // no ticker segment, FLAT contract, generic renderer). The page carries
 // one more level than macro: FAMILY pills (focus v1.12, fluxo v1.13,
-// índices v1.14, inflação v1.15, juros v1.16; dividends joins later).
-// The per-family loaders only differ by the family key, so ONE factory
-// builds them (pane id tab-<family>-<sub>, endpoint key <family>:<sub>)
-// — the v1.13 fluxo family was a one-line addition.
+// índices v1.14, inflação v1.15, juros v1.16, ações v1.17; dividends
+// joins later). The per-family loaders only differ by the family key, so
+// ONE factory builds them (pane id tab-<family>-<sub>, endpoint key
+// <family>:<sub>) — the v1.13 fluxo family was a one-line addition.
 function mercadoLoader(family) {
   return function(sub) {
     var panel = document.getElementById('tab-' + family + '-' + sub);
@@ -2927,6 +2946,7 @@ window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
 window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
 window.loadInflacaoSubtab = mercadoLoader('inflacao'); // [v1.15] índices de preços
 window.loadJurosSubtab = mercadoLoader('juros'); // [v1.16] taxas de juros
+window.loadAcoesSubtab = mercadoLoader('acoes'); // [v1.17] ações B3 + evolução
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -3034,7 +3054,7 @@ function prefetchSubtab(e) {
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
               foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
               ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab,
-              jur: window.loadJurosSubtab };
+              jur: window.loadJurosSubtab, aco: window.loadAcoesSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }

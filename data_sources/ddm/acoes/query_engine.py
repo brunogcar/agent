@@ -6,6 +6,9 @@ Functions:
   - last_value(ticker)                       - latest snapshot for one ticker
   - search(query, limit)                     - LIKE search over ticker + name
   - summary()                                - overview stats
+  - price_history(limit)                     - [v2] evolution store: every
+                                               stored snapshot's prices,
+                                               grouped by ref_date (ASC)
 
 All queries open a read-only SQLite URI connection (fails if DB missing).
 """
@@ -220,4 +223,65 @@ def stocks(order_by: str = "negocios", direction: str = "desc",
     ``stocks`` — the latter reads better in dashboard code (``stocks(...)``).
     """
     return stocks_list(order_by=order_by, direction=direction, limit=limit)
+
+
+def price_history(limit: int = 0) -> dict:
+    """[v2] The evolution store: every stored snapshot's prices by date.
+
+    Reads stocks_history (one row per ticker per sync day — accumulated
+    by sync_all since the v2 schema; the first post-upgrade sync also
+    preserves the pre-upgrade snapshot) and groups the prices by ref_date
+    in memory. Consumers bucket them into the shared 22-range price
+    palette via ``skills._colors.price.price_distribution`` (the same
+    function the current-snapshot bar chart uses — one bucketing, no
+    forked numerics) to draw the distribution-over-time charts.
+
+    Args:
+        limit: Max DATES to return, newest kept (0 = all). The window is
+               per-DATE, not per-row — limit=30 returns the last 30
+               snapshot days with ALL their tickers.
+
+    Returns:
+        {"status": "ok", "snapshots": <int>, "dates": ["2026-06-01", ...],
+         "prices": [[44.30, 7.81, ...], ...],      # aligned with dates
+         "counts":  [<int>, ...]}                  # rows per date
+        {"status": "not_synced", "error": ...} when acoes.db is missing.
+        An EMPTY history (pre-v2 DB never synced again) returns
+        snapshots=0 with empty lists — NOT an error; callers decide
+        whether to fall back to the current `stocks` snapshot.
+    """
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        rows = conn.execute(
+            "SELECT ref_date, last_price FROM stocks_history "
+            "WHERE last_price IS NOT NULL "
+            "ORDER BY ref_date ASC, ticker ASC"
+        ).fetchall()
+    except Exception:
+        # Pre-v2 DB without the stocks_history table yet (it is created
+        # on the next sync's ensure_schema) — same as an empty history.
+        return {"status": "ok", "snapshots": 0, "dates": [],
+                "prices": [], "counts": []}
+    finally:
+        conn.close()
+
+    by_date: dict[str, list[float]] = {}
+    for r in rows:
+        by_date.setdefault(r["ref_date"], []).append(r["last_price"])
+
+    dates = sorted(by_date)
+    if limit and limit > 0:
+        dates = dates[-limit:]
+
+    return {
+        "status":     "ok",
+        "snapshots":  len(dates),
+        "dates":      dates,
+        "prices":     [by_date[d] for d in dates],
+        "counts":     [len(by_date[d]) for d in dates],
+    }
 

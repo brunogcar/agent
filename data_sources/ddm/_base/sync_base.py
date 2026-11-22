@@ -214,6 +214,7 @@ class BaseDDMSyncEngine:
         full_refresh: bool = False,
         compute_last_date: Callable[[list[dict]], str] | None = None,
         result_extras: Callable[[list[dict], str, str], dict] | None = None,
+        extra_write_fn: Callable[..., None] | None = None,
         force: bool = False,
     ) -> dict:
         """Single-page sync: fetch + parse + write to DB + record sync_state.
@@ -237,6 +238,16 @@ class BaseDDMSyncEngine:
                                extra keys to merge into the result dict
                                (e.g. fluxo returns {"last_date": ...},
                                 focus returns {"ref_date": ...}).
+            extra_write_fn:    [v2] optional callable(conn, observations, now,
+                               last_date) -> None, invoked INSIDE the same
+                               transaction as the main INSERT (after it, before
+                               _record_sync_state) in BOTH the full-refresh and
+                               the accumulate paths. Lets a source write to
+                               ADDITIONAL tables atomically — used by acoes
+                               (v2) to append the day's snapshot to
+                               stocks_history (the evolution store). A raised
+                               exception rolls the whole sync back (the main
+                               rows too — same all-or-nothing contract).
             force:             passed to fetch_fn.
 
         Returns:
@@ -276,6 +287,8 @@ class BaseDDMSyncEngine:
                 try:
                     rows = [row_mapper(obs, now) for obs in observations]
                     conn.executemany(insert_sql, rows)
+                    if extra_write_fn:
+                        extra_write_fn(conn, observations, now, last_date)
                     cls._record_sync_state(conn, slug, last_date, len(observations), now)
                     conn.commit()
                 except Exception:
@@ -284,6 +297,8 @@ class BaseDDMSyncEngine:
             else:
                 rows = [row_mapper(obs, now) for obs in observations]
                 conn.executemany(insert_sql, rows)
+                if extra_write_fn:
+                    extra_write_fn(conn, observations, now, last_date)
                 cls._record_sync_state(conn, slug, last_date, len(observations), now)
                 conn.commit()
         finally:

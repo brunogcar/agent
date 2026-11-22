@@ -32,6 +32,18 @@ ACOES_PATH = "/acoes"
 # ref_date is the YYYY-MM-DD of the data (the day the snapshot was scraped -
 # DDM does not expose a "data do pregao" column on the acoes page itself,
 # so we use the scrape date as a proxy).
+#
+# [v2] stocks_history — the EVOLUTION store. The DDM /acoes page is a LIVE
+# quote table: unlike inflation/juros/poupanca (whose pages carry full
+# historical series), acoes ships NO history — so the only way to answer
+# "how did the price distribution move over time?" is to ACCUMULATE one
+# snapshot per sync ourselves. Every sync_all() appends the day's rows
+# keyed by (ref_date, ticker) — re-syncing the same day replaces that
+# day's snapshot (idempotent), a sync on a new day ADDS one. The table
+# starts empty on pre-v2 DBs (CREATE TABLE IF NOT EXISTS is the whole
+# migration) and the first post-upgrade sync also preserves the previous
+# `stocks` snapshot into it (see sync_engine.py), so the evolution starts
+# with data the user already has instead of from zero.
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS stocks (
     ticker        TEXT PRIMARY KEY,     -- 'PETR4'
@@ -46,6 +58,19 @@ CREATE TABLE IF NOT EXISTS stocks (
 CREATE INDEX IF NOT EXISTS idx_stocks_negocios  ON stocks(negocios);
 CREATE INDEX IF NOT EXISTS idx_stocks_price     ON stocks(last_price);
 CREATE INDEX IF NOT EXISTS idx_stocks_variation ON stocks(variation);
+
+CREATE TABLE IF NOT EXISTS stocks_history (
+    ref_date      TEXT NOT NULL,        -- YYYY-MM-DD (snapshot date)
+    ticker        TEXT NOT NULL,        -- 'PETR4'
+    name          TEXT,                 -- 'Petrobras'
+    negocios      INTEGER,              -- 52792400 (number of trades)
+    last_price    REAL,                 -- 44.30 (BRL)
+    variation     REAL,                 -- 2.78 (percentage, can be negative)
+    synced_at     TEXT,                 -- ISO timestamp of the sync
+    PRIMARY KEY (ref_date, ticker)      -- one row per ticker per day
+);
+
+CREATE INDEX IF NOT EXISTS idx_stocks_history_date ON stocks_history(ref_date);
 
 CREATE TABLE IF NOT EXISTS sync_state (
     slug          TEXT PRIMARY KEY,     -- always 'acoes' for this subdomain

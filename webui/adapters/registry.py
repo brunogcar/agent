@@ -470,3 +470,20 @@ def _register_builtins() -> None:
              family="juros", label="Mercado — Juros: Meta Selic")
     register("juros:cdi", _bind(JurosService, "cdi"),
              family="juros", label="Mercado — Juros: CDI")
+
+    # [v1.17] Mercado — Ações family (the B3 listed stocks from
+    # dadosdemercado.com.br; reference: skills/ddm/acoes static report +
+    # acoes_dashboard.html). The static's single tab becomes 2 subtabs:
+    # Visão Geral (the current snapshot — KPIs + distribution + top-10 +
+    # the full sortable table) and Evolução (the distribution OVER TIME,
+    # fed by the v2 stocks_history evolution store — one snapshot per
+    # sync; the 100% stacked area + the absolute counts + the per-date
+    # table). Ticker-less FLAT payloads served by the same
+    # GET /api/webui/mercado/sections/{key} endpoint as the other
+    # families. Data: ddm acoes.db through the same query engine the
+    # skill's modes use.
+    from webui.services.acoes import AcoesService
+    register("acoes:overview", _bind(AcoesService, "overview"),
+             family="acoes", label="Mercado — Ações: Visão Geral")
+    register("acoes:evolucao", _bind(AcoesService, "evolucao"),
+             family="acoes", label="Mercado — Ações: Evolução")

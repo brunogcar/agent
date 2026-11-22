@@ -20,6 +20,7 @@
 [WebUI v1.14] ?v=54 (Mercado Índices family — app.js + mercado.html)
 [WebUI v1.15] ?v=55 (Mercado Inflação family — app.js + mercado.html: month-axis formatting)
 [WebUI v1.16] ?v=56 (Mercado Juros family — app.js + mercado.html)
+[WebUI v1.17] ?v=57 (Mercado Ações family — app.js + mercado.html: interaction honoring)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -48,7 +49,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=56">
+  <link rel="stylesheet" href="/static/css/app.css?v=57">
 </head>
 <body>
   <div class="app-shell">
@@ -142,6 +143,6 @@
   </div>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=56"></script>
+  <script src="/static/js/app.js?v=57"></script>
 </body>
 </html>

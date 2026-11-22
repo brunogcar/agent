@@ -12,6 +12,8 @@ Pre-sorted by Negocios DESC (most-traded first). No pagination - all rows
 are on one page. Server-rendered HTML, no JS, no auth.
 
 8 modes: sync_all, sync_index, stocks, last, search, summary, status, ticker.
+[v2] adds the `history` mode (price_history) — the evolution store
+accumulated by every sync (one snapshot per day in stocks_history).
 sync_all fetches the single acoes page; sync_index is an alias for parity
 with the other DDM sub-domains (inflation/juros/poupanca). Both `last`
 and `ticker` modes return the most-recent snapshot for a single ticker
@@ -123,6 +125,23 @@ MANIFEST = {
                 'data_source(domain="ddm", sub_domain="acoes", mode="summary")',
             ],
         },
+        "history": {
+            "description": (
+                "[v2] The evolution store: every accumulated snapshot's "
+                "prices grouped by ref_date (ASC). One snapshot per sync "
+                "day in stocks_history (the acoes page carries NO history "
+                "-- the series grows one point per sync; re-syncing the "
+                "same day replaces that day's snapshot)."
+            ),
+            "include_in_all": True,
+            "params": {
+                "limit": "int. Max DATES to return, newest kept (0 = all). Default: 0.",
+            },
+            "examples": [
+                'data_source(domain="ddm", sub_domain="acoes", mode="history", '
+                'params=\'{"limit":90}\')',
+            ],
+        },
         "status": {
             "description": "Show acoes.db stats: row count + last sync timestamp.",
             "include_in_all": True,
@@ -157,6 +176,7 @@ _MODE_MAP = {
     "last":       ("data_sources.ddm.acoes.query_engine",    "last_value"),
     "search":     ("data_sources.ddm.acoes.query_engine",    "search"),
     "summary":    ("data_sources.ddm.acoes.query_engine",    "summary"),
+    "history":    ("data_sources.ddm.acoes.query_engine",    "price_history"),
     "ticker":     ("data_sources.ddm.acoes.query_engine",    "last_value"),
     "status":     ("data_sources.ddm.acoes.status_reporter", "status"),
 }

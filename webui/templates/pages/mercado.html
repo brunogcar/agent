@@ -13,9 +13,12 @@ one level deeper):
   (the B3 investment flow by investor type); v1.14 added Índices (B3 index
   compositions — IBOV/SMLL/BDRX/IFIX/IDIV, from the B3 indexProxy API);
   v1.15 added Inflação (the Brazilian price indices — IGP-M, IPCA e INPC);
-  v1.16 adds Juros (the Brazilian interest rates — Selic, Meta Selic e
-  CDI); dividends joins as a later family (hidden until shipped — the
-  company page's Historical-button precedent).
+  v1.16 added Juros (the Brazilian interest rates — Selic, Meta Selic e
+  CDI); v1.17 adds Ações (the B3 listed stocks — the current snapshot by
+  price range + the evolution of the distribution over time, fed by the
+  snapshots each sync accumulates); dividends joins as a later family
+  (hidden until shipped — the company page's Historical-button
+  precedent).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
   tabs) become 7 question-driven subtabs:
@@ -71,14 +74,28 @@ one level deeper):
     (as duas sub-abas do estático, mescladas — SEM coluna 'Ano':
     taxas, não acumulados).
 
+- Ações subtabs (level 2, v1.17): the static acoes_dashboard.html
+  reorganized — its single flat tab (4 KPIs + the price-distribution
+  bar chart + the sortable stocks table) becomes 2 subtabs:
+
+  - Visão Geral: o snapshot atual — 6 KPIs (os 4 do estático + Faixa
+    Mais Comum + Preço Mediano) + a distribuição nas 22 faixas da
+    paleta + o Top 10 Mais Negociadas (novo) + a tabela completa.
+  - Evolução: a distribuição AO LONGO DO TEMPO — a área 100% empilhada
+    (um ponto por snapshot diário acumulado em stocks_history pela v2
+    do sync; as faixas somam 100% em cada data) + a visão absoluta +
+    a tabela por data com bandas agrupadas. <2 snapshots degradam em
+    nota — o histórico ganha forma a cada sincronização.
+
 Every subtab loads lazily through the ticker-less generic endpoint
 /api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
 loadFluxoSubtab / loadIndicesSubtab / loadInflacaoSubtab /
-loadJurosSubtab in app.js) and renders through the SAME generic renderer
-as every tab since v1.8 (valKpisHtml + valSectionsHtml + mountValCharts).
-Data: DDM focus.db + fluxo.db + inflation.db + juros.db — sincronize as
-fontes ddm-focus / ddm-fluxo / ddm-inflation / ddm-juros na página
-Sincronização; índices: b3-index (B3 indexProxy).
+loadJurosSubtab / loadAcoesSubtab in app.js) and renders through the
+SAME generic renderer as every tab since v1.8 (valKpisHtml +
+valSectionsHtml + mountValCharts).
+Data: DDM focus.db + fluxo.db + inflation.db + juros.db + acoes.db —
+sincronize as fontes ddm-focus / ddm-fluxo / ddm-inflation / ddm-juros /
+ddm-acoes na página Sincronização; índices: b3-index (B3 indexProxy).
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -90,10 +107,12 @@ Sincronização; índices: b3-index (B3 indexProxy).
       investimento na B3 por tipo de investidor, a composição dos índices
       B3 (IBOV, SMLL, BDRX, IFIX e IDIV — todos os constituintes em
       doughnut e tabela), a trajetória dos índices de preços (IGP-M, IPCA
-      e INPC — variação mensal, acumulados e a matriz ano × mês) e as
+      e INPC — variação mensal, acumulados e a matriz ano × mês), as
       taxas de juros (Selic, Meta Selic e CDI — taxa efetiva, médias e a
-      matriz ano × mês). Famílias: Focus, Fluxo, Índices, Inflação e
-      Juros; em breve: dividendos.
+      matriz ano × mês) e as ações listadas na B3 (o snapshot atual por
+      faixa de preço + a evolução da distribuição ao longo do tempo, um
+      snapshot por sincronização). Famílias: Focus, Fluxo, Índices,
+      Inflação, Juros e Ações; em breve: dividendos.
     </p>
   </div>
 
@@ -124,7 +143,12 @@ Sincronização; índices: b3-index (B3 indexProxy).
             @click="family='juros'; subtab='overview'"
             onclick="loadJurosSubtab('overview')"
             data-lazy="jur:overview">Juros</button>
-    {# v1.17+: Dividendos — hidden until shipped (the company
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'acoes' }"
+            @click="family='acoes'; subtab='overview'"
+            onclick="loadAcoesSubtab('overview')"
+            data-lazy="aco:overview">Ações</button>
+    {# v1.18+: Dividendos — hidden until shipped (the company
        page's Historical-button precedent). #}
   </nav>
 
@@ -304,6 +328,24 @@ Sincronização; índices: b3-index (B3 indexProxy).
 
     {# ── CDI ── #}
     <div x-show="subtab === 'cdi'" style="display: none;" id="tab-juros-cdi">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Ações family panel [v1.17] ── #}
+  <div x-show="family === 'acoes'" style="display: none;" id="family-acoes">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas das Ações">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadAcoesSubtab('overview')" data-lazy="aco:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'evolucao' }" @click="subtab='evolucao'" onclick="loadAcoesSubtab('evolucao')" data-lazy="aco:evolucao">Evolução</button>
+    </nav>
+
+    {# ── Visão Geral ── #}
+    <div x-show="subtab === 'overview'" id="tab-acoes-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Evolução ── #}
+    <div x-show="subtab === 'evolucao'" style="display: none;" id="tab-acoes-evolucao">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>
