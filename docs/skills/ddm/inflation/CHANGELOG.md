@@ -1,5 +1,24 @@
 # DDM Inflation Skill — Changelog
 
+## v3.1 — 2026-11-22 (shipped with WebUI v1.15)
+
+### Fixed — window phrasing (PT-BR)
+
+- `modes/dashboard.py` — `months=0` / `compare_months=0` (the DEFAULTS,
+  "all available data") rendered "…Últimos 0 meses." in the Evolução
+  mensal chart description and "Acumulado 12m (últimos 0 meses)" as the
+  Comparativo title. New `_window_text(months)` helper: 0 → "todo o
+  histórico disponível", N > 0 → "últimos N meses".
+
+### Docs
+
+- `docs/skills/ddm/INFLATION.md` refreshed (was stale at the pre-v2/v3
+  shape): DB path corrected (`memory_db/ddm/inflation.db`, not the
+  nested `ddm/inflation/inflation.db`), the Histórico + Matriz subtab
+  structure, the v2 heatmap colors, the 3-dataset evolução chart (was
+  "2 datasets, last 60 months"), `REQUIRED_SOURCES = ["ddm-inflation"]`
+  (was `["ddm"]`) and the WebUI v1.15 Inflação family note.
+
 ## v1.0 — 2025-01
 
 Initial release. Mirrors `bcb/macro` skill pattern.

@@ -12,6 +12,11 @@ Each index tab has a `type: "subtabs"` section with 2 subtabs:
 
 Section titles don't repeat the index name (already in tab name).
 Date display: "Jul/2026" format (not ISO "2026-07").
+
+[v3.1] Window phrasing fix: months=0 / compare_months=0 (the defaults,
+"all available data") used to render "Últimos 0 meses" in the chart
+description and "Acumulado 12m (últimos 0 meses)" in the Comparativo
+title — now "todo o histórico disponível" (the _window_text helper).
 """
 from __future__ import annotations
 from datetime import datetime as _dt
@@ -30,6 +35,14 @@ from data_sources.ddm.inflation.catalog import INDEX_CATALOG
 
 
 _INDEX_SLUGS = ["igp-m", "ipca", "inpc"]
+
+
+def _window_text(months: int) -> str:
+    """[v3.1] Human window phrase: 0 → "todo o histórico disponível"
+    (the default rendered "Últimos 0 meses" — a PT-BR bug)."""
+    if months and months > 0:
+        return f"últimos {months} meses"
+    return "todo o histórico disponível"
 
 
 def _safe_call(fn, **kwargs):
@@ -78,7 +91,7 @@ def _build_index_tab(slug: str, months: int = 0) -> dict:
             observations,
             slug=slug,
             description=(f"Variação mensal (%) e acumulado 12 meses (%) "
-                         f"para {name}. Últimos {months} meses."),
+                         f"para {name}. {_window_text(months).capitalize()}."),
         ))
         historico_sections.append(build_table_section(
             "Histórico mensal",
@@ -144,7 +157,7 @@ def _build_comparativo_tab(months: int = 0) -> dict:
         }
 
     sections = [build_overlay_chart_section(
-        f"Acumulado 12m (últimos {months} meses)",
+        f"Acumulado 12m ({_window_text(months)})",
         series,
         description=("Sobreposição do acumulado 12 meses (%) para IGP-M, "
                      "IPCA e INPC. Permite comparar a trajetória da "

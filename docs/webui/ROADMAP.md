@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.13)
+## ✅ Built (v1 → v1.15)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -30,7 +30,7 @@
 - [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
 - [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
 - [x] Macro (`/webui/macro`) — 8 lazy subtabs over BCB SGS + Focus (v1.11; was a placeholder since v1)
-- [x] Mercado (`/webui/mercado`) — the DDM dashboards' home: family pills + subtabs, Focus family (v1.12) + Fluxo family (v1.13)
+- [x] Mercado (`/webui/mercado`) — the DDM dashboards' home: family pills + subtabs, Focus family (v1.12) + Fluxo family (v1.13) + Índices family (v1.14) + Inflação family (v1.15)
 - [x] Sync (`/webui/sync`) — freshness table + pre-flight panel (v1.7) + Sincronizar buttons + live SSE log
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
@@ -53,6 +53,7 @@
 - [x] **[v1.12] Mercado — Focus family** — the new nav session for the DDM dashboards (dadosdemercado.com.br), next to Macro: family pills (Focus; dividends/índices/fluxo/inflação/juros as later families, hidden until shipped) + the family's subtabs. The static focus dashboard reorganized (reference: `focus_dashboard.html` / `skills/ddm/focus`; data: `memory_db/ddm/focus.db`): the LANDING subtab carries the general content (4 KPIs + o Boletim Focus, uma tabela por ano — the static's 4 year subtabs stacked); the 12 per-indicator tabs regrouped into 6 question-driven subtabs — Inflação (IPCA + IPCA Adm + IGP-M), Atividade (PIB), Juros (Selic), Câmbio, Setor Externo (Conta corrente + Balança + Investimento direto), Fiscal (Dívida líquida + Primário + Nominal) — each with a KPI card per indicator (Hoje do ano corrente, tooltip com todos os anos + comparação 4 semanas + respondentes — novo vs o estático) + grouped bar chart 3 janelas × 4 anos + tabela por ano sortable. Ticker-less dispatch reaproveitado do v1.11 (zero registry changes) + generic `GET /api/webui/mercado/sections/{key}`. **Unit map fix**: 5 nomes de indicadores faltavam no `_INDICATOR_UNITS` do skill — o estático renderizava "IPCA Adm 4,77" sem %, "Investimento direto no país 80.000,00" sem US$ mi (alias truncado nunca casava); corrigido na fonte (skill v1.1).
 - [x] **[v1.13] Mercado — Fluxo family** — the static fluxo dashboard reorganized (reference: `fluxo_dashboard.html` / `skills/ddm/fluxo`; data: `memory_db/ddm/fluxo.db` — the B3 investment flow, ~244 pregões): the static's 5 flat tabs (1 Fluxo + 4 per-investor × Diário/Mensal/Anual) become 4 comparison-driven subtabs — Visão Geral (6 KPIs: Última data, Dias na base, Líquido anual por investidor com o 365d no tooltip + o fluxo diário de TODOS num único chart de colunas empilhadas com range bar (fix1 — um pregão = uma coluna, um segmento por tipo; a altura líquida é o total do dia) + a tabela diária completa 244×7 sortable), Mensal (o acumulado mensal COMPARADO — chart + tabela Mês × investidor + Total, KPIs de melhor/pior mês — o estático tinha 4 tabelas separadas), Anual (o YTD corrente em serra dente-de-serra por investidor + totais por ano), Por Investidor (o chart diário verde/vermelho POR SINAL, um por tipo — os 4 do estático + Outros, inédito). "Outros" joina toda view (no estático era só coluna da tabela diária). 4 `register()` zero-param (mesmo `takes_ticker` + o MESMO endpoint mercado); `mercadoLoader(family)` — UMA fábrica de loaders no app.js (família nova = uma linha). `docs/skills/ddm/FLUXO.md` KPI section updated (was stale at the pre-v1.1 5 "Total" cards).
 - [x] **[v1.14] Mercado — Índices family** — the static index dashboard reorganized (reference: `index_dashboard.html` / `skills/b3/index`; data: `memory_db/b3/index.db` — B3 indexProxy, 5 active indices IBOV/SMLL/BDRX/IFIX/IDIV, 25 catalogued): the static's 6 flat tabs (Resumo + 5 per-index, chart top-15 bar + table capped at 20) become 6 subtabs — Visão Geral (5 KPIs + índices sincronizados com maior peso/top-5 + PRESENÇA EM ÍNDICES, o cruzamento 2+ índices que o estático não tinha), IBOV/SMLL/BDRX/IFIX/IDIV (5 KPIs + o DOUGHNUT com TODOS os constituintes — era barra do top 15 — + o doughnut por tipo de ativo ON/PN/UNT/DRN/CI + a tabela COMPLETA sortable — era top 20). Skill fixes at source (helpers v1.1): format_pct "10,886%" e format_qty "3.535.764.048" (o estático embarcava EN-US), spec "ON NM" colapsado no fetch, ticker mode compartilha o helper. Client: renderValChart honra plugins.legend + o novo tooltipUnit (tooltip pt-BR com sufixo); loadIndicesSubtab = mercadoLoader('indices') + `ind:` prefetch. 3D pie fora do Chart.js v4 — doughnut é a entrega.
+- [x] **[v1.15] Mercado — Inflação family** — the static inflation dashboard reorganized (reference: `inflation_dashboard.html` / `skills/ddm/inflation`; data: `memory_db/ddm/inflation.db` — IGP-M (FGV), IPCA e INPC (IBGE), ~322 meses cada, 2000-01 a hoje): the static's 4 flat tabs (IGP-M, IPCA e INPC each with Histórico + Matriz subtabs, plus a Comparativo tab) become 4 subtabs — Visão Geral (6 KPIs — mês + 12m por índice, o ano no tooltip do card do mês — + a variação mensal e o acumulado 12m dos TRÊS índices em 2 charts — o Comparativo do estático era a ÚLTIMA aba — + a tabela comparativa Mês × índice, o ⓘ do mês carrega o 12m dos três), IGP-M/IPCA/INPC (3 KPIs + o chart Evolução mensal de 3 linhas do estático — variação cheia, ano tracejada na 300-shade, 12m pontilhada slate — + o histórico completo 322 linhas sortable + a matriz ano × mês em heatmap — 27 anos, meses divergentes vermelho→branco→verde, coluna Ano sequencial branco→azul — computada do DB, o live-fetch fica no skill). Skill fix at source (v3.1): months=0 defaults renderizavam "Últimos 0 meses" → "todo o histórico disponível" (_window_text); INFLATION.md refreshed (DB path, 3 datasets vs "2, 60 meses", heatmap v2, REQUIRED_SOURCES). Client: eixo mensal YYYY-MM — ticks/tooltips "jul/2026" (fmtMonth) e valChartRange corta o cutoff em 7 chars (prefixo lexicográfico); loadInflacaoSubtab = mercadoLoader('inflacao') + `inf:` prefetch. 57 subtabs em 12 famílias no preflight.
 
 ### Features
 - [x] Ticker search (HTMX debounced keyup, wildcard-escaped, relevance-ranked since v1.5)
@@ -91,7 +92,7 @@
 - [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
 
 #### Macro Page (v1.11 shipped the BCB layer — see Built)
-- [ ] **ddm-specific indicators** — next phase per the v1.11 plan: poupança, acoes, fluxo, index, inflation, juros, dividends dashboards (ddm data sources) as new macro subtabs.
+- [ ] **ddm-specific indicators** — next phase per the v1.11 plan: poupança, acoes, juros, dividends dashboards (ddm data sources) as Mercado families (fluxo, index e inflation shipped as v1.13/v1.14/v1.15).
 - [ ] **Macro dashboard ribbon** — ribbon of key indicators on the dashboard page.
 
 ### Polish
@@ -104,8 +105,7 @@
 ## 🔮 Planned (v2)
 
 ### Macro Page — ddm phase
-- [ ] **ddm dashboards** — the ddm-specific indicators become macro subtabs (same recipe as the v1.11 BCB layer): acoes, dividends, fluxo, index, inflation, juros, poupanca.
-- [ ] **PETR4_index (indices ibov) dashboard**
+- [ ] **ddm dashboards** — the remaining ddm-specific indicators become Mercado families (same recipe as v1.12–v1.15): acoes, dividends, juros, poupanca.
 
 ## 🔮 Planned (v3)
 

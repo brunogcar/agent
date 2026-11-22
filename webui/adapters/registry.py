@@ -429,3 +429,23 @@ def _register_builtins() -> None:
              family="indices", label="Mercado — Índices: IFIX")
     register("indices:idiv", _bind(IndexesService, "idiv"),
              family="indices", label="Mercado — Índices: IDIV")
+
+    # [v1.15] Mercado — Inflação family (the Brazilian price indices from
+    # dadosdemercado.com.br; reference: skills/ddm/inflation static
+    # report + inflation_dashboard.html). The static's 4 flat tabs (IGP-M,
+    # IPCA and INPC each with Histórico + Matriz subtabs, plus a
+    # Comparativo tab) become 4 subtabs: the comparison lands on the
+    # overview (the static's 12m overlay was the LAST tab) and each
+    # index's Histórico + Matriz merge into ONE subtab. Ticker-less FLAT
+    # payloads served by the same GET /api/webui/mercado/sections/{key}
+    # endpoint as the other families. Data: ddm inflation.db through the
+    # same query engine the skill's modes use.
+    from webui.services.inflation import InflationService
+    register("inflacao:overview", _bind(InflationService, "overview"),
+             family="inflacao", label="Mercado — Inflação: Visão Geral")
+    register("inflacao:igpm", _bind(InflationService, "igpm"),
+             family="inflacao", label="Mercado — Inflação: IGP-M")
+    register("inflacao:ipca", _bind(InflationService, "ipca"),
+             family="inflacao", label="Mercado — Inflação: IPCA")
+    register("inflacao:inpc", _bind(InflationService, "inpc"),
+             family="inflacao", label="Mercado — Inflação: INPC")

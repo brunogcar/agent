@@ -37,6 +37,8 @@
   investment flow family).
 [v1.14] indices:* joins the mercado endpoint (6 subtabs — the B3 index
   composition family: overview + IBOV/SMLL/BDRX/IFIX/IDIV).
+[v1.15] inflacao:* joins the mercado endpoint (4 subtabs — the DDM
+  price-index family: overview + IGP-M/IPCA/INPC).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -50,8 +52,8 @@ Routes:
   GET /api/webui/mercado/sections/{key}     → mercado page subtabs
         (ticker-less; focus: overview/inflacao/atividade/juros/cambio/
         externo/fiscal; fluxo: overview/mensal/anual/por_investidor;
-        indices: overview/ibov/smll/bdrx/ifix/idiv)
-        [v1.12, v1.13, v1.14]
+        indices: overview/ibov/smll/bdrx/ifix/idiv; inflacao: overview/
+        igpm/ipca/inpc) [v1.12, v1.13, v1.14, v1.15]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)
@@ -219,8 +221,9 @@ def mercado_sections(key: str):
     families build market-wide payloads (DDM — dadosdemercado.com.br).
     Key format "<family>:<sub>" (v1.12: focus:overview/inflacao/
     atividade/juros/cambio/externo/fiscal; v1.13: fluxo:overview/mensal/
-    anual/por_investidor). Unknown/malformed keys → 404 PT-BR plain
-    text (never reflected into HTML).
+    anual/por_investidor; v1.15: inflacao:overview/igpm/ipca/inpc).
+    Unknown/malformed keys → 404 PT-BR plain text (never reflected
+    into HTML).
     """
     if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
         return PlainTextResponse(

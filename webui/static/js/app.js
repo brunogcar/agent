@@ -36,6 +36,15 @@ if (typeof Chart !== 'undefined' && typeof ChartZoom !== 'undefined') {
 // ── Helpers ──
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 function fmtDate(iso) { return iso && iso.match(/^\d{4}-\d{2}-\d{2}$/) ? iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : iso; }
+// [v1.15] ISO month "2026-07" → "jul/2026" (same short PT-BR month form
+// the tables use — sortable by _valSortKey, readable on the x-axis).
+var _MONTH_NAMES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+function fmtMonth(iso) {
+  var m = iso && iso.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return iso;
+  var i = Number(m[2]) - 1;
+  return (i >= 0 && i < 12 ? _MONTH_NAMES[i] : m[2]) + '/' + m[1];
+}
 
 // [v1.5] One pt-BR BRL formatter with thousands separators ("R$ 1.234,56").
 var _brlFmt = null;
@@ -1953,6 +1962,12 @@ window.valChartRange = function(btn) {
     var cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - months);
     var iso = cutoff.toISOString().slice(0, 10);
+    // [v1.15] Monthly YYYY-MM labels (the Inflação family) compare against
+    // a YYYY-MM cutoff: "2025-11" is a lexicographic PREFIX of
+    // "2025-11-22", so the daily cutoff would wrongly drop the boundary
+    // month from the window.
+    var _firstLbl = String(full.labels[0] || '');
+    if (/^\d{4}-\d{2}$/.test(_firstLbl)) iso = iso.slice(0, 7);
     for (var i = 0; i < full.labels.length; i++) {
       if (String(full.labels[i]) >= iso) { start = i; break; }
     }
@@ -2093,16 +2108,20 @@ function renderValAll(panel, data) {
   panel.innerHTML = html || '<div class="loading">Sem dados</div>';
 }
 
-// [v1.8 fix1] True when EVERY x label is an ISO YYYY-MM-DD string
-// (empty / non-string / mixed axes → false). renderValChart uses this to
-// decide whether the x-axis is a date axis worth formatting as dd/mm/yyyy.
+// [v1.8 fix1] Returns the x-axis date kind when EVERY label is an ISO
+// date string: 'date' (YYYY-MM-DD), 'month' (YYYY-MM — v1.15) or ''
+// (empty / non-string / mixed axes). renderValChart uses this to decide
+// whether the x-axis is worth formatting (dd/mm/yyyy / jul/2026).
 function _isoDateLabels(labels) {
-  if (!labels || !labels.length) return false;
+  if (!labels || !labels.length) return '';
+  var month = false;
   for (var i = 0; i < labels.length; i++) {
-    if (typeof labels[i] !== 'string' ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(labels[i])) return false;
+    if (typeof labels[i] !== 'string') return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(labels[i])) continue;
+    if (/^\d{4}-\d{2}$/.test(labels[i])) { month = true; continue; }
+    return '';
   }
-  return true;
+  return month ? 'month' : 'date';
 }
 
 // Mount every chart canvas stashed during HTML build. Chart configs come
@@ -2183,13 +2202,17 @@ function renderValChart(canvas, cd) {
     // hardcoded chart config in this file. Labels stay ISO in the payload
     // (valChartRange slices them); non-date axes (strikes, tickers, years)
     // are untouched.
+    // [v1.15] Monthly axes: YYYY-MM labels (the Inflação family ships
+    // 322-month series) format as "jul/2026" — the same short PT-BR
+    // month form the tables use, instead of the raw "2026-07".
     var dateAxis = _isoDateLabels(cd.data.labels);
+    var _axisFmt = dateAxis === 'month' ? fmtMonth : fmtDate;
     if (dateAxis) {
-      xScale.ticks.callback = function(v) { return fmtDate(this.getLabelForValue(v)); };
+      xScale.ticks.callback = function(v) { return _axisFmt(this.getLabelForValue(v)); };
     }
     var plugins = { legend: { display: true, position: 'top', labels: { color: th.text } } };
     if (dateAxis) {
-      plugins.tooltip = { callbacks: { title: function(i) { return fmtDate(i[0].label); } } };
+      plugins.tooltip = { callbacks: { title: function(i) { return _axisFmt(i[0].label); } } };
     }
     // [v1.14] Honor the server's plugins.legend (display/position) — the
     // Índices composition doughnuts ship legend off (78-136 slices would
@@ -2902,6 +2925,7 @@ function renderMercadoSubtab(panel, data) {
 window.loadFocusSubtab = mercadoLoader('focus');   // [v1.12] Boletim Focus
 window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
 window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
+window.loadInflacaoSubtab = mercadoLoader('inflacao'); // [v1.15] índices de preços
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -3008,7 +3032,7 @@ function prefetchSubtab(e) {
               opt: window.loadOptSubtab, sh: window.loadShSubtab,
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
               foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
-              ind: window.loadIndicesSubtab };
+              ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -3069,6 +3093,7 @@ function initApp() {
     // [v1.13/v1.14] Fluxo/Índices — NOT booted eagerly (fluxo precedent:
     // only the first family boots; the others load on family-pill click,
     // with the data-lazy hover prefetch hiding the latency).
+    // [v1.15] Inflação — same (boot on family-pill click only).
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });
@@ -3087,6 +3112,7 @@ function initApp() {
   loadFocusSubtab('overview');
   // [v1.13/v1.14] Fluxo/Índices boot on family-pill click only (the
   // mercadoLoader pane guard no-ops them everywhere else).
+  // [v1.15] Inflação — same.
 
   // [v1.5 fix1] Hover/focus prefetch for lazy subtabs — the fetch starts
   // when the pointer heads toward the button (~300ms before the click),
