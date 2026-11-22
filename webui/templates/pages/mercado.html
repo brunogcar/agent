@@ -14,11 +14,11 @@ one level deeper):
   compositions — IBOV/SMLL/BDRX/IFIX/IDIV, from the B3 indexProxy API);
   v1.15 added Inflação (the Brazilian price indices — IGP-M, IPCA e INPC);
   v1.16 added Juros (the Brazilian interest rates — Selic, Meta Selic e
-  CDI); v1.17 adds Ações (the B3 listed stocks — the current snapshot by
+  CDI); v1.17 added Ações (the B3 listed stocks — the current snapshot by
   price range + the evolution of the distribution over time, fed by the
-  snapshots each sync accumulates); dividends joins as a later family
-  (hidden until shipped — the company page's Historical-button
-  precedent).
+  snapshots each sync accumulates); v1.18 adds Proventos (the agenda de
+  dividendos — family key "dividendos", display name "Proventos": the
+  B3 natives + the BDR split + the per-empresa and per-day aggregations).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
   tabs) become 7 question-driven subtabs:
@@ -87,15 +87,37 @@ one level deeper):
     a tabela por data com bandas agrupadas. <2 snapshots degradam em
     nota — o histórico ganha forma a cada sincronização.
 
+- Proventos subtabs (level 2, v1.18): the static dividends_dashboard.html
+  reorganized — its single flat tab (4 KPIs + the 8-bucket distribution
+  chart + the sortable agenda table over the WHOLE agenda, BDRs mixed
+  in) becomes 4 subtabs with the BDR SPLIT (tickers ending in 34 —
+  ~40% of the events, payouts R$ 1,70-6,32 vs natives topping at
+  ~R$ 1,13):
+
+  - Visão Geral: a agenda B3 — 6 KPIs (os 4 do estático, escopados às
+    ações B3 + Empresas Pagadoras + Valor Mediano) + a distribuição nas
+    8 faixas (Dividendo vs JCP) + o doughnut por tipo + a tabela
+    completa (sem BDRs).
+  - BDRs: o gêmeo *34 — os mesmos KPIs e a mesma escala de faixas para
+    os recibos (a distribuição estica para a direita — o universo de
+    valor por recibo) + a tabela BDR.
+  - Por Empresa: a agenda agregada por empresa (eventos, valor total/
+    média/máximo, último pagamento) + Top 10 por valor e por eventos
+    (barras coloridas por classe B3/BDR) + a tabela completa.
+  - Calendário: os pagamentos por data (pago vs a pagar) + a tabela por
+    dia com os principais pagadores (a agenda é uma janela móvel — cada
+    sync traz o mês corrente).
+
 Every subtab loads lazily through the ticker-less generic endpoint
 /api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
 loadFluxoSubtab / loadIndicesSubtab / loadInflacaoSubtab /
-loadJurosSubtab / loadAcoesSubtab in app.js) and renders through the
-SAME generic renderer as every tab since v1.8 (valKpisHtml +
-valSectionsHtml + mountValCharts).
-Data: DDM focus.db + fluxo.db + inflation.db + juros.db + acoes.db —
-sincronize as fontes ddm-focus / ddm-fluxo / ddm-inflation / ddm-juros /
-ddm-acoes na página Sincronização; índices: b3-index (B3 indexProxy).
+loadJurosSubtab / loadAcoesSubtab / loadDividendosSubtab in app.js) and
+renders through the SAME generic renderer as every tab since v1.8
+(valKpisHtml + valSectionsHtml + mountValCharts).
+Data: DDM focus.db + fluxo.db + inflation.db + juros.db + acoes.db +
+dividends.db — sincronize as fontes ddm-focus / ddm-fluxo / ddm-inflation
+/ ddm-juros / ddm-acoes / ddm-dividends na página Sincronização; índices:
+b3-index (B3 indexProxy).
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -109,10 +131,12 @@ ddm-acoes na página Sincronização; índices: b3-index (B3 indexProxy).
       doughnut e tabela), a trajetória dos índices de preços (IGP-M, IPCA
       e INPC — variação mensal, acumulados e a matriz ano × mês), as
       taxas de juros (Selic, Meta Selic e CDI — taxa efetiva, médias e a
-      matriz ano × mês) e as ações listadas na B3 (o snapshot atual por
+      matriz ano × mês), as ações listadas na B3 (o snapshot atual por
       faixa de preço + a evolução da distribuição ao longo do tempo, um
-      snapshot por sincronização). Famílias: Focus, Fluxo, Índices,
-      Inflação, Juros e Ações; em breve: dividendos.
+      snapshot por sincronização) e a agenda de proventos (dividendos e
+      JCP das ações B3 e dos BDRs, agregada por empresa e por data de
+      pagamento). Famílias: Focus, Fluxo, Índices, Inflação, Juros,
+      Ações e Proventos.
     </p>
   </div>
 
@@ -148,8 +172,11 @@ ddm-acoes na página Sincronização; índices: b3-index (B3 indexProxy).
             @click="family='acoes'; subtab='overview'"
             onclick="loadAcoesSubtab('overview')"
             data-lazy="aco:overview">Ações</button>
-    {# v1.18+: Dividendos — hidden until shipped (the company
-       page's Historical-button precedent). #}
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'dividendos' }"
+            @click="family='dividendos'; subtab='overview'"
+            onclick="loadDividendosSubtab('overview')"
+            data-lazy="div:overview">Proventos</button>
   </nav>
 
   {# ── Focus family panel ── #}
@@ -346,6 +373,39 @@ ddm-acoes na página Sincronização; índices: b3-index (B3 indexProxy).
 
     {# ── Evolução ── #}
     <div x-show="subtab === 'evolucao'" style="display: none;" id="tab-acoes-evolucao">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Proventos family panel [v1.18] — family key "dividendos" (the data
+     source's name; the display name is Proventos — the company page owns
+     the proventos:* registry keys). The BDR SPLIT: Visão Geral carries the
+     B3 natives only; the *34 tickers live in BDRs. #}
+  <div x-show="family === 'dividendos'" style="display: none;" id="family-dividendos">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas dos Proventos">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadDividendosSubtab('overview')" data-lazy="div:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'bdrs' }" @click="subtab='bdrs'" onclick="loadDividendosSubtab('bdrs')" data-lazy="div:bdrs">BDRs</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'empresas' }" @click="subtab='empresas'" onclick="loadDividendosSubtab('empresas')" data-lazy="div:empresas">Por Empresa</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'calendario' }" @click="subtab='calendario'" onclick="loadDividendosSubtab('calendario')" data-lazy="div:calendario">Calendário</button>
+    </nav>
+
+    {# ── Visão Geral (B3 natives — the "main display") ── #}
+    <div x-show="subtab === 'overview'" id="tab-dividendos-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── BDRs ── #}
+    <div x-show="subtab === 'bdrs'" style="display: none;" id="tab-dividendos-bdrs">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Por Empresa ── #}
+    <div x-show="subtab === 'empresas'" style="display: none;" id="tab-dividendos-empresas">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Calendário ── #}
+    <div x-show="subtab === 'calendario'" style="display: none;" id="tab-dividendos-calendario">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>

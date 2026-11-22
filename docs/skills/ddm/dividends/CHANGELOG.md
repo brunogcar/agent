@@ -1,5 +1,52 @@
 # DDM Dividends Skill — Changelog
 
+## v2 — 2026-11 (WebUI v1.18)
+
+The Proventos reorganization: the 1-tab flat dashboard becomes 4 tabs
+with the **BDR split** (tickers ending in 34 — ~40% of the events,
+payouts R$ 1,70-6,32 vs B3 natives topping at ~R$ 1,13) + the two
+aggregations the flat table hid. PT-BR accents fixed in every
+user-facing string (the v1 static's were ASCII-fied — the fix the acoes
+skill got in its v2). Same data layer (`data_sources/ddm/dividends`
+query engine, read-only).
+
+### Added
+
+- `helpers.py` — the SHARED NUMERICS (used by BOTH the static dashboard
+  and the WebUI Mercado page's Proventos family via
+  `webui/services/dividendos.py` — the no-forked-numerics pattern the
+  acoes skill set in v1.17):
+  - `is_bdr(ticker)` — the *34 predicate.
+  - `summarize(divs, today_iso)` — scoped KPI numbers (totals, by_tipo,
+    biggest, next payment, distinct tickers, median/mean).
+  - `DISTRIBUTION_BUCKETS` + `bucketize(divs)` — the 8 value-range
+    buckets × tipo counts (moved from report.py's inline loop; the
+    ≥5,00 label gains the ≥ glyph).
+  - `aggregate_by_empresa(divs)` — per-ticker: events, tipo split,
+    total/avg/max value, biggest event, last payment, BDR flag.
+  - `aggregate_by_day(divs)` — per-payment-date: events, value, BDR
+    count/value, the day's top-3 payers.
+- `report.py` — new builders: `build_tipo_doughnut` (Dividendo vs JCP),
+  `build_top_empresas_chart` (Top 10 by value/events, B3 teal vs BDR
+  slate datasets), `build_empresa_table` (per-empresa aggregation),
+  `build_calendario_chart` (per-day bars, Pago vs A pagar vs today),
+  `build_calendario_table` (per-day rows with top-3 payers). The BDR
+  slate accent `#94a3b8` is deliberately neither teal nor amber so
+  "é BDR" can never be misread as a tipo.
+- `modes/dashboard.py` — the 4 tabs: **Proventos** (B3 natives:
+  distribution + doughnut + sortable table), **BDRs** (the *34 twin),
+  **Por Empresa** (Top 10 charts + the empresas table), **Calendário**
+  (per-day chart + table). Top-level KPIs grow 4 → 6 (Empresas
+  Pagadoras + Valor Mediano; the Total KPI carries the B3/BDR split).
+
+### Changed
+
+- PT-BR accents everywhere: "Código", "Distribuição por Faixa de
+  Valor", "Próximo Pagamento", "Valor Mediano", "Calendário",
+  "NÃO empilhadas" (was "Codigo", "Distribuicao", "Proximo"…).
+- MANIFEST description refreshed (4 tabs, the BDR split, the
+  aggregations).
+
 ## v1.0 — 2026-07
 
 Initial release. Mirrors `ddm/inflation/juros/poupanca` skill pattern,

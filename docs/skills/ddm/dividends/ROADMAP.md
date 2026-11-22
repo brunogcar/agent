@@ -1,13 +1,16 @@
-# DDM Dividends Skill — Roadmap
+# DDM Proventos Skill — Roadmap
 
-## v1.0 (current)
+## v2 (current — WebUI v1.18)
 
-- 1-tab dashboard (Dividendos).
-- 4 KPI cards at top level.
-- Grouped bar distribution chart (Dividendo vs JCP, 8 value-range buckets).
-- Sortable dividends table (default sort: Valor DESC; click headers to
-  re-sort).
-- Dates displayed as DD/MM/YYYY (PT-BR).
+- 4-tab dashboard: Proventos (B3 natives), BDRs, Por Empresa, Calendário.
+- BDR split on `is_bdr(ticker)` (the *34 predicate) in every view.
+- 6 top-level KPIs (whole agenda) + per-scope KPIs in the WebUI subtabs.
+- Grouped bar distribution (Dividendo vs JCP, 8 buckets) + tipo doughnut.
+- Per-empresa aggregation (Top 10 charts + full table, B3/BDR colored).
+- Per-day calendar (Pago vs A pagar + per-day table with top-3 payers).
+- Shared numerics in `helpers.py` (used by the static AND the WebUI
+  Proventos family — no forked numerics).
+- Sortable tables (Valor DESC default; dates DD/MM/YYYY PT-BR).
 - Sync guard wired (`REQUIRED_SOURCES = ["ddm-dividends"]`).
 - Freshness tracking wired (`skills/_freshness.py` reads `sync_state`).
 
@@ -32,19 +35,6 @@ Cross-reference dividend values with stock prices from `b3/price` to
 compute dividend yield (value / current_price). Requires a join with
 `b3/cotahist` or `b3/brapi` data. Useful for income-investor screening.
 
-### P4 — Ex-dividend date calendar view
-
-A monthly calendar visualization showing which tickers go ex-dividend
-each day. Currently the dashboard shows a flat table — a calendar view
-would highlight clusters of activity (e.g. Q1 is heavy on bank
-dividends, Q2 on commodities).
-
-### P5 — Dividendo vs JCP split chart
-
-Add a doughnut chart showing the count split between Dividendo and JCP
-(currently only shown in the KPI subtitle). Quick visual of the tax
-strategy distribution.
-
 ### P6 — Cumulative dividend income (per ticker)
 
 For a given ticker + a starting date, plot the cumulative dividend
@@ -64,13 +54,29 @@ which means the `sortTable()` JS uses `textContent` (DD/MM/YYYY) for
 sorting. This sorts incorrectly lexicographically ("01/07" < "10/07" <
 "02/07" — wrong order). Fix: emit `data-value="2026-07-01"` (ISO format)
 on date cells + update the sortTable JS to use `data-value` for text
-columns too when present. Out of scope for v1 (the default sort is
-Valor DESC, which works correctly).
+columns too when present. Out of scope for v2 (the default sorts are
+Valor/Valor Total/Data DESC — the WebUI tables sort dates correctly via
+_valSortKey; only the STATIC is affected).
 
 ### P9 — Pagination for large result sets
 
 If the agenda grows beyond ~500 rows, the table will become unwieldy.
 Add client-side pagination (50 rows per page) or virtualized scrolling.
+
+### P10 — BDR origin metadata
+
+DDM only exposes the ticker + company name; a `bdr_origin` mapping
+(underlying foreign ticker + exchange) would enrich the BDRs tab. Needs
+an additional source (B3 BDR list) — out of scope until that source
+exists in the repo.
+
+## Shipped (from the v1 backlog)
+
+- ~~P4 — Ex-dividend date calendar view~~ → the v2 **Calendário** tab
+  (per-day payments chart + table; a month-grid view remains possible
+  as a future polish).
+- ~~P5 — Dividendo vs JCP split chart~~ → the v2 **tipo doughnut** in
+  the Proventos tab.
 
 ## Out of scope
 

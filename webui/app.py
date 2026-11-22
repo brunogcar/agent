@@ -43,11 +43,43 @@ def _allow_lan() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan: startup freshness check (non-blocking, skippable) + shutdown.
+    """Lifespan: startup schema self-heal + freshness check + shutdown.
 
-    This is a freshness CHECK (logs stale sources) — it never syncs.
+    The freshness check never syncs (logs stale sources only).
     WEBUI_NO_SYNC=1 (set by `python webui.py --no-sync`) skips it.
     """
+    # [v1.18] Startup schema self-heal for the acoes evolution store.
+    # v1.17 added stocks_history to the acoes catalog's CREATE TABLE IF NOT
+    # EXISTS script — but the table only materialized on the first ddm-acoes
+    # SYNC after the upgrade, so the preflight panel kept showing "tabelas
+    # ausentes: stocks_history" on DBs last synced by a pre-v1.17 process
+    # (a stale server that was never restarted can even re-sync without
+    # creating it — the running code is the old one). Ensuring the schema
+    # AT BOOT closes the gap: the table exists as soon as the server
+    # starts, the diagnostic clears without a sync, and the NEXT sync
+    # fills it (the v2 sync engine still preserves the previous `stocks`
+    # snapshot into it on the way). Idempotent (CREATE IF NOT EXISTS,
+    # ~5ms); only runs when the DB already exists (a fresh install keeps
+    # the "arquivo não encontrado" preflight message — that's a sync
+    # hint, not a migration case); failures log to stderr and never block
+    # startup (the preflight panel remains the reporter).
+    try:
+        from data_sources.ddm.acoes.catalog import (
+            connect as _acoes_connect, db_path as _acoes_db_path,
+            ensure_schema as _acoes_ensure_schema,
+        )
+        if _acoes_db_path().exists():
+            _conn = _acoes_connect(read_only=False)
+            try:
+                _acoes_ensure_schema(_conn)
+            finally:
+                _conn.close()
+            print("[webui] Startup: acoes schema ensured (stocks_history)",
+                  file=sys.stderr)
+    except Exception as e:  # pragma: no cover — never block startup
+        print(f"[webui] Startup: acoes schema ensure skipped ({e})",
+              file=sys.stderr)
+
     if os.environ.get("WEBUI_NO_SYNC", "") == "1":
         print("[webui] Startup freshness check skipped (--no-sync)", file=sys.stderr)
     else:

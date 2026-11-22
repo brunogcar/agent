@@ -2908,8 +2908,8 @@ function renderMacroSubtab(panel, data) {
 // <family>:<sub> endpoint — same v1.11 macro recipe (market-wide payload,
 // no ticker segment, FLAT contract, generic renderer). The page carries
 // one more level than macro: FAMILY pills (focus v1.12, fluxo v1.13,
-// índices v1.14, inflação v1.15, juros v1.16, ações v1.17; dividends
-// joins later). The per-family loaders only differ by the family key, so
+// índices v1.14, inflação v1.15, juros v1.16, ações v1.17, proventos
+// v1.18). The per-family loaders only differ by the family key, so
 // ONE factory builds them (pane id tab-<family>-<sub>, endpoint key
 // <family>:<sub>) — the v1.13 fluxo family was a one-line addition.
 function mercadoLoader(family) {
@@ -2947,6 +2947,7 @@ window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
 window.loadInflacaoSubtab = mercadoLoader('inflacao'); // [v1.15] índices de preços
 window.loadJurosSubtab = mercadoLoader('juros'); // [v1.16] taxas de juros
 window.loadAcoesSubtab = mercadoLoader('acoes'); // [v1.17] ações B3 + evolução
+window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos (BDR split)
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -3054,7 +3055,8 @@ function prefetchSubtab(e) {
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
               foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
               ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab,
-              jur: window.loadJurosSubtab, aco: window.loadAcoesSubtab };
+              jur: window.loadJurosSubtab, aco: window.loadAcoesSubtab,
+              div: window.loadDividendosSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }

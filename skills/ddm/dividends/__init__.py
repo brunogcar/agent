@@ -1,9 +1,22 @@
 """skills/ddm/dividends/__init__.py -- Dividends skill manifest + router.
 
-DDM Dividends dashboard. 1 mode: dashboard (1-tab).
+DDM Proventos dashboard. 1 mode: dashboard (4 tabs — [v2]).
 
-  Tab:
-    1. Dividendos  (group: Dividendos)  - KPIs + distribution chart + sortable table
+  Tabs:
+    1. Proventos   (group: Proventos)   - B3 natives: distribution chart
+                                          (8 faixas, Dividendo vs JCP) +
+                                          tipo doughnut + sortable table
+    2. BDRs        (group: BDRs)        - the *34 tickers (Brazilian
+                                          Depositary Receipts): the same
+                                          distribution + agenda table
+    3. Por Empresa (group: Análise)     - per-ticker aggregation + Top 10
+                                          charts (B3/BDR colored) + table
+    4. Calendário  (group: Análise)     - per-day payments (pago vs a
+                                          pagar) + per-day table
+
+Top-level KPIs (6): Total de Proventos (B3/BDR split), Empresas
+Pagadoras, Valor Total, Maior Provento, Valor Mediano, Próximo
+Pagamento.
 
 Calls data_sources.ddm.dividends query_engine directly (read-only - no own DB).
 
@@ -12,9 +25,17 @@ Skill structure mirrors the ddm/inflation + ddm/juros + ddm/poupanca pattern:
                           (with a standalone fallback)
   - helpers.py          : format_brl, format_int, format_pct, format_value,
                           format_date (YYYY-MM-DD -> DD/MM/YYYY PT-BR display)
+                          + [v2] the shared numerics: is_bdr (tickers ending
+                          in 34), summarize (scoped KPIs), bucketize (the 8
+                          value-range buckets), aggregate_by_empresa,
+                          aggregate_by_day (the same functions the WebUI
+                          Proventos family uses — no forked numerics)
   - report.py           : build_kpi_card, build_dividends_table (sortable=True),
                           build_distribution_chart (grouped bar: Dividendo vs
-                          JCP per value range), build_error_section
+                          JCP per value range), build_tipo_doughnut,
+                          build_top_empresas_chart, build_empresa_table,
+                          build_calendario_chart, build_calendario_table,
+                          build_error_section
   - modes/<mode>.py     : @register_mode-decorated implementations
   - __init__.py         : auto_discover + MANIFEST + route (this file)
 
@@ -48,17 +69,21 @@ REQUIRED_SOURCES = ["ddm-dividends"]
 MANIFEST = {
     "sub_domain":  "dividends",
     "description": (
-        "DDM Dividends dashboard - 1 tab: Dividendos. The tab shows 4 KPIs "
-        "(total dividendos, valor total, maior dividendo, proximo "
-        "pagamento) + a grouped bar distribution chart (Dividendo vs JCP "
-        "per value range: <0.05, 0.05-0.10, 0.10-0.25, 0.25-0.50, "
-        "0.50-1.00, 1.00-2.00, 2.00-5.00, >=5.00) + a sortable dividends "
-        "table (default sort: Valor DESC). Column headers are clickable; "
-        "clicking toggles asc/desc. Numeric cells carry data-value attrs "
-        "for accurate sorting. Dates stored as YYYY-MM-DD in DB but "
-        "displayed as DD/MM/YYYY (PT-BR). NO price colors on Valor column "
-        "(dividend amounts, not stock prices). Data source: "
-        "data_sources/ddm/dividends/ (read-only queries against dividends.db)."
+        "DDM Proventos dashboard - 4 tabs: Proventos (B3 natives), BDRs, "
+        "Por Empresa, Calendário. The agenda de dividendos "
+        "(dadosdemercado.com.br) split by asset class — BDR tickers end "
+        "in 34 and their payouts (R$ 1,70-6,32) live in a different "
+        "value universe than B3 natives (~R$ 0,01-1,13). Top-level KPIs: "
+        "total de proventos (B3/BDR split), empresas pagadoras, valor "
+        "total, maior provento, valor mediano, próximo pagamento. "
+        "Distribution chart: 8 value-range buckets, Dividendo vs JCP. "
+        "Por Empresa: per-ticker aggregation (eventos, valor total/média/"
+        "máximo, último pagamento) + Top 10 charts colored by class. "
+        "Calendário: per-day payments (pago vs a pagar). Tables sortable "
+        "(default sort: Valor DESC). Dates displayed as DD/MM/AAAA "
+        "(PT-BR). DPA colors on Valor (dividend amounts, not stock "
+        "prices). Data source: data_sources/ddm/dividends/ (read-only "
+        "queries against dividends.db)."
     ),
     "source":  "data_sources/ddm/dividends/ (read-only)",
     "storage": "read-only - no own database",

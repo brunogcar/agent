@@ -44,6 +44,11 @@
 [v1.17] acoes:* joins the mercado endpoint (2 subtabs — the DDM
   listed-stocks family: overview + evolucao — the distribution over
   time fed by the stocks_history snapshots accumulated per sync).
+[v1.18] dividendos:* joins the mercado endpoint (4 subtabs — the DDM
+  Proventos family: overview (B3 natives) + bdrs (the *34 split) +
+  empresas (per-ticker aggregation) + calendario (per-day payments,
+  pago vs a pagar)). The family DISPLAY name is "Proventos"; the key
+  names the data source (the company page owns proventos:*).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -59,8 +64,9 @@ Routes:
         externo/fiscal; fluxo: overview/mensal/anual/por_investidor;
         indices: overview/ibov/smll/bdrx/ifix/idiv; inflacao: overview/
         igpm/ipca/inpc; juros: overview/selic/meta_selic/cdi; acoes:
-        overview/evolucao)
-        [v1.12, v1.13, v1.14, v1.15, v1.16, v1.17]
+        overview/evolucao; dividendos: overview/bdrs/empresas/
+        calendario)
+        [v1.12, v1.13, v1.14, v1.15, v1.16, v1.17, v1.18]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)

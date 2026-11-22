@@ -278,7 +278,9 @@ class PreflightService:
             return self._check(
                 cid, label, _FAIL,
                 f"{size} · tabelas ausentes: {', '.join(missing_main)}",
-                hint="esquema divergente — re-sincronize a fonte "
+                hint="esquema divergente — reinicie o servidor (se acabou "
+                     "de atualizar o código; um processo antigo sincroniza "
+                     "sem criar tabelas novas) ou re-sincronize a fonte "
                      f"'{spec['source']}'")
         if rekey_pending:
             return self._check(

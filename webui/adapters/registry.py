@@ -487,3 +487,28 @@ def _register_builtins() -> None:
              family="acoes", label="Mercado — Ações: Visão Geral")
     register("acoes:evolucao", _bind(AcoesService, "evolucao"),
              family="acoes", label="Mercado — Ações: Evolução")
+
+    # [v1.18] Mercado — Proventos family (the agenda de dividendos from
+    # dadosdemercado.com.br; reference: skills/ddm/dividends static
+    # report + dividends_dashboard.html). DISPLAY name "Proventos" (the
+    # PT-BR umbrella for dividends + JCP — the company tab's term);
+    # family key "dividendos" (the data source's name — the company
+    # page's proventos:* keys are taken, and the key names the DATA).
+    # The static's single flat tab becomes 4 subtabs with the BDR SPLIT
+    # (tickers ending in 34 — their payouts live in a different value
+    # universe, ~40% of the events): Visão Geral (B3 natives only — the
+    # "main display"), BDRs (the *34 twin), Por Empresa (the per-ticker
+    # aggregation, Top 10 charts colored by class) and Calendário (the
+    # per-day payments, pago vs a pagar). Ticker-less FLAT payloads
+    # served by the same GET /api/webui/mercado/sections/{key} endpoint.
+    # Data: ddm dividends.db through the same query engine the skill's
+    # modes use + the shared numerics in skills/ddm/dividends/helpers.py.
+    from webui.services.dividendos import DividendosService
+    register("dividendos:overview", _bind(DividendosService, "overview"),
+             family="dividendos", label="Mercado — Proventos: Visão Geral")
+    register("dividendos:bdrs", _bind(DividendosService, "bdrs"),
+             family="dividendos", label="Mercado — Proventos: BDRs")
+    register("dividendos:empresas", _bind(DividendosService, "empresas"),
+             family="dividendos", label="Mercado — Proventos: Por Empresa")
+    register("dividendos:calendario", _bind(DividendosService, "calendario"),
+             family="dividendos", label="Mercado — Proventos: Calendário")
