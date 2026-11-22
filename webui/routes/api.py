@@ -33,6 +33,8 @@
   same dispatch for the mercado:* page families (focus:* now; the
   DDM dashboards dividends/índices/fluxo/inflação/juros as later
   families).
+[v1.13] fluxo:* joins the mercado endpoint (4 subtabs — the B3
+  investment flow family).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -44,8 +46,9 @@ Routes:
         key = "macro:<sub>": overview/juros/inflacao/cambio/atividade/
         retorno_real/focus/curva) [v1.11]
   GET /api/webui/mercado/sections/{key}     → mercado page subtabs
-        (ticker-less; key = "focus:<sub>": overview/inflacao/atividade/
-        juros/cambio/externo/fiscal) [v1.12]
+        (ticker-less; focus: overview/inflacao/atividade/juros/cambio/
+        externo/fiscal; fluxo: overview/mensal/anual/por_investidor)
+        [v1.12, v1.13]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)
@@ -212,8 +215,9 @@ def mercado_sections(key: str):
     Same shape as the macro /sections/{key} endpoint: mercado page
     families build market-wide payloads (DDM — dadosdemercado.com.br).
     Key format "<family>:<sub>" (v1.12: focus:overview/inflacao/
-    atividade/juros/cambio/externo/fiscal). Unknown/malformed keys →
-    404 PT-BR plain text (never reflected into HTML).
+    atividade/juros/cambio/externo/fiscal; v1.13: fluxo:overview/mensal/
+    anual/por_investidor). Unknown/malformed keys → 404 PT-BR plain
+    text (never reflected into HTML).
     """
     if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
         return PlainTextResponse(

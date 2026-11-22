@@ -8,10 +8,11 @@ data), next to Macro (realized BCB SGS indicators). Two levels, the company
 page's tab/subtab architecture on a standalone page (macro.html pattern,
 one level deeper):
 
-- FAMILY pills (level 1): the DDM dashboard families. v1.12 ships Focus
-  (Boletim Focus — the weekly expectations bulletin); dividends, índices,
-  fluxo, inflação and juros join as later families (hidden until shipped —
-  the company page's Historical-button precedent).
+- FAMILY pills (level 1): the DDM dashboard families. v1.12 shipped Focus
+  (Boletim Focus — the weekly expectations bulletin); v1.13 adds Fluxo
+  (the B3 investment flow by investor type); dividends, índices, inflação
+  and juros join as later families (hidden until shipped — the company
+  page's Historical-button precedent).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
   tabs) become 7 question-driven subtabs:
@@ -24,11 +25,23 @@ one level deeper):
   - Setor Externo: Conta corrente + Balança comercial + Investimento direto.
   - Fiscal: Dívida líquida setor público + Resultado primário + nominal.
 
+- Fluxo subtabs (level 2, v1.13): the static fluxo_dashboard.html
+  reorganized — its 5 flat tabs (1 Fluxo + 4 per-investor ×
+  Diário/Mensal/Anual) become 4 comparison-driven subtabs:
+
+  - Visão Geral: KPIs + o fluxo diário de todos os investidores num
+    único chart + a tabela diária completa.
+  - Mensal: acumulado mensal COMPARADO (chart + tabela Mês × investidor).
+  - Anual: acumulado YTD corrente + totais por ano.
+  - Por Investidor: o chart diário verde/vermelho por sinal, um por tipo
+    (os 4 do estático + Outros).
+
 Every subtab loads lazily through the ticker-less generic endpoint
-/api/webui/mercado/sections/focus:<sub> (loadFocusSubtab in app.js) and
-renders through the SAME generic renderer as every tab since v1.8
-(valKpisHtml + valSectionsHtml + mountValCharts). Data: DDM focus.db —
-sincronize a fonte ddm-focus na página Sincronização.
+/api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
+loadFluxoSubtab in app.js) and renders through the SAME generic renderer
+as every tab since v1.8 (valKpisHtml + valSectionsHtml + mountValCharts).
+Data: DDM focus.db + fluxo.db — sincronize as fontes ddm-focus / ddm-fluxo
+na página Sincronização.
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -36,8 +49,9 @@ sincronize a fonte ddm-focus na página Sincronização.
     <p class="macro-subtitle">
       Dados de mercado (dadosdemercado.com.br) — expectativas semanais do
       Boletim Focus para inflação, atividade, juros, câmbio e as contas
-      externas e públicas, por ano de referência. Família Focus; em breve:
-      dividendos, índices, fluxo, inflação e juros.
+      externas e públicas, por ano de referência, e o fluxo diário de
+      investimento na B3 por tipo de investidor. Famílias: Focus e Fluxo;
+      em breve: dividendos, índices, inflação e juros.
     </p>
   </div>
 
@@ -46,8 +60,14 @@ sincronize a fonte ddm-focus na página Sincronização.
     <button class="subtab-btn mercado-family-btn"
             :class="{ 'active': family === 'focus' }"
             @click="family='focus'; subtab='overview'"
-            onclick="loadFocusSubtab('overview')">Focus</button>
-    {# v1.13+: Dividendos, Índices, Fluxo, Inflação, Juros — hidden until
+            onclick="loadFocusSubtab('overview')"
+            data-lazy="foc:overview">Focus</button>
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'fluxo' }"
+            @click="family='fluxo'; subtab='overview'"
+            onclick="loadFluxoSubtab('overview')"
+            data-lazy="flx:overview">Fluxo</button>
+    {# v1.14+: Dividendos, Índices, Inflação, Juros — hidden until
        shipped (the company page's Historical-button precedent). #}
   </nav>
 
@@ -95,6 +115,36 @@ sincronize a fonte ddm-focus na página Sincronização.
 
     {# ── Fiscal ── #}
     <div x-show="subtab === 'fiscal'" style="display: none;" id="tab-focus-fiscal">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Fluxo family panel [v1.13] ── #}
+  <div x-show="family === 'fluxo'" style="display: none;" id="family-fluxo">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas do Fluxo">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadFluxoSubtab('overview')" data-lazy="flx:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'mensal' }" @click="subtab='mensal'" onclick="loadFluxoSubtab('mensal')" data-lazy="flx:mensal">Mensal</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'anual' }" @click="subtab='anual'" onclick="loadFluxoSubtab('anual')" data-lazy="flx:anual">Anual</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'por_investidor' }" @click="subtab='por_investidor'" onclick="loadFluxoSubtab('por_investidor')" data-lazy="flx:por_investidor">Por Investidor</button>
+    </nav>
+
+    {# ── Visão Geral ── #}
+    <div x-show="subtab === 'overview'" id="tab-fluxo-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Mensal ── #}
+    <div x-show="subtab === 'mensal'" style="display: none;" id="tab-fluxo-mensal">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Anual ── #}
+    <div x-show="subtab === 'anual'" style="display: none;" id="tab-fluxo-anual">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Por Investidor ── #}
+    <div x-show="subtab === 'por_investidor'" style="display: none;" id="tab-fluxo-por_investidor">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>

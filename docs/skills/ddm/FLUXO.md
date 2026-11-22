@@ -48,19 +48,29 @@ Each investor tab has 3 subtabs:
 - **Anual** — running annual cumulative line chart (each day = previous
   cumulative + today) + sortable cumulative table.
 
-### KPIs (top-level, 5 cards)
+### KPIs (top-level, 10 cards — 2 rows of 5, v1.1)
 
 | KPI                       | Source                                       | Example             |
 | ------------------------- | -------------------------------------------- | ------------------- |
 | Última data               | `summary().last_date`                        | `19/08/2026`        |
-| Total Estrangeiro         | in-memory sum of `estrangeiro` column        | `R$ -3.860,52 mi`   |
-| Total Institucional       | in-memory sum of `institucional` column      | `R$ 2.463,56 mi`    |
-| Total Pessoa física       | in-memory sum of `pessoa_fisica` column      | `R$ 554,91 mi`      |
-| Total Inst. Financeira    | in-memory sum of `inst_financeira` column    | `R$ 691,38 mi`      |
+| Líquido anual Estrangeiro | YTD sum of `estrangeiro` (current year)      | `R$ 20,02 bi`       |
+| Líquido anual Institucional | YTD sum of `institucional`                 | `R$ -39,97 bi`      |
+| Líquido anual Pessoa física | YTD sum of `pessoa_fisica`                 | `R$ 44,94 mi`       |
+| Líquido anual Inst. Financeira | YTD sum of `inst_financeira`             | `R$ 691,38 mi`      |
+| Dias na base              | `summary().row_count`                        | `244`               |
+| Líquido 365d Estrangeiro  | rolling last-365-days sum of `estrangeiro`   | `R$ 20,02 bi`       |
+| Líquido 365d Institucional | rolling last-365-days sum                  | `R$ -39,97 bi`      |
+| Líquido 365d Pessoa física | rolling last-365-days sum                  | `R$ 44,94 mi`       |
+| Líquido 365d Inst. Financeira | rolling last-365-days sum                | `R$ 691,38 mi`      |
 
-The "Total" KPIs are the cumulative net flow over the entire synced
-period (~1 year). Negative totals (e.g. Estrangeiro) indicate net
-outflow over the period.
+Row 1 is year-to-date (sum of daily values where `ref_date` starts
+with the current year); row 2 is the rolling window (last 365 days
+from `last_date`). Values auto-scale (`format_brl_from_millions`:
+≥1B reais → `bi`, <1B → `mi`). Negative totals (e.g. Institucional)
+indicate net outflow. "Outros" is intentionally not a KPI — it stays
+a residual category (daily-table column only). The WebUI v1.13 Fluxo
+family ships the same metrics as 6 cards (the 365d number rides the
+YTD card's tooltip).
 
 ## Why values are parsed to floats
 

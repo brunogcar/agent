@@ -387,3 +387,21 @@ def _register_builtins() -> None:
              family="focus", label="Mercado — Focus: Setor Externo")
     register("focus:fiscal", _bind(FocusService, "fiscal"),
              family="focus", label="Mercado — Focus: Fiscal")
+
+    # [v1.13] Mercado — Fluxo family (the B3 investment flow by investor
+    # type, also from dadosdemercado.com.br; reference:
+    # skills/ddm/fluxo static report + fluxo_dashboard.html). The static's
+    # 5 flat tabs (1 Fluxo + 4 per-investor × Diário/Mensal/Anual) become
+    # 4 comparison-driven subtabs over the same fluxo.db query engine.
+    # Ticker-less FLAT payloads served by the same
+    # GET /api/webui/mercado/sections/{key} endpoint as the focus family.
+    from webui.services.fluxo import FluxoService
+    register("fluxo:overview", _bind(FluxoService, "overview"),
+             family="fluxo", label="Mercado — Fluxo: Visão Geral")
+    register("fluxo:mensal", _bind(FluxoService, "mensal"),
+             family="fluxo", label="Mercado — Fluxo: Mensal")
+    register("fluxo:anual", _bind(FluxoService, "anual"),
+             family="fluxo", label="Mercado — Fluxo: Anual")
+    register("fluxo:por_investidor",
+             _bind(FluxoService, "por_investidor"),
+             family="fluxo", label="Mercado — Fluxo: Por Investidor")

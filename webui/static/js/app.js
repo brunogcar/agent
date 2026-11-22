@@ -2835,27 +2835,32 @@ function renderMacroSubtab(panel, data) {
   mountValCharts(panel);
 }
 
-// ── Mercado page / Focus family [WebUI v1.12] ────────────────────────
-// 7 lazy subtabs (Visão Geral / Inflação / Atividade / Juros / Câmbio /
-// Setor Externo / Fiscal) over the TICKER-LESS generic
-// /mercado/sections/focus:<sub> endpoint — same v1.11 macro recipe
-// (market-wide payload, no ticker segment, FLAT contract, generic
-// renderer). The page carries one more level (family pills — v1.12
-// ships Focus; dividends/índices/fluxo/inflação/juros join later), but
-// the panes and loader are the same pattern.
-window.loadFocusSubtab = function(sub) {
-  var panel = document.getElementById('tab-focus-' + sub);
-  if (!panel || panel._loaded) return;
-  fetch('/api/webui/mercado/sections/focus:' + encodeURIComponent(sub) +
-        '?_t=' + Date.now())
-    .then(function(r) { return r.json(); })
-    .then(function(data) { panel._loaded = true; renderFocusSubtab(panel, data); })
-    .catch(function(err) {
-      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
-    });
-};
+// ── Mercado page [WebUI v1.12 / v1.13] ───────────────────────────────
+// Family subtab loaders over the TICKER-LESS generic /mercado/sections/
+// <family>:<sub> endpoint — same v1.11 macro recipe (market-wide payload,
+// no ticker segment, FLAT contract, generic renderer). The page carries
+// one more level than macro: FAMILY pills (focus v1.12, fluxo v1.13;
+// dividends/índices/inflação/juros join later). The per-family loaders
+// only differ by the family key, so ONE factory builds them (pane id
+// tab-<family>-<sub>, endpoint key <family>:<sub>) — the v1.13 fluxo
+// family was a one-line addition.
+function mercadoLoader(family) {
+  return function(sub) {
+    var panel = document.getElementById('tab-' + family + '-' + sub);
+    if (!panel || panel._loaded) return;
+    fetch('/api/webui/mercado/sections/' + family + ':' +
+          encodeURIComponent(sub) + '?_t=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        panel._loaded = true; renderMercadoSubtab(panel, data);
+      })
+      .catch(function(err) {
+        panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+      });
+  };
+}
 
-function renderFocusSubtab(panel, data) {
+function renderMercadoSubtab(panel, data) {
   if (data._error) {
     panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
     return;
@@ -2867,6 +2872,9 @@ function renderFocusSubtab(panel, data) {
   panel.innerHTML = html || '<div class="loading">Sem dados</div>';
   mountValCharts(panel);
 }
+
+window.loadFocusSubtab = mercadoLoader('focus');   // [v1.12] Boletim Focus
+window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
 
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
@@ -2972,7 +2980,7 @@ function prefetchSubtab(e) {
               val: window.loadValSubtab, prov: window.loadProvSubtab,
               opt: window.loadOptSubtab, sh: window.loadShSubtab,
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
-              foc: window.loadFocusSubtab };
+              foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
