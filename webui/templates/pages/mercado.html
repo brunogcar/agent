@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.mercado") }} — Agent{% endblock %}
+{% block content %}
+{# webui/templates/pages/mercado.html — Mercado page [WebUI v1.12].
+
+The new home for the DDM dashboards (dadosdemercado.com.br — market-level
+data), next to Macro (realized BCB SGS indicators). Two levels, the company
+page's tab/subtab architecture on a standalone page (macro.html pattern,
+one level deeper):
+
+- FAMILY pills (level 1): the DDM dashboard families. v1.12 ships Focus
+  (Boletim Focus — the weekly expectations bulletin); dividends, índices,
+  fluxo, inflação and juros join as later families (hidden until shipped —
+  the company page's Historical-button precedent).
+- Focus subtabs (level 2): the static focus_dashboard.html reorganized —
+  its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
+  tabs) become 7 question-driven subtabs:
+
+  - Visão Geral: KPIs + o Boletim Focus (uma tabela por ano).
+  - Inflação: IPCA + IPCA Adm + IGP-M.
+  - Atividade: PIB Total.
+  - Juros: Selic.
+  - Câmbio: USD/BRL.
+  - Setor Externo: Conta corrente + Balança comercial + Investimento direto.
+  - Fiscal: Dívida líquida setor público + Resultado primário + nominal.
+
+Every subtab loads lazily through the ticker-less generic endpoint
+/api/webui/mercado/sections/focus:<sub> (loadFocusSubtab in app.js) and
+renders through the SAME generic renderer as every tab since v1.8
+(valKpisHtml + valSectionsHtml + mountValCharts). Data: DDM focus.db —
+sincronize a fonte ddm-focus na página Sincronização.
+#}
+<div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
+  <div class="macro-header">
+    <h1>{{ t("nav.mercado") }}</h1>
+    <p class="macro-subtitle">
+      Dados de mercado (dadosdemercado.com.br) — expectativas semanais do
+      Boletim Focus para inflação, atividade, juros, câmbio e as contas
+      externas e públicas, por ano de referência. Família Focus; em breve:
+      dividendos, índices, fluxo, inflação e juros.
+    </p>
+  </div>
+
+  {# ── Family pills (level 1 — one per DDM dashboard family) ── #}
+  <nav class="subtab-nav mercado-family-nav" aria-label="Famílias do Mercado">
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'focus' }"
+            @click="family='focus'; subtab='overview'"
+            onclick="loadFocusSubtab('overview')">Focus</button>
+    {# v1.13+: Dividendos, Índices, Fluxo, Inflação, Juros — hidden until
+       shipped (the company page's Historical-button precedent). #}
+  </nav>
+
+  {# ── Focus family panel ── #}
+  <div x-show="family === 'focus'" id="family-focus">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas do Focus">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadFocusSubtab('overview')" data-lazy="foc:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'inflacao' }" @click="subtab='inflacao'" onclick="loadFocusSubtab('inflacao')" data-lazy="foc:inflacao">Inflação</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'atividade' }" @click="subtab='atividade'" onclick="loadFocusSubtab('atividade')" data-lazy="foc:atividade">Atividade</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'juros' }" @click="subtab='juros'" onclick="loadFocusSubtab('juros')" data-lazy="foc:juros">Juros</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'cambio' }" @click="subtab='cambio'" onclick="loadFocusSubtab('cambio')" data-lazy="foc:cambio">Câmbio</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'externo' }" @click="subtab='externo'" onclick="loadFocusSubtab('externo')" data-lazy="foc:externo">Setor Externo</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'fiscal' }" @click="subtab='fiscal'" onclick="loadFocusSubtab('fiscal')" data-lazy="foc:fiscal">Fiscal</button>
+    </nav>
+
+    {# ── Visão Geral (loads on page open — see initApp) ── #}
+    <div x-show="subtab === 'overview'" id="tab-focus-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Inflação ── #}
+    <div x-show="subtab === 'inflacao'" style="display: none;" id="tab-focus-inflacao">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Atividade ── #}
+    <div x-show="subtab === 'atividade'" style="display: none;" id="tab-focus-atividade">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Juros ── #}
+    <div x-show="subtab === 'juros'" style="display: none;" id="tab-focus-juros">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Câmbio ── #}
+    <div x-show="subtab === 'cambio'" style="display: none;" id="tab-focus-cambio">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Setor Externo ── #}
+    <div x-show="subtab === 'externo'" style="display: none;" id="tab-focus-externo">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Fiscal ── #}
+    <div x-show="subtab === 'fiscal'" style="display: none;" id="tab-focus-fiscal">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

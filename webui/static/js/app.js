@@ -2835,6 +2835,39 @@ function renderMacroSubtab(panel, data) {
   mountValCharts(panel);
 }
 
+// ── Mercado page / Focus family [WebUI v1.12] ────────────────────────
+// 7 lazy subtabs (Visão Geral / Inflação / Atividade / Juros / Câmbio /
+// Setor Externo / Fiscal) over the TICKER-LESS generic
+// /mercado/sections/focus:<sub> endpoint — same v1.11 macro recipe
+// (market-wide payload, no ticker segment, FLAT contract, generic
+// renderer). The page carries one more level (family pills — v1.12
+// ships Focus; dividends/índices/fluxo/inflação/juros join later), but
+// the panes and loader are the same pattern.
+window.loadFocusSubtab = function(sub) {
+  var panel = document.getElementById('tab-focus-' + sub);
+  if (!panel || panel._loaded) return;
+  fetch('/api/webui/mercado/sections/focus:' + encodeURIComponent(sub) +
+        '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { panel._loaded = true; renderFocusSubtab(panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderFocusSubtab(panel, data) {
+  if (data._error) {
+    panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    return;
+  }
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
 // ignores — same mechanism as pair_with_next). Those tables render their
@@ -2938,7 +2971,8 @@ function prefetchSubtab(e) {
   var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
               val: window.loadValSubtab, prov: window.loadProvSubtab,
               opt: window.loadOptSubtab, sh: window.loadShSubtab,
-              ins: window.loadInsSubtab, mac: window.loadMacroSubtab };
+              ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
+              foc: window.loadFocusSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -2993,6 +3027,9 @@ function initApp() {
     // [v1.11] Macro — first subtab of the macro page (no-op elsewhere:
     // the loader guards on the pane's existence).
     loadMacroSubtab('overview');
+    // [v1.12] Mercado — first subtab of the Focus family (same no-op
+    // guard — only the /webui/mercado page carries the pane).
+    loadFocusSubtab('overview');
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });
@@ -3007,6 +3044,8 @@ function initApp() {
   // server-rendered; no HTMX settle fires, so the first subtab boots
   // here — the loader no-ops on every other page).
   loadMacroSubtab('overview');
+  // [v1.12] Mercado — same for /webui/mercado (Focus family first).
+  loadFocusSubtab('overview');
 
   // [v1.5 fix1] Hover/focus prefetch for lazy subtabs — the fetch starts
   // when the pointer heads toward the button (~300ms before the click),

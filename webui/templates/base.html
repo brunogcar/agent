@@ -15,6 +15,7 @@
   - Sidebar collapse persists in localStorage (was reset on every page load)
   - Search input has an aria-label
 [WebUI v1.11] ?v=51 (Macro page — app.js/app.css) — table cells dd/mm/yyyy, chart axes + tooltips via renderValChart — see CHANGELOG)
+[WebUI v1.12] ?v=52 (Mercado page — app.js/app.css + nav item)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -43,7 +44,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=51">
+  <link rel="stylesheet" href="/static/css/app.css?v=52">
 </head>
 <body>
   <div class="app-shell">
@@ -59,6 +60,10 @@
         <a href="/webui" class="nav-item {{ 'active' if active_tab == 'dashboard' else '' }}">
           <span class="icon">🏠</span>
           <span class="label" x-show="!collapsed">{{ t("nav.dashboard") }}</span>
+        </a>
+        <a href="/webui/mercado" class="nav-item {{ 'active' if active_tab == 'mercado' else '' }}">
+          <span class="icon">📈</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.mercado") }}</span>
         </a>
         <a href="/webui/macro" class="nav-item {{ 'active' if active_tab == 'macro' else '' }}">
           <span class="icon">🌎</span>
@@ -133,6 +138,6 @@
   </div>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=51"></script>
+  <script src="/static/js/app.js?v=52"></script>
 </body>
 </html>

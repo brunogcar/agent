@@ -3,6 +3,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "company": "Company",
+    "mercado": "Market",
     "macro": "Macro",
     "sync": "Sync",
     "settings": "Settings"

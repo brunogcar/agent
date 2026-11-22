@@ -1,5 +1,22 @@
 # DDM Focus Skill — Changelog
 
+## v1.1 — 2026-11-22
+
+**Unit map fix — 5 stored indicator names were missing from
+`_INDICATOR_UNITS`, shipped together with the WebUI v1.12 Mercado page.**
+
+- The dashboard rendered them as plain numbers: "IPCA Adm 4,77" (should
+  be `4,7700%`), "Dívida líquida setor pub 70,20" (should be `70,20%`),
+  "Resultado primário -0,50" / "Resultado nominal -8,97" (should be `%`),
+  and "Investimento direto no país 80.000,00" (should be
+  `US$ 80.000 mi` — the map carried the truncated alias
+  "Investimento direto", which never matched the stored full name).
+- `helpers.py` `_INDICATOR_UNITS` gains the 5 names. Benefits the static
+  dashboard AND the WebUI (`webui/services/focus.py` imports
+  `format_value` — the Mercado page's Focus family, `/webui/mercado`,
+  regroups this skill's 13 flat tabs into 7 question-driven subtabs; see
+  `docs/webui/CHANGELOG.md` v1.12).
+
 ## v1.0 — 2025-01
 
 Initial release. 13-tab dashboard with multi-subtab structure per tab.

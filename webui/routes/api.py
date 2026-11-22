@@ -29,6 +29,10 @@
   dispatches the macro:* adapters (market-wide payloads, no company
   scope) through the same registry + contract validation. Unknown keys
   → 404 PT-BR plain text (same pattern as the company endpoint).
+[v1.12] New ticker-less generic endpoint /mercado/sections/{key} —
+  same dispatch for the mercado:* page families (focus:* now; the
+  DDM dashboards dividends/índices/fluxo/inflação/juros as later
+  families).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -39,6 +43,9 @@ Routes:
   GET /api/webui/macro/sections/{key}       → macro subtabs (ticker-less,
         key = "macro:<sub>": overview/juros/inflacao/cambio/atividade/
         retorno_real/focus/curva) [v1.11]
+  GET /api/webui/mercado/sections/{key}     → mercado page subtabs
+        (ticker-less; key = "focus:<sub>": overview/inflacao/atividade/
+        juros/cambio/externo/fiscal) [v1.12]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)
@@ -189,6 +196,24 @@ def macro_sections(key: str):
     format "macro:<sub>" (overview/juros/inflacao/cambio/atividade/
     retorno_real/focus/curva). Unknown/malformed keys → 404 PT-BR plain
     text (never reflected into HTML).
+    """
+    if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
+        return PlainTextResponse(
+            f"Subtab '{key}' não encontrada.", status_code=404
+        )
+    data = dispatch(key)
+    return JSONResponse(data)
+
+
+@router.get("/mercado/sections/{key}")
+def mercado_sections(key: str):
+    """[v1.12] Generic mercado subtab endpoint — ticker-less dispatch.
+
+    Same shape as the macro /sections/{key} endpoint: mercado page
+    families build market-wide payloads (DDM — dadosdemercado.com.br).
+    Key format "<family>:<sub>" (v1.12: focus:overview/inflacao/
+    atividade/juros/cambio/externo/fiscal). Unknown/malformed keys →
+    404 PT-BR plain text (never reflected into HTML).
     """
     if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
         return PlainTextResponse(

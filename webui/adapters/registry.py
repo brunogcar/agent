@@ -362,3 +362,28 @@ def _register_builtins() -> None:
              family="macro", label="Macro — Expectativas Focus")
     register("macro:curva", _bind(MacroService, "curva"),
              family="macro", label="Macro — Curva de Juros")
+
+    # [v1.12] Mercado — the /webui/mercado page, the new home for the
+    # DDM dashboards (reference: skills/ddm/focus static report +
+    # focus_dashboard.html; market-level data from dadosdemercado.com.br).
+    # Focus family first (Boletim Focus — the weekly expectations
+    # bulletin, 3 time windows × 4 reference years); dividends, índices,
+    # fluxo, inflação and juros join as later families. Ticker-less FLAT
+    # payloads served by the dedicated GET /api/webui/macro-style
+    # endpoint /api/webui/mercado/sections/{key}. Data: DDM focus.db
+    # through the same query engine the skill's modes use.
+    from webui.services.focus import FocusService
+    register("focus:overview", _bind(FocusService, "overview"),
+             family="focus", label="Mercado — Focus: Visão Geral")
+    register("focus:inflacao", _bind(FocusService, "inflacao"),
+             family="focus", label="Mercado — Focus: Inflação")
+    register("focus:atividade", _bind(FocusService, "atividade"),
+             family="focus", label="Mercado — Focus: Atividade")
+    register("focus:juros", _bind(FocusService, "juros"),
+             family="focus", label="Mercado — Focus: Juros")
+    register("focus:cambio", _bind(FocusService, "cambio"),
+             family="focus", label="Mercado — Focus: Câmbio")
+    register("focus:externo", _bind(FocusService, "externo"),
+             family="focus", label="Mercado — Focus: Setor Externo")
+    register("focus:fiscal", _bind(FocusService, "fiscal"),
+             family="focus", label="Mercado — Focus: Fiscal")

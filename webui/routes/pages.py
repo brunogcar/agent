@@ -20,6 +20,7 @@ Routes:
   GET /webui/company/{ticker}     → company overview
   GET /webui/company/{ticker}/{tab}  → company tab (visao_geral/preco/financials/valuation)
   GET /webui/macro                → macro page
+  GET /webui/mercado              → mercado page (DDM dashboards) [v1.12]
   GET /webui/sync                 → sync status page
   GET /webui/settings             → settings page
 """
@@ -102,6 +103,21 @@ def company_tab(request: Request, ticker: str, tab: str):
 def macro_page(request: Request):
     return templates.TemplateResponse(
         request, "pages/macro.html", _ctx(request, active_tab="macro"),
+    )
+
+
+@router.get("/mercado", response_class=HTMLResponse)
+def mercado_page(request: Request):
+    """[v1.12] Mercado page — the DDM dashboards' home.
+
+    Market-level data from dadosdemercado.com.br (Boletim Focus now;
+    dividends, índices, fluxo, inflação and juros as later families),
+    next to Macro (realized BCB SGS indicators). Family + subtab shell
+    (macro.html pattern, one level deeper — the company page's tab /
+    subtab architecture on a standalone page).
+    """
+    return templates.TemplateResponse(
+        request, "pages/mercado.html", _ctx(request, active_tab="mercado"),
     )
 
 

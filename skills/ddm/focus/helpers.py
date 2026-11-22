@@ -13,10 +13,17 @@ from __future__ import annotations
 #   - "%"      — percentage indicators (IPCA, PIB, Selic, IGP-M, etc.)
 #   - "R$"     — currency (Cambio = USD/BRL exchange rate)
 #   - "US$ mi" — USD millions (Balança comercial, Investimento direto, Conta corrente)
+# [v1.12 fix] 5 stored indicator names were missing from the map — the
+# dashboard rendered them as plain numbers ("IPCA Adm 4,77" instead of
+# "4,7700%", "Dívida líquida setor pub 70,20" instead of "70,20%", and
+# "Investimento direto no país 80.000,00" instead of "US$ 80.000 mi" —
+# the map carried the truncated alias "Investimento direto", which never
+# matched the stored full name).
 _INDICATOR_UNITS: dict[str, str] = {
     # Percentage indicators
     "IPCA":               "%",
     "IPCA em 12 meses":   "%",
+    "IPCA Adm":           "%",
     "PIB Total":          "%",
     "PIB Agropecuária":   "%",
     "PIB Indústria":      "%",
@@ -26,6 +33,9 @@ _INDICATOR_UNITS: dict[str, str] = {
     "IGP-DI":             "%",
     "IPC-Fipe":           "%",
     "Taxa de desocupação": "%",
+    "Dívida líquida setor pub": "%",
+    "Resultado primário": "%",
+    "Resultado nominal":  "%",
     # Currency (R$)
     "Câmbio":             "R$",
     "Cambio":             "R$",
@@ -33,6 +43,7 @@ _INDICATOR_UNITS: dict[str, str] = {
     "Balança comercial":  "US$ mi",
     "Balanca comercial":  "US$ mi",
     "Investimento direto": "US$ mi",
+    "Investimento direto no país": "US$ mi",
     "Conta corrente":     "US$ mi",
 }
 

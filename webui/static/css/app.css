@@ -903,3 +903,22 @@ td[title], .kpi-card[title] { cursor: help; }
 /* Long subtab rows (8 pills) wrap on narrow screens — .subtab-nav already
    flex-wraps; this just tightens the wrap gap so two rows read as one bar. */
 .macro-subtab-nav { row-gap: var(--space-1); }
+
+/* ── Mercado page [WebUI v1.12] ──
+   Reuses the macro header (.macro-header/.macro-subsubtitle). The page
+   carries ONE more level than macro: FAMILY pills (Focus now; the other
+   DDM dashboards join as later families) above each family's subtab nav.
+   Family pills are the same .subtab-btn base, slightly more prominent
+   (bigger + bolder) so the two levels read apart at a glance; the panes
+   themselves render through the generic section renderer — no
+   mercado-specific pane styling needed. */
+.mercado-family-nav {
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.mercado-family-btn {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 16px;
+}

@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.11)
+## ✅ Built (v1 → v1.12)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -30,6 +30,7 @@
 - [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
 - [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
 - [x] Macro (`/webui/macro`) — 8 lazy subtabs over BCB SGS + Focus (v1.11; was a placeholder since v1)
+- [x] Mercado (`/webui/mercado`) — the DDM dashboards' home: family pills + subtabs, Focus family first (v1.12)
 - [x] Sync (`/webui/sync`) — freshness table + pre-flight panel (v1.7) + Sincronizar buttons + live SSE log
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
@@ -47,6 +48,9 @@
 
 ### Macro Page
 - [x] **[v1.11] Macro** — the static macro dashboard reorganized (reference: `macro_dashboard.html` / `skills/bcb/macro`; data: `sgs.db` + `focus.db`): the LANDING subtab carries only what is general (the static's "Indicadores Atuais" — 4 KPIs + the 12-series current table with computed IPCA/IGP-M acumulado 12m); every specific view is its own lazy subtab — Juros (Selic/CDI/Meta Copom in ONE % a.a. chart — the static shipped 5 near-duplicates — + TR + Selic acumulada + monthly tables ANNUALIZED), Inflação (IPCA vs IGP-M mensal + acumulado 12m, one chart per question), Câmbio (ptax diária + média mensal + máx/mín 12m), Atividade (PIB nominal trimestral em R$ tri `T3 2026` + salário mínimo), Retorno Real (Fisher — real line joined to a monthly IPCA step), Expectativas Focus (mediana ± faixa min/max, IPCA/Selic/Câmbio, dedupe por rodada), Curva de Juros (Selic Focus por ano — forward-looking, sem range bar). Ticker-less dispatch (`takes_ticker`) + generic `GET /api/webui/macro/sections/{key}`; same data layer as the skill's query engines; degradation per fonte (`sgs`/`focus`). **PIB unit fix**: SGS 4380 catalog "R$ mil" → "R$ milhões" (the static read "R$ 1.165.623 mil" — R$ 1,17 bi per quarter, absurd for a country's GDP).
+
+### Mercado Page
+- [x] **[v1.12] Mercado — Focus family** — the new nav session for the DDM dashboards (dadosdemercado.com.br), next to Macro: family pills (Focus; dividends/índices/fluxo/inflação/juros as later families, hidden until shipped) + the family's subtabs. The static focus dashboard reorganized (reference: `focus_dashboard.html` / `skills/ddm/focus`; data: `memory_db/ddm/focus.db`): the LANDING subtab carries the general content (4 KPIs + o Boletim Focus, uma tabela por ano — the static's 4 year subtabs stacked); the 12 per-indicator tabs regrouped into 6 question-driven subtabs — Inflação (IPCA + IPCA Adm + IGP-M), Atividade (PIB), Juros (Selic), Câmbio, Setor Externo (Conta corrente + Balança + Investimento direto), Fiscal (Dívida líquida + Primário + Nominal) — each with a KPI card per indicator (Hoje do ano corrente, tooltip com todos os anos + comparação 4 semanas + respondentes — novo vs o estático) + grouped bar chart 3 janelas × 4 anos + tabela por ano sortable. Ticker-less dispatch reaproveitado do v1.11 (zero registry changes) + generic `GET /api/webui/mercado/sections/{key}`. **Unit map fix**: 5 nomes de indicadores faltavam no `_INDICATOR_UNITS` do skill — o estático renderizava "IPCA Adm 4,77" sem %, "Investimento direto no país 80.000,00" sem US$ mi (alias truncado nunca casava); corrigido na fonte (skill v1.1).
 
 ### Features
 - [x] Ticker search (HTMX debounced keyup, wildcard-escaped, relevance-ranked since v1.5)
