@@ -27,7 +27,7 @@ SGS is the Brazilian Central Bank's public time-series API. Free, no auth, no to
 | 189 | IGP-M mensal | monthly | % | Inflacao |
 | 1 | USD/BRL ptax venda | daily | R$ | Cambio |
 | 24369 | USD/BRL ptax mensal | monthly | R$ | Cambio |
-| 4380 | PIB nominal trimestral | quarterly | R$ mil | Atividade |
+| 4380 | PIB nominal trimestral | quarterly | R$ milhões | Atividade |
 | 1619 | Salario minimo mensal | monthly | R$ | Atividade |
 
 ---

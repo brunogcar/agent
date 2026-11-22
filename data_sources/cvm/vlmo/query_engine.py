@@ -113,14 +113,24 @@ def _query_history(conn, cnpj: str, company: str, limit: int) -> dict:
 
 
 def _query_by_role(conn, cnpj: str, company: str, limit: int) -> dict:
-    """Group insider transactions by role (Tipo_Cargo)."""
+    """Group insider transactions by role (Tipo_Cargo).
+
+    [fix] Tipo_Movimentacao matching is now prefix-based (LIKE 'Compra%' /
+    'Venda%'). CVM's VLMO vocabulary carries qualified forms -- "Compra à
+    vista", "Venda à vista", "Compra a prazo", ... -- and the old exact
+    equality (= 'Compra' / = 'Venda') silently dropped every one of them
+    from the aggregates: the PETR4 static dashboard showed 2026-06 with
+    R$ 0,00 volume while its own transactions table listed ~R$ 1,4 bi in
+    "Venda à vista" rows. Prefix match is a strict superset of the exact
+    match, so older rows stored as plain "Compra"/"Venda" keep counting.
+    """
     rows = conn.execute(
         """SELECT Tipo_Cargo,
                   COUNT(*) as transaction_count,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Compra' THEN Quantidade ELSE 0 END) as total_bought,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Venda' THEN Quantidade ELSE 0 END) as total_sold,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Compra' THEN Volume ELSE 0 END) as volume_bought,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Venda' THEN Volume ELSE 0 END) as volume_sold,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Compra%' THEN Quantidade ELSE 0 END) as total_bought,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Venda%' THEN Quantidade ELSE 0 END) as total_sold,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Compra%' THEN Volume ELSE 0 END) as volume_bought,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Venda%' THEN Volume ELSE 0 END) as volume_sold,
                   MIN(Data_Movimentacao) as earliest_date,
                   MAX(Data_Movimentacao) as latest_date
            FROM vlmo_movements
@@ -145,14 +155,20 @@ def _query_by_role(conn, cnpj: str, company: str, limit: int) -> dict:
 
 
 def _query_summary(conn, cnpj: str, company: str) -> dict:
-    """Net buy/sell summary per month."""
+    """Net buy/sell summary per month.
+
+    [fix] Same prefix-based Tipo_Movimentacao match as _query_by_role --
+    "Compra à vista"/"Venda à vista" are the dominant values in the VLMO
+    data and exact equality dropped them (months showed R$ 0,00 despite
+    priced transactions).
+    """
     rows = conn.execute(
         """SELECT substr(Data_Movimentacao, 1, 7) as month,
                   COUNT(*) as transaction_count,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Compra' THEN Quantidade ELSE 0 END) as bought,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Venda' THEN Quantidade ELSE 0 END) as sold,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Compra' THEN Volume ELSE 0 END) as volume_bought,
-                  SUM(CASE WHEN Tipo_Movimentacao = 'Venda' THEN Volume ELSE 0 END) as volume_sold
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Compra%' THEN Quantidade ELSE 0 END) as bought,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Venda%' THEN Quantidade ELSE 0 END) as sold,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Compra%' THEN Volume ELSE 0 END) as volume_bought,
+                  SUM(CASE WHEN Tipo_Movimentacao LIKE 'Venda%' THEN Volume ELSE 0 END) as volume_sold
            FROM vlmo_movements
            WHERE REPLACE(REPLACE(REPLACE(CNPJ_Companhia, '.', ''), '/', ''), '-', '') = ?
              AND Data_Movimentacao IS NOT NULL

@@ -38,6 +38,7 @@ _UNIT_COLOR = {
     "%":      "#f59e0b",
     "R$":     "#3b82f6",
     "R$ mil": "#3b82f6",
+    "R$ milhões": "#3b82f6",
 }
 
 

@@ -73,6 +73,15 @@
             hx-swap="innerHTML">
       {{ t("company.shareholders") }}
     </button>
+    {# [WebUI v1.10] Insiders tab — VLMO movimentações de administradores
+       (reference: PETR4_insider_dashboard.html / skills/cvm/insider). #}
+    <button class="tab-btn" :class="{ 'active': tab === 'insiders' }"
+            @click="tab='insiders'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/insiders"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.insiders") }}
+    </button>
     {# Re-enable when implemented:
     <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
             @click="tab='historical'"

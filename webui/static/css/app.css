@@ -889,3 +889,17 @@ td[title], .kpi-card[title] { cursor: help; }
 .prov-upcoming-date { font-size: 13px; font-weight: 600; }
 .prov-upcoming-val { font-size: 13px; font-family: var(--font-mono); }
 .prov-upcoming-rel { font-size: 10px; color: var(--color-text-sec); }
+
+/* ── Macro page [WebUI v1.11] ──
+   Server-rendered page shell (not a company tab partial): a compact
+   header + the shared .subtab-nav. The panes themselves render through
+   the generic section renderer (KPI grid, fin-charts-grid, val-table)
+   — no macro-specific pane styling needed. */
+.macro-header { margin-bottom: var(--space-4); }
+.macro-header h1 { font-size: 24px; margin-bottom: var(--space-2); }
+.macro-subtitle {
+  color: var(--color-text-sec); font-size: 13px; max-width: 72ch;
+}
+/* Long subtab rows (8 pills) wrap on narrow screens — .subtab-nav already
+   flex-wraps; this just tightens the wrap gap so two rows read as one bar. */
+.macro-subtab-nav { row-gap: var(--space-1); }

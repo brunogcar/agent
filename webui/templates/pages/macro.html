@@ -1,9 +1,88 @@
 {% extends "base.html" %}
 {% block title %}{{ t("nav.macro") }} — Agent{% endblock %}
 {% block content %}
-<div class="page-macro">
-  <h1>{{ t("nav.macro") }}</h1>
-  <p>Macro indicators — Selic, IPCA, CDI, câmbio, Focus bulletin.</p>
-  <div class="placeholder">Coming soon</div>
+{# webui/templates/pages/macro.html — Macro page [WebUI v1.11].
+
+A reorganized take on the static macro_dashboard.html (built by
+skills/bcb/macro/modes/dashboard.py — 8 flat tabs). Per the v1.11 design
+the LANDING subtab carries only what is general (the static dashboard's
+"Indicadores Atuais" + header KPIs); every specific view is its own lazy
+subtab, exactly like the company tabs since v1.8:
+
+- Visão Geral: 4 KPIs + a tabela Indicadores Atuais (10 séries).
+- Juros: Selic/CDI/Meta Copom num único gráfico % a.a. + TR + Selic
+  acumulada + tabelas mensais.
+- Inflação: IPCA vs IGP-M — variação mensal + acumulado 12m.
+- Câmbio: USD/BRL ptax diária + média mensal + máx/mín 12m.
+- Atividade: PIB nominal trimestral + salário mínimo.
+- Retorno Real: equação de Fisher (Selic vs IPCA 12m).
+- Expectativas Focus: mediana ± faixa min/max (IPCA/Selic/Câmbio).
+- Curva de Juros: Selic Focus por ano de referência.
+
+Every subtab loads lazily through the ticker-less generic endpoint
+/api/webui/macro/sections/macro:<sub> (loadMacroSubtab in app.js) and
+renders through the SAME generic renderer as the company tabs
+(valKpisHtml + valSectionsHtml + mountValCharts). Data: BCB SGS (sgs.db)
++ BCB Focus (focus.db) — sincronize na página Sincronização.
+#}
+<div class="page-macro tab-macro" x-data="{ subtab: 'overview' }">
+  <div class="macro-header">
+    <h1>{{ t("nav.macro") }}</h1>
+    <p class="macro-subtitle">
+      Indicadores macroeconômicos do Banco Central — Selic, IPCA, câmbio,
+      atividade e expectativas Focus. Fontes: BCB SGS + Focus.
+    </p>
+  </div>
+
+  <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas da Macro">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadMacroSubtab('overview')" data-lazy="mac:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'juros' }" @click="subtab='juros'" onclick="loadMacroSubtab('juros')" data-lazy="mac:juros">Juros</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'inflacao' }" @click="subtab='inflacao'" onclick="loadMacroSubtab('inflacao')" data-lazy="mac:inflacao">Inflação</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'cambio' }" @click="subtab='cambio'" onclick="loadMacroSubtab('cambio')" data-lazy="mac:cambio">Câmbio</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'atividade' }" @click="subtab='atividade'" onclick="loadMacroSubtab('atividade')" data-lazy="mac:atividade">Atividade</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'retorno_real' }" @click="subtab='retorno_real'" onclick="loadMacroSubtab('retorno_real')" data-lazy="mac:retorno_real">Retorno Real</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'focus' }" @click="subtab='focus'" onclick="loadMacroSubtab('focus')" data-lazy="mac:focus">Expectativas Focus</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'curva' }" @click="subtab='curva'" onclick="loadMacroSubtab('curva')" data-lazy="mac:curva">Curva de Juros</button>
+  </nav>
+
+  {# ── Visão Geral (loads on page open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-macro-overview">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Juros ── #}
+  <div x-show="subtab === 'juros'" style="display: none;" id="tab-macro-juros">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Inflação ── #}
+  <div x-show="subtab === 'inflacao'" style="display: none;" id="tab-macro-inflacao">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Câmbio ── #}
+  <div x-show="subtab === 'cambio'" style="display: none;" id="tab-macro-cambio">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Atividade ── #}
+  <div x-show="subtab === 'atividade'" style="display: none;" id="tab-macro-atividade">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Retorno Real ── #}
+  <div x-show="subtab === 'retorno_real'" style="display: none;" id="tab-macro-retorno_real">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Expectativas Focus ── #}
+  <div x-show="subtab === 'focus'" style="display: none;" id="tab-macro-focus">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Curva de Juros ── #}
+  <div x-show="subtab === 'curva'" style="display: none;" id="tab-macro-curva">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
 </div>
 {% endblock %}

@@ -35,6 +35,11 @@ _UNIT_FORMAT = {
     "%":      lambda v: f"{v:.2f}%" if v is not None else "-",
     "R$":     lambda v: f"R$ {v:,.4f}".replace(",", "_").replace(".", ",").replace("_", ".") if v is not None else "-",
     "R$ mil": lambda v: f"R$ {v:,.0f} mil".replace(",", ".") if v is not None else "-",
+    # [v1.11 fix] SGS 4380 (PIB nominal trimestral) reports R$ MILHÕES —
+    # the catalog said "R$ mil" and the PIB table read "R$ 1.165.623 mil"
+    # (R$ 1,17 bi per quarter — absurd for a country's GDP; the series is
+    # IBGE's quarterly nominal PIB mirrored by BCB, unit R$ milhões).
+    "R$ milhões": lambda v: f"R$ {v:,.0f} milhões".replace(",", ".") if v is not None else "-",
 }
 
 

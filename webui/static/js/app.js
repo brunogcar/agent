@@ -2765,20 +2765,106 @@ function renderShSubtab(panel, data) {
   mountValCharts(panel);
 }
 
+// ── Insiders tab [WebUI v1.10] ────────────────────────────────────────
+// 4 lazy subtabs (Visão Geral / Movimentações / Por Cargo / Mensal) over
+// the generic /sections/insiders:<sub> endpoint — the v1.7 recipe:
+// service + register() + shell partial + this loader. Payloads are the
+// FLAT contract ({kpis, sections}); everything renders through the SAME
+// generic renderer as Valuation/Proventos/Opções/Acionistas (valKpisHtml
+// + valSectionsHtml + mountValCharts). No pills/maturity passthrough —
+// VLMO data is historical, nothing is refetched client-side.
+window.loadInsSubtab = function(sub) {
+  var panel = document.getElementById('tab-ins-' + sub);
+  if (!panel || panel._loaded) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) +
+        '/sections/insiders:' + encodeURIComponent(sub) + '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { panel._loaded = true; renderInsSubtab(panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderInsSubtab(panel, data) {
+  if (data._error) {
+    panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    return;
+  }
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
+// ── Macro page [WebUI v1.11] ─────────────────────────────────────────
+// 8 lazy subtabs (Visão Geral / Juros / Inflação / Câmbio / Atividade /
+// Retorno Real / Expectativas Focus / Curva de Juros) over the
+// TICKER-LESS generic /macro/sections/macro:<sub> endpoint — same v1.7
+// recipe as the company tabs minus the company: macro is market-wide,
+// so the URL has no ticker segment and the panes carry no data-ticker.
+// Payloads are the FLAT contract ({kpis, sections}); everything renders
+// through the SAME generic renderer as every tab since v1.8
+// (valKpisHtml + valSectionsHtml + mountValCharts). No pills/passthrough
+// — the range bar on history charts filters client-side (valChartRange).
+window.loadMacroSubtab = function(sub) {
+  var panel = document.getElementById('tab-macro-' + sub);
+  if (!panel || panel._loaded) return;
+  fetch('/api/webui/macro/sections/macro:' + encodeURIComponent(sub) +
+        '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) { panel._loaded = true; renderMacroSubtab(panel, data); })
+    .catch(function(err) {
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function renderMacroSubtab(panel, data) {
+  if (data._error) {
+    panel.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    return;
+  }
+  panel._valChartCfgs = {};
+  var html = '';
+  if (data.kpis && data.kpis.length) html += valKpisHtml(data.kpis);
+  html += valSectionsHtml(data.sections || [], panel);
+  panel.innerHTML = html || '<div class="loading">Sem dados</div>';
+  mountValCharts(panel);
+}
+
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
 // ignores — same mechanism as pair_with_next). Those tables render their
 // headers as .val-sortable buttons; ONE delegated listener reorders the
 // tbody rows by the clicked column, parsing PT-BR formatted cells
-// ("R$ 1.234,56" → 1234.56, "4,19%" → 4.19, dates — ISO, dd/mm/yyyy and
-// dd/mm/yy — chronologically, "-" always last). Benefits every tab that
-// marks a table sortable, not just Opções.
+// ("R$ 1.234,56" → 1234.56, "4,19%" → 4.19, compact BRL "R$ 4,27 bi" →
+// 4.27e9, dates — ISO, dd/mm/yyyy, dd/mm/yy and BR month labels (jun/2026)
+// — chronologically, tooltip ⓘ markers stripped, "-" always last).
+// Benefits every tab that marks a table sortable, not just Opções.
 function _valSortKey(cell) {
   var el = cell.querySelector ? cell : null;
-  var text = (el ? el.textContent : String(cell)).trim();
+  // [v1.10] First-column cells carry a tooltip ⓘ marker INSIDE the cell
+  // ("03/11/2026 ⓘ") — strip it, or the anchored date regexes below never
+  // match and dates fall back to lexicographic order (01/12/2026 sorting
+  // before 05/01/2024 — not chronological). Affects every sortable table
+  // whose first column has a tooltip.
+  var text = (el ? el.textContent : String(cell)).replace(/\s*ⓘ/g, '').trim();
   if (!text || text === '-' || text === '—') return null;
   var m = String(text).match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return {num: Date.parse(m[0]) / 1e13, str: m[0], isNum: true};
+  // [v1.10] Month keys — "YYYY-MM" and BR month labels ("jun/2026") —
+  // sorted chronologically (lexicographic would put "abr/2025" before
+  // "dez/2024" and "2025-9" issues aside, keep it explicit).
+  var ym = String(text).match(/^(\d{4})-(\d{2})$/);
+  if (ym) return {num: (Number(ym[1]) * 12 + Number(ym[2])) / 1e5, str: text, isNum: true};
+  var brm = String(text).match(/^(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\/(\d{4})$/i);
+  if (brm) {
+    var mi = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'].indexOf(brm[1].toLowerCase());
+    return {num: (Number(brm[2]) * 12 + mi + 1) / 1e5, str: text, isNum: true};
+  }
   // [v1.8 fix1] BR dates (tables render dd/mm/yyyy since the fix; the
   // maturity pills / heatmap headers use the 2-digit year). Reordered to
   // ISO so Date.parse sorts them chronologically — a plain string compare
@@ -2787,6 +2873,16 @@ function _valSortKey(cell) {
   if (br) return {num: Date.parse(br[3] + '-' + br[2] + '-' + br[1]) / 1e13, str: text, isNum: true};
   var br2 = String(text).match(/^(\d{2})\/(\d{2})\/(\d{2})$/);
   if (br2) return {num: Date.parse('20' + br2[3] + '-' + br2[2] + '-' + br2[1]) / 1e13, str: text, isNum: true};
+  // [v1.10] Compact BRL ("R$ 4,27 bi" / "R$ 225,94 mi" / "R$ 1.234 mil" /
+  // "R$ -4,25 bi") — the suffix multiplies; a plain string compare would
+  // put "R$ 1,39 bi" before "R$ 22,40 mi" and "R$ 133,50 mi" before
+  // "R$ 75,00 mi". "mil" must alternate before "mi" or it never matches.
+  var cb = String(text).match(/^R\$\s*(-?[\d.]+(?:,\d+)?)\s*(tri|bi|mil|mi)\s*$/i);
+  if (cb) {
+    var mult = {tri: 1e12, bi: 1e9, mil: 1e3, mi: 1e6}[cb[2].toLowerCase()];
+    var cv = parseFloat(cb[1].replace(/\./g, '').replace(',', '.'));
+    if (!isNaN(cv)) return {num: cv * mult, str: text, isNum: true};
+  }
   var s = text.replace(/^R\$\s*/, '').replace(/%/g, '').replace(/\s/g, '');
   if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
   else if (/^-?\d+,\d+$/.test(s)) s = s.replace(',', '.');
@@ -2841,7 +2937,8 @@ function prefetchSubtab(e) {
   var parts = (btn.getAttribute('data-lazy') || '').split(':');
   var fns = { preco: window.loadPrecoSubtab, fin: window.loadFinSubtab,
               val: window.loadValSubtab, prov: window.loadProvSubtab,
-              opt: window.loadOptSubtab, sh: window.loadShSubtab };
+              opt: window.loadOptSubtab, sh: window.loadShSubtab,
+              ins: window.loadInsSubtab, mac: window.loadMacroSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -2891,6 +2988,11 @@ function initApp() {
     loadOptSubtab('overview');
     // [v1.9] Acionistas — first subtab of the shareholders tab.
     loadShSubtab('overview');
+    // [v1.10] Insiders — first subtab of the insiders tab.
+    loadInsSubtab('overview');
+    // [v1.11] Macro — first subtab of the macro page (no-op elsewhere:
+    // the loader guards on the pane's existence).
+    loadMacroSubtab('overview');
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
   });
@@ -2901,6 +3003,10 @@ function initApp() {
   initValTableSort();
   initCompanyPage();
   initSyncPage();
+  // [v1.11] Macro — direct full-page load (the /webui/macro page is
+  // server-rendered; no HTMX settle fires, so the first subtab boots
+  // here — the loader no-ops on every other page).
+  loadMacroSubtab('overview');
 
   // [v1.5 fix1] Hover/focus prefetch for lazy subtabs — the fetch starts
   // when the pointer heads toward the button (~300ms before the click),

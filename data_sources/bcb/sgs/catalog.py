@@ -49,7 +49,7 @@ SERIES_CATALOG: dict[int, tuple[str, str, str, str, str]] = {
     1:     ("USD/BRL ptax venda",           "daily",    "R$",      "Cambio",
             "Dolar americano venda - taxa ptax. Serie diaria usada tambem para calcular medias mensais."),
     # Atividade (Economic activity)
-    4380:  ("PIB nominal trimestral",       "quarterly","R$ mil",  "Atividade",
+    4380:  ("PIB nominal trimestral",       "quarterly","R$ milhões", "Atividade",
             "Produto Interno Bruto nominal - trimestral"),
     1619:  ("Salario minimo mensal",        "monthly",  "R$",      "Atividade",
             "Salario minimo mensal"),

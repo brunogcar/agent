@@ -25,6 +25,10 @@
   registered adapter — the per-family endpoints below remain as
   stable aliases (existing client loaders keep working; new tabs use
   the generic path).
+[v1.11] New ticker-less generic endpoint /macro/sections/{key} —
+  dispatches the macro:* adapters (market-wide payloads, no company
+  scope) through the same registry + contract validation. Unknown keys
+  → 404 PT-BR plain text (same pattern as the company endpoint).
 
 Routes:
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
@@ -32,6 +36,9 @@ Routes:
   GET /api/webui/company/{ticker}/sections/{key} → ANY registered subtab
         adapter (key = "<family>:<sub>", e.g. valuation:overview,
         financials:demonstracoes?period=quarterly) [v1.7]
+  GET /api/webui/macro/sections/{key}       → macro subtabs (ticker-less,
+        key = "macro:<sub>": overview/juros/inflacao/cambio/atividade/
+        retorno_real/focus/curva) [v1.11]
   GET /api/webui/company/{ticker}/candlestick?range=1A  → OHLCV + MAs (JSON)
   GET /api/webui/company/{ticker}/price-data → full price data (JSON)
   GET /api/webui/company/{ticker}/indicators → RSI/MACD/Stoch/OBV/ADX/CCI/W%R (JSON)
@@ -98,8 +105,8 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 
 # Tabs with a rendered partial (historical is future work —
 # company.html hides its button until it exists). [v1.6] proventos.
-# [v1.8] options. [v1.9] shareholders.
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options", "shareholders"}
+# [v1.8] options. [v1.9] shareholders. [v1.10] insiders.
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options", "shareholders", "insiders"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -170,6 +177,24 @@ def company_sections(ticker: Ticker, key: str,
         )
     data = dispatch(key, ticker.upper(), period=period, periods=periods,
                     maturity=maturity)
+    return JSONResponse(data)
+
+
+@router.get("/macro/sections/{key}")
+def macro_sections(key: str):
+    """[v1.11] Generic macro subtab endpoint — ticker-less dispatch.
+
+    Same shape as the company /sections/{key} endpoint, minus the ticker:
+    macro:* adapters build market-wide payloads (BCB SGS + Focus). Key
+    format "macro:<sub>" (overview/juros/inflacao/cambio/atividade/
+    retorno_real/focus/curva). Unknown/malformed keys → 404 PT-BR plain
+    text (never reflected into HTML).
+    """
+    if not _ADAPTER_KEY_RE.match(key or "") or not adapter_has(key):
+        return PlainTextResponse(
+            f"Subtab '{key}' não encontrada.", status_code=404
+        )
+    data = dispatch(key)
     return JSONResponse(data)
 
 
@@ -360,6 +385,15 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_shareholders.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "insiders":
+        # [WebUI v1.10] Shell only — subtabs fetch through the generic
+        # /sections/insiders:<sub> endpoint (overview/transactions/
+        # by_role/monthly).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_insiders.html",
             {"ticker": ticker, "t": tr},
         )
     else:  # financials

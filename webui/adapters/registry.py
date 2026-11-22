@@ -61,7 +61,7 @@ _KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 
 class _Entry:
     __slots__ = ("key", "loader", "fn", "family", "label", "generic",
-                 "param_names", "takes_kwargs")
+                 "param_names", "takes_kwargs", "takes_ticker")
 
     def __init__(self, key: str, loader: Callable[[], AdapterFn],
                  family: str, label: str, generic: bool) -> None:
@@ -75,6 +75,10 @@ class _Entry:
         # whether the method takes **kwargs.
         self.param_names: frozenset[str] = frozenset()
         self.takes_kwargs = False
+        # [v1.11] Ticker-less adapters (macro): bound methods that take NO
+        # parameters are called without the positional ticker — macro is
+        # market-wide, there is no company to scope the query to.
+        self.takes_ticker = True
 
 
 _REGISTRY: dict[str, _Entry] = {}
@@ -149,7 +153,7 @@ def has(key: str) -> bool:
     return key in _REGISTRY
 
 
-def dispatch(key: str, ticker: str, **params: Any) -> dict[str, Any]:
+def dispatch(key: str, ticker: str = "", **params: Any) -> dict[str, Any]:
     """Run one adapter for a ticker. Never raises — exceptions become the
     canonical error payload (PT-BR, logged server-side with the traceback).
 
@@ -176,7 +180,12 @@ def dispatch(key: str, ticker: str, **params: Any) -> dict[str, Any]:
         call_params = ({k: v for k, v in params.items()
                         if entry.takes_kwargs or k in entry.param_names}
                        if params else {})
-        result = entry.fn(tk, **call_params)
+        # [v1.11] Ticker-less adapters (macro:*) dispatch without the
+        # positional ticker — a market-wide query has no company.
+        if entry.takes_ticker:
+            result = entry.fn(tk, **call_params)
+        else:
+            result = entry.fn(**call_params)
     except Exception as e:  # noqa: BLE001 — safety net, logged
         print(f"[webui-adapters] dispatch({key}, {tk}) failed: {e}\n"
               f"{traceback.format_exc()}", file=sys.stderr)
@@ -213,9 +222,16 @@ def _bind_fn(entry: "_Entry") -> None:
         entry.takes_kwargs = any(
             p.kind is p.VAR_KEYWORD for p in sig.parameters.values()
         )
+        # [v1.11] A bound method with zero parameters (macro adapters) is
+        # ticker-less; anything with parameters keeps the (ticker, ...)
+        # company contract. VAR_POSITIONAL (*args) also accepts a ticker.
+        entry.takes_ticker = bool(sig.parameters) or entry.takes_kwargs or any(
+            p.kind is p.VAR_POSITIONAL for p in sig.parameters.values()
+        )
     except (TypeError, ValueError):  # builtins/C-callables — ticker only
         entry.param_names = frozenset()
         entry.takes_kwargs = False
+        entry.takes_ticker = True
 
 
 def _bind(cls: type, method: str) -> Callable[[], AdapterFn]:
@@ -227,6 +243,7 @@ def _register_builtins() -> None:
     # top of this module — circular-import containment).
     from webui.services.company import CompanyService
     from webui.services.financials import FinancialsService
+    from webui.services.insiders import InsiderService
     from webui.services.options import OptionsService
     from webui.services.price import PriceService
     from webui.services.proventos import ProventosService
@@ -306,3 +323,42 @@ def _register_builtins() -> None:
              family="shareholders", label="Acionistas — Free Float")
     register("shareholders:equity", _bind(ShareholdersService, "equity"),
              family="shareholders", label="Acionistas — Estrutura Patrimonial")
+
+    # [v1.10] Insiders — the reorganized insider-trading dashboard
+    # (reference: skills/cvm/insider static report +
+    # PETR4_insider_dashboard.html). All four subtabs are FLAT payloads
+    # → generic renderer. Data: VLMO (vlmo.db) through the same query
+    # engine the skill's modes use (with the compra*/venda* prefix fix).
+    register("insiders:overview", _bind(InsiderService, "overview"),
+             family="insiders", label="Insiders — Visão Geral")
+    register("insiders:transactions",
+             _bind(InsiderService, "transactions"),
+             family="insiders", label="Insiders — Movimentações")
+    register("insiders:by_role", _bind(InsiderService, "by_role"),
+             family="insiders", label="Insiders — Por Cargo")
+    register("insiders:monthly", _bind(InsiderService, "monthly"),
+             family="insiders", label="Insiders — Mensal")
+
+    # [v1.11] Macro — the /webui/macro page (reference: skills/bcb/macro
+    # static report + macro_dashboard.html). Ticker-less FLAT payloads
+    # (market-wide — no company scope) served by the dedicated
+    # GET /api/webui/macro/sections/{key} endpoint. Data: BCB SGS
+    # (sgs.db) + BCB Focus (focus.db) through the same query engines the
+    # skill's modes use.
+    from webui.services.macro import MacroService
+    register("macro:overview", _bind(MacroService, "overview"),
+             family="macro", label="Macro — Visão Geral")
+    register("macro:juros", _bind(MacroService, "juros"),
+             family="macro", label="Macro — Juros")
+    register("macro:inflacao", _bind(MacroService, "inflacao"),
+             family="macro", label="Macro — Inflação")
+    register("macro:cambio", _bind(MacroService, "cambio"),
+             family="macro", label="Macro — Câmbio")
+    register("macro:atividade", _bind(MacroService, "atividade"),
+             family="macro", label="Macro — Atividade")
+    register("macro:retorno_real", _bind(MacroService, "retorno_real"),
+             family="macro", label="Macro — Retorno Real")
+    register("macro:focus", _bind(MacroService, "focus"),
+             family="macro", label="Macro — Expectativas Focus")
+    register("macro:curva", _bind(MacroService, "curva"),
+             family="macro", label="Macro — Curva de Juros")

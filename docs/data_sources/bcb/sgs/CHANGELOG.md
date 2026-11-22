@@ -2,6 +2,27 @@
 
 # 📋 SGS Changelog
 
+## v3.2 — 2026-11-22
+
+**Unit fix — SGS 4380 (PIB nominal trimestral) is R$ MILHÕES, not "R$ mil".**
+
+### The bug
+
+- The `SERIES_CATALOG` entry for code 4380 declared unit `"R$ mil"`, but the
+  series is IBGE's quarterly nominal PIB mirrored by BCB and its values are
+  in **R$ milhões** (e.g. `1165623.2` = R$ 1,17 tri per quarter). With the
+  wrong unit, the macro dashboard's PIB table read "R$ 1.165.623 mil"
+  (R$ 1,17 bi per quarter — absurd for a country's GDP).
+
+### Fixed
+
+- `catalog.py` — unit `"R$ mil"` → `"R$ milhões"` for 4380.
+- `docs/data_sources/bcb/SGS.md` — series table row updated.
+- `skills/bcb/macro/helpers.py` — `_UNIT_FORMAT` gains a `"R$ milhões"`
+  formatter (`R$ 1.165.623 milhões`, PT-BR thousands).
+- `skills/bcb/macro/modes/dashboard.py` — Atividade tab passes the new unit.
+- `skills/bcb/macro/report.py` — `_UNIT_COLOR` gains the new unit (blue).
+
 ## v3.1 — 2026-08-27
 
 **Incremental sync — pass start=MAX(ref_date) to fetcher (no gaps).**

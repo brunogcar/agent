@@ -17,7 +17,8 @@
     "dividends": "Proventos",
     "historical": "Historical",
     "options": "Options",
-    "shareholders": "Shareholders"
+    "shareholders": "Shareholders",
+    "insiders": "Insiders"
   },
   "sync": {
     "checking": "Checking sources...",

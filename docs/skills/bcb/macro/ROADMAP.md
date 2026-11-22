@@ -38,4 +38,4 @@
 
 ---
 
-*Last updated: 2026-09-05 (v1.5 — yield_curve shipped, Option B Focus).*
+*Last updated: 2026-11-22 (v1.6.1 — PIB unit fix, R$ milhões; the WebUI v1.11 macro page renders this skill's data layer).*

@@ -2,6 +2,22 @@
 
 # 📋 Macro Changelog
 
+## v1.6.1 — 2026-11-22
+
+**PIB unit fix — SGS 4380 is R$ MILHÕES (with the WebUI v1.11 macro page).**
+
+- The static dashboard's Atividade tab read "R$ 1.165.623 mil" for the
+  quarterly nominal PIB — the catalog unit for series 4380 said "R$ mil",
+  but the series is IBGE's quarterly nominal PIB mirrored by BCB in
+  **R$ milhões** (R$ 1,17 tri per quarter, not R$ 1,17 bi).
+- `helpers.py` `_UNIT_FORMAT` gains a `"R$ milhões"` formatter
+  (`R$ 1.165.623 milhões`, PT-BR thousands separator).
+- `modes/dashboard.py` Atividade tab + `report.py` `_UNIT_COLOR` carry the
+  new unit; `data_sources/bcb/sgs/catalog.py` + `docs/.../SGS.md` fixed at
+  the source (see the SGS v3.2 changelog).
+- Shipped together with the WebUI v1.11 macro page (`/webui/macro`), which
+  renders PIB as `R$ 1,17 tri` / `T3 2026` — see `docs/webui/CHANGELOG.md`.
+
 ## v1.6 — 2026-08-27
 
 **Sortable tables + DD/MM/YYYY dates + charts show all data + collapsible tables + monthly Juros/Retorno Real + merged Cambio + Focus dedup.**

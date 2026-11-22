@@ -6,7 +6,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.8 fix1)
+## ✅ Built (v1 → v1.11)
 
 ### Architecture
 - [x] Single-command entry point (`python webui.py`)
@@ -29,7 +29,7 @@
 ### Pages
 - [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
 - [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
-- [x] Macro (`/webui/macro`) — placeholder
+- [x] Macro (`/webui/macro`) — 8 lazy subtabs over BCB SGS + Focus (v1.11; was a placeholder since v1)
 - [x] Sync (`/webui/sync`) — freshness table + pre-flight panel (v1.7) + Sincronizar buttons + live SSE log
 - [x] Settings (`/webui/settings`) — theme + language dropdowns
 
@@ -42,7 +42,11 @@
 - [x] **[v1.7.2] Múltiplos parity** — Preço (P/L,LPA,P/VP,VPA + Múltiplos de Preço dual-axis histories | Múltiplos + Per-share tables | Comparativos), EBIT/EBITDA (EBIT + EBITDA history charts | tables), Menos Comuns (Preço/Balanço + Ativo/Preço histories + table); Tudo/10A/…/1M range bar on every history chart (client-side filter).
 - [x] **[v1.8] Opções** — the static options dashboard reorganized: Visão Geral (6 KPIs + dual-axis P/C Ratio + Últimas Observações | Resumo CALL vs PUT + OI walls), Cadeia (maturity pill bar + Calls | Puts side by side, top-30 by volume, sortable), Volume & Exercícios (merged), Vol. Implícita (smile + term-structure heatmap capped to ±25% spot × 8 expiries), Posições (CALL/PUT split, top-50 by OI, sortable). Same data layer as the skill's static report; maturity pills refetch server-side; generic table click-sort added to the shared renderer. **[fix1]** Datas no padrão brasileiro: dd/mm/yyyy nas tabelas (Data/Vencimento) e refs de texto; eixos + tooltips de TODOS os gráficos com labels ISO (P/C, Exercícios e os históricos 5A do Valuation) formatados pelo `renderValChart`; colunas de data ordenáveis cronologicamente (`_valSortKey` parseia dd/mm/yy[yy]).
 - [x] **[v1.9] Acionistas** — the static shareholders dashboard reorganized: Visão Geral (6 KPIs + evolução do free float + evolução de acionistas PF/PJ/Inst. empilhados + Mercado|Patrimônio blocks + top-5 preview), Posição Acionária (tabela completa com % ON \| % PN \| % Total lado a lado + CPF/CNPJ mascarado, sortable, cap 60 + doughnut top-5 com disambiguação de nomes duplicados e fatia de remanescente clamped), Free Float (7 KPIs + os dois charts de evolução + tabela de TODOS os períodos — o estático mostrava uma única linha), Estrutura Patrimonial (6 KPIs BPP + Composição bar + Evolução PL/Capital line + tabela de todos os exercícios em BRL compacto + Capital Social FRE). Same data layer as the skill's static report (fre.db + dfp.db); degradação por fonte; `renderValChart` honra cutout do server (doughnut).
+- [x] **[v1.10] Insiders** — the static insider dashboard reorganized (reference: `PETR4_insider_dashboard.html` / `skills/cvm/insider`; data: VLMO vlmo.db): Visão Geral (6 KPIs — Sentimento/Volume Comprado/Volume Vendido/Net Volume/Transações na janela de 24 meses + Última Movimentação + chart de volume líquido mensal com labels BR `jun/2026` + preview das 20 últimas movimentações), Movimentações (volume líquido acumulado em linha ACIMA da tabela, sobre a janela inteira — o estático desenhava sobre 10 pontos — + as 120 mais recentes, sortable), Por Cargo (agregado por Tipo_Cargo em TODO o histórico, Net Volume formatado em fmt_brl — o estático exibia floats crus — + barras comprado vs vendido + KPIs de maior comprador/vendedor líquido), Mensal (chart de net mensal verde/vermelho ACIMA da tabela + 24 meses com Mês em label BR `jun/2026`, sortable + KPIs de melhor/pior mês). **Engine fix**: `_query_by_role`/`_query_summary` do VLMO agora agregam por prefixo (`LIKE 'Compra%'/'Venda%'`) — o match exato perdia os "Compra à vista"/"Venda à vista" (o estático mostrava 2026-06 com R$ 0,00 apesar de ~R$ 1,4 bi em vendas na própria tabela de transações). **Sort fix (global)**: `_valSortKey` stripa o marcador de tooltip ⓘ da célula ("03/11/2026 ⓘ" não casava o regex de data ancorado → datas em sort lexicográfico, não cronológico) e parseia labels de mês BR (`jun/2026`), `YYYY-MM` e BRL compacto (`R$ 4,27 bi` → 4,27e9) cronologicamente/numericamente. Same data layer as the skill's modes; `_error` PT-BR aponta a fonte `vlmo`.
 - [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
+
+### Macro Page
+- [x] **[v1.11] Macro** — the static macro dashboard reorganized (reference: `macro_dashboard.html` / `skills/bcb/macro`; data: `sgs.db` + `focus.db`): the LANDING subtab carries only what is general (the static's "Indicadores Atuais" — 4 KPIs + the 12-series current table with computed IPCA/IGP-M acumulado 12m); every specific view is its own lazy subtab — Juros (Selic/CDI/Meta Copom in ONE % a.a. chart — the static shipped 5 near-duplicates — + TR + Selic acumulada + monthly tables ANNUALIZED), Inflação (IPCA vs IGP-M mensal + acumulado 12m, one chart per question), Câmbio (ptax diária + média mensal + máx/mín 12m), Atividade (PIB nominal trimestral em R$ tri `T3 2026` + salário mínimo), Retorno Real (Fisher — real line joined to a monthly IPCA step), Expectativas Focus (mediana ± faixa min/max, IPCA/Selic/Câmbio, dedupe por rodada), Curva de Juros (Selic Focus por ano — forward-looking, sem range bar). Ticker-less dispatch (`takes_ticker`) + generic `GET /api/webui/macro/sections/{key}`; same data layer as the skill's query engines; degradation per fonte (`sgs`/`focus`). **PIB unit fix**: SGS 4380 catalog "R$ mil" → "R$ milhões" (the static read "R$ 1.165.623 mil" — R$ 1,17 bi per quarter, absurd for a country's GDP).
 
 ### Features
 - [x] Ticker search (HTMX debounced keyup, wildcard-escaped, relevance-ranked since v1.5)
@@ -71,8 +75,8 @@
 ### v1.8 — Feature wave (built on the v1.7 adapter registry)
 
 #### Company Tabs
-- [x] **Options tab** — shipped (see Built). The recipe held: service + register() + shell partial + loader, zero api.py endpoint edits (only the maturity passthrough param).
-- [ ] **Insider tab**
+- [x] **Options tab** — shipped v1.8 (see Built). The recipe held: service + register() + shell partial + loader, zero api.py endpoint edits (only the maturity passthrough param).
+- [x] **Insider tab** — shipped v1.10 (see Built).
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
 
 #### Screener
@@ -80,10 +84,9 @@
 - [ ] **Filter + sort** — filter by P/L range, DY range, market cap range. Sort by any column.
 - [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
 
-#### Macro Page
-- [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.
-- [ ] **Focus Bulletin** — market expectations (median, high, low) for IPCA, PIB, Selic, exchange rate. Table + chart.
-- [ ] **Macro dashboard** — ribbon of key indicators on the dashboard page.
+#### Macro Page (v1.11 shipped the BCB layer — see Built)
+- [ ] **ddm-specific indicators** — next phase per the v1.11 plan: poupança, acoes, fluxo, index, inflation, juros, dividends dashboards (ddm data sources) as new macro subtabs.
+- [ ] **Macro dashboard ribbon** — ribbon of key indicators on the dashboard page.
 
 ### Polish
 - [ ] **i18n honesty pass** — externalize app.js strings via a `window.I18N` dump OR document pt-BR as the content language and keep en-US for the shell.
@@ -94,17 +97,8 @@
 
 ## 🔮 Planned (v2)
 
-### Macro Page
-- [ ] **BCB SGS indicators** — Selic, IPCA, CDI, PIB, exchange rates. Time series charts.
-- [ ] **Focus Bulletin** — market expectations (median, high, low) for IPCA, PIB, Selic, exchange rate. Table + chart.
-- [ ] **Macro dashboard** — ribbon of key indicators on the dashboard page.
-- [ ] **acoes dashboard**
-- [ ] **dividends dashboard**
-- [ ] **fluxo dashboard**
-- [ ] **index dashboard**
-- [ ] **inflation dashboard**
-- [ ] **juros dashboard**
-- [ ] **poupanca dashboard**
+### Macro Page — ddm phase
+- [ ] **ddm dashboards** — the ddm-specific indicators become macro subtabs (same recipe as the v1.11 BCB layer): acoes, dividends, fluxo, index, inflation, juros, poupanca.
 - [ ] **PETR4_index (indices ibov) dashboard**
 
 ## 🔮 Planned (v3)

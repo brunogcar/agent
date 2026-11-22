@@ -121,7 +121,7 @@ def _build_atividade_sections() -> list[dict]:
     sections = []
 
     for code, label, unit, days in [
-        (PIB_NOMINAL, "PIB nominal trimestral", "R$ mil", 3650),
+        (PIB_NOMINAL, "PIB nominal trimestral", "R$ milhões", 3650),
         (SALARIO_MIN, "Salario minimo (mensal)", "R$", 3650),
     ]:
         res = query_series(code=code, days=days)
