@@ -49,8 +49,15 @@
   empresas (per-ticker aggregation) + calendario (per-day payments,
   pago vs a pagar)). The family DISPLAY name is "Proventos"; the key
   names the data source (the company page owns proventos:*).
+[v1.19] GET /api/webui/home — the Painel landing payload (BCB SGS KPI
+  row + 5 ranked ticker cards over b3-index + cotahist; see
+  webui/services/home.py). The dashboard's sync ribbon is GONE from
+  the top — the page bottom now carries the compact /api/webui/sync/box
+  (routes/sync.py) and the full table stays on the Sincronização page.
 
 Routes:
+  GET /api/webui/home                       → Painel landing payload (KPI row
+        + 5 ticker cards) [v1.19]
   GET /api/webui/search?q=...               → ticker search (HTML fragment)
   GET /api/webui/company/{ticker}/header    → identity card (HTML fragment)
   GET /api/webui/company/{ticker}/sections/{key} → ANY registered subtab
@@ -96,6 +103,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from webui.adapters.registry import dispatch, has as adapter_has
 from webui.i18n import negotiate_locale, t
 from webui.services.company import CompanyService
+from webui.services.home import HomeService
 from webui.services.price import PriceService
 from webui.services.financials import FinancialsService
 from webui.services.valuation import ValuationService
@@ -113,6 +121,7 @@ def _svc(cls):
 
 
 _company_service = _svc(CompanyService)
+_home_service = _svc(HomeService)
 _price_service = _svc(PriceService)
 _financials_service = _svc(FinancialsService)
 _valuation_service = _svc(ValuationService)
@@ -159,6 +168,20 @@ def _locale(request: Request) -> str:
 def _tr(request: Request):
     locale = _locale(request)
     return lambda key, **fmt: t(key, locale=locale, **fmt)
+
+
+@router.get("/home")
+def home_overview():
+    """[v1.19] Painel landing page — one payload, one screen.
+
+    Macro KPI row (Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL
+    ptax — BCB SGS) + 5 ranked ticker cards (Top 10 IBOV / SMLL by weight
+    with quote enrichment; Mais Negócios / Maiores Altas / Maiores Baixas
+    from the latest cotahist session). Section-scoped degradation: each
+    part fails alone with a PT-BR message naming its sync source.
+    Rendered by loadHomeData() in app.js.
+    """
+    return JSONResponse(_home_service.overview())
 
 
 @router.get("/search", response_class=HTMLResponse)

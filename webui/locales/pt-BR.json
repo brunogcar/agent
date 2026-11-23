@@ -8,6 +8,11 @@
     "sync": "Sincronização",
     "settings": "Configurações"
   },
+  "dashboard": {
+    "subtitle": "O Brasil em uma tela — economia, índices e o pregão da B3",
+    "loading_kpis": "Carregando indicadores…",
+    "loading_cards": "Carregando o mercado…"
+  },
   "company": {
     "search_placeholder": "Buscar ticker (ex: PETR4)...",
     "search_results": "Resultados",

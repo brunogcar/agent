@@ -34,6 +34,24 @@ All HTML routes accept:
 
 Return JSON. Used by Chart.js and programmatic clients.
 
+### `GET /api/webui/home`
+
+[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + 5 ranked ticker cards (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19 fix 1] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
+
+```json
+{
+  "status": "ok",
+  "kpis": [{"label": "Selic (a.a.)", "value": "13,65%", "tooltip": "…"}],
+  "cards": [
+    {"key": "ibov", "title": "IBOV · Top 10", "subtitle": "Maiores pesos — carteira de 05/08/2026",
+     "error": null,
+     "items": [{"ticker": "VALE3", "name": "VALE", "value": "R$ 34,50",
+                "variation": "+1,23%", "extra": {"label": "peso", "text": "10,886%"}}]}
+  ]
+}
+```
+`kpis_note` (optional) carries the SGS degradation message; `variation` is `null` without a previous-session close; `extra` is `null` on the altas/baixas cards. Rendered by `loadHomeData()` (app.js).
+
 ### `GET /api/webui/company/{ticker}/sections/{key}`
 
 [v1.7] **Generic subtab endpoint** — dispatches ANY adapter registered in `webui/adapters/registry.py`. This is the canonical endpoint for new tabs; the per-family endpoints below are stable aliases over the same service methods.
@@ -180,7 +198,7 @@ Tab content — returns the HTML fragment for a specific company tab.
 
 ### `GET /api/webui/sync/status`
 
-Returns freshness status for all data sources — HTML partial (Sync page table + Dashboard ribbon). `/api/webui/sync/status.json` returns the JSON shape:
+Returns freshness status for all data sources — HTML partial (the Sync page table). `/api/webui/sync/status.json` returns the JSON shape:
 ```json
 {
   "dfp": { "last_sync": "2026-09-15T10:30:00", "stale": false, "status": "fresh" },
@@ -188,6 +206,10 @@ Returns freshness status for all data sources — HTML partial (Sync page table 
   ...
 }
 ```
+
+### `GET /api/webui/sync/box`
+
+[v1.19] The compact sync status box for the Painel's bottom slot — a collapsed `<details>` whose summary carries the overall count ("14 de 20 atualizadas · 6 desatualizados"), with the same freshness table + a note linking to the Sincronização page inside. Same 30s refresh cadence the old dashboard ribbon used.
 
 ### `POST /api/webui/sync/all`
 

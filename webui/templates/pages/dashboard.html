@@ -3,22 +3,34 @@
 {% block content %}
 <div class="page-dashboard">
   <h1>{{ t("nav.dashboard") }}</h1>
-  <p class="subtitle">Brazilian Financial Data</p>
+  <p class="subtitle">{{ t("dashboard.subtitle") }}</p>
 
-  {# Sync status ribbon — [WebUI v1.5] HTML partial (was raw JSON painted
-     into the page). Scrollable so the full source table fits. #}
-  <div class="sync-ribbon"
-       hx-get="/api/webui/sync/status"
-       hx-trigger="load, every 30s"
-       hx-target="this"
-       hx-swap="innerHTML">
-    <span class="loading">{{ t("sync.checking") }}</span>
+  {# [v1.19] THE LANDING REDESIGN — the sync table that used to open this
+     page is GONE (the full panel lives on the Sincronização page; a
+     compact collapsed box now sits at the VERY BOTTOM), and so are the
+     three hardcoded company suggestions. The page answers "where does
+     Brazil stand?" instead: a BCB SGS KPI row + 5 ranked ticker cards,
+     every row a link into the company page.
+
+     KPI row — Selic (a.a.), IPCA/IGP-M (acumulado 12m), USD/BRL ptax,
+     painted by loadHomeData() from GET /api/webui/home. #}
+  <div id="home-kpis" class="home-kpis">
+    <span class="loading">{{ t("dashboard.loading_kpis") }}</span>
+  </div>
+
+  {# 5 ticker cards — Top 10 IBOV / SMLL (maiores pesos, quote-enriched),
+     Mais Negócios, Maiores Altas, Maiores Baixas (latest cotahist
+     session). Same payload, same loader. #}
+  <div id="home-cards" class="home-grid">
+    <span class="loading">{{ t("dashboard.loading_cards") }}</span>
   </div>
 
   {# [v1.7] Pre-flight banner — one-line system diagnosis (DBs, schema,
      WAL, vendor assets, adapters, config) linking to the Sync page for
      the full panel. Loads once per view — checks don't change on a 30s
-     cadence and each run re-probes every DB. #}
+     cadence and each run re-probes every DB. [v1.19] moved from the top
+     to the bottom — diagnostics no longer lead the landing page; they
+     close it, right above the sync box. #}
   <div class="preflight-banner-slot"
        hx-get="/api/webui/preflight/banner"
        hx-trigger="load"
@@ -27,20 +39,17 @@
     <span class="loading">Diagnóstico…</span>
   </div>
 
-  {# Quick links #}
-  <div class="quick-links">
-    <a href="/webui/company/PETR4" class="quick-card">
-      <span class="ticker">PETR4</span>
-      <span class="name">Petrobras</span>
-    </a>
-    <a href="/webui/company/VALE3" class="quick-card">
-      <span class="ticker">VALE3</span>
-      <span class="name">Vale</span>
-    </a>
-    <a href="/webui/company/ITUB4" class="quick-card">
-      <span class="ticker">ITUB4</span>
-      <span class="name">Itaú Unibanco</span>
-    </a>
+  {# [v1.19] Sync status — the VERY BOTTOM slot. The old top ribbon
+     rendered the full freshness table here; now a compact collapsed
+     <details> (overall count in the summary, the table inside) refreshes
+     on the same 30s cadence. The full panel with the live SSE log stays
+     on the Sincronização page — the note inside the box links there. #}
+  <div class="sync-box-slot"
+       hx-get="/api/webui/sync/box"
+       hx-trigger="load, every 30s"
+       hx-target="this"
+       hx-swap="innerHTML">
+    <span class="loading">{{ t("sync.checking") }}</span>
   </div>
 </div>
 {% endblock %}

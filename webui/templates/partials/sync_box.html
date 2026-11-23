@@ -1,0 +1,27 @@
+{# webui/templates/partials/sync_box.html — compact sync status box [v1.19].
+
+Rendered by GET /api/webui/sync/box for the Painel's BOTTOM slot (the
+dashboard used to render the full freshness table at the top — v1.19
+moved diagnostics to the page bottom; the full panel with the SSE log
+lives on the Sincronização page). A collapsed <details>: the summary
+line carries the overall count ("X de Y fontes atualizadas"); expanding
+reveals the same freshness table the Sync page renders (included from
+partials/sync_status.html — same `rows` context contract) plus the link
+to the full panel. Button clicks keep flowing through the delegated
+listener in app.js (initSyncButtons).
+#}
+<details class="sync-box{% if stale_count == 0 %} sync-box-ok{% endif %}">
+  <summary>
+    <span class="sync-box-title">{{ t("sync.sources") }}</span>
+    <span class="badge {{ 'badge-stale' if stale_count else 'badge-fresh' }}">
+      {{ fresh_count }} de {{ total }} atualizada{{ "" if fresh_count == 1 else "s" }}{% if stale_count %} · {{ stale_count }} desatualizada{{ "" if stale_count == 1 else "s" }}{% endif %}
+    </span>
+  </summary>
+  <div class="sync-box-body">
+    {% include "partials/sync_status.html" %}
+    <p class="muted sync-box-note">
+      O painel completo — log ao vivo, "Sincronizar tudo" e histórico —
+      está na página <a href="/webui/sync">{{ t("nav.sync") }}</a>.
+    </p>
+  </div>
+</details>

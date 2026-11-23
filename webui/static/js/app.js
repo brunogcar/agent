@@ -1713,13 +1713,35 @@ function renderFinStmtChartDef(canvas, def, labels) {
   else yTicks.callback = function(v) { return 'R$ ' + Number(v).toFixed(0) + ' mi'; };
   var y = { stacked: !!def.stacked, grid: { color: th.grid }, ticks: yTicks, title: { display: true, text: def.yTitle } };
   if (def.pctStacked) { y.min = 0; y.max = 100; y.ticks.stepSize = 25; }
+  // [v1.19 fix 1] Quarterly labels ("4T2024") are too wide for the chart
+  // cards, so Chart.js autoSkip silently thinned them to every OTHER label —
+  // which landed on the 4T/2T positions only and read as "charts display
+  // data just for 4T and 2T" (the bars were all there; the AXIS only named
+  // those quarters — the table below, horizontally scrollable, showed every
+  // column, which is why only the charts looked wrong). Annual "2016" labels
+  // always fit, so only Trimestral was affected. Fix: abbreviate the tick
+  // text ("4T2024" → "4T24") and rotate instead of skipping — every quarter
+  // stays labeled.
+  var xTicks = { color: th.text, maxTicksLimit: 14 };
+  if (labels.length && /^\dT\d{4}$/.test(String(labels[0]))) {
+    xTicks = {
+      color: th.text,
+      autoSkip: false,
+      minRotation: 0,
+      maxRotation: 90,
+      callback: function(v, idx) {
+        var m = /^(\dT)(\d{2})(\d{2})$/.exec(String(labels[idx]));
+        return m ? m[1] + m[3] : String(labels[idx]);
+      }
+    };
+  }
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: def.type === 'line' ? 'line' : 'bar',
     data: { labels: chartLabels, datasets: datasets },
     options: { responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       scales: {
-        x: { stacked: !!def.stacked, grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 14 } },
+        x: { stacked: !!def.stacked, grid: { color: th.grid }, ticks: xTicks },
         y: y
       },
       plugins: { legend: { display: true, position: 'top' } }
@@ -2949,6 +2971,109 @@ window.loadJurosSubtab = mercadoLoader('juros'); // [v1.16] taxas de juros
 window.loadAcoesSubtab = mercadoLoader('acoes'); // [v1.17] ações B3 + evolução
 window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos (BDR split)
 
+// ── Painel (landing page) [WebUI v1.19] ─────────────────────────────
+// The dashboard's own loader — NOT the generic subtab recipe: the landing
+// page is a launcher, not a report. GET /api/webui/home returns the KPI row
+// (rendered through the SHARED valKpisHtml — same cards as every other
+// page) + 5 ranked ticker CARDS whose rows are <a> links into the company
+// pages (ticker · name · value · colored variation · context extra).
+// Server ships pre-formatted PT-BR strings; the client only colorizes
+// (leading '+' → val-pos, '-' → val-neg — the variation contract carries
+// the sign explicitly, null → '—').
+//
+// [v1.19 fix 1] SINGLE-FLIGHT: the old guard set _loaded only AFTER the
+// fetch resolved, so the direct boot + the sync-box/banner afterSettle
+// triggers all passed the check while the first request was still in
+// flight (3 concurrent /api/webui/home calls per page load) — and the 30s
+// sync-box refresh kept firing new ones, so a slow snapshot compounded
+// forever. The guard is keyed to the PANE ELEMENT (a fresh DOM node per
+// page load — the sidebar is plain <a> navigation, so every load gets a
+// new kpiBox): all triggers within one page see the same node and no-op,
+// a re-entered pane (future soft swap) gets a fresh request. A failed
+// fetch resets it so the next trigger can retry.
+var _homeReq = null;
+window.loadHomeData = function() {
+  var kpiBox = document.getElementById('home-kpis');
+  var cardsBox = document.getElementById('home-cards');
+  if (!kpiBox && !cardsBox) return;
+  if (_homeReq && _homeReq.box === kpiBox) return;   // this pane: in flight or done
+  var req = { box: kpiBox, done: false };
+  _homeReq = req;
+  fetch('/api/webui/home?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      req.done = true;
+      renderHome(kpiBox, cardsBox, data);
+    })
+    .catch(function(err) {
+      if (_homeReq === req) _homeReq = null;   // allow a later trigger to retry
+      var msg = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+      if (kpiBox) kpiBox.innerHTML = msg;
+      if (cardsBox) cardsBox.innerHTML = msg;
+    });
+};
+
+function homeTickerRow(item) {
+  var v = item.variation;
+  var vHtml;
+  if (v === null || v === undefined) {
+    vHtml = '<span class="muted">—</span>';
+  } else {
+    var cls = v.charAt(0) === '-' ? 'val-neg'
+            : (v.charAt(0) === '+' ? 'val-pos' : 'val-zero');
+    vHtml = '<span class="' + cls + '">' + valEsc(v) + '</span>';
+  }
+  var extra = item.extra
+    ? '<span class="tk-extra" title="' + valEsc(item.extra.label || '') + '">' +
+      valEsc(item.extra.text) + '</span>'
+    : '';
+  return '<a class="ticker-row' + (item.extra ? ' has-extra' : '') +
+         '" href="/webui/company/' +
+         encodeURIComponent(item.ticker) + '">' +
+    '<span class="tk">' + valEsc(item.ticker) + '</span>' +
+    '<span class="tk-name" title="' + valEsc(item.name) + '">' + valEsc(item.name) + '</span>' +
+    '<span class="tk-val">' + valEsc(item.value) + '</span>' +
+    '<span class="tk-var">' + vHtml + '</span>' +
+    extra +
+    '</a>';
+}
+
+function homeCard(card) {
+  var h = '<div class="home-card">';
+  h += '<div class="home-card-head"><div class="home-card-title">' +
+       valEsc(card.title) + '</div>';
+  if (card.subtitle) {
+    h += '<div class="home-card-sub">' + valEsc(card.subtitle) + '</div>';
+  }
+  h += '</div>';
+  if (card.error) {
+    h += '<div class="home-card-error">' + valEsc(card.error) + '</div>';
+  } else if (card.items && card.items.length) {
+    h += card.items.map(homeTickerRow).join('');
+  } else {
+    h += '<div class="muted home-card-empty">Sem dados</div>';
+  }
+  return h + '</div>';
+}
+
+function renderHome(kpiBox, cardsBox, data) {
+  if (data._error) {
+    if (kpiBox) kpiBox.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    if (cardsBox) cardsBox.innerHTML = '';
+    return;
+  }
+  if (kpiBox) {
+    kpiBox.innerHTML =
+      (data.kpis && data.kpis.length ? valKpisHtml(data.kpis) : '') +
+      (data.kpis_note
+        ? '<div class="home-note">' + valEsc(data.kpis_note) + '</div>'
+        : '');
+  }
+  if (cardsBox) {
+    cardsBox.innerHTML = (data.cards || []).map(homeCard).join('');
+  }
+}
+
 // ── Generic table click-sort [WebUI v1.8] ─────────────────────────────────
 // Server table sections can carry `sortable: true` (extra key the contract
 // ignores — same mechanism as pair_with_next). Those tables render their
@@ -3087,6 +3212,27 @@ function initApp() {
     }
   });
 
+  // [v1.19] The Painel's bottom sync box refreshes every 30s (freshness
+  // rows + fresh "Sincronizar" buttons after a click) — but hx-swap
+  // replaces the whole <details>, collapsing an expanded box every cycle.
+  // Remember the open state across swaps (the box starts collapsed; this
+  // only preserves what the user opened).
+  document.body.addEventListener('htmx:beforeSwap', function(evt) {
+    var tgt = evt.target;
+    if (tgt && tgt.classList && tgt.classList.contains('sync-box-slot')) {
+      var box = tgt.querySelector('.sync-box');
+      tgt._syncBoxOpen = !!(box && box.open);
+    }
+  });
+  document.body.addEventListener('htmx:afterSwap', function(evt) {
+    var tgt = evt.target;
+    if (tgt && tgt.classList && tgt.classList.contains('sync-box-slot') &&
+        tgt._syncBoxOpen) {
+      var box = tgt.querySelector('.sync-box');
+      if (box) box.open = true;
+    }
+  });
+
   document.body.addEventListener('htmx:afterSettle', function() {
     // Candlestick (Visão Geral tab)
     var canvas = document.getElementById('price-chart');
@@ -3114,6 +3260,9 @@ function initApp() {
     // [v1.12] Mercado — first subtab of the Focus family (same no-op
     // guard — only the /webui/mercado page carries the pane).
     loadFocusSubtab('overview');
+    // [v1.19] Painel — the landing page's KPI row + ticker cards (no-op
+    // everywhere else: only /webui carries the panes).
+    loadHomeData();
     // [v1.13/v1.14] Fluxo/Índices — NOT booted eagerly (fluxo precedent:
     // only the first family boots; the others load on family-pill click,
     // with the data-lazy hover prefetch hiding the latency).
@@ -3134,6 +3283,9 @@ function initApp() {
   loadMacroSubtab('overview');
   // [v1.12] Mercado — same for /webui/mercado (Focus family first).
   loadFocusSubtab('overview');
+  // [v1.19] Painel — direct full-page load (the /webui landing is
+  // server-rendered; the loader no-ops on every other page).
+  loadHomeData();
   // [v1.13/v1.14] Fluxo/Índices boot on family-pill click only (the
   // mercadoLoader pane guard no-ops them everywhere else).
   // [v1.15] Inflação — same.

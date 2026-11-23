@@ -14,6 +14,11 @@ works through proxies, no protocol library.
     the already-running dedupe case).
   - /stream sends an explicit retry: 3000 so the reconnect interval is
     visible in the contract.
+
+[WebUI v1.19] /box — the COMPACT status box for the Painel's bottom slot
+  (the dashboard no longer renders the full table at the top; the Sincronização
+  page keeps the full panel). Same freshness pass, same table partial
+  inside a collapsed <details> whose summary carries the overall count.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from webui.i18n import negotiate_locale, t
 from webui.services.sync import SyncService, syncable_sources
 from webui.templating import templates
 
@@ -65,6 +71,34 @@ async def sync_status(request: Request):
         request,
         "partials/sync_status.html",
         {"rows": _status_rows()},
+    )
+
+
+@router.get("/box", response_class=HTMLResponse)
+async def sync_box(request: Request):
+    """[v1.19] Compact sync status box — the Painel's bottom slot.
+
+    Collapsed <details>: the summary line carries the overall freshness
+    count; expanding reveals the same freshness table partial plus the
+    link to the Sincronização page (the full panel with the live SSE log
+    stays there). Same 30s refresh cadence the old dashboard ribbon used.
+    """
+    locale = negotiate_locale(
+        query_lang=request.query_params.get("lang"),
+        cookie_lang=request.cookies.get("webui_locale"),
+        accept_header=request.headers.get("accept-language", ""),
+    )
+    rows = _status_rows()
+    return templates.TemplateResponse(
+        request,
+        "partials/sync_box.html",
+        {
+            "rows": rows,
+            "total": len(rows),
+            "fresh_count": sum(1 for r in rows if not r["stale"]),
+            "stale_count": sum(1 for r in rows if r["stale"]),
+            "t": lambda key, **fmt: t(key, locale=locale, **fmt),
+        },
     )
 
 

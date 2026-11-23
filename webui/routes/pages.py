@@ -63,7 +63,16 @@ def _ctx(request: Request, **extra) -> dict:
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    """Home dashboard — market overview, no ticker required."""
+    """Home dashboard — market overview, no ticker required.
+
+    [v1.19] The landing redesign: the sync table that used to open the
+    page and the hardcoded company suggestions are GONE — the page now
+    summarizes Brazil in one screen (BCB SGS KPI row + 5 ranked ticker
+    cards, every row a link into the company page; see
+    webui/services/home.py). Diagnostics moved to the very bottom: the
+    pre-flight banner + a compact collapsed sync box (the full panel
+    stays on the Sync page).
+    """
     return templates.TemplateResponse(
         request, "pages/dashboard.html", _ctx(request, active_tab="dashboard"),
     )

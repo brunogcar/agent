@@ -27,7 +27,7 @@
 - [x] **[v1.7.1] ITR snapshot re-key** — quarterly balanços fixed at the DATA layer: the sync engine re-keys each filing's BPA/BPP rows into the quarter bucket reported by its own flow rows (fiscal-year filers included; Dec filings stay 12); existing DBs migrate via `python -m tools.migrations.rekey_itr_snapshots --apply` (batched UPDATE + WAL checkpoint + engine-cache wipe — fingerprints don't change with a re-key). `PRAGMA user_version=2` is the marker; the pre-flight itr.db row warns "re-key pendente" until it runs. Zero query-layer changes — every consumer (`_snap`, bpa/bpp engines, TTM balances, Altman Z, liquidity ratios, Valuation > Fundamentos) was already written for the correct semantics and heals as soon as the data is re-keyed.
 
 ### Pages
-- [x] Dashboard (`/webui/`) — market overview, quick links, sync ribbon (HTML since v1.5)
+- [x] Dashboard (`/webui/`) — **[v1.19] THE LANDING REDESIGN** — the Brazil one-screen summary: BCB SGS KPI row (Selic a.a. · IPCA 12m · IGP-M 12m · USD/BRL ptax — macro.py's numerics) + 5 ranked ticker cards, every row a company-page link (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas/Baixas — new `market_snapshot()` in the cotahist query engine, lote padrão spot only, ≥100-trade liquidity gate on variations); section-scoped degradation per source. The sync table left the top — a compact collapsed box (GET /api/webui/sync/box) closes the page below the pre-flight banner; the full panel stays on the Sync page. **[v1.19 fix 1]** the slow painel fixed at three layers: market_snapshot() windowed to the last 10 sessions (was: whole-history scan — minutes on a multi-year cotahist.db), the payload memoized 60s single-flight server-side, loadHomeData() single-flight client-side (the old _loaded-after-fetch guard let boot + afterSettle triple-fire and the 30s box refresh re-fire forever); and the Demonstrações Trimestral charts "showing only 4T and 2T" — Chart.js autoSkip thinned the wide "4T2024" labels to every other tick (which lands on 4T/2T); now abbreviated "4T24" + rotation instead of skipping. (Was: market overview, quick links, sync ribbon — HTML since v1.5.)
 - [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
 - [x] Macro (`/webui/macro`) — 8 lazy subtabs over BCB SGS + Focus (v1.11; was a placeholder since v1)
 - [x] Mercado (`/webui/mercado`) — the DDM dashboards' home: family pills + subtabs, Focus family (v1.12) + Fluxo family (v1.13) + Índices family (v1.14) + Inflação family (v1.15) + Juros family (v1.16)
@@ -81,6 +81,9 @@
 ---
 
 ## 🔄 Next Up
+
+### v1.20 — System log side tab (user request, deferred from the v1.19 fix)
+- [ ] **System log as a WebUI-wide side tab** — a button with an icon in the top bar (next to theme and language) that slides open a side panel showing the live system log — what is going on inside the WebUI (sync jobs, engine calls, errors), the terminal tail made visible in-app. Needs a log ring buffer + an endpoint (SSE, the Sync page's live log precedent) + the panel shell.
 
 ### v1.8 — Feature wave (built on the v1.7 adapter registry)
 

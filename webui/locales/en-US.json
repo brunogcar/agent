@@ -8,6 +8,11 @@
     "sync": "Sync",
     "settings": "Settings"
   },
+  "dashboard": {
+    "subtitle": "Brazil at a glance — economy, indices and the B3 session",
+    "loading_kpis": "Loading indicators…",
+    "loading_cards": "Loading market…"
+  },
   "company": {
     "search_placeholder": "Search ticker (e.g. PETR4)...",
     "search_results": "Results",

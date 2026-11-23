@@ -206,28 +206,136 @@ a:hover { text-decoration: underline; }
 .content { flex: 1; padding: var(--space-5); overflow-y: auto; }
 .loading { color: var(--color-text-sec); font-style: italic; padding: var(--space-3); }
 
-/* ── Dashboard page ── */
+/* ── Dashboard page (Painel landing) [v1.19] ── */
 .page-dashboard h1 { font-size: 24px; margin-bottom: var(--space-1); }
 .page-dashboard .subtitle { color: var(--color-text-sec); margin-bottom: var(--space-5); }
-.sync-ribbon {
-  padding: var(--space-3);
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-5);
+
+/* KPI row (BCB SGS — Selic/IPCA/IGP-M/USD) + degradation note */
+.home-kpis { margin-bottom: var(--space-5); }
+.home-kpis .kpi-grid { margin-bottom: 0; }
+.home-note {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  color: var(--color-warning);
 }
-.quick-links { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3); }
-.quick-card {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-4);
+
+/* 5 ranked ticker cards — the landing page is a launcher: every row is a
+   link into the company page (ticker · name · value · variação · extra). */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+  margin-bottom: var(--space-6);
+}
+.home-card {
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.home-card-head {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.home-card-title { font-size: 13px; font-weight: 700; }
+.home-card-sub {
+  font-size: 11px;
+  color: var(--color-text-sec);
+  margin-top: 2px;
+}
+.home-card-error {
+  padding: var(--space-4);
+  font-size: 12px;
+  color: var(--color-warning);
+}
+.home-card-empty { padding: var(--space-4); font-size: 12px; }
+
+/* One ticker row — grid keeps the value/variation columns aligned down
+   the card (mono figures read as a table without being one). */
+.ticker-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 72px 62px;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 7px var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
   text-decoration: none;
 }
-.quick-card:hover { border-color: var(--color-brand); text-decoration: none; }
-.quick-card .ticker { font-weight: 700; font-family: var(--font-mono); color: var(--color-text); }
-.quick-card .name { color: var(--color-text-sec); font-size: 12px; }
+.ticker-row:last-child { border-bottom: none; }
+.ticker-row:hover { background: var(--color-bg-sec); text-decoration: none; }
+.ticker-row.has-extra { grid-template-columns: 56px minmax(0, 1fr) 64px 72px 62px; }
+.ticker-row .tk {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+}
+.ticker-row .tk-name {
+  font-size: 12px;
+  color: var(--color-text-sec);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticker-row .tk-extra {
+  font-size: 11px;
+  color: var(--color-text-sec);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ticker-row .tk-val,
+.ticker-row .tk-var {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Compact sync status box — the Painel's VERY BOTTOM slot (collapsed
+   <details>: summary carries the overall count, the table lives inside). */
+.sync-box-slot { margin-top: var(--space-5); }
+.sync-box {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.sync-box summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.sync-box summary::-webkit-details-marker { display: none; }
+.sync-box summary::after { content: '▸'; color: var(--color-text-sec); }
+.sync-box[open] summary::after { content: '▾'; }
+.sync-box summary:hover { color: var(--color-brand); }
+.sync-box-title { font-size: 13px; font-weight: 700; }
+.sync-box-body {
+  padding: 0 var(--space-4) var(--space-3);
+  max-height: 420px;
+  overflow-y: auto;
+}
+.sync-box-note {
+  margin: var(--space-3) 0 0;
+  font-size: 12px;
+}
+
+/* Phone — one card per row, tighter columns, the context extra hides
+   (ticker + name + value + variation carry the essentials). */
+@media (max-width: 520px) {
+  .home-grid { grid-template-columns: 1fr; }
+  .ticker-row,
+  .ticker-row.has-extra { grid-template-columns: 48px minmax(0, 1fr) 68px 54px; }
+  .ticker-row .tk-extra { display: none; }
+}
 
 /* ── Company page ── */
 .page-company { display: flex; flex-direction: column; gap: var(--space-4); }
@@ -795,7 +903,8 @@ td[title], .kpi-card[title] { cursor: help; }
 
 /* [WebUI v1.5] Dashboard ribbon: cap the freshness table height (21 sources
    would stretch the dashboard) — scrolls instead. */
-.sync-ribbon { max-height: 420px; overflow-y: auto; }
+/* [v1.19] the old dashboard sync-ribbon scroll cap moved into
+   .sync-box-body above */
 
 /* ════════════════════════════════════════════════════════════════════════
    [WebUI v1.6] Proventos tab — type badges, filter pills + year select,

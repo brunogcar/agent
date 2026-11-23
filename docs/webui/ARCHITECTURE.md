@@ -91,6 +91,7 @@ agent/
 | `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch |
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
+| `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
 | `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
 | `tools/migrations/rekey_itr_snapshots.py` | [v1.7.1] One-time ITR snapshot re-key for DBs synced before v1.7.1 (dry-run + `--apply`: batched rowid UPDATEs, WAL checkpoint, engine-cache wipe) |
