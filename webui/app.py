@@ -22,6 +22,20 @@ continue to use server.py (MCP stdio) separately.
     survives uvicorn's factory + --reload subprocess boundaries).
   - The lifespan uses the routes' SyncService singleton (was a 3rd
     instance) and its freshness check is skipped when --no-sync is set.
+
+[v1.20] THE SYSTEM SURFACE:
+  - RequestLoggingMiddleware (pure ASGI — SSE-safe) feeds every request
+    (method/path/status/duration) into the system log ring buffer; a
+    RingBufferHandler on the root logger captures WARNING+ Python
+    records (unhandled ASGI exceptions included). Both live in
+    webui/services/syslog.py with the 📜 drawer's data.
+  - webui/routes/system.py mounts /api/webui/logs(+/stream) and
+    /api/webui/settings(+/PUT) — the schema-driven settings store
+    (webui/services/settings.py, memory_db/webui_settings.json).
+  - The lifespan now ALSO: logs its steps to the system log, honors
+    sync.auto_on_startup (sync the stale sources at boot — the
+    "Sincronizar tudo" semantics), and starts the periodic auto-sync
+    scheduler (sync.schedule_hours; 0 = off) unless --no-sync.
 """
 from __future__ import annotations
 
@@ -39,6 +53,17 @@ from fastapi.staticfiles import StaticFiles
 
 def _allow_lan() -> bool:
     return os.environ.get("WEBUI_ALLOW_LAN", "") == "1"
+
+
+def _syslog():
+    """Lazy import — avoids import cycles during package init."""
+    from webui.services.syslog import syslog
+    return syslog
+
+
+def _settings():
+    from webui.services.settings import settings_service
+    return settings_service()
 
 
 @asynccontextmanager
@@ -82,8 +107,11 @@ async def lifespan(app: FastAPI):
 
     if os.environ.get("WEBUI_NO_SYNC", "") == "1":
         print("[webui] Startup freshness check skipped (--no-sync)", file=sys.stderr)
+        _syslog().log("info", "startup",
+                      "WebUI iniciado (verificação e agenda de sync desligadas — --no-sync)")
     else:
         print("[webui] Startup: freshness check", file=sys.stderr)
+        _syslog().log("info", "startup", "WebUI iniciado — verificando fontes…")
 
         def _check():
             try:
@@ -93,18 +121,43 @@ async def lifespan(app: FastAPI):
                 fresh = _sync_service.freshness()
                 stale = [k for k, v in fresh.items() if v.get("stale")]
                 if stale:
-                    print(f"[webui] {len(stale)} stale sources: {', '.join(stale)}",
-                          file=sys.stderr)
+                    msg = f"{len(stale)} fontes desatualizadas: {', '.join(stale)}"
+                    print(f"[webui] {msg}", file=sys.stderr)
+                    _syslog().log("warning", "startup", msg)
+                    # [v1.20] sync.auto_on_startup — the "Sincronizar tudo"
+                    # semantics at boot (stale sources only, background
+                    # threads, deduped per source). Off by default.
+                    if _settings().get("sync.auto_on_startup", False):
+                        res = _sync_service.trigger_sync_all(stale_only=True)
+                        n = len(res.get("started", []))
+                        _syslog().log("info", "startup",
+                                      f"Sincronização automática ao iniciar: {n} fonte(s)"
+                                      f" em andamento")
                 else:
                     print("[webui] All sources fresh", file=sys.stderr)
+                    _syslog().log("info", "startup", "Todas as fontes atualizadas")
             except Exception as e:
                 print(f"[webui] Freshness check failed: {e}", file=sys.stderr)
+                _syslog().log("error", "startup", f"Falha na verificação de fontes: {e}")
 
         threading.Thread(target=_check, daemon=True).start()
+
+        # [v1.20] Periodic auto-sync scheduler (sync.schedule_hours; 0 =
+        # off). Daemon thread with an Event-based stop; the interval is
+        # re-read every cycle so a settings change applies without a
+        # restart. Skipped entirely under --no-sync.
+        from webui.routes.sync import _sync_service
+        _sync_service.start_scheduler()
 
     yield
 
     print("[webui] Shutdown", file=sys.stderr)
+    _syslog().log("info", "startup", "WebUI encerrado")
+    try:
+        from webui.routes.sync import _sync_service
+        _sync_service.stop_scheduler()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
@@ -144,12 +197,22 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # ── [v1.20] System log capture: requests + Python logging WARNING+ ──────
+    # Outermost middleware (last added = first to see the request) so even
+    # TrustedHost rejections are logged. Pure ASGI — SSE streams untouched.
+    from webui.services.syslog import (
+        RequestLoggingMiddleware, attach_logging_handler,
+    )
+    app.add_middleware(RequestLoggingMiddleware)
+    attach_logging_handler()
+
     # ── WebUI routes ─────────────────────────────────────────────────────────
-    from webui.routes import pages, api, sync, preflight
+    from webui.routes import pages, api, sync, preflight, system
     app.include_router(pages.router)
     app.include_router(api.router)
     app.include_router(sync.router)
     app.include_router(preflight.router)  # [v1.7] pre-flight checks
+    app.include_router(system.router)     # [v1.20] logs + settings
 
     # ── Existing gateway routes (optional — mount if available) ─────────────
     # This brings /chat, /task, /ws, /health onto the same app so the WebUI

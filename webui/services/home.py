@@ -72,16 +72,36 @@ from tools.report_ops.formats import fmt_num
 # ── the skill's display helpers (no forked numerics) ────────────────────────
 from skills.b3.index.helpers import format_pct as _fmt_weight  # "10,886%"
 
-_TOP = 10            # rows per card (user request: "top 10")
 _MIN_TRADES = 100    # liquidity gate for the gainers/losers ranking
 
-# [v1.19 fix 1] The landing payload is memoized for this many seconds.
-# Nothing on the page changes between syncs, and the OLD behavior fired
-# the heavy snapshot per request (three concurrent page loads + the 30s
-# sync-box refresh kept the server churning). The lock makes concurrent
-# callers coalesce into ONE computation (single-flight); the TTL bounds
-# staleness after a sync.
-_CACHE_TTL = 60.0
+from webui.services.settings import settings_service
+
+
+def _card_rows() -> int:
+    """[v1.20] Rows per ranking card — the home.card_rows SETTING
+    (default 10; clamped to the schema's 5-25 range)."""
+    n = settings_service().get("home.card_rows", 10)
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 10
+    return max(5, min(25, n))
+
+
+def _cache_ttl() -> float:
+    """[v1.20] The landing payload's memoization TTL — the
+    home.cache_seconds SETTING (default 60s, clamped 5-600).
+    [v1.19 fix 1] Nothing on the page changes between syncs, and the OLD
+    behavior fired the heavy snapshot per request (three concurrent page
+    loads + the 30s sync-box refresh kept the server churning). The lock
+    makes concurrent callers coalesce into ONE computation (single-
+    flight); the TTL bounds staleness after a sync."""
+    s = settings_service().get("home.cache_seconds", 60)
+    try:
+        s = float(s)
+    except (TypeError, ValueError):
+        s = 60.0
+    return max(5.0, min(600.0, s))
 
 _SGS_ERR = ("Dados macroeconômicos indisponíveis — sincronize a fonte "
             "sgs (BCB — Sistema Gerenciador de Séries Temporais) na "
@@ -175,7 +195,7 @@ class HomeService:
             card["error"] = _INDEX_ERR
             return card
 
-        constituents = data["constituents"][:_TOP]
+        constituents = data["constituents"][:_card_rows()]
         ref = _fmt_date(data.get("ref_date", ""))
         card["subtitle"] = f"Maiores pesos — carteira de {ref or '-'}"
         card["items"] = [
@@ -222,7 +242,8 @@ class HomeService:
             }
 
         # Mais negócios — by trade_count (volume as the card's context).
-        by_trades = sorted(symbols, key=lambda s: -s["trade_count"])[:_TOP]
+        top = _card_rows()
+        by_trades = sorted(symbols, key=lambda s: -s["trade_count"])[:top]
         trades_card = {
             "key": "negocios", "title": "Mais Negócios", "subtitle": sub,
             "error": None,
@@ -235,8 +256,8 @@ class HomeService:
         liquid = [s for s in symbols
                   if s.get("variation_pct") is not None
                   and s["trade_count"] >= _MIN_TRADES]
-        gainers = sorted(liquid, key=lambda s: -s["variation_pct"])[:_TOP]
-        losers = sorted(liquid, key=lambda s: s["variation_pct"])[:_TOP]
+        gainers = sorted(liquid, key=lambda s: -s["variation_pct"])[:top]
+        losers = sorted(liquid, key=lambda s: s["variation_pct"])[:top]
 
         return [
             trades_card,
@@ -250,25 +271,33 @@ class HomeService:
 
     # ── the landing payload ─────────────────────────────────────────────────
     def __init__(self) -> None:
-        # [v1.19 fix 1] TTL memoization state — see _CACHE_TTL.
+        # [v1.19 fix 1] TTL memoization state — see _cache_ttl().
         self._lock = threading.Lock()
         self._cache: dict[str, Any] | None = None
         self._cached_at: float = 0.0
+        # [v1.20] The settings the cached payload was built with — a
+        # home.* change in Configurações busts the memo on the next call.
+        self._cache_settings: tuple[int, float] | None = None
 
     def overview(self) -> dict[str, Any]:
         """One call, one screen: macro KPIs + 5 ranked ticker cards.
 
-        [v1.19 fix 1] Memoized for _CACHE_TTL seconds under a lock
-        (single-flight): concurrent loads coalesce into one computation
-        and repeat loads are instant — the payload only changes on sync.
+        [v1.19 fix 1] Memoized for home.cache_seconds (the v1.20 setting;
+        60s default) under a lock (single-flight): concurrent loads
+        coalesce into one computation and repeat loads are instant — the
+        payload only changes on sync. [v1.20] A settings change (rows /
+        TTL) invalidates the memo immediately.
         """
         with self._lock:
+            current = (_card_rows(), _cache_ttl())
             if (self._cache is not None
-                    and time.monotonic() - self._cached_at < _CACHE_TTL):
+                    and current == self._cache_settings
+                    and time.monotonic() - self._cached_at < current[1]):
                 return self._cache
             payload = self._compute()
             self._cache = payload
             self._cached_at = time.monotonic()
+            self._cache_settings = current
             return payload
 
     def _compute(self) -> dict[str, Any]:

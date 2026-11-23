@@ -28,34 +28,54 @@ agent/
 │   │   ├── pages.py                  # HTML page routes (/webui/*)
 │   │   ├── api.py                    # JSON + HTMX partial routes (/api/webui/*)
 │   │   ├── sync.py                   # SSE sync progress (/api/webui/sync/*)
-│   │   └── preflight.py              # [v1.7] Pre-flight checks (/api/webui/preflight/*)
+│   │   ├── preflight.py              # [v1.7] Pre-flight checks (/api/webui/preflight/*)
+│   │   └── system.py                 # [v1.20] System log + settings (/api/webui/logs|settings*)
 │   ├── services/                     # Service layer (ONLY place that imports skills)
 │   │   ├── company.py                # Company header + ratios + price series
 │   │   ├── price.py                  # Preço tab (OHLCV, indicators, volatility, volume, Fibonacci)
 │   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch)
 │   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
 │   │   ├── proventos.py              # Proventos tab (dividends.db + yield at ex-date)
-│   │   ├── sync.py                   # Freshness check + background sync + SSE pub/sub
-│   │   └── preflight.py              # [v1.7] Pre-flight checklist (DBs, system, adapters, config)
+│   │   ├── options.py                # [v1.8] Opções tab (chain, activity, IV, positions)
+│   │   ├── shareholders.py           # [v1.9] Acionistas tab (fre.db + dfp.db)
+│   │   ├── insiders.py               # [v1.10] Insiders tab (vlmo.db)
+│   │   ├── macro.py                  # [v1.11] Macro page (SGS numerics — shared by home.py)
+│   │   ├── focus.py                  # [v1.12] Mercado Focus family
+│   │   ├── fluxo.py                  # [v1.13] Mercado Fluxo family
+│   │   ├── indexes.py                # [v1.14] Mercado Índices family
+│   │   ├── inflation.py              # [v1.15] Mercado Inflação family
+│   │   ├── juros.py                  # [v1.16] Mercado Juros family
+│   │   ├── acoes.py                  # [v1.17] Mercado Ações family
+│   │   ├── dividendos.py             # [v1.18] Mercado Proventos family (BDR split)
+│   │   ├── home.py                   # [v1.19] Painel landing (SGS KPIs + 5 ranked cards, TTL memo)
+│   │   ├── sync.py                   # Freshness check + background sync + SSE pub/sub + scheduler
+│   │   ├── preflight.py              # [v1.7] Pre-flight checklist (DBs, system, adapters, config)
+│   │   ├── settings.py               # [v1.20] Schema-driven settings store (webui_settings.json)
+│   │   └── syslog.py                 # [v1.20] System log ring buffer + request middleware + logging handler
 │   ├── templates/                    # Jinja2 templates
-│   │   ├── base.html                 # Shell: sidebar + topbar + content area
+│   │   ├── base.html                 # Shell: sidebar + topbar + content area + 📜 log drawer
 │   │   ├── pages/                    # Full HTML pages (extend base.html)
-│   │   │   ├── dashboard.html        # Home (market overview + pre-flight banner)
+│   │   │   ├── dashboard.html        # [v1.19] Painel (KPI row + 5 cards + bottom sync box)
 │   │   │   ├── company.html          # Company view (header + tabs)
 │   │   │   ├── macro.html            # Macro indicators
+│   │   │   ├── mercado.html          # Mercado page (family pills + subtabs)
 │   │   │   ├── sync.html             # Sync status + pre-flight panel + SSE log
-│   │   │   └── settings.html         # Theme + language settings
+│   │   │   └── settings.html         # [v1.20] Schema-driven settings (JS-rendered form)
 │   │   └── partials/                 # HTMX fragments (no <html> wrapper)
 │   │       ├── search_results.html   # Ticker search dropdown
 │   │       ├── identity_card.html    # Persistent identity header (all tabs)
-│   │       ├── sync_status.html      # Freshness table (Sync page + Dashboard ribbon)
+│   │       ├── sync_status.html      # Freshness table (Sync page + Dashboard)
+│   │       ├── sync_box.html         # [v1.19] Compact collapsed sync box (Painel bottom)
 │   │       ├── preflight_panel.html  # [v1.7] Grouped checks card (Sync page)
 │   │       ├── preflight_banner.html # [v1.7] One-line diagnosis (Dashboard)
 │   │       ├── tab_visao_geral.html  # Visão Geral tab (reg tables + chart)
 │   │       ├── tab_preco.html        # Preço tab shell (5 lazy subtabs)
 │   │       ├── tab_financials.html   # Financeiro tab shell (2 lazy subtabs)
 │   │       ├── tab_valuation.html    # Valuation tab shell (5 lazy subtabs)
-│   │       └── tab_proventos.html    # Proventos tab shell (3 lazy subtabs)
+│   │       ├── tab_proventos.html    # Proventos tab shell (3 lazy subtabs)
+│   │       ├── tab_options.html      # [v1.8] Opções tab shell
+│   │       ├── tab_shareholders.html # [v1.9] Acionistas tab shell
+│   │       └── tab_insiders.html     # [v1.10] Insiders tab shell
 │   ├── static/                       # Static assets (CSS, JS, vendor)
 │   │   ├── favicon.svg               # Teal bar-chart icon
 │   │   ├── css/app.css               # 3-layer token system + layout + components
@@ -252,6 +272,28 @@ class CompanyService:
 - The overview payload already carries every anchor (3.01/3.03/3.05/3.06/3.11 per period); a server round-trip per toggle would add latency + a route for zero new data
 - Deltas are computed from the DRE subtotals (Custos = Receita − Lucro Bruto), so the chart needs no per-line code presence and degrades gracefully when a subtotal is missing
 - The card lives inside a custom-rendered subtab (financials:overview, `generic=False`), so this doesn't bypass the adapter contract — new TABS still go through the registry
+
+### 14. The System Log Is a Ring Buffer Fed by Three Capture Paths (v1.20)
+
+**Decision:** The 📜 drawer's data is ONE in-memory, per-process ring buffer (`webui/services/syslog.py`) with three feeders: a pure-ASGI request middleware (method/path/status/duration for every non-static request — SSE-safe, no BaseHTTPMiddleware), a root-logger handler (WARNING+; unhandled ASGI exceptions land here), and explicit `syslog.log()` points (sync lifecycle, startup, scheduler, settings changes).
+
+**Rationale:**
+- In-memory ONLY, deliberately: the panel answers "what happened since I opened it" — a tail, not a log file. Persisting history is a `logging` config concern, not a UI feature (and the terminal already has everything)
+- The pure-ASGI middleware (vs BaseHTTPMiddleware) wraps the send channel only — the two SSE streams pass through untouched, and a streaming request logs its OPEN, not a completion line that would only appear minutes later on disconnect
+- No subscriber registry (unlike the sync SSE): the buffer is PULLED — the stream endpoint polls it every ~1s inside the generator, so worker threads never push and there is nothing to register/unregister
+- While the drawer is closed the feed degrades to a 15s poll of `?after=<id>` — enough to keep the unseen-error badge counting without holding a stream on every page
+- Request noise control: /static/, /docs, favicon and OPTIONS preflights are skipped; 4xx logs as warning, 5xx and exceptions as error
+
+### 15. Settings as Data — One Dict Entry per Setting (v1.20)
+
+**Decision:** Every setting is ONE entry in the `SCHEMA` list in `webui/services/settings.py` (key, section, label, type, default + type-specific extras). The Configurações page renders itself from `GET /api/webui/settings`; `PUT` validates + persists all-or-nothing to `memory_db/webui_settings.json` (atomic write, mtime-checked in-memory read cache).
+
+**Rationale:**
+- Adding a setting = one dict entry — no template edit, no route edit, no form HTML (the SDNext pattern the roadmap asked for)
+- Storage is a JSON FILE, not a table: settings are a handful of scalars, the file is human-readable/diffable/atomic-replaceable, and there is no migration story to carry
+- EVERY shipped setting is wired end-to-end (sync preferences → lifespan/scheduler/freshness; Painel knobs → HomeService with memo invalidation; theme/locale → Set-Cookie so the cookie stays the single source of truth; log level/buffer → live re-trim). No dead knobs — a setting that does nothing is documentation debt wearing a form
+- Validation rejects the whole patch on any invalid key (no partial saves); errors are PT-BR per key
+- The scheduler re-reads its interval every cycle, so changing `sync.schedule_hours` applies without a restart
 
 ---
 

@@ -1,0 +1,206 @@
+"""webui/services/syslog.py — the in-app system log (the 📜 drawer's data).
+
+[v1.20] "What is going on inside the WebUI" — the terminal tail made
+visible in-app. THREE capture paths feed ONE ring buffer:
+
+  1. RequestLoggingMiddleware (pure ASGI, streaming-safe — no
+     BaseHTTPMiddleware, so SSE responses pass through untouched):
+     method + path + status + duration for every non-static request.
+     4xx → warning, 5xx/exceptions → error, everything else → info.
+     OPTIONS preflights and /static/ assets are skipped (noise).
+  2. RingBufferHandler on the ROOT Python logger (WARNING+): unhandled
+     ASGI exceptions, uvicorn errors, library warnings — anything that
+     already goes through ``logging`` shows up here too. uvicorn.access
+     records are skipped (the middleware already logs requests with a
+     duration; double lines would be pure noise).
+  3. Explicit ``syslog.log()`` calls: sync job lifecycle (started /
+     completed / failed / per-ticker bulk progress), startup freshness
+     check, settings changes, the auto-sync scheduler.
+
+Consumed by ``GET /api/webui/logs`` (snapshot/since) and
+``GET /api/webui/logs/stream`` (SSE: one snapshot event + 1s polls —
+no subscriber registry needed; the SyncService SSE pub/sub exists because
+WORKER THREADS push, here the buffer is pulled).
+
+Behavior notes:
+  - In-memory ONLY, per process: it is a tail, not a log file. Restart
+    clears it (that's the point — "what happened since I opened it").
+  - min level + buffer size come from the SettingsService (logs.level /
+    logs.buffer) and apply LIVE — the buffer is re-trimmed on the next
+    append, the level on the next log() call.
+  - Entry ids are monotonic per process; the client dedupes with
+    ``since(id)`` semantics across reconnects.
+"""
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections import deque
+from datetime import datetime
+from typing import Any
+
+from webui.services.settings import settings_service
+
+_LEVELS = {"info": 0, "warning": 1, "error": 2}
+_MAX_MSG = 600  # tracebacks get truncated — the panel is a tail, not a dump
+
+
+class SystemLog:
+    """Thread-safe in-memory log ring buffer."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._buf: deque[dict[str, Any]] = deque(maxlen=500)
+        self._next_id = 1
+
+    # ── configuration (live, from settings) ──────────────────────────────────
+
+    @staticmethod
+    def _min_level() -> int:
+        return _LEVELS.get(
+            settings_service().get("logs.level", "info"), 0)
+
+    def _retrim(self) -> None:
+        """Apply a logs.buffer change (caller holds the lock)."""
+        size = settings_service().get("logs.buffer", 500)
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            size = 500
+        size = max(100, min(5000, size))
+        if self._buf.maxlen != size:
+            self._buf = deque(self._buf, maxlen=size)
+
+    # ── write ────────────────────────────────────────────────────────────────
+
+    def log(self, level: str, source: str, message: str) -> None:
+        """Append one entry (thread-safe; drops below the min level)."""
+        if _LEVELS.get(level, 0) < self._min_level():
+            return
+        msg = str(message).replace("\n", " ")[:_MAX_MSG]
+        with self._lock:
+            self._retrim()
+            self._buf.append({
+                "id": self._next_id,
+                "ts": datetime.now().strftime("%H:%M:%S"),
+                "level": level if level in _LEVELS else "info",
+                "source": str(source)[:24] or "webui",
+                "message": msg,
+            })
+            self._next_id += 1
+
+    # ── read ─────────────────────────────────────────────────────────────────
+
+    def snapshot(self, limit: int = 300) -> list[dict[str, Any]]:
+        """The last ``limit`` entries (oldest first)."""
+        with self._lock:
+            entries = list(self._buf)
+        return entries[-max(1, min(limit, 5000)):]
+
+    def since(self, after_id: int) -> list[dict[str, Any]]:
+        """Entries with id > after_id (oldest first; empty list = nothing)."""
+        with self._lock:
+            return [e for e in self._buf if e["id"] > after_id]
+
+
+# ── module-level singleton ────────────────────────────────────────────────────
+syslog = SystemLog()
+
+
+# ── capture path 2: Python logging → ring buffer ─────────────────────────────
+class RingBufferHandler(logging.Handler):
+    """Root-logger handler: WARNING+ records land in the drawer.
+
+    uvicorn.access is skipped (the request middleware already logs those,
+    with a duration); uvicorn.error tracebacks ("Exception in ASGI
+    application") are the main thing this path catches.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover
+        try:
+            if record.name.startswith("uvicorn.access"):
+                return
+            level = ("error" if record.levelno >= logging.ERROR
+                     else "warning" if record.levelno >= logging.WARNING
+                     else "info")
+            extra = ""
+            if record.exc_info and record.exc_info[0] is not None:
+                extra = f" ({record.exc_info[0].__name__})"
+            syslog.log(level, "py",
+                       f"{record.name}: {record.getMessage()}{extra}")
+        except Exception:
+            # A logging handler must never take the app down.
+            pass
+
+
+def attach_logging_handler() -> None:
+    """Idempotently attach the ring-buffer handler to the root logger."""
+    root = logging.getLogger()
+    if not any(isinstance(h, RingBufferHandler) for h in root.handlers):
+        handler = RingBufferHandler()
+        handler.setLevel(logging.WARNING)
+        root.addHandler(handler)
+
+
+# ── capture path 1: pure ASGI request middleware ─────────────────────────────
+# NOT BaseHTTPMiddleware: that wraps responses in a way that interferes with
+# long-lived SSE streams (and this app leans on SSE twice). A raw ASGI
+# wrapper adds ~15 lines and streams untouched.
+class RequestLoggingMiddleware:
+    """Log every HTTP request (method, path, status, duration) to syslog."""
+
+    # Paths that never show up (assets, docs, CORS preflights).
+    _SKIP_PREFIXES = ("/static/", "/favicon", "/docs", "/openapi.json")
+    _SKIP_METHODS = ("OPTIONS", "HEAD")
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "?")
+        path = scope.get("path", "?")
+        if method in self._SKIP_METHODS or path.startswith(self._SKIP_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        # SSE endpoints stay open for minutes — log the OPEN, not the close
+        # (the completion line would only appear when the drawer disconnects).
+        if path.endswith("/stream"):
+            syslog.log("info", "http", f"{method} {path} · SSE aberto")
+            await self.app(scope, receive, send)
+            return
+
+        state = {"status": 0}
+        start = time.perf_counter()
+
+        async def send_wrapper(message) -> None:
+            if message["type"] == "http.response.start":
+                state["status"] = message.get("status", 0)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as e:
+            elapsed = _fmt_ms(time.perf_counter() - start)
+            syslog.log("error", "http",
+                       f"{method} {path} → exceção ({type(e).__name__}) · {elapsed}")
+            raise
+        else:
+            status = state["status"]
+            elapsed = _fmt_ms(time.perf_counter() - start)
+            level = ("error" if status >= 500
+                     else "warning" if status >= 400
+                     else "info")
+            syslog.log(level, "http", f"{method} {path} → {status} · {elapsed}")
+
+
+def _fmt_ms(seconds: float) -> str:
+    """Duration for the log line: '12ms' / '1,4s' (pt-BR comma)."""
+    if seconds < 1.0:
+        return f"{int(seconds * 1000)}ms"
+    return f"{seconds:.1f}".replace(".", ",") + "s"

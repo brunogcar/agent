@@ -37,11 +37,8 @@
     "sources": "Data sources"
   },
   "settings": {
-    "appearance": "Appearance",
-    "theme": "Theme",
-    "language": "Language",
-    "data": "Data",
-    "auto_sync": "Auto-sync on startup"
+    "intro": "Every option below is a schema entry on the server — adding a new setting is one line there, and this page re-renders itself.",
+    "loading": "Loading settings…"
   },
   "common": {
     "loading": "Loading...",
@@ -57,5 +54,17 @@
     "ok": "ok",
     "warnings": "warnings",
     "failures": "failures"
+  },
+  "logs": {
+    "title": "System log",
+    "live": "live",
+    "pause": "Pause the stream",
+    "clear": "Clear the view",
+    "filter_label": "Filter by level",
+    "filter_all": "All",
+    "filter_warning": "Warnings",
+    "filter_error": "Errors",
+    "new_entries": "new lines",
+    "empty": "No events yet — browse, sync or change settings."
   }
 }

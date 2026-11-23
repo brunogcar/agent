@@ -27,12 +27,27 @@ multi-LLM review):
 Freshness check is cheap (SELECT MAX(synced_at) per DB). Sync is expensive
 (downloads ZIPs from CVM/B3 APIs) — always runs in a daemon thread, never
 on the event loop.
+
+[v1.20] SETTINGS + SYSTEM LOG:
+  - freshness() reads the stale threshold from the settings store
+    (sync.stale_hours, default 24 — the SYNC_FRESHNESS_HOURS constant was
+    the hardcoded pre-v1.20 value; skills keep their own constant).
+  - The sync job lifecycle (started/completed/failed + the bulk per-ticker
+    progress lines) now ALSO lands in the system log ring buffer
+    (webui/services/syslog.py) — the 📜 drawer shows syncs from ANY page,
+    not just the Sincronização page's SSE log.
+  - start_scheduler()/stop_scheduler(): the periodic auto-sync
+    (sync.schedule_hours; 0 = off) — a daemon thread that re-reads the
+    interval every cycle (settings changes apply without a restart) and
+    fires trigger_sync_all(stale_only=True) per interval. Started by the
+    app lifespan unless --no-sync.
 """
 from __future__ import annotations
 
 import asyncio
 import sys
 import threading
+import time
 import traceback
 import uuid
 from datetime import datetime, timedelta
@@ -45,6 +60,9 @@ from skills._base.sync_guard import (
     _trigger_sync,
     SYNC_FRESHNESS_HOURS,
 )
+
+from webui.services.settings import settings_service
+from webui.services.syslog import syslog
 
 # Sources that can be triggered from the WebUI sync page. Mirrors the
 # sync_guard registry (single source of truth). brapi is gone (paid API).
@@ -71,6 +89,7 @@ class SyncService:
     """Data source sync service — freshness check + background sync."""
 
     _MAX_FINISHED_JOBS = 50  # prune finished jobs beyond this many
+    _SCHED_TICK = 30.0       # scheduler wake-up cadence (settings re-read)
 
     def __init__(self) -> None:
         # job_id → status dict (guarded by _lock — written by worker threads,
@@ -83,6 +102,10 @@ class SyncService:
         # to the correct loop thread-safely.
         self._subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = []
         self._lock = threading.Lock()
+        # [v1.20] periodic auto-sync scheduler state
+        self._sched_stop = threading.Event()
+        self._sched_thread: threading.Thread | None = None
+        self._sched_last_fire = 0.0
 
     # ── freshness ────────────────────────────────────────────────────────────
 
@@ -91,9 +114,19 @@ class SyncService:
 
         One get_freshness() pass; each timestamp parsed via sync_guard's
         tz-aware parser. Returns {"dfp": {"last_sync": ..., "stale": ...}}.
+
+        [v1.20] The threshold is the sync.stale_hours SETTING (default 24 —
+        the old SYNC_FRESHNESS_HOURS constant). Every consumer (Painel
+        box, Sincronização page, "Sincronizar tudo", the startup check)
+        flows through here, so one settings change moves them all.
         """
         fresh = get_freshness()
-        max_age = timedelta(hours=SYNC_FRESHNESS_HOURS)
+        hours = settings_service().get("sync.stale_hours", SYNC_FRESHNESS_HOURS)
+        try:
+            hours = float(hours)
+        except (TypeError, ValueError):
+            hours = SYNC_FRESHNESS_HOURS
+        max_age = timedelta(hours=hours)
         out: dict[str, dict] = {}
         for source, ts_str in fresh.items():
             stale = True
@@ -214,6 +247,7 @@ class SyncService:
         """
         try:
             self._publish({"event": "sync.started", "job_id": job_id, "source": source})
+            syslog.log("info", "sync", f"{source}: sincronização iniciada")
             if source in _BULK_SYNC:
                 result = self._run_bulk_sync(job_id, source)
             else:
@@ -221,8 +255,10 @@ class SyncService:
             status = result.get("status", "unknown")
             if status == "ok":
                 self._finish_job(job_id, source, "completed", f"Sync {source}: concluído")
+                syslog.log("info", "sync", f"{source}: sincronização concluída")
             else:
                 self._finish_job(job_id, source, "failed", f"Sync {source}: falhou")
+                syslog.log("error", "sync", f"{source}: sincronização FALHOU")
             self._publish({
                 "event": "sync.completed" if status == "ok" else "sync.failed",
                 "job_id": job_id,
@@ -233,6 +269,8 @@ class SyncService:
             # Log the real traceback server-side; UI gets a short PT-BR line.
             print(f"[webui-sync] job {job_id} ({source}) FAILED: {e}\n"
                   f"{traceback.format_exc()}", file=sys.stderr)
+            syslog.log("error", "sync",
+                       f"{source}: erro interno ({type(e).__name__})")
             self._finish_job(job_id, source, "failed", f"Sync {source}: erro interno")
             self._publish({
                 "event": "sync.failed",
@@ -254,13 +292,15 @@ class SyncService:
         bulk_fn = getattr(mod, fn_name)
 
         def _on_progress(p: dict) -> None:
+            msg = (f"{p.get('ticker', '')}: {p.get('status', '')} "
+                   f"({p.get('done', '?')}/{p.get('total', '?')})")
             self._publish({
                 "event": "sync.progress",
                 "job_id": job_id,
                 "source": source,
-                "message": f"{p.get('ticker', '')}: {p.get('status', '')} "
-                           f"({p.get('done', '?')}/{p.get('total', '?')})",
+                "message": msg,
             })
+            syslog.log("info", "sync", f"{source}: {msg}")
 
         result = bulk_fn(force=True, trace_id="", on_progress=_on_progress)
         # Shape like _trigger_sync's contract so _run_sync's status logic
@@ -308,3 +348,51 @@ class SyncService:
     def all_jobs(self) -> list[dict]:
         with self._lock:
             return [dict(j) for j in self._jobs.values()]
+
+    # ── [v1.20] periodic auto-sync scheduler ──────────────────────────────────
+
+    def start_scheduler(self) -> None:
+        """Start the periodic auto-sync (sync.schedule_hours; 0 = off).
+
+        Idempotent; the interval is re-read every cycle so a settings
+        change applies without a restart. Fires trigger_sync_all(stale_only
+        =True) — the "Sincronizar tudo" semantics, deduped per source.
+        """
+        if self._sched_thread is not None and self._sched_thread.is_alive():
+            return
+        self._sched_stop.clear()
+        self._sched_last_fire = time.monotonic()
+        self._sched_thread = threading.Thread(
+            target=self._sched_loop, name="webui-sync-scheduler", daemon=True,
+        )
+        self._sched_thread.start()
+
+    def stop_scheduler(self) -> None:
+        """Signal the scheduler to stop (app shutdown)."""
+        self._sched_stop.set()
+
+    def _sched_loop(self) -> None:
+        while not self._sched_stop.wait(self._SCHED_TICK):
+            try:
+                interval = settings_service().get("sync.schedule_hours", 0)
+                interval = float(interval) if interval else 0.0
+            except (TypeError, ValueError):
+                interval = 0.0
+            if interval <= 0:
+                continue
+            if time.monotonic() - self._sched_last_fire < interval * 3600.0:
+                continue
+            self._sched_last_fire = time.monotonic()
+            h = f"{interval:g}".replace(".", ",")
+            syslog.log("info", "sync",
+                       f"Agenda automática: sincronizando fontes desatualizadas "
+                       f"(intervalo de {h}h)")
+            try:
+                res = self.trigger_sync_all(stale_only=True)
+                n = len(res.get("started", []))
+                syslog.log("info", "sync",
+                           f"Agenda automática: {n} fonte(s) iniciada(s), "
+                           f"{res.get('skipped_fresh', 0)} já atualizada(s)")
+            except Exception as e:
+                syslog.log("error", "sync",
+                           f"Agenda automática falhou: {type(e).__name__}: {e}")

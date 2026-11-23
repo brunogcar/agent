@@ -37,11 +37,8 @@
     "sources": "Fontes de dados"
   },
   "settings": {
-    "appearance": "Aparência",
-    "theme": "Tema",
-    "language": "Idioma",
-    "data": "Dados",
-    "auto_sync": "Sincronização automática ao iniciar"
+    "intro": "Cada opção abaixo vive no servidor como uma entrada de schema — adicionar uma configuração nova é acrescentar uma linha lá, e esta página se re-renderiza sozinha.",
+    "loading": "Carregando configurações…"
   },
   "common": {
     "loading": "Carregando...",
@@ -57,5 +54,17 @@
     "ok": "ok",
     "warnings": "avisos",
     "failures": "falhas"
+  },
+  "logs": {
+    "title": "Log do sistema",
+    "live": "ao vivo",
+    "pause": "Pausar o fluxo",
+    "clear": "Limpar a visualização",
+    "filter_label": "Filtrar por nível",
+    "filter_all": "Tudo",
+    "filter_warning": "Avisos",
+    "filter_error": "Erros",
+    "new_entries": "novas linhas",
+    "empty": "Sem eventos ainda — navegue, sincronize ou altere configurações."
   }
 }

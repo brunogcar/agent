@@ -11,6 +11,8 @@ Brazilian Financial Data WebUI — a live, server-rendered web interface that re
 - **Theme-aware** — CSS variables with dark/light themes, user-customizable
 - **Multilingual** — JSON-based i18n (pt-BR default, en-US), no gettext
 - **Real-time sync** — SSE (Server-Sent Events) for live sync progress
+- **System log** — a 📜 top-bar button opens a right-side drawer with the live request/sync/error tail (SSE while open, badge-polling while closed) [v1.20]
+- **Settings as data** — schema-driven Configurações page; sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale and log controls, all wired [v1.20]
 - **No build step** — vanilla JS + HTMX + Alpine.js, no Node.js, no bundler
 
 ## Quick Start

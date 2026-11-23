@@ -22,6 +22,10 @@
 [WebUI v1.16] ?v=56 (Mercado Juros family — app.js + mercado.html)
 [WebUI v1.17] ?v=57 (Mercado Ações family — app.js + mercado.html: interaction honoring)
 [WebUI v1.18] ?v=58 (Mercado Proventos family — app.js + mercado.html: loadDividendosSubtab)
+[WebUI v1.19] ?v=59 (Painel redesign — dashboard.html + sync_box partial)
+[WebUI v1.20] ?v=61 (System log drawer + schema-driven settings — app.js/app.css;
+  top-bar 📜 button, right drawer on every page, Configurações re-rendered
+  from GET /api/webui/settings)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -50,7 +54,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=60">
+  <link rel="stylesheet" href="/static/css/app.css?v=61">
 </head>
 <body>
   <div class="app-shell">
@@ -133,6 +137,15 @@
                       onclick="document.cookie='webui_locale=en-US;path=/;max-age=31536000'; location.reload();">English (US)</button>
             </div>
           </div>
+          {# [v1.20] System log — opens the right drawer (the terminal tail
+             made visible: requests, sync jobs, errors). The red badge
+             counts UNSEEN error-level entries while closed. #}
+          <div class="syslog-switcher">
+            <button class="icon-btn syslog-toggle" id="syslog-toggle"
+                    aria-label="{{ t('logs.title') }}" title="{{ t('logs.title') }}">📜
+              <span class="syslog-badge" id="syslog-badge" hidden></span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -143,7 +156,42 @@
     </div>
   </div>
 
+  {# ── [v1.20] System log drawer — on EVERY page (base.html), fed by
+     GET /api/webui/logs/stream (SSE: one snapshot + ~1s batches).
+     initSyslogDrawer() in app.js owns the open/close + EventSource
+     lifecycle (connected only while open), the level filter pills, the
+     pause button and the unseen-error badge. #}
+  <div class="syslog-scrim" id="syslog-scrim" hidden></div>
+  <aside class="syslog-drawer" id="syslog-drawer" role="region"
+         aria-label="{{ t('logs.title') }}">
+    <div class="syslog-head">
+      <div class="syslog-head-row">
+        <span class="syslog-title">📜 {{ t('logs.title') }}</span>
+        <span class="syslog-state" id="syslog-state" title="{{ t('logs.live') }}"></span>
+        <span class="syslog-spacer"></span>
+        <button class="syslog-icon-btn" id="syslog-pause" aria-label="{{ t('logs.pause') }}"
+                title="{{ t('logs.pause') }}">⏸</button>
+        <button class="syslog-icon-btn" id="syslog-clear" aria-label="{{ t('logs.clear') }}"
+                title="{{ t('logs.clear') }}">🧹</button>
+        <button class="syslog-icon-btn" id="syslog-close" aria-label="{{ t('common.close') }}"
+                title="{{ t('common.close') }}">✕</button>
+      </div>
+      <div class="syslog-filters" id="syslog-filters" role="group" aria-label="{{ t('logs.filter_label') }}">
+        <button class="syslog-pill is-active" data-filter="all">{{ t('logs.filter_all') }}</button>
+        <button class="syslog-pill" data-filter="warning">{{ t('logs.filter_warning') }}</button>
+        <button class="syslog-pill" data-filter="error">{{ t('logs.filter_error') }}</button>
+      </div>
+    </div>
+    <div class="syslog-list" id="syslog-list" data-filter="all">
+      <div class="syslog-empty">{{ t('logs.empty') }}</div>
+    </div>
+    <div class="syslog-foot">
+      <span id="syslog-count">—</span>
+      <button class="syslog-jump" id="syslog-jump" hidden>↓ {{ t('logs.new_entries') }}</button>
+    </div>
+  </aside>
+
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=60"></script>
+  <script src="/static/js/app.js?v=61"></script>
 </body>
 </html>

@@ -3,144 +3,83 @@
 # 🗺️ WebUI Roadmap
 
 > What's built, what's next, and what's deferred for the Brazilian Financial Data WebUI.
+>
+> **[v1.20] Pruned** — the completed per-feature essays moved to the
+> CHANGELOG's version table (one topic summary each); this file now carries
+> only the shape of what exists and what's still open.
 
 ---
 
-## ✅ Built (v1 → v1.18)
+## ✅ Built (v1 → v1.20)
 
-### Architecture
-- [x] Single-command entry point (`python webui.py`)
-- [x] One process, one port (extends existing FastAPI gateway)
-- [x] SQLite WAL mode for concurrent read/write
-- [x] Service layer between routes and calculation engines
-- [x] Direct engine imports (bypasses MCP dispatcher)
-- [x] SSE for sync progress (not WebSocket) — working end-to-end since v1.5
-- [x] CSS variables 3-layer theme system (JSON theme files)
-- [x] JSON i18n (not gettext)
-- [x] Vendored JS (HTMX + Alpine + Chart.js, no CDN)
-- [x] [v1.5] Ticker regex validation at every company route (422 on garbage)
-- [x] [v1.5] TrustedHostMiddleware loopback-only (LAN = `WEBUI_ALLOW_LAN=1`)
-- [x] [v1.5] Threadpool route handlers (plain `def` — event loop never blocks)
-- [x] [v1.5] Shared Jinja env (`webui/templating.py`, `__file__`-relative)
-- [x] **[v1.7] Adapter contract + registry** — `webui/adapters/` formalizes the section-payload pattern (Valuation v1.4 / Proventos v1.6): every lazy subtab is registered under a `"<family>:<sub>"` key and served by ONE generic endpoint (`GET /api/webui/company/{ticker}/sections/{key}`). Contract validation at dispatch time (violations logged + `_contract_violations` attached). Memoized service singletons shared by routes and dispatch (one PriceService = one OHLCV cache). All 15 existing subtabs registered; per-family endpoints remain as aliases.
-- [x] **[v1.7] Pre-flight checks** — `PreflightService` + `/api/webui/preflight` (JSON) + `/panel` (Sync page card: Diagnóstico do Sistema, with "Verificar novamente") + `/banner` (Dashboard one-liner). Per-DB existence/size/expected-schema/WAL/`MAX(rowid)` row sanity (26 DBs across cvm/b3/bcb/ddm), sync coverage, vendor assets, Python/disk/write access, adapter registry integrity, launch config. Side-effect free (resolves the memory root without mkdir).
-- [x] **[v1.7.1] ITR snapshot re-key** — quarterly balanços fixed at the DATA layer: the sync engine re-keys each filing's BPA/BPP rows into the quarter bucket reported by its own flow rows (fiscal-year filers included; Dec filings stay 12); existing DBs migrate via `python -m tools.migrations.rekey_itr_snapshots --apply` (batched UPDATE + WAL checkpoint + engine-cache wipe — fingerprints don't change with a re-key). `PRAGMA user_version=2` is the marker; the pre-flight itr.db row warns "re-key pendente" until it runs. Zero query-layer changes — every consumer (`_snap`, bpa/bpp engines, TTM balances, Altman Z, liquidity ratios, Valuation > Fundamentos) was already written for the correct semantics and heals as soon as the data is re-keyed.
+### The app today
 
-### Pages
-- [x] Dashboard (`/webui/`) — **[v1.19] THE LANDING REDESIGN** — the Brazil one-screen summary: BCB SGS KPI row (Selic a.a. · IPCA 12m · IGP-M 12m · USD/BRL ptax — macro.py's numerics) + 5 ranked ticker cards, every row a company-page link (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas/Baixas — new `market_snapshot()` in the cotahist query engine, lote padrão spot only, ≥100-trade liquidity gate on variations); section-scoped degradation per source. The sync table left the top — a compact collapsed box (GET /api/webui/sync/box) closes the page below the pre-flight banner; the full panel stays on the Sync page. **[v1.19 fix 1]** the slow painel fixed at three layers: market_snapshot() windowed to the last 10 sessions (was: whole-history scan — minutes on a multi-year cotahist.db), the payload memoized 60s single-flight server-side, loadHomeData() single-flight client-side (the old _loaded-after-fetch guard let boot + afterSettle triple-fire and the 30s box refresh re-fire forever); and the Demonstrações Trimestral charts "showing only 4T and 2T" — Chart.js autoSkip thinned the wide "4T2024" labels to every other tick (which lands on 4T/2T); now abbreviated "4T24" + rotation instead of skipping. (Was: market overview, quick links, sync ribbon — HTML since v1.5.)
-- [x] Company (`/webui/company/{ticker}`) — header + 4 tabs
-- [x] Macro (`/webui/macro`) — 8 lazy subtabs over BCB SGS + Focus (v1.11; was a placeholder since v1)
-- [x] Mercado (`/webui/mercado`) — the DDM dashboards' home: family pills + subtabs, Focus family (v1.12) + Fluxo family (v1.13) + Índices family (v1.14) + Inflação family (v1.15) + Juros family (v1.16)
-- [x] Sync (`/webui/sync`) — freshness table + pre-flight panel (v1.7) + Sincronizar buttons + live SSE log
-- [x] Settings (`/webui/settings`) — theme + language dropdowns
+- **Painel** (`/webui`) — the Brazil one-screen landing: SGS KPI row (Selic · IPCA 12m · IGP-M 12m · USD/BRL) + 5 ranked ticker cards (Top 10 IBOV/SMLL, Mais Negócios, Altas, Baixas), every row a company-page link; compact sync box + pre-flight banner at the bottom. [v1.19]
+- **Company page** (`/webui/company/{ticker}`) — identity card + 8 tabs: Visão Geral (candlestick 7 ranges, Ctrl+wheel zoom), Preço (5 subtabs), Financeiro (TTM + waterfall + all 5 Demonstrações), Valuation (5 subtabs), Proventos, Opções, Acionistas, Insiders. [v1.1–v1.10]
+- **Macro** (`/webui/macro`) — BCB SGS + Focus in 8 lazy subtabs. [v1.11]
+- **Mercado** (`/webui/mercado`) — the DDM families: Focus, Fluxo, Índices, Inflação, Juros, Ações (with the stocks_history evolution store), Proventos (BDR split). [v1.12–v1.18]
+- **Sincronização** (`/webui/sync`) — freshness table, per-source buttons ("Sincronizar tudo" = stale only), live SSE log, pre-flight diagnostics panel. [v1, v1.5, v1.7]
+- **Configurações** (`/webui/settings`) — schema-driven form (see below). [v1.20]
+- **System log drawer** — the 📜 top-bar button; a right-side panel on every page with the live request/sync/error tail. [v1.20]
 
-### Company Tabs
-- [x] Visão Geral — company header (identity card) + registration tables + activity description + candlestick chart (7 range options, Ctrl+wheel zoom)
-- [x] Preço — 5 lazy subtabs: Cotação (tables + Histograma + Início vs Fim), Indicadores (RSI/MACD/Stochastic/OBV/ADX/CCI/Williams %R), Volatilidade (Bollinger Bands + rolling vol), Volume (volume bars + trade count + contracts), Fibonacci (global dropdowns + COMPRA/VENDA + dividend adjustments)
-- [x] Financeiro — Visão Geral (TTM + **Conversão da Receita em Lucro waterfall [v1.7.1]** — Anual/Trimestral toggle, client-derived from the overview payload + Trajetória + WACC/DuPont/Altman + Red Flags) + Demonstrações (all 5 statements, one fetch, per-statement charts; **quarterly balanço shows real Mar/Jun/Sep period-end values since the v1.7.1 re-key**)
-- [x] Valuation — Visão Geral / Múltiplos (nested subtabs + per-group 5Y history charts + side-by-side layout since v1.7.2) / Valor Intrínseco / Fundamentos (nested subtabs) / Todas as métricas
-- [x] **[v1.6] Proventos** — complete corporate-actions view: Histórico (every cash_dividends row, type pills + year filter + sortable columns + yield at ex-date + upcoming-payments + corporate actions + subscriptions), Visão Geral (6 KPIs + stacked annual + monthly seasonality + yield TTM history), Anual (per-ex-year aggregation + DVA declarado). ISIN dedupe across share classes. Renamed from "Dividends" (covers dividendos, JCP, rendimentos, bonificações, desdobramentos, grupamentos, subscrições).
-- [x] **[v1.7.2] Múltiplos parity** — Preço (P/L,LPA,P/VP,VPA + Múltiplos de Preço dual-axis histories | Múltiplos + Per-share tables | Comparativos), EBIT/EBITDA (EBIT + EBITDA history charts | tables), Menos Comuns (Preço/Balanço + Ativo/Preço histories + table); Tudo/10A/…/1M range bar on every history chart (client-side filter).
-- [x] **[v1.8] Opções** — the static options dashboard reorganized: Visão Geral (6 KPIs + dual-axis P/C Ratio + Últimas Observações | Resumo CALL vs PUT + OI walls), Cadeia (maturity pill bar + Calls | Puts side by side, top-30 by volume, sortable), Volume & Exercícios (merged), Vol. Implícita (smile + term-structure heatmap capped to ±25% spot × 8 expiries), Posições (CALL/PUT split, top-50 by OI, sortable). Same data layer as the skill's static report; maturity pills refetch server-side; generic table click-sort added to the shared renderer. **[fix1]** Datas no padrão brasileiro: dd/mm/yyyy nas tabelas (Data/Vencimento) e refs de texto; eixos + tooltips de TODOS os gráficos com labels ISO (P/C, Exercícios e os históricos 5A do Valuation) formatados pelo `renderValChart`; colunas de data ordenáveis cronologicamente (`_valSortKey` parseia dd/mm/yy[yy]).
-- [x] **[v1.9] Acionistas** — the static shareholders dashboard reorganized: Visão Geral (6 KPIs + evolução do free float + evolução de acionistas PF/PJ/Inst. empilhados + Mercado|Patrimônio blocks + top-5 preview), Posição Acionária (tabela completa com % ON \| % PN \| % Total lado a lado + CPF/CNPJ mascarado, sortable, cap 60 + doughnut top-5 com disambiguação de nomes duplicados e fatia de remanescente clamped), Free Float (7 KPIs + os dois charts de evolução + tabela de TODOS os períodos — o estático mostrava uma única linha), Estrutura Patrimonial (6 KPIs BPP + Composição bar + Evolução PL/Capital line + tabela de todos os exercícios em BRL compacto + Capital Social FRE). Same data layer as the skill's static report (fre.db + dfp.db); degradação por fonte; `renderValChart` honra cutout do server (doughnut).
-- [x] **[v1.10] Insiders** — the static insider dashboard reorganized (reference: `PETR4_insider_dashboard.html` / `skills/cvm/insider`; data: VLMO vlmo.db): Visão Geral (6 KPIs — Sentimento/Volume Comprado/Volume Vendido/Net Volume/Transações na janela de 24 meses + Última Movimentação + chart de volume líquido mensal com labels BR `jun/2026` + preview das 20 últimas movimentações), Movimentações (volume líquido acumulado em linha ACIMA da tabela, sobre a janela inteira — o estático desenhava sobre 10 pontos — + as 120 mais recentes, sortable), Por Cargo (agregado por Tipo_Cargo em TODO o histórico, Net Volume formatado em fmt_brl — o estático exibia floats crus — + barras comprado vs vendido + KPIs de maior comprador/vendedor líquido), Mensal (chart de net mensal verde/vermelho ACIMA da tabela + 24 meses com Mês em label BR `jun/2026`, sortable + KPIs de melhor/pior mês). **Engine fix**: `_query_by_role`/`_query_summary` do VLMO agora agregam por prefixo (`LIKE 'Compra%'/'Venda%'`) — o match exato perdia os "Compra à vista"/"Venda à vista" (o estático mostrava 2026-06 com R$ 0,00 apesar de ~R$ 1,4 bi em vendas na própria tabela de transações). **Sort fix (global)**: `_valSortKey` stripa o marcador de tooltip ⓘ da célula ("03/11/2026 ⓘ" não casava o regex de data ancorado → datas em sort lexicográfico, não cronológico) e parseia labels de mês BR (`jun/2026`), `YYYY-MM` e BRL compacto (`R$ 4,27 bi` → 4,27e9) cronologicamente/numericamente. Same data layer as the skill's modes; `_error` PT-BR aponta a fonte `vlmo`.
-- [ ] Historical — 5Y price + ratio charts (buttons hidden until shipped)
+### Architecture decisions that hold
 
-### Macro Page
-- [x] **[v1.11] Macro** — the static macro dashboard reorganized (reference: `macro_dashboard.html` / `skills/bcb/macro`; data: `sgs.db` + `focus.db`): the LANDING subtab carries only what is general (the static's "Indicadores Atuais" — 4 KPIs + the 12-series current table with computed IPCA/IGP-M acumulado 12m); every specific view is its own lazy subtab — Juros (Selic/CDI/Meta Copom in ONE % a.a. chart — the static shipped 5 near-duplicates — + TR + Selic acumulada + monthly tables ANNUALIZED), Inflação (IPCA vs IGP-M mensal + acumulado 12m, one chart per question), Câmbio (ptax diária + média mensal + máx/mín 12m), Atividade (PIB nominal trimestral em R$ tri `T3 2026` + salário mínimo), Retorno Real (Fisher — real line joined to a monthly IPCA step), Expectativas Focus (mediana ± faixa min/max, IPCA/Selic/Câmbio, dedupe por rodada), Curva de Juros (Selic Focus por ano — forward-looking, sem range bar). Ticker-less dispatch (`takes_ticker`) + generic `GET /api/webui/macro/sections/{key}`; same data layer as the skill's query engines; degradation per fonte (`sgs`/`focus`). **PIB unit fix**: SGS 4380 catalog "R$ mil" → "R$ milhões" (the static read "R$ 1.165.623 mil" — R$ 1,17 bi per quarter, absurd for a country's GDP).
-
-### Mercado Page
-- [x] **[v1.12] Mercado — Focus family** — the new nav session for the DDM dashboards (dadosdemercado.com.br), next to Macro: family pills (Focus; dividends/índices/fluxo/inflação/juros as later families, hidden until shipped) + the family's subtabs. The static focus dashboard reorganized (reference: `focus_dashboard.html` / `skills/ddm/focus`; data: `memory_db/ddm/focus.db`): the LANDING subtab carries the general content (4 KPIs + o Boletim Focus, uma tabela por ano — the static's 4 year subtabs stacked); the 12 per-indicator tabs regrouped into 6 question-driven subtabs — Inflação (IPCA + IPCA Adm + IGP-M), Atividade (PIB), Juros (Selic), Câmbio, Setor Externo (Conta corrente + Balança + Investimento direto), Fiscal (Dívida líquida + Primário + Nominal) — each with a KPI card per indicator (Hoje do ano corrente, tooltip com todos os anos + comparação 4 semanas + respondentes — novo vs o estático) + grouped bar chart 3 janelas × 4 anos + tabela por ano sortable. Ticker-less dispatch reaproveitado do v1.11 (zero registry changes) + generic `GET /api/webui/mercado/sections/{key}`. **Unit map fix**: 5 nomes de indicadores faltavam no `_INDICATOR_UNITS` do skill — o estático renderizava "IPCA Adm 4,77" sem %, "Investimento direto no país 80.000,00" sem US$ mi (alias truncado nunca casava); corrigido na fonte (skill v1.1).
-- [x] **[v1.13] Mercado — Fluxo family** — the static fluxo dashboard reorganized (reference: `fluxo_dashboard.html` / `skills/ddm/fluxo`; data: `memory_db/ddm/fluxo.db` — the B3 investment flow, ~244 pregões): the static's 5 flat tabs (1 Fluxo + 4 per-investor × Diário/Mensal/Anual) become 4 comparison-driven subtabs — Visão Geral (6 KPIs: Última data, Dias na base, Líquido anual por investidor com o 365d no tooltip + o fluxo diário de TODOS num único chart de colunas empilhadas com range bar (fix1 — um pregão = uma coluna, um segmento por tipo; a altura líquida é o total do dia) + a tabela diária completa 244×7 sortable), Mensal (o acumulado mensal COMPARADO — chart + tabela Mês × investidor + Total, KPIs de melhor/pior mês — o estático tinha 4 tabelas separadas), Anual (o YTD corrente em serra dente-de-serra por investidor + totais por ano), Por Investidor (o chart diário verde/vermelho POR SINAL, um por tipo — os 4 do estático + Outros, inédito). "Outros" joina toda view (no estático era só coluna da tabela diária). 4 `register()` zero-param (mesmo `takes_ticker` + o MESMO endpoint mercado); `mercadoLoader(family)` — UMA fábrica de loaders no app.js (família nova = uma linha). `docs/skills/ddm/FLUXO.md` KPI section updated (was stale at the pre-v1.1 5 "Total" cards).
-- [x] **[v1.14] Mercado — Índices family** — the static index dashboard reorganized (reference: `index_dashboard.html` / `skills/b3/index`; data: `memory_db/b3/index.db` — B3 indexProxy, 5 active indices IBOV/SMLL/BDRX/IFIX/IDIV, 25 catalogued): the static's 6 flat tabs (Resumo + 5 per-index, chart top-15 bar + table capped at 20) become 6 subtabs — Visão Geral (5 KPIs + índices sincronizados com maior peso/top-5 + PRESENÇA EM ÍNDICES, o cruzamento 2+ índices que o estático não tinha), IBOV/SMLL/BDRX/IFIX/IDIV (5 KPIs + o DOUGHNUT com TODOS os constituintes — era barra do top 15 — + o doughnut por tipo de ativo ON/PN/UNT/DRN/CI + a tabela COMPLETA sortable — era top 20). Skill fixes at source (helpers v1.1): format_pct "10,886%" e format_qty "3.535.764.048" (o estático embarcava EN-US), spec "ON NM" colapsado no fetch, ticker mode compartilha o helper. Client: renderValChart honra plugins.legend + o novo tooltipUnit (tooltip pt-BR com sufixo); loadIndicesSubtab = mercadoLoader('indices') + `ind:` prefetch. 3D pie fora do Chart.js v4 — doughnut é a entrega.
-- [x] **[v1.15] Mercado — Inflação family** — the static inflation dashboard reorganized (reference: `inflation_dashboard.html` / `skills/ddm/inflation`; data: `memory_db/ddm/inflation.db` — IGP-M (FGV), IPCA e INPC (IBGE), ~322 meses cada, 2000-01 a hoje): the static's 4 flat tabs (IGP-M, IPCA e INPC each with Histórico + Matriz subtabs, plus a Comparativo tab) become 4 subtabs — Visão Geral (6 KPIs — mês + 12m por índice, o ano no tooltip do card do mês — + a variação mensal e o acumulado 12m dos TRÊS índices em 2 charts — o Comparativo do estático era a ÚLTIMA aba — + a tabela comparativa Mês × índice, o ⓘ do mês carrega o 12m dos três), IGP-M/IPCA/INPC (3 KPIs + o chart Evolução mensal de 3 linhas do estático — variação cheia, ano tracejada na 300-shade, 12m pontilhada slate — + o histórico completo 322 linhas sortable + a matriz ano × mês em heatmap — 27 anos, meses divergentes vermelho→branco→verde, coluna Ano sequencial branco→azul — computada do DB, o live-fetch fica no skill). Skill fix at source (v3.1): months=0 defaults renderizavam "Últimos 0 meses" → "todo o histórico disponível" (_window_text); INFLATION.md refreshed (DB path, 3 datasets vs "2, 60 meses", heatmap v2, REQUIRED_SOURCES). Client: eixo mensal YYYY-MM — ticks/tooltips "jul/2026" (fmtMonth) e valChartRange corta o cutoff em 7 chars (prefixo lexicográfico); loadInflacaoSubtab = mercadoLoader('inflacao') + `inf:` prefetch. 57 subtabs em 12 famílias no preflight.
-- [x] **[v1.16] Mercado — Juros family** — the static juros dashboard reorganized (reference: `juros_dashboard.html` / `skills/ddm/juros`; data: `memory_db/ddm/juros.db` — Selic (BCB), Meta Selic (Copom) e CDI (interbancário), ~323 meses cada, 2000-01 a nov/2026; a Meta Selic anda um mês à frente quando o Copom já anunciou a próxima meta): the static's 4 flat tabs (Selic, Meta Selic e CDI each with Histórico + Matriz subtabs, plus a Comparativo tab) become 4 subtabs — Visão Geral (6 KPIs — mês + 12m por taxa, a média no ano no tooltip do card do mês — + a taxa efetiva e a média 12m dos TRÊS índices em 2 charts — o Comparativo do estático era a ÚLTIMA aba — + a tabela comparativa Mês × taxa, o ⓘ do mês carrega a média 12m das três, a nota explica a Meta Selic adiantada), Selic/Meta Selic/CDI (3 KPIs + o chart Evolução mensal de 3 linhas do estático — taxa cheia, média no ano tracejada na 300-shade, média 12m pontilhada slate — + o histórico completo 323/324 linhas sortable + a matriz ano × mês em heatmap SEM coluna "Ano" — juros são taxas, não acumulados; divergente vermelho→branco→verde com min/max dinâmicos — computada do DB, o live-fetch fica no skill; a view da Meta Selic explica o mês à frente). Skill fix at source (v2): "Ultimos 0 meses" → "todo o histórico disponível" (_window_text, o fix v3.1 da inflação espelhado); JUROS.md refreshed ("last 24 months" vs default tudo, REQUIRED_SOURCES `["ddm-juros"]`). Client: loadJurosSubtab = mercadoLoader('juros') + `jur:` prefetch — zero mudanças de renderer (eixo mensal do v1.15 reaproveitado). 61 subtabs em 13 famílias no preflight.
-- [x] **[v1.17] Mercado — Ações family + the evolution store** — the static acoes dashboard reorganized (reference: `acoes_dashboard.html` / `skills/ddm/acoes`; data: `memory_db/ddm/acoes.db` — ~372 tickers B3: Ticker/Nome/Negócios/Última (R$)/Variação): the static's single flat tab becomes 2 subtabs — Visão Geral (6 KPIs — os 4 do estático + Faixa Mais Comum e Preço Mediano, as leituras de um relance da distribuição — + a distribuição nas 22 faixas da paleta com labels compactos + o Top 10 Mais Negociadas NOVO, cada barra na cor da faixa de preço da ação + a tabela completa 372 linhas sortable) e **Evolução** (a estrela: a área 100% EMPILHADA da distribuição ao longo do tempo — um dataset por faixa na cor da paleta, faixas baixas embaixo, fatias somando EXATAMENTE 100% em cada data + a visão absoluta em nº de ações + a tabela por data com as 22 faixas agrupadas em 5 bandas, o ⓘ da data carrega as top-3 faixas; <2 snapshots degradam em tabela + nota — o caso vazio cai no snapshot atual, que é o que o próximo sync preserva). **The data capability behind it**: o sync engine v2 ACUMULA um snapshot por dia na nova tabela `stocks_history` (PK `(ref_date, ticker)`, mesma transação do INSERT principal via o hook `extra_write_fn` do `_base/sync_base.py`; re-sync no mesmo dia substitui; o PRIMEIRO sync pós-upgrade preserva o snapshot pré-existente — a evolução começa com os dados que o usuário já tem; migração = CREATE TABLE IF NOT EXISTS) + `price_history()` no query engine + o modo `history` da fonte + `history_rows`/`history_dates` no status. Skill fixes at source (v2): PT-BR accents em toda string visível (o estático de juros/inflação sempre teve — "Ações", "Negócios", "Distribuição de Preços"…), "16 colored bars" desatualizado → 22 faixas, `skills/_price_colors.py` → `skills/_colors/price.py`, e as seções de evolução no dashboard estático; ACOES.md + acoes/CHANGELOG.md refreshed. Numerics compartilhadas: `distribution_snapshots` (counts + shares exatas-100) usada pela skill E pelo WebUI. Client: renderValChart honra a `interaction` do server (mode/intersect — o padrão opt-in beginAtZero/stacked/legend; os charts de 22 faixas usam `nearest` para não virar um muro de tooltip) + loadAcoesSubtab = mercadoLoader('acoes') + `aco:` prefetch. Preflight: o inventário lista `stocks_history` (espelha o CREATE TABLE do catálogo — um DB pré-v2 mostra o hint de re-sync, que cria a tabela e preserva o snapshot). 63 subtabs em 14 famílias no preflight.
-- [x] **[v1.18] Mercado — Proventos family + the stocks_history startup self-heal** — the static dividends dashboard reorganized (reference: `dividends_dashboard.html` / `skills/ddm/dividends`; data: `memory_db/ddm/dividends.db` — the agenda de dividendos, ~94 events): the static's single flat tab (4 KPIs + 8-bucket distribution + sortable table over the WHOLE agenda, BDRs mixed in) becomes 4 subtabs with the **BDR SPLIT** (tickers ending in 34 — ~40% of the events, payouts R$ 1,70-6,32 vs natives topping at ~R$ 1,13) — Visão Geral (a agenda B3: 6 KPIs escopados + a distribuição 8 faixas Dividendo/JCP + o doughnut por tipo NOVO + a tabela completa sem BDRs), BDRs (o gêmeo *34 na mesma escala — a distribuição estica para a direita), Por Empresa (a agenda agregada por ticker — Top 10 por valor/eventos com barras B3 teal/BDR slate + a tabela completa com a coluna Classe) e Calendário (os pagamentos por data, Pago vs A pagar + a tabela por dia com os principais pagadores). Numerics compartilhadas no `skills/ddm/dividends/helpers.py` (`is_bdr`, `summarize`, `bucketize`, `aggregate_by_empresa`, `aggregate_by_day`) — usadas pela skill E pelo `DividendosService` (o padrão v1.17). NAMING: display "Proventos" (o guarda-chuva PT-BR), family key `dividendos` (a company page possui `proventos:*`). O BUGFIX do v1.17: `stocks_history` só era criada no primeiro sync pós-upgrade — o lifespan do `webui/app.py` agora roda o `ensure_schema()` do catálogo acoes no boot (idempotente; o painel Diagnóstico limpa sem sync; o próximo sync ainda preserva o snapshot pré-existente) + o hint do preflight nomeia o restart. 4 `register()` zero-param no MESMO endpoint `/mercado/sections/{key}` (67 subtabs em 15 famílias); loadDividendosSubtab = mercadoLoader('dividendos') + `div:` prefetch; `?v=57->58`.
-
-### Features
-- [x] Ticker search (HTMX debounced keyup, wildcard-escaped, relevance-ranked since v1.5)
-- [x] Company header (identity card — persistent across all tabs)
-- [x] Candlestick chart (OHLCV + MM20/50/100/200, Ctrl+wheel zoom, Shift+drag pan, 7 ranges)
-- [x] Theme toggle (dark/light, cookie is the single source of truth)
-- [x] Language switcher (pt-BR/en-US — shell only; content is pt-BR)
-- [x] Sidebar collapse (persists in localStorage since v1.5) + current-page highlight
-- [x] Favicon (SVG bar-chart icon)
-- [x] Sync status (freshness table with badges, auto-refresh)
-- [x] SSE sync stream (live progress events — native EventSource since v1.5)
-- [x] Per-source "Sincronizar" buttons (dedupe: one running job per source)
-- [x] Cache-busting (?v=46 on static URLs, ?_t= on API fetch)
-- [x] Price service (ohlcv_with_mas, price_data, indicators, volatility, volume, fibonacci)
-- [x] Chart.js zoom plugin + Hammer.js (vendored locally)
-- [x] [v1.5] Chart lifecycle: destroy on HTMX cleanup + before re-renders (no leaks)
-- [x] [v1.5] Lazy subtabs everywhere (Preço/Financeiro/Valuation — active subtab only)
-- [x] [v1.5] Shared 60s-TTL OHLCV cache (4 Preço subtabs = 1 DB scan)
-- [x] [v1.5] pt-BR number formatting (Intl.NumberFormat, thousands separators)
-- [x] [v1.7] Valuation + Proventos loaders fetch through the generic `/sections/{key}` endpoint (adapter dispatch path)
+- One process, one port (`python webui.py`) — the WebUI mounts on the existing FastAPI gateway
+- Service layer over the skill engines (direct imports; **no forked numerics** — shared helpers)
+- Adapter contract + registry (`webui/adapters/`) — every lazy subtab a `<family>:<sub>` key behind ONE generic endpoint per scope (company / macro / mercado)
+- SSE, not WebSocket (sync stream + system log stream)
+- Pure-ASGI request logging middleware (SSE-safe), threadpool `def` handlers
+- Vendored JS (HTMX + Alpine + Chart.js, no CDN), no build step
+- CSS variables 3-layer theme system; JSON i18n (shell bilingual, content pt-BR)
+- Security posture: loopback-only by default (LAN = `WEBUI_ALLOW_LAN=1`), ticker regex at every company route, allow-lists for tabs/adapters, reflected-XSS closed
+- **Settings as data** [v1.20] — one dict entry in `webui/services/settings.py` SCHEMA = a new setting (form auto-renders; storage `memory_db/webui_settings.json`); sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale, log level/buffer — all wired, no dead knobs
+- **System log** [v1.20] — one in-memory ring buffer (`webui/services/syslog.py`) fed by three capture paths (request middleware, root-logger handler, explicit points); SSE while the drawer is open, 15s poll + unseen-error badge while closed
 
 ---
 
 ## 🔄 Next Up
 
-### v1.20 — System log side tab (user request, deferred from the v1.19 fix)
-- [ ] **System log as a WebUI-wide side tab** — a button with an icon in the top bar (next to theme and language) that slides open a side panel showing the live system log — what is going on inside the WebUI (sync jobs, engine calls, errors), the terminal tail made visible in-app. Needs a log ring buffer + an endpoint (SSE, the Sync page's live log precedent) + the panel shell.
-
-### v1.8 — Feature wave (built on the v1.7 adapter registry)
-
-#### Company Tabs
-- [x] **Options tab** — shipped v1.8 (see Built). The recipe held: service + register() + shell partial + loader, zero api.py endpoint edits (only the maturity passthrough param).
-- [x] **Insider tab** — shipped v1.10 (see Built).
+### Company Tabs
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.
 
-#### Screener
-- [ ] **Sector screener** — select sector → see all companies with key metrics (P/L, DY, ROE, market cap).
-- [ ] **Filter + sort** — filter by P/L range, DY range, market cap range. Sort by any column.
-- [ ] **Peer comparison** — side-by-side comparison of 2-5 tickers.
-
-#### Macro Page (v1.11 shipped the BCB layer — see Built)
-- [ ] **ddm-specific indicators** — next phase per the v1.11 plan: poupança as a Mercado family (fluxo v1.13, índices v1.14, inflação v1.15, juros v1.16, ações v1.17 and proventos/dividends v1.18 shipped).
-- [ ] **Macro dashboard ribbon** — ribbon of key indicators on the dashboard page.
+### Screener
+- [ ] **Sector screener** — select sector → all companies with key metrics (P/L, DY, ROE, market cap).
+- [ ] **Filter + sort** — by P/L range, DY range, market cap range.
+- [ ] **Peer comparison** — side-by-side of 2-5 tickers.
 
 ### Polish
+- [ ] **Theme accent color** — user-selectable accent (teal, blue, violet, orange) via CSS variable override; pairs naturally with the v1.20 settings schema.
 - [ ] **i18n honesty pass** — externalize app.js strings via a `window.I18N` dump OR document pt-BR as the content language and keep en-US for the shell.
-- [ ] **Accessibility** — `role=tab`/`aria-selected` on tab buttons, aria-labels on charts, keyboard nav on the search dropdown (blur/Escape dismissal).
-- [ ] **Mobile** — sidebar hamburger (VERIFIED pre-existing on 390px: the sidebar renders open and squeezes the content on EVERY page — the user must tap ◀; a hamburger/drawer or auto-collapse under ~768px is the fix), `overflow-x` on wide tables, touch pan on charts.
+- [ ] **Accessibility** — `role=tab`/`aria-selected` on tab buttons, aria-labels on charts, keyboard nav on the search dropdown.
+- [ ] **Mobile** — sidebar hamburger (the sidebar renders open and squeezes content on every page at 390px today), `overflow-x` on wide tables, touch pan on charts.
 
 ---
 
 ## 🔮 Planned (v2)
-
-### Macro Page — ddm phase
-- [ ] **ddm dashboards** — the remaining ddm-specific indicators become Mercado families (same recipe as v1.12–v1.18): poupança.
-
-## 🔮 Planned (v3)
-
-### Settings (auto-generated)
-- [ ] **Settings as data** — SDNext-style schema-driven settings page. Define settings as a dict (key, label, type, default, section), auto-render the form. Adding a setting = one dict entry.
-- [ ] **Theme accent color** — user-selectable accent (teal, blue, violet, orange) via CSS variable override.
-- [ ] **Sync preferences** — auto-sync on startup (on/off), stale threshold (hours), sync schedule.
 
 ### Watchlist
 - [ ] **Saved tickers** — SQLite-stored watchlist. Add/remove from the company page.
 - [ ] **Watchlist view** — table with live KPIs for all watched tickers.
 
 ### Export
-- [ ] **Download report** — "Download as HTML" button on each company page. Calls the existing `build_dashboard()` and serves the self-contained HTML.
+- [ ] **Download report** — "Download as HTML" on each company page (reuse `build_dashboard()`).
 - [ ] **Export to Excel** — export ratios table to .xlsx.
+
+### Data
+- [ ] **ddm poupança** — the last DDM indicator without a Mercado family (same recipe as v1.12–v1.18).
 
 ---
 
-## 🔮 Planned (v4)
+## 🔮 Planned (v3)
 
 ### Agent Integration
-- [ ] **Agent chat tab** — embedded chat interface using the existing `/chat` + `/ws` endpoints. Talk to the LLM from the WebUI.
-- [ ] **Task history** — list of recent agent tasks with status + result preview.
+- [ ] **Agent chat tab** — embedded chat using the existing `/chat` + `/ws` endpoints.
+- [ ] **Task history** — recent agent tasks with status + result preview.
 
 ### Polish
 - [ ] **Multiple themes** — solarized, midnight, high-contrast.
 - [ ] **ES (Spanish) locale** — third language.
-- [ ] **Mobile responsive** — sidebar collapses to hamburger menu, tables scroll horizontally.
-- [ ] **Keyboard shortcuts** — `/` to focus search, `g d` to go to dashboard, etc.
+- [ ] **Keyboard shortcuts** — `/` to focus search, `g d` to go to dashboard.
 - [ ] **Loading indicators** — HTMX `hx-indicator` spinners on all async requests.
 - [ ] **Error toasts** — non-blocking error notifications.
 
@@ -148,8 +87,9 @@
 
 ## 🚫 Deferred / Out of Scope
 
-- **User authentication / multi-user** — the WebUI is a local single-user tool. The gateway's Bearer token is sufficient. Don't add user registration, sessions, or RBAC.
-- **Real-time price streaming** — prices are daily (COTAHIST) or 15-min delayed (brapi). Don't build a real-time price feed — poll on page load.
-- **Custom chart builder** — Chart.js with predefined configs is enough. Don't build a drag-and-drop chart builder.
-- **Plugin system** — the page registry is a simple list of dicts. Don't build a plugin system until there are 5+ toolset pages.
-- **Offline PWA** — the WebUI requires a server connection (SQLite DBs are local, but the Python server must run). Don't build a Progressive Web App.
+- **User authentication / multi-user** — the WebUI is a local single-user tool. The gateway's Bearer token is sufficient.
+- **Real-time price streaming** — prices are daily (COTAHIST). Poll on page load; don't build a real-time feed.
+- **Custom chart builder** — Chart.js with predefined configs is enough.
+- **Plugin system** — the page registry is a simple list of dicts. Don't build one until there are 5+ toolset pages.
+- **Offline PWA** — the Python server must run; don't build a Progressive Web App.
+- **Persistent log file** — the system log is an in-memory tail by design (what happened since boot). A rotating file is a `logging` config change, not a WebUI feature.

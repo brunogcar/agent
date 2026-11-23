@@ -2681,6 +2681,385 @@ function initSyncButtons() {
   });
 }
 
+// ── System log drawer (the 📜 top-bar button — every page) [v1.20] ────────
+// The terminal tail made visible in-app. While the drawer is OPEN the feed
+// is the SSE stream (GET /api/webui/logs/stream: one "snapshot" event with
+// the whole ring buffer, then ~1s "logs" batches). While CLOSED it degrades
+// to a lightweight 15s poll of /api/webui/logs?after=<id> — enough to keep
+// the unseen-ERROR badge counting without holding a stream per page.
+var SYSLOG_MAX_DOM = 500;
+
+function initSyslogDrawer() {
+  var drawer = document.getElementById('syslog-drawer');
+  if (!drawer || drawer._booted) return;
+  drawer._booted = true;
+
+  var toggle = document.getElementById('syslog-toggle');
+  var scrim = document.getElementById('syslog-scrim');
+  var list = document.getElementById('syslog-list');
+  var badge = document.getElementById('syslog-badge');
+  var stateDot = document.getElementById('syslog-state');
+  var pauseBtn = document.getElementById('syslog-pause');
+  var clearBtn = document.getElementById('syslog-clear');
+  var closeBtn = document.getElementById('syslog-close');
+  var countEl = document.getElementById('syslog-count');
+  var jumpBtn = document.getElementById('syslog-jump');
+  var filters = document.getElementById('syslog-filters');
+
+  var es = null;            // EventSource — only while open
+  var pollTimer = null;     // setInterval handle — only while closed
+  var entries = [];         // {id, ts, level, source, message}
+  var lastId = 0;           // newest id ingested (poll anchor + SSE dedupe)
+  var domId = 0;            // newest id rendered in the DOM
+  var paused = false;
+  var pinned = true;        // auto-scroll while the user is at the bottom
+  var unseenErrors = 0;
+
+  function isOpen() { return drawer.classList.contains('open'); }
+
+  function setLive(on) {
+    if (stateDot) stateDot.className = 'syslog-state' + (on ? ' is-live' : '');
+  }
+
+  function updateBadge() {
+    if (isOpen()) unseenErrors = 0;
+    if (!badge) return;
+    badge.hidden = unseenErrors === 0;
+    badge.textContent = unseenErrors > 99 ? '99+' : String(unseenErrors);
+  }
+
+  function updateCount() {
+    if (countEl) {
+      countEl.textContent = entries.length + ' evento' + (entries.length === 1 ? '' : 's') +
+                            (paused ? ' · pausado' : '');
+    }
+  }
+
+  function entryLine(e) {
+    var line = document.createElement('div');
+    line.className = 'log-line log-' + e.level;
+    var ts = document.createElement('span'); ts.className = 'log-ts'; ts.textContent = e.ts;
+    var src = document.createElement('span'); src.className = 'log-src'; src.textContent = e.source;
+    var msg = document.createElement('span'); msg.className = 'log-msg'; msg.textContent = e.message;
+    line.appendChild(ts); line.appendChild(src); line.appendChild(msg);
+    return line;
+  }
+
+  function appendDom() {
+    var fresh = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].id > domId) fresh.push(entries[i]);
+    }
+    if (!fresh.length) return;
+    var emptyEl = list.querySelector('.syslog-empty');
+    if (emptyEl) emptyEl.remove();
+    var frag = document.createDocumentFragment();
+    for (var j = 0; j < fresh.length; j++) frag.appendChild(entryLine(fresh[j]));
+    list.appendChild(frag);
+    domId = fresh[fresh.length - 1].id;
+    while (list.children.length > SYSLOG_MAX_DOM) list.removeChild(list.firstChild);
+    if (pinned) list.scrollTop = list.scrollHeight;
+    else if (jumpBtn) jumpBtn.hidden = false;  // new lines below the fold
+  }
+
+  function forceRender() {
+    domId = 0;
+    list.innerHTML = '';
+    if (!entries.length) {
+      var empty = document.createElement('div');
+      empty.className = 'syslog-empty';
+      empty.textContent = 'Sem eventos ainda — navegue, sincronize ou altere configurações.';
+      list.appendChild(empty);
+    } else {
+      appendDom();
+    }
+    updateCount();
+  }
+
+  function ingest(arr) {
+    if (!arr || !arr.length) return;
+    for (var i = 0; i < arr.length; i++) {
+      var e = arr[i];
+      if (e.id <= lastId) continue;  // dedupe (snapshot overlap)
+      entries.push(e);
+      if (e.level === 'error' && !isOpen()) unseenErrors++;
+      lastId = e.id;
+    }
+    if (entries.length > SYSLOG_MAX_DOM * 4) entries = entries.slice(-SYSLOG_MAX_DOM * 2);
+    updateBadge();
+    if (isOpen()) {
+      if (!paused) appendDom();
+      updateCount();
+    }
+  }
+
+  // ── feed: SSE while open, poll while closed ──
+  function connect() {
+    if (es || typeof EventSource === 'undefined') return;
+    es = new EventSource('/api/webui/logs/stream');
+    es.addEventListener('snapshot', function(evt) {
+      try {
+        var arr = JSON.parse(evt.data) || [];
+        // The snapshot is authoritative — replace the local view.
+        entries = arr.slice(-SYSLOG_MAX_DOM * 2);
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].id > lastId) lastId = entries[i].id;
+        }
+        forceRender();
+      } catch (err) { /* ignore */ }
+    });
+    es.addEventListener('logs', function(evt) {
+      try { ingest(JSON.parse(evt.data)); } catch (err) { /* ignore */ }
+    });
+    es.onopen = function() { setLive(true); };
+    es.onerror = function() { setLive(false); /* auto-reconnects (retry: 3000) */ };
+  }
+
+  function disconnect() {
+    if (es) { try { es.close(); } catch (err) { /* noop */ } es = null; }
+    setLive(false);
+  }
+
+  function startPolling() {
+    if (pollTimer || es) return;
+    pollTimer = setInterval(function() {
+      fetch('/api/webui/logs?after=' + lastId)
+        .then(function(r) { return r.json(); })
+        .then(function(d) { ingest(d && d.entries); })
+        .catch(function() { /* offline — the next tick retries */ });
+    }, 15000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  // ── open/close ──
+  function openDrawer() {
+    drawer.classList.add('open');
+    scrim.hidden = false;
+    unseenErrors = 0;
+    pinned = true;
+    if (jumpBtn) jumpBtn.hidden = true;
+    updateBadge();
+    stopPolling();
+    connect();
+    // The snapshot handler force-renders + scrolls; if SSE is unavailable
+    // (very old browser) the already-polled entries still render:
+    forceRender();
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    scrim.hidden = true;
+    disconnect();
+    startPolling();
+  }
+
+  if (toggle) toggle.addEventListener('click', function() { isOpen() ? closeDrawer() : openDrawer(); });
+  if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+  if (scrim) scrim.addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && isOpen()) closeDrawer();
+  });
+
+  // ── pause / clear ──
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', function() {
+      paused = !paused;
+      pauseBtn.textContent = paused ? '▶' : '⏸';
+      pauseBtn.classList.toggle('is-paused', paused);
+      if (!paused) { pinned = true; forceRender(); }
+      updateCount();
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function() {
+      entries = [];  // visual only — the anchor stays, so the server's
+                      // ring buffer history is not re-counted as "new"
+      forceRender();
+      updateBadge();
+    });
+  }
+
+  // ── filters (CSS-driven: the list's data-filter attribute hides levels) ──
+  if (filters) {
+    filters.addEventListener('click', function(e) {
+      var pill = e.target && e.target.closest ? e.target.closest('.syslog-pill') : null;
+      if (!pill) return;
+      filters.querySelectorAll('.syslog-pill').forEach(function(p) { p.classList.remove('is-active'); });
+      pill.classList.add('is-active');
+      list.setAttribute('data-filter', pill.getAttribute('data-filter') || 'all');
+      pinned = true;
+      forceRender();
+    });
+  }
+
+  // ── auto-scroll: pinned while at the bottom, jump pill while scrolled up ──
+  list.addEventListener('scroll', function() {
+    pinned = (list.scrollTop + list.clientHeight >= list.scrollHeight - 40);
+    if (pinned && jumpBtn) jumpBtn.hidden = true;
+  });
+  if (jumpBtn) {
+    jumpBtn.addEventListener('click', function() {
+      pinned = true;
+      list.scrollTop = list.scrollHeight;
+      jumpBtn.hidden = true;
+    });
+  }
+
+  // Start closed: badge-only polling (15s, anchored on the first response).
+  startPolling();
+}
+
+// ── Settings page (schema-driven form) [v1.20] ────────────────────────────
+// The form renders itself from GET /api/webui/settings (the SCHEMA in
+// webui/services/settings.py — adding a setting = one dict entry there).
+// One control per type: bool → toggle, number → input + unit, select →
+// dropdown. Dirty keys are tracked client-side; Save PUTs ONLY the patch.
+// ui.theme / ui.locale are saved server-side via Set-Cookie — the client
+// reloads so the whole shell (data-theme, FOUC script, locale) applies.
+function initSettingsPage() {
+  var root = document.getElementById('settings-root');
+  if (!root || root._booted) return;
+  root._booted = true;
+
+  var state = { sections: [], values: {}, serverValues: {}, dirty: {} };
+
+  function controlHtml(s) {
+    var v = state.values[s.key];
+    if (s.type === 'bool') {
+      return '<label class="toggle"><input type="checkbox" data-key="' + s.key + '"' +
+             (v ? ' checked' : '') + '><span class="toggle-track"></span></label>';
+    }
+    if (s.type === 'number') {
+      return '<input type="number" class="set-input" data-key="' + s.key +
+             '" value="' + v + '" min="' + (s.min || 0) + '" max="' + (s.max || 9999) + '" step="1">' +
+             (s.unit ? '<span class="set-unit">' + esc(s.unit) + '</span>' : '');
+    }
+    if (s.type === 'select') {
+      var opts = (s.options || []).map(function(o) {
+        return '<option value="' + esc(o.value) + '"' + (o.value === v ? ' selected' : '') + '>' +
+               esc(o.label) + '</option>';
+      }).join('');
+      return '<select class="set-select" data-key="' + s.key + '">' + opts + '</select>';
+    }
+    return '<input type="text" class="set-input" data-key="' + s.key + '" value="' + esc(String(v)) + '">';
+  }
+
+  function render() {
+    var html = state.sections.map(function(sec) {
+      var rows = sec.settings.map(function(s) {
+        return '<div class="setting-row">' +
+                 '<div class="setting-label">' +
+                   '<span class="setting-name">' + esc(s.label) + '</span>' +
+                   (s.help ? '<span class="setting-help">' + esc(s.help) + '</span>' : '') +
+                 '</div>' +
+                 '<div class="setting-control">' + controlHtml(s) + '</div>' +
+               '</div>';
+      }).join('');
+      return '<div class="settings-section"><h3>' + esc(sec.name) + '</h3>' + rows + '</div>';
+    }).join('');
+    html += '<div class="settings-savebar" id="settings-savebar">' +
+              '<span class="settings-msg" id="settings-msg"></span>' +
+              '<button class="settings-btn" id="settings-reset">Descartar</button>' +
+              '<button class="settings-btn primary" id="settings-save" disabled>Salvar</button>' +
+            '</div>';
+    root.innerHTML = html;
+    wire();
+    updateBar();
+  }
+
+  function wire() {
+    function onEdit() {
+      var key = this.getAttribute('data-key');
+      if (!key) return;
+      state.values[key] = this.type === 'checkbox' ? this.checked : this.value;
+      state.dirty[key] = true;
+      updateBar();
+    }
+    root.querySelectorAll('[data-key]').forEach(function(el) {
+      el.addEventListener('input', onEdit);
+      el.addEventListener('change', onEdit);
+    });
+    var save = document.getElementById('settings-save');
+    var reset = document.getElementById('settings-reset');
+    if (save) save.addEventListener('click', savePatch);
+    if (reset) reset.addEventListener('click', function() {
+      state.values = Object.assign({}, state.serverValues);
+      state.dirty = {};
+      render();
+    });
+  }
+
+  function updateBar() {
+    var save = document.getElementById('settings-save');
+    var msg = document.getElementById('settings-msg');
+    var n = Object.keys(state.dirty).length;
+    if (save) save.disabled = n === 0;
+    if (msg) {
+      msg.className = 'settings-msg';
+      msg.textContent = n > 0 ? n + ' alteração' + (n > 1 ? 'ões' : '') + ' sem salvar' : '';
+    }
+  }
+
+  function savePatch() {
+    var save = document.getElementById('settings-save');
+    var msg = document.getElementById('settings-msg');
+    if (!save || save.disabled) return;
+    var patch = {};
+    Object.keys(state.dirty).forEach(function(k) { patch[k] = state.values[k]; });
+    save.disabled = true;
+    save.textContent = 'Salvando…';
+    fetch('/api/webui/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+      .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+      .then(function(res) {
+        if (!res.ok || !res.j || res.j._error) {
+          var errs = res.j && res.j.errors
+            ? Object.keys(res.j.errors).map(function(k) { return res.j.errors[k]; }).join(' · ')
+            : (res.j && res.j._error) || 'Erro ao salvar';
+          save.textContent = 'Salvar';
+          save.disabled = false;
+          if (msg) { msg.className = 'settings-msg is-error'; msg.textContent = errs; }
+          return;
+        }
+        state.dirty = {};
+        state.values = Object.assign({}, res.j.values);
+        state.serverValues = Object.assign({}, res.j.values);
+        var applied = res.j.applied || [];
+        if (applied.indexOf('ui.theme') >= 0 || applied.indexOf('ui.locale') >= 0) {
+          save.textContent = 'Aplicando…';
+          location.reload();
+          return;
+        }
+        save.textContent = 'Salvo';
+        updateBar();
+        setTimeout(function() { save.textContent = 'Salvar'; }, 2500);
+      })
+      .catch(function() {
+        save.disabled = false;
+        save.textContent = 'Salvar';
+        if (msg) { msg.className = 'settings-msg is-error'; msg.textContent = 'Erro de rede'; }
+      });
+  }
+
+  fetch('/api/webui/settings')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      state.sections = (d && d.sections) || [];
+      state.values = Object.assign({}, (d && d.values) || {});
+      state.serverValues = Object.assign({}, state.values);
+      render();
+    })
+    .catch(function() {
+      root.innerHTML = '<div class="error">Falha ao carregar as configurações.</div>';
+    });
+}
+
 // ── Company page bootstrap [WebUI v1.5] ─────────────────────────────────
 // Replaces the old inline <script> in company.html that interpolated the
 // ticker into a JS string (and needed htmx.config.includeScriptTags=true
@@ -3269,6 +3648,10 @@ function initApp() {
     // [v1.15] Inflação — same (boot on family-pill click only).
     // Sync page (full page load or HTMX navigation)
     initSyncPage();
+    // [v1.20] drawer + settings (idempotent — the _booted guards no-op
+    // on every HTMX settle after the first).
+    initSyslogDrawer();
+    initSettingsPage();
   });
 
   initPriceRangeBar();
@@ -3277,6 +3660,11 @@ function initApp() {
   initValTableSort();
   initCompanyPage();
   initSyncPage();
+  // [v1.20] System log drawer (base.html — every page) + the
+  // schema-driven settings form (settings.html — the loader no-ops
+  // everywhere else).
+  initSyslogDrawer();
+  initSettingsPage();
   // [v1.11] Macro — direct full-page load (the /webui/macro page is
   // server-rendered; no HTMX settle fires, so the first subtab boots
   // here — the loader no-ops on every other page).

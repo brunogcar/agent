@@ -1031,3 +1031,212 @@ td[title], .kpi-card[title] { cursor: help; }
   font-weight: 700;
   padding: 8px 16px;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   [WebUI v1.20] System log drawer (the 📜 top-bar button) + the
+   schema-driven settings form.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Top-bar button + unseen-error badge ── */
+.syslog-switcher { position: relative; }
+.syslog-toggle { position: relative; }
+.syslog-badge {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px;
+  background: var(--color-danger); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 16px;
+  text-align: center; pointer-events: none;
+}
+
+/* ── Scrim + drawer shell ── */
+.syslog-scrim {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0, 0, 0, 0.45);
+}
+.syslog-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 100;
+  width: min(480px, 100vw);
+  display: flex; flex-direction: column;
+  background: var(--color-bg-sec);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  transform: translateX(100%);
+  transition: transform 0.22s ease;
+}
+.syslog-drawer.open { transform: translateX(0); }
+
+/* ── Header: title + live dot + buttons + filter pills ── */
+.syslog-head {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+}
+.syslog-head-row { display: flex; align-items: center; gap: var(--space-2); }
+.syslog-title { font-weight: 700; font-size: 14px; }
+.syslog-spacer { flex: 1; }
+.syslog-state {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-text-sec); opacity: 0.5;
+}
+.syslog-state.is-live {
+  background: var(--color-success); opacity: 1;
+  animation: syslog-pulse 1.6s ease-in-out infinite;
+}
+@keyframes syslog-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); }
+}
+.syslog-icon-btn {
+  background: none; border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  min-width: 32px; min-height: 32px;
+  cursor: pointer; color: var(--color-text); font-size: 13px;
+}
+.syslog-icon-btn:hover { border-color: var(--color-brand); }
+.syslog-icon-btn.is-paused { border-color: var(--color-warning); }
+.syslog-filters { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+.syslog-pill {
+  background: none; border: 1px solid var(--color-border);
+  border-radius: 999px; padding: 3px 12px;
+  font-size: 12px; cursor: pointer; color: var(--color-text-sec);
+}
+.syslog-pill:hover { border-color: var(--color-brand); color: var(--color-text); }
+.syslog-pill.is-active {
+  background: var(--color-brand-dim); border-color: var(--color-brand);
+  color: var(--color-text); font-weight: 600;
+}
+
+/* ── Log list: one monospace line per entry ── */
+.syslog-list {
+  flex: 1; overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.7;
+}
+.log-line { display: flex; gap: 8px; align-items: baseline; }
+.log-ts { color: var(--color-text-sec); flex-shrink: 0; }
+.log-src {
+  color: var(--color-brand); flex-shrink: 0; min-width: 52px;
+  text-align: right; font-weight: 600;
+}
+.log-msg { white-space: pre-wrap; word-break: break-word; }
+.log-line.log-warning .log-msg { color: var(--color-warning); }
+.log-line.log-error .log-msg { color: var(--color-danger); font-weight: 600; }
+.syslog-empty {
+  color: var(--color-text-sec); font-style: italic;
+  padding: var(--space-4); font-family: var(--font-sans); font-size: 13px;
+}
+/* Level filter (CSS-driven — the list's data-filter attribute) */
+.syslog-list[data-filter="warning"] .log-line.log-info { display: none; }
+.syslog-list[data-filter="error"] .log-line.log-info,
+.syslog-list[data-filter="error"] .log-line.log-warning { display: none; }
+
+/* ── Footer: entry count + jump pill ── */
+.syslog-foot {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  font-size: 12px; color: var(--color-text-sec);
+}
+.syslog-jump {
+  margin-left: auto;
+  background: var(--color-brand-dim); color: var(--color-text);
+  border: 1px solid var(--color-brand); border-radius: 999px;
+  padding: 3px 12px; font-size: 12px; cursor: pointer;
+}
+
+/* ── Settings page: schema-driven form [v1.20] ── */
+.settings-intro {
+  color: var(--color-text-sec); font-size: 13px;
+  margin-bottom: var(--space-4);
+}
+.settings-section {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.settings-section h3 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--color-text-sec); margin-bottom: var(--space-3);
+}
+.setting-row {
+  display: flex; gap: var(--space-4); align-items: flex-start;
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border);
+}
+.setting-row:first-of-type { border-top: none; padding-top: 0; }
+.setting-label { flex: 1; min-width: 0; }
+.setting-name { display: block; font-weight: 600; font-size: 13px; }
+.setting-help {
+  display: block; color: var(--color-text-sec);
+  font-size: 12px; line-height: 1.45; margin-top: 2px;
+}
+.setting-control {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-shrink: 0; min-height: 32px;
+}
+.set-input, .set-select {
+  padding: 6px 10px; width: 130px;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); color: var(--color-text); font-size: 13px;
+}
+.set-select { width: auto; min-width: 150px; }
+.set-input:focus, .set-select:focus { outline: none; border-color: var(--color-brand); }
+.set-unit { color: var(--color-text-sec); font-size: 12px; }
+
+/* Toggle switch (bool settings) */
+.toggle { position: relative; display: inline-block; cursor: pointer; }
+.toggle input { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.toggle-track {
+  display: block; width: 42px; height: 24px;
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  border-radius: 999px; position: relative; transition: background 0.15s;
+}
+.toggle-track::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--color-text-sec); transition: transform 0.15s, background 0.15s;
+}
+.toggle input:checked + .toggle-track {
+  background: var(--color-brand-dim); border-color: var(--color-brand);
+}
+.toggle input:checked + .toggle-track::after {
+  transform: translateX(18px); background: var(--color-brand);
+}
+.toggle input:focus-visible + .toggle-track { outline: 2px solid var(--color-brand); }
+
+/* Save bar */
+.settings-savebar {
+  display: flex; align-items: center; gap: var(--space-3);
+  position: sticky; bottom: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+}
+.settings-msg { flex: 1; font-size: 12.5px; color: var(--color-text-sec); }
+.settings-msg.is-error { color: var(--color-danger); }
+.settings-btn {
+  background: none; border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 8px 18px;
+  font-size: 13px; cursor: pointer; color: var(--color-text);
+}
+.settings-btn:hover { border-color: var(--color-brand); }
+.settings-btn.primary {
+  background: var(--color-brand); border-color: var(--color-brand);
+  color: #fff; font-weight: 600;
+}
+.settings-btn.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Mobile: the drawer covers the viewport; settings rows stack; the drawer
+   header buttons grow to comfortable touch targets (44px guideline). */
+@media (max-width: 640px) {
+  .syslog-drawer { width: 100vw; border-left: none; }
+  .syslog-icon-btn { min-width: 40px; min-height: 40px; }
+  .syslog-pill { padding: 6px 14px; }
+  .setting-row { flex-direction: column; gap: var(--space-2); }
+  .setting-control { width: 100%; }
+}

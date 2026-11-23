@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-11-21 (v1.7 — adapter dispatch endpoint + pre-flight routes)
+Last updated: 2026-11-23 (v1.20 — system log + settings routes; v1.7 adapter dispatch + pre-flight)
 
 ---
 
@@ -18,8 +18,9 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 | GET | `/webui/company/{ticker}` | Company overview page (default tab: visao_geral) |
 | GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: visao_geral, preco, financials, valuation, proventos) |
 | GET | `/webui/macro` | Macro indicators page |
+| GET | `/webui/mercado` | Mercado page (DDM families) |
 | GET | `/webui/sync` | Data sync status page |
-| GET | `/webui/settings` | Settings page (theme, language) |
+| GET | `/webui/settings` | Settings page (schema-driven form [v1.20]) |
 | GET | `/` | Redirects to `/webui/` |
 
 ### Query Parameters
@@ -191,6 +192,48 @@ Tab content — returns the HTML fragment for a specific company tab.
 
 **Parameters:**
 - `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `proventos`
+
+---
+
+## System Routes [v1.20]
+
+The system surface: the log drawer's feed + the schema-driven settings store. Lives in `webui/routes/system.py`; the data services in `webui/services/syslog.py` and `webui/services/settings.py`.
+
+### `GET /api/webui/logs`
+
+System-log ring-buffer entries (JSON). The log captures every non-static HTTP request (method, path, status, duration), the sync job lifecycle, startup events and Python WARNING+ records — in memory, per process.
+
+**Parameters:**
+- `?after=<id>` — only entries with id greater than this (incremental tail); omit/0 → the last `limit` entries
+- `?limit=<n>` — snapshot size (default 300)
+
+Returns `{"entries": [{"id", "ts", "level", "source", "message"}, …]}` (oldest first).
+
+### `GET /api/webui/logs/stream`
+
+SSE stream of the system log (the 📜 drawer's live feed). On connect: one `snapshot` event with the whole current buffer, then `logs` events (~1s batches) plus a keepalive comment every ~15s of silence. Auto-reconnects (`retry: 3000`).
+
+### `GET /api/webui/settings`
+
+The settings schema + current values — the Configurações page renders its form from this. Returns:
+
+```json
+{
+  "sections": [{"name": "Sincronização", "settings": [
+    {"key": "sync.auto_on_startup", "label": "…", "type": "bool",
+     "default": false, "value": false, "help": "…"}
+  ]}],
+  "values": {"sync.auto_on_startup": false, "…": "…"}
+}
+```
+
+`ui.theme` / `ui.locale` values are seeded from the request cookies (the cookie is the single source of truth for those).
+
+### `PUT /api/webui/settings`
+
+Persist a `{key: value}` patch (JSON body). Validation is all-or-nothing per the SCHEMA (types, min/max, select options) — any invalid key rejects the whole patch with `400` + `{"_error": …, "errors": {key: PT-BR message}}`. On success returns `{"ok": true, "applied": [keys], "values": {…}}`; `ui.theme`/`ui.locale` additionally get a `Set-Cookie` on the response.
+
+Storage: `memory_db/webui_settings.json` (atomic write). Every setting is wired: `sync.auto_on_startup` (sync stale sources at boot), `sync.stale_hours` (staleness threshold everywhere), `sync.schedule_hours` (periodic auto-sync, 0 = off), `home.card_rows`, `home.cache_seconds`, `logs.level`, `logs.buffer`.
 
 ---
 
