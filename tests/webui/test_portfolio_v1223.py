@@ -90,6 +90,16 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "memory_root", str(tmp_path), raising=False)
     monkeypatch.setattr(pfmod, "_quotes_for",
                         _fake_quotes_factory({}, {}))
+    # [v1.22.4] The boot-time metadata backfill (empty name/sector →
+    # background re-fetch) must NEVER run inside the HTTP tests: its
+    # daemon threads hit the REAL cvm/bridge DBs and save the store
+    # mid-test (a flaky reload race). Both the service class AND the
+    # router's singleton get the no-op.
+    monkeypatch.setattr(pfmod.PortfolioService,
+                        "_maybe_backfill_meta", lambda self: None)
+    from webui.routes import portfolio as _pfroute
+    monkeypatch.setattr(_pfroute._svc, "_spawn_meta_refresh",
+                        lambda ticker: None)
     import webui.app as m
     from fastapi.testclient import TestClient
     return TestClient(m.create_app(), base_url="http://127.0.0.1:8000")

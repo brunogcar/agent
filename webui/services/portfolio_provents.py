@@ -130,6 +130,7 @@ def proventos_report(scope: str) -> dict[str, Any]:
     events_out: list[dict[str, Any]] = []
     monthly: dict[str, float] = {}
     any_db = False
+    held_no_events: list[str] = []
     for tk in sorted(tickers):
         ladders: list[tuple[dict, list[dict], list[str]]] = []
         for acc in accounts:
@@ -146,6 +147,17 @@ def proventos_report(scope: str) -> dict[str, Any]:
                 ladders.append((acc, rows, [r["date"] for r in rows]))
         if not ladders:
             continue
+
+        # Current position (scope-merged, weighted PM — same math as
+        # positions()) — computed BEFORE the events loop so the
+        # "held ticker with zero events" note can use it.
+        qty = pm_cost = realized = 0.0
+        for acc in accounts:
+            p = raw_by_acc.get(acc["id"], {}).get(tk)
+            if p:
+                qty += p["qty"]
+                pm_cost += p["qty"] * p["pm"]
+                realized += p["realized"]
 
         events = _events(tk)
         if events:
@@ -196,19 +208,16 @@ def proventos_report(scope: str) -> dict[str, Any]:
                 "valor_br": _brl(valor),
                 "debit_br": _brl(debit) if debit > 1e-9 else None,
                 "future": future,
+                # [v1.22.4] which source carried the event (the 🅓 tag).
+                "source": ev.get("source") or "b3",
             })
         if not tk_events:
+            # [v1.22.4] An OPEN position with zero events is suspicious —
+            # the dividends sources may simply not cover it yet.
+            if abs(qty) > 1e-9:
+                held_no_events.append(tk)
             continue
 
-        # Current position (scope-merged, weighted PM — same math as
-        # positions()).
-        qty = pm_cost = realized = 0.0
-        for acc in accounts:
-            p = raw_by_acc.get(acc["id"], {}).get(tk)
-            if p:
-                qty += p["qty"]
-                pm_cost += p["qty"] * p["pm"]
-                realized += p["realized"]
         meta = snap["tickers"].get(tk) or {}
         pm = pm_cost / qty if abs(qty) > 1e-9 else None
         open_cost = pm_cost if qty > 1e-9 else 0.0
@@ -283,6 +292,9 @@ def proventos_report(scope: str) -> dict[str, Any]:
         "da corretora.",
         "Posições vendidas a descoberto PAGAM o provento ao emprestador "
         "(debitado pela B3) — não entram no recebido.",
+        "[v1.22.4] Eventos combinam DUAS fontes: B3 (provents) + "
+        "Dados de Mercado (agenda), sem duplicatas (mesma data com e "
+        "valor por ação).",
     ]
     if total_debit > 0.009:
         notes.append(f"⚠️ Proventos debitados por shorts no período: "
@@ -291,6 +303,13 @@ def proventos_report(scope: str) -> dict[str, Any]:
         notes.insert(0, "Sem eventos de proventos no dividends.db — "
                         "sincronize a fonte dividendos na página "
                         "Sincronização.")
+    elif held_no_events:
+        notes.append("⚠️ Sem NENHUM evento para "
+                     + ", ".join(held_no_events[:8])
+                     + (" e outros" if len(held_no_events) > 8 else "")
+                     + " — sincronize as fontes dividendos (B3) e "
+                       "ddm-dividends (agenda) na página Sincronização "
+                       "para cobrir esses papéis.")
 
     return {
         "ok": True,

@@ -125,6 +125,19 @@ def _num_or_none(v: Any) -> float | None:
         return None
 
 
+def _days_between(a: str, b: str) -> int:
+    """Calendar-day distance of two ISO dates (a huge number when
+    either is empty — [v1.22.4] the DDM merge's near-date check must
+    NEVER treat a missing date as "near")."""
+    try:
+        from datetime import date as _d
+        if not a or not b:
+            return 99999
+        return (_d.fromisoformat(a[:10]) - _d.fromisoformat(b[:10])).days
+    except ValueError:
+        return 99999
+
+
 def _quarter_end(y: int, q: int) -> date:
     """Last calendar day of quarter q (0-based) of year y."""
     month = q * 3 + 1
@@ -212,21 +225,40 @@ class ProventosService:
 
     def _fetch_events(self, tk: str) -> list[dict]:
         from data_sources.b3.dividends.catalog import connect
-        conn = connect(read_only=True)  # FileNotFoundError propagates to caller
         try:
-            rows = conn.execute(
-                "SELECT label, isin_code, approved_on, last_date_prior, "
-                "       rate, related_to, payment_date, remarks "
-                "FROM cash_dividends WHERE ticker=? "
-                "ORDER BY COALESCE(last_date_prior, payment_date, approved_on) ASC",
-                (tk,),
-            ).fetchall()
-            rows = [dict(r) for r in rows]
-        finally:
-            conn.close()
+            conn = connect(read_only=True)
+        except FileNotFoundError:
+            # [v1.22.4] No B3 dividends.db at all — the DDM merge below
+            # still fills what the agenda source knows (graceful, not
+            # an empty tab).
+            conn = None
+        rows: list[dict] = []
+        if conn is not None:
+            try:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT label, isin_code, approved_on, last_date_prior, "
+                    "       rate, related_to, payment_date, remarks "
+                    "FROM cash_dividends WHERE ticker=? "
+                    "ORDER BY COALESCE(last_date_prior, payment_date, approved_on) ASC",
+                    (tk,),
+                ).fetchall()]
+            finally:
+                conn.close()
 
         if not rows:
-            return []
+            # Still run the pipeline (the DDM merge + enrichment) — an
+            # empty B3 answer is not the end of the events.
+            dates: list[str] = []
+            closes: list[float] = []
+            try:
+                dates, closes = self._price_map(tk, "1990-01-01",
+                                                date.today().isoformat())
+            except Exception as e:
+                _log_err("proventos price map", e)
+            events = self._merge_ddm(tk, [], dates, closes,
+                                     date.today().isoformat())
+            events.sort(key=lambda e: e["event_date"] or "")
+            return events
 
         # ── dedupe across share classes ──
         groups: dict[tuple, list[dict]] = {}
@@ -289,8 +321,96 @@ class ProventosService:
                 "remarks": keep.get("remarks") or "",
                 "classes": classes,
                 "future": bool(pay_date and pay_date > today),
+                "source": "b3",
             })
+        events = self._merge_ddm(tk, events, dates, closes, today)
         events.sort(key=lambda e: e["event_date"] or "")
+        return events
+
+    # ── [v1.22.4] second source: DDM agenda (dadosdemercado.com.br) ─────────
+
+    _DDM_TYPES = {"Dividendo": ("Dividendo", "div"),
+                  "JCP": ("JCP", "jcp")}
+
+    def _merge_ddm(self, tk: str, events: list[dict],
+                   dates: list[str], closes: list[float],
+                   today_iso: str) -> list[dict]:
+        """Merge the DDM agenda rows into the B3 events — no duplicates.
+
+        The two sources disagree on coverage (the B3 provents API misses
+        recent/odd events the agenda publishes and vice-versa — the
+        user-visible "proventos limitados"). B3 rows WIN on collision
+        (they carry approved_on + remarks + the share-class detail);
+        a DDM row is a duplicate when the type matches AND the ex-dates
+        are within 5 days AND the per-share rates are within 2% (the
+        sources follow slightly different date conventions — data com vs
+        ex-date — and rounding).
+        """
+        try:
+            from data_sources.ddm.dividends.catalog import connect as ddm_connect
+        except Exception:
+            return events
+        try:
+            conn = ddm_connect(read_only=True)
+            rows = [dict(r) for r in conn.execute(
+                "SELECT tipo, value, record_date, ex_date, payment_date "
+                "FROM dividends WHERE ticker = ?", (tk,)).fetchall()]
+            conn.close()
+        except Exception:
+            return events
+        if not rows:
+            return events
+
+        def _iso(v: Any) -> str:
+            s = str(v or "")
+            return s[:10] if len(s) >= 10 else ""
+
+        for r in rows:
+            type_pt, type_key = self._DDM_TYPES.get(
+                (r.get("tipo") or "").strip(),
+                ((r.get("tipo") or "").strip().title() or "—", "outros"))
+            rate = _num_or_none(r.get("value"))
+            ex_date = _iso(r.get("ex_date")) or _iso(r.get("record_date"))
+            pay_date = _iso(r.get("payment_date"))
+            event_date = ex_date or pay_date
+            if not event_date or rate is None:
+                continue
+            dup = False
+            for ev in events:
+                if ev.get("type_key") != type_key:
+                    continue
+                ev_ex = ev.get("ex_date") or ev.get("event_date") or ""
+                near_date = (abs(_days_between(ev_ex, ex_date)) <= 5
+                             or (pay_date and ev.get("pay_date") == pay_date))
+                ev_rate = ev.get("rate")
+                close_rate = (ev_rate is not None and
+                              abs(ev_rate - rate) <= max(0.0005, abs(ev_rate) * 0.02))
+                if near_date and (close_rate or ev_rate is None or rate == 0):
+                    dup = True
+                    break
+            if dup:
+                continue
+            yield_ex = None
+            if dates and ex_date:
+                px = self._last_close_before(dates, closes, ex_date)
+                if px is not None and px > 0:
+                    yield_ex = rate / px
+            events.append({
+                "ex_date": ex_date,
+                "pay_date": pay_date,
+                "approved_on": "",
+                "event_date": event_date,
+                "year": int(event_date[:4]) if event_date[:4].isdigit() else None,
+                "type": type_pt,
+                "type_key": type_key,
+                "rate": rate,
+                "yield_ex": yield_ex,
+                "related_to": "",
+                "remarks": "fonte: Dados de Mercado (agenda)",
+                "classes": 1,
+                "future": bool(pay_date and pay_date > today_iso),
+                "source": "ddm",
+            })
         return events
 
     # ── shared helpers ──────────────────────────────────────────────────────

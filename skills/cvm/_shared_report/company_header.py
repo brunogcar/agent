@@ -146,30 +146,130 @@ def build_company_header(company: str) -> dict:
         pass
 
     # ── CAD lookup: trade name, sector (fallback), UF, auditor ──
-    try:
-        from data_sources.cvm._db import cad_db_path
-        import sqlite3
-        cad = cad_db_path()
-        if cad.exists() and header["cnpj"]:
-            cnpj_digits = header["cnpj"].replace(".", "").replace("/", "").replace("-", "")
+    # [v1.22.4] THE FALLBACK CHAIN — one missed FCA row used to blank
+    # the whole identity card (sector "—" on the Carteira, empty
+    # Identificação/Classificação/Governança). Order:
+    #   1. CAD by CNPJ (FCA's, or the bridge ticker_map's), SIT=ATIVO
+    #   2. CAD by the same CNPJ, ANY situation (a merged/delisted
+    #      paper — MBRF3 after the BRF merger — still has a sector)
+    #   3. CAD by CD_CVM (from FCA or the bridge — CNPJ formats drift)
+    #   4. bridge.db ticker_map itself (sector cached at sync time)
+    #   5. B3 dividends company_info (trading name + segment + cd_cvm)
+    def _cad_by_cnpj(cnpj_raw: str, ativo_only: bool):
+        try:
+            from data_sources.cvm._db import cad_db_path
+            import sqlite3
+            cad = cad_db_path()
+            if not cad.exists() or not cnpj_raw:
+                return None
+            digits = cnpj_raw.replace(".", "").replace("/", "").replace("-", "")
+            conn = sqlite3.connect(f"file:{cad}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            sql = ("SELECT DENOM_SOCIAL, DENOM_COMERC, SETOR_ATIV, UF, "
+                   "AUDITOR, SIT FROM cia_aberta "
+                   "WHERE REPLACE(REPLACE(REPLACE(CNPJ_CIA,'.',''),'/',''),'-','') = ?")
+            if ativo_only:
+                sql += " AND SIT = 'ATIVO'"
+            sql += " ORDER BY SIT = 'ATIVO' DESC, rowid DESC LIMIT 1"
+            row = conn.execute(sql, (digits,)).fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    def _cad_by_cd_cvm(cd_cvm_raw: str):
+        try:
+            from data_sources.cvm._db import cad_db_path
+            import sqlite3
+            cad = cad_db_path()
+            if not cad.exists() or not cd_cvm_raw:
+                return None
             conn = sqlite3.connect(f"file:{cad}?mode=ro", uri=True)
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                """SELECT DENOM_SOCIAL, DENOM_COMERC, SETOR_ATIV, UF, AUDITOR
-                   FROM cia_aberta
-                   WHERE REPLACE(REPLACE(REPLACE(CNPJ_CIA,'.',''),'/',''),'-','') = ?
-                   AND SIT = 'ATIVO'
-                   ORDER BY rowid DESC LIMIT 1""",
-                (cnpj_digits,),
+                "SELECT DENOM_SOCIAL, DENOM_COMERC, SETOR_ATIV, UF, "
+                "AUDITOR, SIT FROM cia_aberta WHERE CD_CVM = ? "
+                "ORDER BY SIT = 'ATIVO' DESC, rowid DESC LIMIT 1",
+                (str(cd_cvm_raw).strip(),),
             ).fetchone()
-            if row:
-                header["trade_name"] = row["DENOM_COMERC"] or ""
-                if not header["sector"]:
-                    header["sector"] = row["SETOR_ATIV"] or ""
-                header["uf"] = row["UF"] or ""
-                # [v2.2-header] Extract auditor (was fetched but not used)
-                header["auditor"] = row["AUDITOR"] or ""
             conn.close()
+            return dict(row) if row else None
+        except Exception:
+            return None
+
+    # bridge.db ticker_map — the ticker's cached identity (CNPJ, CD_CVM,
+    # names, sector) from the bridge sync's own FCA→CAD resolution.
+    bridge_row = None
+    try:
+        from data_sources.cvm._db import bridge_db_path
+        import sqlite3 as _sq
+        bp = bridge_db_path()
+        if bp.exists():
+            bconn = _sq.connect(f"file:{bp}?mode=ro", uri=True)
+            bconn.row_factory = _sq.Row
+            brow = bconn.execute(
+                "SELECT ticker, cd_cvm, cnpj, trading_name, denom_social, "
+                "denom_comerc, sit, setor_ativ FROM ticker_map "
+                "WHERE UPPER(ticker) = ? LIMIT 1", (ticker,)).fetchone()
+            bconn.close()
+            if brow:
+                bridge_row = dict(brow)
+    except Exception:
+        bridge_row = None
+
+    # CNPJ: FCA's, else the bridge's.
+    if not header["cnpj"] and bridge_row:
+        header["cnpj"] = bridge_row.get("cnpj") or ""
+    if not header["cd_cvm"] and bridge_row:
+        header["cd_cvm"] = str(bridge_row.get("cd_cvm") or "")
+
+    cad_row = _cad_by_cnpj(header["cnpj"], ativo_only=True)
+    if cad_row is None:
+        cad_row = _cad_by_cnpj(header["cnpj"], ativo_only=False)
+    if cad_row is None and header["cd_cvm"]:
+        cad_row = _cad_by_cd_cvm(header["cd_cvm"])
+    if cad_row is None and bridge_row and bridge_row.get("cd_cvm"):
+        cad_row = _cad_by_cd_cvm(bridge_row["cd_cvm"])
+    if cad_row:
+        if not header["name"]:
+            header["name"] = cad_row.get("DENOM_SOCIAL") or ""
+        header["trade_name"] = cad_row.get("DENOM_COMERC") or ""
+        if not header["sector"]:
+            header["sector"] = cad_row.get("SETOR_ATIV") or ""
+        header["uf"] = cad_row.get("UF") or ""
+        header["auditor"] = cad_row.get("AUDITOR") or ""
+    elif bridge_row:
+        # CAD unreachable but the bridge cached the resolution.
+        if not header["name"]:
+            header["name"] = (bridge_row.get("denom_social")
+                              or bridge_row.get("denom_comerc") or "")
+        if not header["trade_name"]:
+            header["trade_name"] = (bridge_row.get("denom_comerc")
+                                    or bridge_row.get("trading_name") or "")
+        if not header["sector"]:
+            header["sector"] = bridge_row.get("setor_ativ") or ""
+
+    # Last resort — B3 dividends company_info: trading name + the B3
+    # listing segment (Nível 2 / NM…) + cd_cvm. No economic sector
+    # there, but it fills Identificação when everything else missed.
+    try:
+        from data_sources.b3.dividends.catalog import connect as _b3div
+        import sqlite3 as _sq2
+        dconn = _b3div(read_only=True)
+        dconn.row_factory = _sq2.Row
+        drow = dconn.execute(
+            "SELECT trading_name, code_cvm, segment FROM company_info "
+            "WHERE ticker = ? LIMIT 1", (ticker,)).fetchone()
+        dconn.close()
+        if drow:
+            if not header["cd_cvm"]:
+                header["cd_cvm"] = str(drow["code_cvm"] or "")
+            if not header["trade_name"]:
+                header["trade_name"] = drow["trading_name"] or ""
+            if not header["name"]:
+                header["name"] = drow["trading_name"] or ""
+            if not header["listing_segment"]:
+                header["listing_segment"] = drow["segment"] or ""
     except Exception:
         pass
 

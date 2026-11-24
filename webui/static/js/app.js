@@ -3634,13 +3634,29 @@ function initCarteiraPage() {
 
   function $(id) { return document.getElementById(id); }
 
+  // [v1.22.4] NEVER "Unexpected token 'I'": any non-JSON answer (a
+  // proxy error page, a plain-text 500) becomes a friendly PT-BR
+  // error the caller's catch can render — the fetch itself only
+  // rejects on network failure.
   function api(method, path, body) {
     return fetch('/api/webui/portfolio' + path, {
       method: method,
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, j: j }; });
+      return r.text().then(function(txt) {
+        var j = null;
+        try { j = JSON.parse(txt); } catch (e) { /* not JSON */ }
+        if (j === null) {
+          var msg = r.status === 500
+            ? 'Erro interno do servidor (resposta não-JSON) — veja o log do sistema (📜).'
+            : 'Resposta inválida do servidor (HTTP ' + r.status + ').';
+          var err = new Error(msg);
+          err.status = r.status;
+          throw err;
+        }
+        return { ok: r.ok, j: j };
+      });
     });
   }
 
@@ -4136,7 +4152,10 @@ function initCarteiraPage() {
     html += '<div id="cart-alloc" class="cart-view"' +
       (st.view === 'alloc' ? '' : ' hidden') + '></div>';
     // [v1.22.2] imported-notas registry (undo/dedup visibility).
-    html += '<div id="cart-notas" class="cart-notas"></div>';
+    // [v1.22.4] It belongs to the TRANSAÇÕES view only (it used to
+    // hang under every view — now it shows/hides with the pill).
+    html += '<div id="cart-notas" class="cart-notas"' +
+      (st.view === 'txs' ? '' : ' hidden') + '></div>';
     box.innerHTML = html;
     renderPositionsTable(d);
     // [v1.22.3] page-1 seeds the ledger; the filter bar re-fetches.
@@ -4227,7 +4246,7 @@ function initCarteiraPage() {
       return '<tr>' +
         '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(r.ticker) + '">' +
           esc(r.ticker) + '</a></td>' +
-        '<td class="cart-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
+        '<td class="cart-name">' + esc(r.name) + '</td>' +
         '<td class="cart-sector" title="' + esc(r.sector) + '">' + esc(r.sector) + '</td>' +
         '<td class="val-val">' + pmCell + '</td>' +
         '<td class="val-val">' + valNumHtml(r.price) + staleFlag + '</td>' +
@@ -4281,34 +4300,34 @@ function initCarteiraPage() {
     return parts.join('&');
   }
 
-  function loadTxs() {
-    var box = $('cart-txs');
-    if (!box) return;
-    box.innerHTML = '<span class="loading">⏳ Carregando transações…</span>';
-    api('GET', '/txs?' + txFilter_qs()).then(function(res) {
-      if (!res.ok) {
-        box.innerHTML = '<div class="error">' +
-          esc((res.j && res.j._error) || 'Erro') + '</div>';
-        return;
-      }
-      st.txRows = res.j.rows || [];
-      st.txTotal = res.j.total || 0;
-      st.txPages = res.j.pages || 1;
-      st.txPage = res.j.page || 1;
-      renderTxsTable();
-    }).catch(function(err) {
-      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
-    });
+  // [v1.22.4] Known-ticker suggestions for the filter (the store's
+  // ticker metadata + every position) — the native datalist pops the
+  // matches while you type ("KL" → KLBN4, KLBN11…).
+  function txTickerOptions() {
+    var seen = {};
+    var out = [];
+    function add(tk) {
+      if (tk && !seen[tk]) { seen[tk] = 1; out.push(tk); }
+    }
+    ((st.pos && st.pos.positions) || []).forEach(function(p) { add(p.ticker); });
+    (st.tickers || []).forEach(function(t) { add(t.ticker); });
+    (st.txRows || []).forEach(function(t) { add(t.ticker); });
+    return out.sort();
   }
 
-  function renderTxsTable() {
-    var box = $('cart-txs');
-    if (!box) return;
+  // [v1.22.4] The filter bar is its own builder — the ERROR path keeps
+  // it alive (the old code replaced the whole view with the error,
+  // wiping the input mid-typing; with prefix filtering the server no
+  // longer 400s on partials, but any error must stay non-destructive).
+  function txFilterBarHtml() {
     var f = st.txFilters;
-    // ── filter bar ──
-    var bar = '<div class="cart-filterbar">' +
-      '<input type="text" id="txf-ticker" maxlength="8" placeholder="Ticker" ' +
+    var opts = txTickerOptions().map(function(tk) {
+      return '<option value="' + esc(tk) + '"></option>';
+    }).join('');
+    return '<div class="cart-filterbar">' +
+      '<input type="text" id="txf-ticker" maxlength="8" placeholder="Ticker" list="txf-ticker-list" ' +
         'value="' + esc(f.ticker) + '" style="text-transform: uppercase;" aria-label="Filtrar por ticker">' +
+      '<datalist id="txf-ticker-list">' + opts + '</datalist>' +
       '<select id="txf-type" aria-label="Filtrar por tipo">' +
         '<option value="">Tipo: todos</option>' +
         '<option value="buy"' + (f.type === 'buy' ? ' selected' : '') + '>✅ Compras</option>' +
@@ -4324,6 +4343,41 @@ function initCarteiraPage() {
         'value="' + esc(f.q) + '" aria-label="Buscar">' +
       '<button class="cart-btn" id="txf-clear" title="Limpar filtros">✖</button>' +
       '</div>';
+  }
+
+  function loadTxs() {
+    var box = $('cart-txs');
+    if (!box) return;
+    box.innerHTML = '<span class="loading">⏳ Carregando transações…</span>';
+    api('GET', '/txs?' + txFilter_qs()).then(function(res) {
+      if (!res.ok) {
+        // non-destructive: the bar (with the user's typing) stays.
+        renderTxsTable();
+        var errBox = $('txf-error');
+        if (errBox) {
+          errBox.innerHTML = '<div class="error">' +
+            esc((res.j && res.j._error) || 'Erro') + '</div>';
+        }
+        return;
+      }
+      st.txRows = res.j.rows || [];
+      st.txTotal = res.j.total || 0;
+      st.txPages = res.j.pages || 1;
+      st.txPage = res.j.page || 1;
+      renderTxsTable();
+    }).catch(function(err) {
+      renderTxsTable();
+      var errBox = $('txf-error');
+      if (errBox) {
+        errBox.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+      }
+    });
+  }
+
+  function renderTxsTable() {
+    var box = $('cart-txs');
+    if (!box) return;
+    var bar = txFilterBarHtml() + '<div id="txf-error"></div>';
 
     var rows = (st.txRows || []).map(function(t) {
       var buy = t.type === 'buy';
@@ -4488,9 +4542,10 @@ function initCarteiraPage() {
         }).join('') + '</tbody></table></div>';
     } else {
       html += '<div class="cart-empty"><h3>Sem proventos registrados</h3>' +
-        '<p>Nenhum evento da B3 (dividends.db) encontrou posição nas ' +
-        'datas com dos seus tickers — sincronize a fonte ' +
-        '<b>dividendos</b> na página Sincronização se faltar histórico.</p></div>';
+        '<p>Nenhum evento (B3 provents + agenda Dados de Mercado) ' +
+        'encontrou posição nas datas com dos seus tickers — sincronize ' +
+        'as fontes <b>dividendos</b> e <b>ddm-dividends</b> na página ' +
+        'Sincronização se faltar histórico.</p></div>';
     }
     if ((j.events || []).length) {
       html += '<div class="cart-sec-head"><h3>📋 Eventos recebidos' +
@@ -4508,7 +4563,9 @@ function initCarteiraPage() {
             '<td>' + (e.pay_br ? esc(e.pay_br) : '—') + '</td>' +
             '<td class="cart-tk">' + esc(e.ticker) + '</td>' +
             '<td>' + esc(e.type) + '</td>' +
-            '<td class="val-val">' + esc(e.rate_br) + '</td>' +
+            '<td class="val-val">' + esc(e.rate_br) +
+              (e.source === 'ddm' ? ' ' + flagHtml('🅓',
+                'Evento da agenda Dados de Mercado — fora do provents da B3.') : '') + '</td>' +
             '<td class="val-val">' + esc(e.qty_br) +
               (e.debit_br ? ' ' + flagHtml('🚨', 'Short na data com: ' + e.debit_br +
                 ' debitados (quem vende a descoberto paga o provento).') : '') + '</td>' +
@@ -4551,7 +4608,7 @@ function initCarteiraPage() {
     }
     var html = kpiCardsHtml(j.kpis);
     if ((j.curve || {}).labels && j.curve.labels.length > 1) {
-      html += '<div class="cart-sec-head"><h3>📈 Patrimônio × CDI × IBOV</h3></div>' +
+      html += '<div class="cart-sec-head"><h3>📈 Patrimônio × CDI × IBOV × S&P 500</h3></div>' +
         '<div class="cart-chart-box"><canvas id="cart-perf-chart" height="120"></canvas></div>';
     }
     html += '<ul class="cart-notes-list">' +
@@ -4561,11 +4618,14 @@ function initCarteiraPage() {
 
     // The curve chart — the vendored Chart.js, the page's theme colors
     // (the company pages' renderValChart conventions, simplified for a
-    // single line trio; ISO labels formatted on the ticks).
+    // line quartet; [v1.22.4] tick labels are BR months ("mar/2025" —
+    // the raw ISO slice "2025-03" leaked before) and IVVB11 joins as
+    // the S&P 500 (BRL) line).
     var cv = $('cart-perf-chart');
     if (!cv || typeof Chart === 'undefined') return;
     var th = chartTheme();
-    var labels = j.curve.labels.map(function(iso) { return iso.slice(0, 7); });
+    var isoLabels = j.curve.labels;
+    var labels = isoLabels.map(function(iso) { return fmtMonth(iso.slice(0, 7)); });
     var mk = function(label, data, color, dash) {
       return { label: label, data: data, borderColor: color,
                backgroundColor: color, borderWidth: 2, pointRadius: 0,
@@ -4573,11 +4633,14 @@ function initCarteiraPage() {
                borderDash: dash || [] };
     };
     var ds = [mk('Patrimônio', j.curve.patrimonio, cssVar('--color-primary') || '#0d9488')];
-    if (j.curve.cdi.some(function(v) { return v !== null; })) {
+    if (j.curve.cdi && j.curve.cdi.some(function(v) { return v !== null; })) {
       ds.push(mk('CDI', j.curve.cdi, '#f59e0b', [5, 3]));
     }
-    if (j.curve.ibov.some(function(v) { return v !== null; })) {
+    if (j.curve.ibov && j.curve.ibov.some(function(v) { return v !== null; })) {
       ds.push(mk('IBOV (BOVA11)', j.curve.ibov, '#94a3b8', [2, 3]));
+    }
+    if (j.curve.ivvb && j.curve.ivvb.some(function(v) { return v !== null; })) {
+      ds.push(mk('S&P 500 (IVVB11)', j.curve.ivvb, '#dc2626', [6, 3]));
     }
     new Chart(cv, {
       type: 'line',
@@ -4590,7 +4653,11 @@ function initCarteiraPage() {
           tooltip: {
             callbacks: {
               title: function(items) {
-                return fmtMonth(items[0].label);
+                // the full ISO date under the month tick (precision
+                // the tick itself doesn't carry)
+                var i = items[0].dataIndex;
+                return i < isoLabels.length ? fmtDate(isoLabels[i])
+                                            : items[0].label;
               },
               label: function(item) {
                 return item.dataset.label + ': ' + fmtBRL(item.parsed.y);
@@ -4710,6 +4777,7 @@ function initCarteiraPage() {
   function openPositionDetail(ticker) {
     var drawer = $('cart-drawer');
     if (!drawer) return;
+    st.drawerTicker = ticker;          // [v1.22.4] refresh after edits
     drawer.hidden = false;
     drawer.classList.add('open');
     drawer.innerHTML = '<div class="cart-drawer-head"><span class="loading">' +
@@ -4747,13 +4815,15 @@ function initCarteiraPage() {
     (j.ladders || []).forEach(function(l) {
       html += '<div class="cart-sec-head"><h4>🏦 ' + esc(l.account) + '</h4></div>' +
         '<div class="cart-table-wrap cart-scroll-y"><table class="val-table cart-table">' +
-        '<thead><tr><th>🗓️</th><th>Tipo</th><th class="th-num">Qtd</th>' +
+        '<thead><tr><th></th><th>🗓️</th><th>Tipo</th><th class="th-num">Qtd</th>' +
         '<th class="th-num">Preço</th><th class="th-num">Taxas</th>' +
         '<th class="th-num">Qtd após</th><th class="th-num">PM após</th>' +
         '<th class="th-num">Δ realizado</th></tr></thead><tbody>' +
         l.rows.map(function(r) {
           var corp = r.type === 'corp';
           return '<tr>' +
+            '<td class="cart-actions"><button class="cart-icon-btn" data-et="' +
+              esc(r.id) + '" title="✏️ Editar esta transação (a gaveta fica aberta)">✏️</button></td>' +
             '<td>' + esc(fmtDate(r.date)) + (r.note ? ' ' + flagHtml('📝', r.note) : '') + '</td>' +
             '<td>' + (corp
               ? '<span class="cart-type is-corp" title="' +
@@ -4797,6 +4867,7 @@ function initCarteiraPage() {
     if (!drawer) return;
     drawer.classList.remove('open');
     drawer.hidden = true;
+    st.drawerTicker = null;            // [v1.22.4] stop post-edit refreshes
   }
 
   // ── 🧪 what-if simulator (roadmap 6) ──────────────────────────────────
@@ -5143,9 +5214,19 @@ function initCarteiraPage() {
     if (type === 'corp') {
       // [v1.22.3] corp hints: the factor's plain-language meaning +
       // the fraction warning (B3 pays fractions in cash).
+      // [v1.22.4] with no event selected yet, the only hint is the
+      // nudge (the instructions block below carries the detail).
+      var action = $('cart-tx-action').value;
+      if (!action) {
+        hints.push('🔀 <b>Selecione o tipo de evento</b> acima ' +
+          '(desdobramento, grupamento ou bonificação) e informe o fator.');
+        box.innerHTML = hints.join('<br>');
+        box.hidden = !hints.length;
+        return;
+      }
       var f = parseBr($('cart-tx-factor').value);
       if (tk && f !== null && Math.abs(f - 1) > 1e-9) {
-        hints.push('🔀 <b>' + esc(CORP_NAMES[$('cart-tx-action').value] || 'Evento') +
+        hints.push('🔀 <b>' + esc(CORP_NAMES[action] || 'Evento') +
           ':</b> a quantidade multiplica por <b>' + esc(String(f).replace('.', ',')) +
           '</b> e o PM divide pelo mesmo fator — o custo total não muda.');
         var pos0 = findPos(tk);
@@ -5244,12 +5325,15 @@ function initCarteiraPage() {
       ? String(tx.quantity).replace('.', ',')
       : (prefQty !== undefined && prefQty !== '' && prefQty !== null
           ? String(prefQty).replace('.', ',') : '');
-    // [v1.22.3] Corporate action fields — prefills from the tx (edit) or
-    // the preset picker; the money fields hide when type === 'corp'.
+    // [v1.22.3] Corporate action fields — prefills from the tx (edit);
+    // [v1.22.4] NEW corp txs start with NOTHING selected (the
+    // placeholder option) and an empty factor — the flow is: pick the
+    // event, then the factor (the instructions block under the fields
+    // spells out each one).
     var isCorp = (tx ? tx.type : $('cart-tx-type').value) === 'corp';
-    $('cart-tx-action').value = tx && tx.type === 'corp' ? (tx.action || 'split') : 'split';
+    $('cart-tx-action').value = tx && tx.type === 'corp' ? (tx.action || '') : '';
     $('cart-tx-factor').value = tx && tx.type === 'corp'
-      ? String(tx.factor || '').replace('.', ',') : '2';
+      ? String(tx.factor || '').replace('.', ',') : '';
     // [fix 2] setMoney also primes the mask mode (a 4-decimal PM edit
     // opens in explicit mode; a fresh form starts in cents-fill).
     setMoney($('cart-tx-price'), tx && tx.type !== 'corp' ? tx.raw_price : null);
@@ -5264,15 +5348,32 @@ function initCarteiraPage() {
     if (!tx && !prefill.ticker) $('cart-tx-ticker').focus();
   }
 
-  // [v1.22.3] corp mode: the money/qty fields hide; the action select +
-  // factor (with quick presets) show. Nothing is traded — only the
-  // quantity/PM re-base.
+  // [v1.22.3] corp mode: the action select + factor (with quick
+  // presets) show. Nothing is traded — only the quantity/PM re-base.
+  // [v1.22.4] The money/qty fields STAY VISIBLE but lock at 0 (the
+  // user reads "nothing was traded here" right on the form); leaving
+  // corp mode unlocks them empty again.
   function toggleCorpFields(isCorp) {
     ['cart-tx-qty', 'cart-tx-price', 'cart-tx-fees'].forEach(function(id) {
       var el = $(id);
-      if (el) {
-        var field = el.closest('.cart-field');
-        if (field) field.hidden = isCorp;
+      if (!el) return;
+      if (isCorp) {
+        el.disabled = true;
+        el.value = id === 'cart-tx-qty' ? '0' : '0,00';
+        el.setAttribute('aria-readonly', 'true');
+        var fld = el.closest('.cart-field');
+        if (fld) fld.classList.add('cart-field-locked');
+      } else {
+        el.disabled = false;
+        el.removeAttribute('aria-readonly');
+        var fld2 = el.closest('.cart-field');
+        if (fld2) fld2.classList.remove('cart-field-locked');
+        // Only reset when they still carry the locked zeros — a fresh
+        // buy form opened straight away keeps its empty cents-fill.
+        if (el.value === '0' || el.value === '0,00') {
+          if (id === 'cart-tx-qty') el.value = '';
+          else setMoney(el, null);
+        }
       }
     });
     var corp = $('cart-tx-corp');
@@ -5391,6 +5492,14 @@ function initCarteiraPage() {
     };
     if (type === 'corp') {
       // [v1.22.3] Corporate action: no money fields — action + factor.
+      // [v1.22.4] The event must be chosen (the placeholder option is
+      // not one) — caught here AND on the server.
+      if (!$('cart-tx-action').value) {
+        fieldErrs(m, { action: 'Selecione o tipo de evento — desdobramento, ' +
+                             'grupamento ou bonificação.' });
+        $('cart-tx-msg').textContent = 'Selecione o tipo de evento.';
+        return;
+      }
       body.action = $('cart-tx-action').value;
       body.factor = parseBr($('cart-tx-factor').value);
     } else {
@@ -5420,6 +5529,9 @@ function initCarteiraPage() {
       // token; 12s to regret.
       showUndoToast(res.j && res.j.undo_label, res.j && res.j.undo_token);
       reload();
+      // [v1.22.4] The drawer (if open on this ticker) shows the edit —
+      // refresh its ladder instead of serving stale numbers.
+      if (st.drawerTicker) openPositionDetail(st.drawerTicker);
     }).catch(function() {
       $('cart-tx-msg').textContent = 'Erro de rede.';
     });
@@ -5498,6 +5610,8 @@ function initCarteiraPage() {
             // [v1.22.3] ↩️ undo toast.
             showUndoToast(res.j && res.j.undo_label, res.j && res.j.undo_token);
             reload();
+            // [v1.22.4] keep an open drawer honest after a delete.
+            if (st.drawerTicker) openPositionDetail(st.drawerTicker);
           }
         });
       });
@@ -6132,7 +6246,11 @@ function initCarteiraPage() {
         var node = $(views[v]);
         if (node) node.hidden = v !== st.view;
       });
+      // [v1.22.4] the notas registry rides the Transações view.
+      var notas = $('cart-notas');
+      if (notas) notas.hidden = st.view !== 'txs';
       if (st.view === 'txs' && st.txRows === null) loadTxs();
+      if (st.view === 'txs') loadNotas();
       if (st.view === 'proventos') loadProventos();
       if (st.view === 'perf') loadPerf();
       if (st.view === 'alloc') loadAlloc();
@@ -6219,6 +6337,8 @@ function initCarteiraPage() {
   });
   // [v1.22.3] type switch flips the corp fields; the action preset
   // primes the factor input (split 2 / group 0,5 / bonus 1,1).
+  // [v1.22.4] the placeholder option clears the factor — the event is
+  // chosen FIRST, the factor after (the instructions explain both).
   $('cart-tx-type').addEventListener('change', function() {
     toggleCorpFields($('cart-tx-type').value === 'corp');
     updateHints();
@@ -6226,7 +6346,7 @@ function initCarteiraPage() {
   $('cart-tx-action').addEventListener('change', function() {
     var a = $('cart-tx-action').value;
     $('cart-tx-factor').value = a === 'group' ? '0,5'
-      : (a === 'bonus' ? '1,1' : '2');
+      : (a === 'bonus' ? '1,1' : (a === 'split' ? '2' : ''));
     updateHints();
   });
   $('cart-tx-factor').addEventListener('input', updateHints);
@@ -6241,6 +6361,26 @@ function initCarteiraPage() {
     readImportFile(this.files && this.files[0]);
   });
   $('cart-import-commit').addEventListener('click', commitImport);
+
+  // [v1.22.4] 🔍 drawer — a click OUTSIDE it (or Esc) closes. The
+  // opener button [data-pd] is excluded (it re-opens); clicks inside
+  // any open <dialog> are the modal's business, not the drawer's.
+  document.addEventListener('click', function(e) {
+    var drawer = $('cart-drawer');
+    if (!drawer || drawer.hidden || !drawer.classList.contains('open')) return;
+    if (drawer.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('[data-pd]')) return;
+    if (e.target.closest && e.target.closest('dialog[open]')) return;
+    closeDrawer();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    if (document.querySelector('dialog[open]')) return;
+    var drawer = $('cart-drawer');
+    if (drawer && !drawer.hidden && drawer.classList.contains('open')) {
+      closeDrawer();
+    }
+  });
 
   reload();
 }

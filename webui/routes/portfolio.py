@@ -145,10 +145,12 @@ def get_txs(scope: str = "all", page: int = 1, per_page: int = 50,
             date_from: str = "", date_to: str = "", q: str = ""):
     """[v1.22.3] The paginated/filtered ledger (roadmap 7).
 
-    Filters: ticker, type (buy|sell|corp), date window (ISO), q (free
-    text over ticker + note). Pages are NEWEST-last (page 1 = the most
-    recent per_page rows, oldest-first inside the page — the ledger
-    reading order).
+    Filters: ticker (PREFIX — "KL" matches KLBN4/KLBN11 while you're
+    still typing; [v1.22.4] the old 4-8 full-ticker rule 400'd on
+    every partial keystroke and nuked the whole view), type
+    (buy|sell|corp), date window (ISO), q (free text over ticker +
+    note). Pages are NEWEST-last (page 1 = the most recent per_page
+    rows, oldest-first inside the page — the ledger reading order).
     """
     if not _SCOPE_RE.match(scope or ""):
         return JSONResponse(
@@ -156,7 +158,7 @@ def get_txs(scope: str = "all", page: int = 1, per_page: int = 50,
                        "account:<id>."}, status_code=400)
     per_page = max(1, min(per_page, 200))
     page = max(1, page)
-    if ticker and not re.match(r"^[A-Z0-9]{4,8}$", ticker.upper()):
+    if ticker and not re.match(r"^[A-Za-z0-9]{1,8}$", ticker):
         return JSONResponse({"_error": "Ticker inválido."}, status_code=400)
     if date_from and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from):
         return JSONResponse({"_error": "Data inicial inválida."},
@@ -388,6 +390,30 @@ def _scope_or_400(scope: str | None):
     return None
 
 
+def _report(get, *args):
+    """[v1.22.4] Run a report builder, JSON on ANY failure.
+
+    The v1.22.3 report GETs computed straight into JSONResponse — an
+    unexpected data-shaped bug escaped as Starlette's PLAIN-TEXT 500,
+    which the client's r.json() then blew up on ("Erro: Unexpected
+    token 'I'"). The compute bugs are fixed (the TWR complex-power
+    guard), but the belt stays: these endpoints always answer JSON
+    (ok:false + the exception class server-logged), so the UI can
+    always render a PT-BR error instead of a parse crash.
+    """
+    try:
+        return JSONResponse(get(*args))
+    except Exception as e:  # noqa: BLE001 — the never-plain-text-500 rule
+        import sys
+        print(f"[webui] report {getattr(get, '__name__', get)} failed: "
+              f"{e!r}", file=sys.stderr)
+        return JSONResponse(
+            {"ok": False,
+             "_error": "Falha ao calcular este relatório "
+                       f"({type(e).__name__}). Verifique o log do sistema."},
+            status_code=500)
+
+
 @router.get("/proventos")
 def get_proventos(scope: str = "all"):
     """Proventos per position / yield-on-cost (roadmap 2)."""
@@ -395,7 +421,7 @@ def get_proventos(scope: str = "all"):
     if bad:
         return bad
     from webui.services.portfolio_provents import proventos_report
-    return JSONResponse(proventos_report(scope))
+    return _report(proventos_report, scope)
 
 
 @router.get("/position-detail")
@@ -407,18 +433,17 @@ def get_position_detail(scope: str = "all", ticker: str = ""):
     if not re.match(r"^[A-Za-z0-9]{4,8}$", ticker or ""):
         return JSONResponse({"_error": "Ticker inválido."}, status_code=400)
     from webui.services.portfolio_provents import position_detail
-    out = position_detail(scope, ticker)
-    return out if out.get("ok") else _bad(out, status_code=out.get("status", 404))
+    return _report(position_detail, scope, ticker.upper())
 
 
 @router.get("/performance")
 def get_performance(scope: str = "all"):
-    """TWR/XIRR vs CDI/IBOV + the patrimônio curve (roadmap 4)."""
+    """TWR/XIRR vs CDI/IBOV/S&P500 + the patrimônio curve (roadmap 4)."""
     bad = _scope_or_400(scope)
     if bad:
         return bad
     from webui.services.portfolio_perf import performance_report
-    return JSONResponse(performance_report(scope))
+    return _report(performance_report, scope)
 
 
 @router.get("/allocation")
@@ -428,7 +453,7 @@ def get_allocation(scope: str = "all"):
     if bad:
         return bad
     from webui.services.portfolio_views import allocation_report
-    return JSONResponse(allocation_report(scope))
+    return _report(allocation_report, scope)
 
 
 @router.post("/simulate")

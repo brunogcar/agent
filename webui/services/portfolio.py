@@ -234,6 +234,12 @@ def _reconcile_tx(t: dict) -> None:
         if f < _FACTOR_MIN or f == 1.0:
             raise ValueError(f"fator de evento corporativo inválido: {f!r}")
         t["factor"] = f
+        # [v1.22.4] Corp rows are SELF-DESCRIBING: nothing was traded,
+        # so quantity and price canonicalize to 0 (the form shows them
+        # locked at 0; pre-v1.22.4 rows without the keys gain them).
+        t["quantity"] = 0.0
+        t["price"] = 0.0
+        t["fees"] = 0.0
         return
     q = _reconcile_num(t.get("quantity"), _QTY_MAX, "quantity")
     if q <= 0:
@@ -414,6 +420,11 @@ class PortfolioService:
         # seconds); nota imports keep their PERSISTED registry instead.
         self._undo_stack: dict[str, dict] = {}
         self._undo_order: list[str] = []
+        # [v1.22.4] One-shot boot backfill: tickers stored with an empty
+        # name/sector (fetched when the CVM source had less data) get a
+        # background re-fetch on the first read — the v1.22.4 fallback
+        # chain fills what the first attempt missed, no 🔄 clicking.
+        self._meta_backfill_done = False
 
     def _bump_rev(self) -> None:
         """[v1.22.3] New store generation — drop every replay memo."""
@@ -534,10 +545,39 @@ class PortfolioService:
             return {"ok": False, "_error": self._load_error, "status": 503}
         return None
 
+    def _maybe_backfill_meta(self) -> None:
+        """[v1.22.4] First successful load: re-fetch incomplete metadata.
+
+        Called under the lock from _snapshot(). Spawn ONE sequencer
+        thread (staggered — a big book must not stampede sqlite) that
+        walks the tickers with an empty name or sector through the
+        same _spawn_meta_refresh path (dedup + never-clobber-empty
+        semantics included). Once per process, degraded stores skip.
+        """
+        if self._meta_backfill_done or self._load_error:
+            return
+        self._meta_backfill_done = True
+        pending = [tk for tk, meta in (self._store.get("tickers") or {}).items()
+                   if not (meta or {}).get("sector")
+                   or not (meta or {}).get("name")]
+        if not pending:
+            return
+
+        def _sequencer() -> None:
+            for i, tk in enumerate(sorted(pending)):
+                time.sleep(0.35 * i)          # stagger the herd
+                if self._load_error:
+                    return
+                self._spawn_meta_refresh(tk)
+
+        threading.Thread(target=_sequencer, daemon=True,
+                         name="portfolio-meta-backfill").start()
+
     def _snapshot(self) -> dict[str, Any]:
         """Deep-enough copy for readers (lists of dicts are re-copied)."""
         with self._lock:
             self._maybe_reload()
+            self._maybe_backfill_meta()
             return {
                 "users": [dict(u) for u in self._store["users"]],
                 "accounts": [dict(a) for a in self._store["accounts"]],
@@ -669,10 +709,15 @@ class PortfolioService:
                     self._maybe_reload()
                     cur = dict(self._store["tickers"].get(ticker) or {})
                     # Never clobber a manual edit with empty values.
-                    if meta.get("name"):
+                    changed = False
+                    if meta.get("name") and meta.get("name") != cur.get("name"):
                         cur["name"] = meta["name"]
-                    if meta.get("sector"):
+                        changed = True
+                    if meta.get("sector") and meta.get("sector") != cur.get("sector"):
                         cur["sector"] = meta["sector"]
+                        changed = True
+                    if not changed:
+                        return            # [v1.22.4] no no-op store writes
                     cur["updated_at"] = _now_iso()
                     self._store["tickers"][ticker] = cur
                     self._save()
@@ -923,7 +968,10 @@ class PortfolioService:
 
         if ttype == "corp":
             action = str(body.get("action") or "").strip().lower()
-            if action not in ("split", "group", "bonus"):
+            if not action:
+                errs["action"] = ("Selecione o tipo de evento — "
+                                  "desdobramento, grupamento ou bonificação.")
+            elif action not in ("split", "group", "bonus"):
                 errs["action"] = ("Evento inválido — desdobramento, "
                                   "grupamento ou bonificação.")
             else:
@@ -946,6 +994,12 @@ class PortfolioService:
                                   "maior que 1 (10% → 1,1).")
             else:
                 out["factor"] = factor
+            # [v1.22.4] Corp rows carry quantity/price/fees = 0 —
+            # nothing was traded; the numbers make the row
+            # self-describing (the form shows them locked at 0).
+            out["quantity"] = 0.0
+            out["price"] = 0.0
+            out["fees"] = 0.0
             # date/note shared below — corp rows carry no money fields.
         else:
             q = _num(body.get("quantity"))
@@ -2184,9 +2238,13 @@ class PortfolioService:
         user_by_id = {u["id"]: u for u in snap["users"]}
         rows = [t for t in snap["txs"] if t.get("account_id") in account_ids]
         # [v1.22.3] Filters (applied on the raw txs, before ordering).
+        # [v1.22.4] The ticker filter is a PREFIX — "KL" lists KLBN4 and
+        # KLBN11 while the user is still typing (the old exact match +
+        # 4-8 char validation 400'd mid-keystroke and wiped the view).
         if ticker:
+            up = ticker.upper()
             rows = [t for t in rows
-                    if (t.get("ticker") or "") == ticker.upper()]
+                    if (t.get("ticker") or "").upper().startswith(up)]
         if ttype:
             rows = [t for t in rows if t.get("type") == ttype]
         if date_from:

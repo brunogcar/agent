@@ -163,6 +163,25 @@ def _pct(v: float | None) -> str | None:
     return fmt_num(v * 100.0, decimals=2) + "%"
 
 
+def _annualize(total: float | None, days: int) -> float | None:
+    """[v1.22.4] (1 + total) ** (365/days) − 1 — None when impossible.
+
+    A cumulative return below −100% (the TWR chain flipped sign —
+    possible when the book swaps long↔short between cashflow dates or
+    a buy priced far above that day's close) makes the power a COMPLEX
+    number in Python: it then reached json.dumps and blew the whole
+    endpoint into a plain-text 500 ("Unexpected token 'I'" on the
+    client). Annualization needs a positive base; the honest answer is
+    None + a note, never a crash.
+    """
+    if total is None or days <= 0:
+        return None
+    base = 1.0 + total
+    if base <= 0.0:
+        return None
+    return base ** (365.0 / days) - 1.0
+
+
 def _xirr(flows: list[tuple[str, float]], end_date: str) -> float | None:
     """Annualized rate zeroing the NPV (bisection, 240 iterations).
 
@@ -288,6 +307,7 @@ def performance_report(scope: str) -> dict[str, Any]:
     # +20% — exactly the market move of the held book, timing-free.
     twr_total: float | None = None
     twr_annual: float | None = None
+    twr_sign_flip = False
     partial = False
     if len(tx_dates) >= 1:
         chain = 1.0
@@ -302,7 +322,14 @@ def performance_report(scope: str) -> dict[str, Any]:
             denom = prev_v
             numer = v - cf_by_date[d]
             if abs(denom) > 1e-9:
-                chain *= numer / denom
+                ratio = numer / denom
+                # [v1.22.4] A negative sub-period ratio (the book value
+                # and the prior book have OPPOSITE signs) makes the
+                # chained product negative — no return interpretation
+                # exists. Flag it, show no TWR, keep the curve honest.
+                if ratio < 0:
+                    twr_sign_flip = True
+                chain *= ratio
             prev_v = v
         # final leg to today (no cashflow assumed after the last tx date)
         if tx_dates and tx_dates[-1] < today:
@@ -310,12 +337,22 @@ def performance_report(scope: str) -> dict[str, Any]:
             if not comp:
                 partial = True
             if prev_v is not None and abs(prev_v) > 1e-9:
-                chain *= v_end / prev_v
-        twr_total = chain - 1.0
+                ratio = v_end / prev_v
+                if ratio < 0:
+                    twr_sign_flip = True
+                chain *= ratio
         days = (date.fromisoformat(today) -
                 date.fromisoformat(first_date)).days
-        if days > 0:
-            twr_annual = (1.0 + twr_total) ** (365.0 / days) - 1.0
+        if twr_sign_flip:
+            # The chain crossed zero — "return" is undefined (a short
+            # book flipping against a long one, or a buy far above the
+            # day's close). Honest: no number, an explanatory note.
+            twr_total = None
+        elif chain > 0:
+            twr_total = chain - 1.0
+            twr_annual = _annualize(twr_total, days)
+        else:
+            twr_total = None
 
     # ── XIRR ──
     flows: list[tuple[str, float]] = []
@@ -340,8 +377,7 @@ def performance_report(scope: str) -> dict[str, Any]:
         cdi_total -= 1.0
     days = (date.fromisoformat(today) -
             date.fromisoformat(first_date)).days
-    cdi_annual = ((1.0 + cdi_total) ** (365.0 / days) - 1.0
-                  if cdi_total is not None and days > 0 else None)
+    cdi_annual = _annualize(cdi_total, days)
 
     ibov_dates, ibov_closes = _price_map("BOVA11", px_from, today)
     ibov_total = None
@@ -350,8 +386,18 @@ def performance_report(scope: str) -> dict[str, Any]:
         end_px = _last_close_le(ibov_dates, ibov_closes, today)
         if start_px and start_px > 0 and end_px:
             ibov_total = end_px / start_px - 1.0
-    ibov_annual = ((1.0 + ibov_total) ** (365.0 / days) - 1.0
-                   if ibov_total is not None and days > 0 else None)
+    ibov_annual = _annualize(ibov_total, days)
+
+    # [v1.22.4] IVVB11 — the S&P 500 by proxy (the B3-listed ETF that
+    # tracks the index in BRL). Same window, same treatment as BOVA11.
+    ivvb_dates, ivvb_closes = _price_map("IVVB11", px_from, today)
+    ivvb_total = None
+    if ivvb_dates:
+        start_px = _last_close_le(ivvb_dates, ivvb_closes, first_date)
+        end_px = _last_close_le(ivvb_dates, ivvb_closes, today)
+        if start_px and start_px > 0 and end_px:
+            ivvb_total = end_px / start_px - 1.0
+    ivvb_annual = _annualize(ivvb_total, days)
 
     # ── the curve grid: month ends + today ──
     grid: list[str] = []
@@ -372,6 +418,7 @@ def performance_report(scope: str) -> dict[str, Any]:
     curve_pat: list[float] = []
     curve_cdi: list[float | None] = []
     curve_ibov: list[float | None] = []
+    curve_ivvb: list[float | None] = []
     pat0 = None
     for g in grid:
         v, comp = value_at(g)
@@ -403,6 +450,16 @@ def performance_report(scope: str) -> dict[str, Any]:
                 curve_ibov.append(None)
         else:
             curve_ibov.append(None)
+        # [v1.22.4] the S&P 500 (BRL) line — IVVB11 over the same grid.
+        if ivvb_dates and ivvb_total is not None:
+            base = _last_close_le(ivvb_dates, ivvb_closes, curve_labels[0])
+            px = _last_close_le(ivvb_dates, ivvb_closes, g)
+            if base and px:
+                curve_ivvb.append(round(pat0 * px / base, 2))
+            else:
+                curve_ivvb.append(None)
+        else:
+            curve_ivvb.append(None)
 
     has_short = any(
         abs(l["rows"][-1]["run_qty"]) > 1e-9 and l["rows"][-1]["run_qty"] < 0
@@ -431,6 +488,13 @@ def performance_report(scope: str) -> dict[str, Any]:
     if ibov_total is not None:
         kpis.append({"label": "IBOV anualizado", "value": _pct(ibov_annual),
                      "tooltip": "O retorno do BOVA11 anualizado."})
+    if ivvb_total is not None:
+        kpis.append({"label": "S&P 500 (via IVVB11)", "value": _pct(ivvb_total),
+                     "tooltip": "Provento do IVVB11 (ETF B3 que replica o "
+                                "S&P 500, em R$) no mesmo intervalo — "
+                                "inclui o câmbio."})
+        kpis.append({"label": "S&P 500 anualizado", "value": _pct(ivvb_annual),
+                     "tooltip": "O retorno do IVVB11 anualizado."})
 
     notes = [
         "Janela: " + _fmt_date(first_date) + " → " + _fmt_date(today)
@@ -438,9 +502,14 @@ def performance_report(scope: str) -> dict[str, Any]:
         "XIRR usa os fluxos das transações + o valor atual da carteira; "
         "TWR encadeia os retornos entre movimentações (cashflow no fim "
         "do dia).",
-        "IBOV aproximado pelo BOVA11 (ETF) — o índice em si não tem "
-        "série no cotahist.",
+        "IBOV aproximado pelo BOVA11 e S&P 500 pelo IVVB11 (ETFs B3 em "
+        "R$) — os índices em si não têm série no cotahist.",
     ]
+    if twr_sign_flip:
+        notes.append("⚠️ O patrimônio trocou de sinal entre "
+                     "movimentações (short ou compra muito acima do "
+                     "fechamento) — o TWR ficaria sem sentido; só a "
+                     "curva e o XIRR são mostrados.")
     if has_short:
         notes.append("⚠️ Há posição vendida a descoberto aberta — TWR/XIRR "
                      "são aproximações (patrimônio negativo não tem taxa "
@@ -471,11 +540,14 @@ def performance_report(scope: str) -> dict[str, Any]:
         "cdi_annual": cdi_annual,
         "ibov_total": ibov_total,
         "ibov_annual": ibov_annual,
+        "ivvb_total": ivvb_total,
+        "ivvb_annual": ivvb_annual,
         "curve": {
             "labels": curve_labels,
             "patrimonio": curve_pat,
             "cdi": curve_cdi,
             "ibov": curve_ibov,
+            "ivvb": curve_ivvb,
         },
         "final_value_br": _brl(final_value),
         "notes": notes,
