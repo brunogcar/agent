@@ -91,6 +91,14 @@
       {{ t("company.historical") }}
     </button>
     #}
+    {# [v1.21 fix 1] ⭐ Watch button — adds/removes this ticker on the
+       Painel's Tickers Observados (initCompanyWatch() in app.js owns the
+       state + toggle). Lives in the tab bar so it's on EVERY tab,
+       Visão Geral included. #}
+    <span class="company-watch-slot">
+      <button class="company-watch-star" id="company-watch-star"
+              data-ticker="{{ ticker }}" aria-label="Ticker observado">☆</button>
+    </span>
   </nav>
 
   {# ── Tab content (HTMX-swapped) ── #}

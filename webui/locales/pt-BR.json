@@ -5,6 +5,7 @@
     "company": "Empresa",
     "mercado": "Mercado",
     "macro": "Macro",
+    "carteira": "Carteira",
     "sync": "Sincronização",
     "settings": "Configurações"
   },
@@ -46,7 +47,8 @@
     "retry": "Tentar novamente",
     "close": "Fechar",
     "save": "Salvar",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "delete": "Excluir"
   },
   "preflight": {
     "title": "Diagnóstico do Sistema",
@@ -66,5 +68,34 @@
     "filter_error": "Erros",
     "new_entries": "novas linhas",
     "empty": "Sem eventos ainda — navegue, sincronize ou altere configurações."
+  },
+  "carteira": {
+    "subtitle": "Usuários, contas e transações — posições pelo preço médio, cotações do último pregão sincronizado",
+    "loading": "Carregando carteira…",
+    "crumbs": "Navegação da carteira",
+    "views": "Alternar visão",
+    "view_positions": "Posições",
+    "view_txs": "Transações",
+    "scope_user": "Usuário",
+    "new_user": "Novo usuário",
+    "user_name": "Nome do usuário",
+    "new_account": "Nova conta",
+    "account": "Conta",
+    "account_name": "Nome da conta",
+    "account_placeholder": "Ex.: XP Clear, BTG13, Tesouro Direto…",
+    "broker": "Corretora (opcional)",
+    "broker_placeholder": "Ex.: XP, BTG, Rico…",
+    "watch_account": "Exibir esta conta no Painel",
+    "new_tx": "Transação",
+    "ticker": "Ticker",
+    "type": "Tipo",
+    "buy": "Compra",
+    "sell": "Venda",
+    "date": "Data",
+    "quantity": "Quantidade",
+    "price": "Preço unitário (R$)",
+    "fees": "Taxas (R$, opcional)",
+    "note": "Observação (opcional)",
+    "manage": "Gerenciar"
   }
 }

@@ -207,12 +207,13 @@ def create_app() -> FastAPI:
     attach_logging_handler()
 
     # ── WebUI routes ─────────────────────────────────────────────────────────
-    from webui.routes import pages, api, sync, preflight, system
+    from webui.routes import pages, api, sync, preflight, system, portfolio
     app.include_router(pages.router)
     app.include_router(api.router)
     app.include_router(sync.router)
     app.include_router(preflight.router)  # [v1.7] pre-flight checks
     app.include_router(system.router)     # [v1.20] logs + settings
+    app.include_router(portfolio.router)  # [v1.21] carteira (portfolio)
 
     # ── Existing gateway routes (optional — mount if available) ─────────────
     # This brings /chat, /task, /ws, /health onto the same app so the WebUI

@@ -5,6 +5,9 @@ Read-only queries against cotahist.db:
   - market_snapshot() — latest-session close + previous close per symbol
     (the WebUI landing page rankings: most traded / gainers / losers;
     quote enrichment for index constituents) [v1.19]
+  - quotes_for(symbols) — same quote shape for a GIVEN symbol list, each
+    at its OWN last session (portfolio valuation: illiquid papers silent
+    for 10+ sessions still get their last traded price) [v1.21]
   - DB stats (years synced, row counts, date range)
 """
 
@@ -221,3 +224,95 @@ def market_snapshot() -> dict:
         "count": len(symbols),
         "symbols": symbols,
     }
+
+
+# [v1.21] Portfolio quotes — latest + previous close for a GIVEN symbol
+# list. market_snapshot() windows the scan to the last _SNAPSHOT_SESSIONS
+# sessions (the landing-page rankings only care about actives); an
+# illiquid paper silent for 10+ sessions falls out of that window, which
+# is wrong for portfolio valuation (the LAST TRADED price is the honest
+# "Valor Hoje"). This variant rides idx_cotahist_symbol instead: the
+# filter IS the bound, so per-symbol window functions run over each
+# symbol's own history (a few thousand rows each — sub-second for a
+# whole portfolio). Same deduped CTE + row shape as market_snapshot().
+def quotes_for(symbols: list[str]) -> dict:
+    """Latest-session quote per requested symbol (own last session).
+
+    Returns the market_snapshot() symbols shape filtered to ``symbols``::
+
+        {"status": "ok",
+         "symbols": [{"ticker": "POMO4", "name": "MARCOPOLO",
+                      "close": 2.44, "prev_close": 2.40,
+                      "variation_pct": 1.67,
+                      "volume": 1.2e5, "trade_count": 340}],
+         "session_date": "2026-11-20"}    # latest refdate among the returns
+
+    "not_synced" when cotahist.db is missing. Symbols with no rows are
+    simply absent from ``symbols`` (the caller degrades per-ticker).
+    Invalid shapes are dropped (the _SYMBOL_RE guard).
+    """
+    wanted = sorted({(s or "").strip().upper() for s in symbols
+                     if _SYMBOL_RE.match((s or "").strip().upper())})
+    if not wanted:
+        return {"status": "ok", "session_date": "", "symbols": []}
+
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    out: list[dict] = []
+    session_date = ""
+    try:
+        # SQLite's default host-parameter limit is 999 — chunk defensively.
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"""
+                WITH scoped AS (
+                  SELECT symbol, corp_name, refdate, close, volume, trade_count
+                  FROM cotahist
+                  WHERE market_type = 10 AND bdi_code = 2
+                    AND close IS NOT NULL AND close > 0
+                    AND symbol IN ({marks})
+                ),
+                deduped AS (
+                  SELECT symbol, corp_name, refdate, close, volume, trade_count,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY symbol, refdate
+                           ORDER BY volume DESC, trade_count DESC) AS d,
+                         DENSE_RANK() OVER (
+                           PARTITION BY symbol ORDER BY refdate DESC) AS s
+                  FROM scoped
+                )
+                SELECT r1.symbol, r1.corp_name, r1.refdate,
+                       r1.close, r1.volume, r1.trade_count,
+                       r2.close AS prev_close
+                FROM deduped r1
+                LEFT JOIN deduped r2
+                  ON r2.symbol = r1.symbol AND r2.s = 2 AND r2.d = 1
+                WHERE r1.d = 1 AND r1.s = 1
+                """,
+                chunk,
+            ).fetchall()
+            for r in rows:
+                close = float(r["close"])
+                prev = float(r["prev_close"]) if r["prev_close"] else None
+                variation = ((close / prev) - 1.0) * 100.0 if prev else None
+                if r["refdate"] and r["refdate"] > session_date:
+                    session_date = r["refdate"]
+                out.append({
+                    "ticker": (r["symbol"] or "").strip().upper(),
+                    "name": (r["corp_name"] or "").strip(),
+                    "close": close,
+                    "prev_close": prev,
+                    "variation_pct": variation,
+                    "volume": float(r["volume"]) if r["volume"] else 0.0,
+                    "trade_count": int(r["trade_count"]) if r["trade_count"] else 0,
+                })
+    finally:
+        conn.close()
+
+    return {"status": "ok", "session_date": session_date,
+            "count": len(out), "symbols": out}

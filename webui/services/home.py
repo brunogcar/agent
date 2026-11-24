@@ -6,11 +6,16 @@ company suggestions; the sync details moved to the bottom box (and the
 full panel stays on the Sincronização page), and the page itself now
 answers "where does Brazil stand?" in one glance:
 
-  KPI row    → Selic (anualizada) · IPCA (acumulado 12m) · IGP-M
-               (acumulado 12m) · USD/BRL (ptax)  [BCB SGS]
-  5 cards    → Top 10 IBOV · Top 10 SMLL          [b3-index + cotahist]
-               Mais Negócios · Maiores Altas ·
-               Maiores Baixas                     [cotahist]
+  KPI row    → Selic (anualizada) · TR · IPCA (mês) · IPCA (12m) ·
+               IGP-M (mês) · IGP-M (12m) · USD/BRL (ptax)  [BCB SGS]
+  6 cards    → Top 10 IBOV · Top 10 SMLL          [b3-index + cotahist]
+               Mais Negócios · Maiores Volumes ·
+               Maiores Altas · Maiores Baixas      [cotahist]
+
+[v1.21 fix 1] KPI row reorganized (rates → inflation mês+12m → FX) with
+the three additions the user asked (IPCA mês, IGP-M mês, TR); new
+"Maiores Volumes (R$)" card right after Mais Negócios — the financial
+volume (quantidade × preço do pregão), the cotahist ``volume`` column.
 
 Every ticker row links to its company page (/webui/company/{ticker}).
 
@@ -55,6 +60,7 @@ from webui.services.macro import (
     IGPM_MENSAL,
     IPCA_MENSAL,
     SELIC_DAILY,
+    TR_DAILY,
     USD_BRL,
     _annualize,
     _brl2,
@@ -67,7 +73,7 @@ from webui.services.macro import (
     _sgs_unavailable,
 )
 
-from tools.report_ops.formats import fmt_num
+from tools.report_ops.formats import fmt_brl, fmt_num
 
 # ── the skill's display helpers (no forked numerics) ────────────────────────
 from skills.b3.index.helpers import format_pct as _fmt_weight  # "10,886%"
@@ -130,15 +136,23 @@ def _quote_text(close: float | None) -> str:
 
 # ── service ─────────────────────────────────────────────────────────────────
 class HomeService:
-    """Painel landing page — KPI row + 5 ranked ticker cards (FLAT, no ticker)."""
+    """Painel landing page — KPI row + 6 ranked ticker cards (FLAT, no ticker)."""
 
     # ── KPI row (BCB SGS — same computation as the Macro family) ────────────
     def _kpis(self) -> tuple[list[dict[str, Any]], str | None]:
-        """(kpis, degradation-note-or-None). Values degrade to '-'."""
+        """(kpis, degradation-note-or-None). Values degrade to '-'.
+
+        [v1.21 fix 1] Organized order — rates (Selic, TR), then inflation
+        (IPCA mês → 12m, IGP-M mês → 12m), then FX — with the three new
+        entries (IPCA mês, IGP-M mês, TR).
+        """
         selic = _last(SELIC_DAILY)
+        tr = _last(TR_DAILY)
         fx = _last(USD_BRL)
         ipca_m = _observations(IPCA_MENSAL, 60)
         igpm_m = _observations(IGPM_MENSAL, 60)
+        ipca_last = ipca_m[-1] if ipca_m else None
+        igpm_last = igpm_m[-1] if igpm_m else None
         ipca_12m = _rolling_12m(ipca_m)[-1].get("acum_12m") if ipca_m else None
         igpm_12m = _rolling_12m(igpm_m)[-1].get("acum_12m") if igpm_m else None
 
@@ -151,16 +165,29 @@ class HomeService:
                 "Taxa Selic diária anualizada (base 252) — a taxa básica da "
                 "economia. "
                 f"Ref: {_fmt_date(selic.get('ref_date'))}."),
+            kpi("TR",
+                _pct(tr.get("value")),
+                "Taxa Referencial diária — remunera poupança e alguns "
+                "financiamentos. "
+                f"Ref: {_fmt_date(tr.get('ref_date'))}."),
+            kpi("IPCA (mês)",
+                _pct(ipca_last.get("value") if ipca_last else None),
+                "IPCA — variação do mês (a meta do Copom é 3% a.a.). "
+                f"Ref: {_fmt_date(ipca_last.get('ref_date')) if ipca_last else '-'}."),
             kpi("IPCA (12m)",
                 _pct(ipca_12m),
                 "IPCA acumulado em 12 meses — a leitura do calendário de "
                 "metas do Copom (a meta atual é 3%). "
-                f"Ref: {_fmt_date(ipca_m[-1].get('ref_date')) if ipca_m else '-'}."),
+                f"Ref: {_fmt_date(ipca_last.get('ref_date')) if ipca_last else '-'}."),
+            kpi("IGP-M (mês)",
+                _pct(igpm_last.get("value") if igpm_last else None),
+                "IGP-M — variação do mês (preços ao produtor). "
+                f"Ref: {_fmt_date(igpm_last.get('ref_date')) if igpm_last else '-'}."),
             kpi("IGP-M (12m)",
                 _pct(igpm_12m),
                 "IGP-M acumulado em 12 meses — o índice de preços ao "
                 "produtor que indexa aluguéis e contratos. "
-                f"Ref: {_fmt_date(igpm_m[-1].get('ref_date')) if igpm_m else '-'}."),
+                f"Ref: {_fmt_date(igpm_last.get('ref_date')) if igpm_last else '-'}."),
             kpi("USD/BRL (ptax)",
                 _brl4(fx.get("value")),
                 "Dólar venda — taxa ptax de fechamento. "
@@ -216,14 +243,18 @@ class HomeService:
 
     # ── cotahist ranking cards ──────────────────────────────────────────────
     def _ranking_cards(self, snap: dict) -> list[dict[str, Any]]:
-        """Mais negócios + maiores altas + maiores baixas (latest session).
+        """Mais negócios + maiores volumes + altas + baixas (latest session).
 
         [v1.19 fix 1] Takes the ALREADY-FETCHED snapshot (see _quotes).
+        [v1.21 fix 1] "Maiores Volumes (R$)" joins after Mais Negócios —
+        ranked by the session's FINANCIAL volume (quantidade × preço, the
+        cotahist ``volume`` column); the quote rides as the row's extra.
         """
         if snap.get("status") != "ok":
             err = {"subtitle": "", "error": _COTAHIST_ERR, "items": []}
             return [
                 {"key": "negocios", "title": "Mais Negócios", **err},
+                {"key": "volumes", "title": "Maiores Volumes (R$)", **err},
                 {"key": "altas", "title": "Maiores Altas", **err},
                 {"key": "baixas", "title": "Maiores Baixas", **err},
             ]
@@ -252,6 +283,21 @@ class HomeService:
                       for s in by_trades],
         }
 
+        # Maiores volumes — financial volume (quantidade × preço).
+        by_volume = sorted(symbols, key=lambda s: -s.get("volume") or 0.0)[:top]
+        volume_card = {
+            "key": "volumes", "title": "Maiores Volumes (R$)", "subtitle": sub,
+            "error": None,
+            "items": [{
+                "ticker": s["ticker"],
+                "name": s["name"],
+                "value": fmt_brl(s.get("volume") or 0.0),
+                "variation": _signed_pct(s.get("variation_pct")),
+                "extra": {"label": "cotação",
+                          "text": _quote_text(s.get("close"))},
+            } for s in by_volume],
+        }
+
         # Variações — close vs previous session, liquidity-gated.
         liquid = [s for s in symbols
                   if s.get("variation_pct") is not None
@@ -261,6 +307,7 @@ class HomeService:
 
         return [
             trades_card,
+            volume_card,
             {"key": "altas", "title": "Maiores Altas", "subtitle": sub,
              "error": None,
              "items": [row(s) for s in gainers]},

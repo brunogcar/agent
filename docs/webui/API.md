@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-11-23 (v1.20 — system log + settings routes; v1.7 adapter dispatch + pre-flight)
+Last updated: 2026-11-23 (v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
 
 ---
 
@@ -19,6 +19,7 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 | GET | `/webui/company/{ticker}/{tab}` | Company tab page (tab: visao_geral, preco, financials, valuation, proventos) |
 | GET | `/webui/macro` | Macro indicators page |
 | GET | `/webui/mercado` | Mercado page (DDM families) |
+| GET | `/webui/carteira` | Carteira (portfolio) page — users → accounts → transactions → PM positions [v1.21] |
 | GET | `/webui/sync` | Data sync status page |
 | GET | `/webui/settings` | Settings page (schema-driven form [v1.20]) |
 | GET | `/` | Redirects to `/webui/` |
@@ -284,6 +285,61 @@ data: {"event": "sync.failed", "job_id": "a1b2c3d4", "source": "dfp", "error": "
 ```
 
 **Keepalive:** The server sends `: keepalive` comments every 15 seconds to prevent proxy timeouts.
+
+---
+
+## Carteira (Portfolio) Routes [v1.21]
+
+The user's own money: users → accounts → transactions → PM (preço médio) positions + watchlist. Lives in `webui/routes/portfolio.py`; the store, the position engine and the quote enrichment in `webui/services/portfolio.py` (storage: `memory_db/webui_portfolio.json` — atomic write + mtime-checked in-memory cache). All mutations validate all-or-nothing and return `{"ok": true, …}` or HTTP 400 `{"_error": summary, "errors": {field: PT-BR message}}`. [v1.21 fix 1] Sells may SHORT (qty goes negative — the sell price becomes the short's PM; buys cover and can flip long) and price `0` is valid (bonificação); only negative prices/quantities and future dates are refused. Numeric strings are PT-BR aware (`"1.234,56"` → 1234.56). CRUD events feed the 📜 system log (source `carteira`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/webui/portfolio/state` | Users + accounts (+ `tx_count`, `user_name`) + watchlist + ticker metadata — the manage UI |
+| GET | `/api/webui/portfolio/directory` | [fix 1] Users → accounts tree with live KPIs (patrimônio/custo/lucro per account AND per user — sums NEVER across users) — the Carteira landing/user pages |
+| GET | `/api/webui/portfolio/positions?scope=all\|user:{id}\|account:{id}` | PM positions + KPI cards + totals + the 200 most recent transactions (chronological ASC; `short`/`zero` row flags) for the scope |
+| GET | `/api/webui/portfolio/overview` | The Painel widget payload — watched accounts GROUPED BY USER (per-user subtotals) + watchlist tickers (price, var. dia) |
+| POST | `/api/webui/portfolio/users` | Create user `{name}` |
+| PUT | `/api/webui/portfolio/users/{id}` | Rename |
+| DELETE | `/api/webui/portfolio/users/{id}` | Delete (cascades accounts + transactions) |
+| POST | `/api/webui/portfolio/accounts` | Create `{user_id, name, broker?, watch?}` |
+| PUT | `/api/webui/portfolio/accounts/{id}` | Update any field (incl. the ⭐ watch flag) |
+| DELETE | `/api/webui/portfolio/accounts/{id}` | Delete (cascades transactions) |
+| POST | `/api/webui/portfolio/txs` | Create `{account_id, ticker, type: buy\|sell, quantity, price, fees?, date, note?}` |
+| PUT | `/api/webui/portfolio/txs/{id}` | Update |
+| DELETE | `/api/webui/portfolio/txs/{id}` | Delete |
+| POST | `/api/webui/portfolio/watchlist` | Add ticker `{ticker}` |
+| DELETE | `/api/webui/portfolio/watchlist/{ticker}` | Remove ticker |
+| POST | `/api/webui/portfolio/tickers/{ticker}/refresh` | Re-fetch the CVM name/sector (background thread) |
+
+### `GET /api/webui/portfolio/positions?scope=all` (sample)
+
+```json
+{
+  "status": "ok", "empty": null,
+  "scope_label": "Geral — todos os usuários e contas",
+  "session_date": "20/11/2026", "quotes_ok": true,
+  "kpis": [{"label": "Patrimônio", "value": "R$ 10.860,00", "tooltip": "…"},
+            {"label": "Custo (PM)", "value": "R$ 7.319,60", "tooltip": "…"},
+            {"label": "Lucro não realizado", "value": "+R$ 3.540,40", "tooltip": "…"},
+            {"label": "Lucro %", "value": "+48,37%", "tooltip": "…"},
+            {"label": "Lucro realizado", "value": "+R$ 176,07", "tooltip": "…"}],
+  "positions": [{"ticker": "POMO4", "name": "MARCOPOLO S.A.",
+                 "sector": "Material Rodoviário",
+                 "pm": "2,44", "price": "3,62", "qty": "3.000",
+                 "cost": "R$ 7.319,60", "value": "R$ 10.860,00",
+                 "profit": "+R$ 3.540,40", "profit_pct": "+48,37%",
+                 "accounts": ["Bruno · XP Clear"]}],
+  "totals": {"cost": "R$ 7.319,60", "value": "R$ 10.860,00",
+             "profit": "+R$ 3.540,40", "profit_pct": "+48,37%"},
+  "txs": [{"id": "…", "date": "01/04/2026", "date_iso": "2026-04-01",
+            "ticker": "POMO4", "account": "Bruno · XP Clear",
+            "account_id": "…", "type": "sell", "qty": "500",
+            "quantity": 500, "price": "2,80", "raw_price": 2.8,
+            "fees": "—", "raw_fees": 0.0, "total": "R$ 1.400,00", "note": ""}]
+}
+```
+
+Every number is a PRE-FORMATTED PT-BR string (the house rule — the client only colorizes by the leading sign). Degradation: cotahist down → `quotes_ok: false` + `quotes_note` naming the source; a held ticker simply absent from the synced history → per-ticker "—" + `quotes_note` listing the stragglers (totals require every quote). Empty states: `"empty": "no_users" | "no_accounts" | "no_txs"` (the client renders the setup guides).
 
 ---
 

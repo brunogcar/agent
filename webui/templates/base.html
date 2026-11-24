@@ -26,6 +26,26 @@
 [WebUI v1.20] ?v=61 (System log drawer + schema-driven settings — app.js/app.css;
   top-bar 📜 button, right drawer on every page, Configurações re-rendered
   from GET /api/webui/settings)
+[WebUI v1.21] ?v=62 (Carteira — app.js/app.css + nav item 💼; the
+  portfolio page shell is pages/carteira.html, the PM engine + store is
+  webui/services/portfolio.py, the REST surface is routes/portfolio.py)
+[WebUI v1.21 fix 1] ?v=63 (Carteira drill-down rework — app.js/app.css/
+  carteira.html/company.html: users → accounts → account navigation,
+  contextual buttons, centered dialogs, BR money/date masks, 🚨 short +
+  ⚠️ bonificação flags, quick ✅/❌ on positions, ⭐ on company pages;
+  Painel: ⭐ Tickers Observados own box + contas grouped by user +
+  Lucro % fix; KPIs +TR/IPCA mês/IGP-M mês + Maiores Volumes card)
+[WebUI v1.21 fix 2] ?v=64 (Carteira fine-tuning — app.js/app.css/
+  carteira.html: sidebar entry ALWAYS lands on 👥 Usuários (one-shot
+  sessionStorage deep link for the Painel conta rows), Gerenciar
+  scrolls in ONE place (pinned title/actions — no nested scrollbars),
+  click outside any box cancels it, money mask truly cents-fill
+  (1·2·3·4 → 0,01 → 0,12 → 1,23 → 12,34; typed ',' = explicit
+  decimals; paste parses), styled 🗑️ confirmations for every delete)
+[WebUI v1.21 fix 3] ?v=65 (app.css: the wide modal's flex layout is
+  scoped to [open] — applied unconditionally it overrode the browser's
+  dialog:not([open]){display:none}, so Gerenciar showed as a ghost box
+  on the carteira page that Fechar/outside-click could not close)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -54,7 +74,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=61">
+  <link rel="stylesheet" href="/static/css/app.css?v=65">
 </head>
 <body>
   <div class="app-shell">
@@ -70,6 +90,12 @@
         <a href="/webui" class="nav-item {{ 'active' if active_tab == 'dashboard' else '' }}">
           <span class="icon">🏠</span>
           <span class="label" x-show="!collapsed">{{ t("nav.dashboard") }}</span>
+        </a>
+        {# [v1.21] Carteira — the user's own money (users → accounts →
+           buy/sell transactions → PM positions + watchlist). #}
+        <a href="/webui/carteira" class="nav-item {{ 'active' if active_tab == 'carteira' else '' }}">
+          <span class="icon">💼</span>
+          <span class="label" x-show="!collapsed">{{ t("nav.carteira") }}</span>
         </a>
         <a href="/webui/mercado" class="nav-item {{ 'active' if active_tab == 'mercado' else '' }}">
           <span class="icon">📈</span>
@@ -192,6 +218,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=61"></script>
+  <script src="/static/js/app.js?v=65"></script>
 </body>
 </html>

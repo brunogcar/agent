@@ -7,14 +7,18 @@
 > **[v1.20] Pruned** — the completed per-feature essays moved to the
 > CHANGELOG's version table (one topic summary each); this file now carries
 > only the shape of what exists and what's still open.
+>
+> **[v1.21]** — Carteira shipped; the v2 Watchlist items landed inside it
+> (watched accounts + watchlist tickers on the Painel).
 
 ---
 
-## ✅ Built (v1 → v1.20)
+## ✅ Built (v1 → v1.21)
 
 ### The app today
 
-- **Painel** (`/webui`) — the Brazil one-screen landing: SGS KPI row (Selic · IPCA 12m · IGP-M 12m · USD/BRL) + 5 ranked ticker cards (Top 10 IBOV/SMLL, Mais Negócios, Altas, Baixas), every row a company-page link; compact sync box + pre-flight banner at the bottom. [v1.19]
+- **Painel** (`/webui`) — the Brazil one-screen landing: SGS KPI row (Selic · TR · IPCA mês · IPCA 12m · IGP-M mês · IGP-M 12m · USD/BRL) + 6 ranked ticker cards (Top 10 IBOV/SMLL, Mais Negócios, **Maiores Volumes (R$)**, Altas, Baixas), every row a company-page link; **⭐ Tickers Observados** (own box) + **💼 Minhas Carteiras** (contas grouped by user, [v1.21 fix 1]); compact sync box + pre-flight banner at the bottom. [v1.19, v1.21]
+- **Carteira** (`/webui/carteira`) — the portfolio: the 👥 usuários → 👤 contas → 🏦 conta drill-down (user/account cards with live totals — sums never across users), transações de compra/venda (BR-standard form, shorts 🚨 / bonificações ⚠️, quick ✅/❌ per position) → PM positions (preço médio brasileiro); ticker metadata from CVM; watched accounts + tickers surface on the Painel (grouped by user). [v1.21 + fix 1]
 - **Company page** (`/webui/company/{ticker}`) — identity card + 8 tabs: Visão Geral (candlestick 7 ranges, Ctrl+wheel zoom), Preço (5 subtabs), Financeiro (TTM + waterfall + all 5 Demonstrações), Valuation (5 subtabs), Proventos, Opções, Acionistas, Insiders. [v1.1–v1.10]
 - **Macro** (`/webui/macro`) — BCB SGS + Focus in 8 lazy subtabs. [v1.11]
 - **Mercado** (`/webui/mercado`) — the DDM families: Focus, Fluxo, Índices, Inflação, Juros, Ações (with the stocks_history evolution store), Proventos (BDR split). [v1.12–v1.18]
@@ -34,6 +38,7 @@
 - Security posture: loopback-only by default (LAN = `WEBUI_ALLOW_LAN=1`), ticker regex at every company route, allow-lists for tabs/adapters, reflected-XSS closed
 - **Settings as data** [v1.20] — one dict entry in `webui/services/settings.py` SCHEMA = a new setting (form auto-renders; storage `memory_db/webui_settings.json`); sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale, log level/buffer — all wired, no dead knobs
 - **System log** [v1.20] — one in-memory ring buffer (`webui/services/syslog.py`) fed by three capture paths (request middleware, root-logger handler, explicit points); SSE while the drawer is open, 15s poll + unseen-error badge while closed
+- **Carteira store** [v1.21] — `memory_db/webui_portfolio.json` (users/accounts/txs/watchlist/ticker-metadata; the settings.py storage pattern) + the PM engine and `quotes_for()` quote enrichment in `webui/services/portfolio.py`; CRUD validated all-or-nothing with replay-checked sells
 
 ---
 
@@ -58,8 +63,7 @@
 ## 🔮 Planned (v2)
 
 ### Watchlist
-- [ ] **Saved tickers** — SQLite-stored watchlist. Add/remove from the company page.
-- [ ] **Watchlist view** — table with live KPIs for all watched tickers.
+- [x] ~~**Add-from-company-page** — a ⭐ button on the company page feeding the Carteira watchlist~~ **SHIPPED in v1.21 fix 1** (⭐ in the company tab bar, every tab; also ⭐ toggles on the account cards).
 
 ### Export
 - [ ] **Download report** — "Download as HTML" on each company page (reuse `build_dashboard()`).

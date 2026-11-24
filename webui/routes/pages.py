@@ -21,6 +21,7 @@ Routes:
   GET /webui/company/{ticker}/{tab}  → company tab (visao_geral/preco/financials/valuation)
   GET /webui/macro                → macro page
   GET /webui/mercado              → mercado page (DDM dashboards) [v1.12]
+  GET /webui/carteira             → carteira (portfolio) page [v1.21]
   GET /webui/sync                 → sync status page
   GET /webui/settings             → settings page
 """
@@ -127,6 +128,22 @@ def mercado_page(request: Request):
     """
     return templates.TemplateResponse(
         request, "pages/mercado.html", _ctx(request, active_tab="mercado"),
+    )
+
+
+@router.get("/carteira", response_class=HTMLResponse)
+def carteira_page(request: Request):
+    """[v1.21] Carteira page — the user's own money.
+
+    Multiple users → accounts → buy/sell transactions, consolidated
+    into PM positions (webui/services/portfolio.py). The shell carries
+    the toolbar (user/account scope selectors + the create buttons),
+    the KPI/tables containers and the CRUD modals; initCarteiraPage()
+    in app.js owns the data flow (GET state + positions, optimistic
+    re-render after every mutation).
+    """
+    return templates.TemplateResponse(
+        request, "pages/carteira.html", _ctx(request, active_tab="carteira"),
     )
 
 

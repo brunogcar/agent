@@ -5,6 +5,7 @@
     "company": "Company",
     "mercado": "Market",
     "macro": "Macro",
+    "carteira": "Portfolio",
     "sync": "Sync",
     "settings": "Settings"
   },
@@ -46,7 +47,8 @@
     "retry": "Retry",
     "close": "Close",
     "save": "Save",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "delete": "Delete"
   },
   "preflight": {
     "title": "System Diagnostics",
@@ -66,5 +68,34 @@
     "filter_error": "Errors",
     "new_entries": "new lines",
     "empty": "No events yet — browse, sync or change settings."
+  },
+  "carteira": {
+    "subtitle": "Users, accounts and transactions — average-cost positions, quotes from the last synced session",
+    "loading": "Loading portfolio…",
+    "crumbs": "Portfolio navigation",
+    "views": "Switch view",
+    "view_positions": "Positions",
+    "view_txs": "Transactions",
+    "scope_user": "User",
+    "new_user": "New user",
+    "user_name": "User name",
+    "new_account": "New account",
+    "account": "Account",
+    "account_name": "Account name",
+    "account_placeholder": "e.g. XP Clear, BTG13, Tesouro Direto…",
+    "broker": "Broker (optional)",
+    "broker_placeholder": "e.g. XP, BTG, Rico…",
+    "watch_account": "Show this account on the Dashboard",
+    "new_tx": "Transaction",
+    "ticker": "Ticker",
+    "type": "Type",
+    "buy": "Buy",
+    "sell": "Sell",
+    "date": "Date",
+    "quantity": "Quantity",
+    "price": "Unit price (R$)",
+    "fees": "Fees (R$, optional)",
+    "note": "Note (optional)",
+    "manage": "Manage"
   }
 }

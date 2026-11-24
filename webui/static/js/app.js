@@ -3565,6 +3565,1307 @@ function prefetchSubtab(e) {
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// ── Carteira (portfolio) [WebUI v1.21 fix 1] ────────────────────────────────
+// The DRILL-DOWN rework — the page IS the hierarchy:
+//   👥 Usuários   landing: user cards with the totals of THEIR accounts
+//                (per-user sums only, never across users) + ✏️ 🗑️ ➕
+//   👤 Usuário   account cards (ativos, transações, patrimônio, lucro)
+//                + the user's consolidated KPI row + ⭐ ✏️ 🗑️ ➕
+//   🏦 Conta     the KPI row + posições/transações tables scoped to
+//                THIS account + ➕ Transação (always relative).
+// Header actions are contextual (one create per level), every dialog is
+// dead-center, the tx form is BR-standard (money fills from the cents —
+// 3,6 5 → 3,65; dd/mm/aaaa dates), sells may short (🚨 tooltip), price
+// R$ 0,00 is a bonificação (⚠️ tooltip), and position rows carry the
+// quick ✅ buy / ❌ sell that pre-fills ticker + account + qty.
+// loadPortfolioWidget() renders the Painel: ⭐ Tickers Observados (its
+// OWN box, first) then 💼 Minhas Carteiras (contas grouped by user,
+// per-user subtotals). Both no-op away from their pages.
+// ═════════════════════════════════════════════════════════════════════════
+
+function initCarteiraPage() {
+  var root = document.getElementById('carteira-root');
+  if (!root || root._booted) return;
+  root._booted = true;
+
+  var st = {
+    users: [], accounts: [], watchlist: [], tickers: [],
+    dir: null,          // GET /directory — users/user levels
+    pos: null,          // GET /positions?scope=account:ID — account level
+    level: readLevel(),
+    view: 'positions',
+    editUser: null, editAccount: null, editTx: null,
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function api(method, path, body) {
+    return fetch('/api/webui/portfolio' + path, {
+      method: method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, j: j }; });
+    });
+  }
+
+  function fieldErrs(modal, j) {
+    var errs = (j && j.errors) || {};
+    modal.querySelectorAll('.cart-err').forEach(function(el) {
+      var key = el.getAttribute('data-err');
+      var msg = errs[key];
+      el.hidden = !msg;
+      el.textContent = msg || '';
+    });
+    return Object.keys(errs).length ? errs : null;
+  }
+
+  // ── level plumbing (👥 users → 👤 user → 🏦 account) ──────────────────
+  // [v1.21 fix 2] Entering via the sidebar ALWAYS lands on 👥 Usuários —
+  // the old localStorage scope restored the last-visited user/account on
+  // every entry. The Painel's conta rows still deep-link: they set a
+  // ONE-SHOT sessionStorage key right before navigating (consumed and
+  // removed here, so a refresh after landing also goes to the users page).
+  function readLevel() {
+    var v = '';
+    try {
+      v = sessionStorage.getItem('webui_carteira_goto') || '';
+      sessionStorage.removeItem('webui_carteira_goto');
+    } catch (err) { /* storage disabled — plain users landing */ }
+    if (v.indexOf('user:') === 0) return { kind: 'user', id: v.slice(5) };
+    if (v.indexOf('account:') === 0) return { kind: 'account', id: v.slice(8) };
+    return { kind: 'users' };
+  }
+
+  function goto(kind, id) {
+    st.level = kind === 'users' ? { kind: 'users' }
+             : { kind: kind, id: id };
+    st.view = 'positions';
+    $('cart-level').innerHTML = '<span class="loading">⏳ Carregando…</span>';
+    hideNote();
+    loadLevel();
+  }
+
+  function reconcileLevel() {
+    if (st.level.kind === 'users') return;
+    var alive = st.level.kind === 'user'
+      ? st.users.some(function(u) { return u.id === st.level.id; })
+      : st.accounts.some(function(a) { return a.id === st.level.id; });
+    if (!alive) {                    // deleted entity — back to L0, re-render
+      st.level = { kind: 'users' };
+      loadLevel();
+    }
+  }
+
+  function scopeStr() {
+    return st.level.kind === 'account' ? 'account:' + st.level.id
+         : st.level.kind === 'user' ? 'user:' + st.level.id : 'all';
+  }
+
+  function userById(id) {
+    return st.users.filter(function(u) { return u.id === id; })[0] || null;
+  }
+
+  function stAccount(id) {
+    return st.accounts.filter(function(a) { return a.id === id; })[0] || null;
+  }
+
+  function dirUser(id) {
+    return ((st.dir && st.dir.users) || [])
+      .filter(function(u) { return u.id === id; })[0] || null;
+  }
+
+  // ── data loads ─────────────────────────────────────────────────────────
+  function loadState() {
+    return api('GET', '/state').then(function(res) {
+      if (!res.ok || !res.j || res.j._error) return;
+      st.users = res.j.users || [];
+      st.accounts = res.j.accounts || [];
+      st.watchlist = res.j.watchlist || [];
+      st.tickers = res.j.tickers || [];
+      reconcileLevel();
+      renderActions();
+      renderCrumbs();
+      if ($('cart-manage-modal').open) renderManage();
+    });
+  }
+
+  function loadDirectory() {
+    return api('GET', '/directory').then(function(res) {
+      st.dir = res.ok ? res.j : { _error: (res.j && res.j._error) || 'Erro' };
+      renderLevel();
+    }).catch(function(err) {
+      st.dir = { _error: 'Erro: ' + err.message };
+      renderLevel();
+    });
+  }
+
+  function loadPositions() {
+    return api('GET', '/positions?scope=' + encodeURIComponent(scopeStr()))
+      .then(function(res) {
+        st.pos = res.ok ? res.j : { _error: (res.j && res.j._error) || 'Erro' };
+        renderLevel();
+      })
+      .catch(function(err) {
+        st.pos = { _error: 'Erro: ' + err.message };
+        renderLevel();
+      });
+  }
+
+  function loadLevel() {
+    if (st.level.kind === 'account') loadPositions();
+    else loadDirectory();
+  }
+
+  function reload() { loadState(); loadLevel(); }
+
+  // ── notes ──────────────────────────────────────────────────────────────
+  function hideNote() {
+    var n = $('cart-note');
+    if (n) { n.hidden = true; n.textContent = ''; }
+  }
+
+  function showNote(d) {
+    var n = $('cart-note');
+    if (!n) return;
+    if (d && d.quotes_note) { n.hidden = false; n.textContent = d.quotes_note; }
+    else { n.hidden = true; n.textContent = ''; }
+  }
+
+  // ── header actions (contextual: one create per level) ─────────────────
+  function renderActions() {
+    var box = $('cart-actions');
+    if (!box) return;
+    var html = '';
+    if (st.level.kind !== 'users') {
+      html += '<button class="cart-btn" data-nav="users" ' +
+              'title="Voltar para os usuários">👤 Usuários</button>';
+    }
+    if (st.level.kind === 'user') {
+      html += '<button class="cart-btn" data-act="account" ' +
+              'title="Nova conta para este usuário">🏦 Nova conta</button>';
+    }
+    if (st.level.kind === 'account') {
+      html += '<button class="cart-btn primary" data-act="tx" ' +
+              'title="Registrar transação nesta conta">➕ Transação</button>';
+    }
+    if (st.level.kind === 'users') {
+      html += '<button class="cart-btn primary" data-act="user" ' +
+              'title="Criar um usuário">➕ Novo usuário</button>';
+    }
+    html += '<button class="cart-btn" data-act="manage" ' +
+            'title="⭐ Observados e 📇 cadastro de tickers">⚙️ Gerenciar</button>';
+    html += '<button class="cart-btn ghost" data-act="reload" ' +
+            'aria-label="Recarregar" title="Recarregar dados">🔄</button>';
+    box.innerHTML = html;
+  }
+
+  // ── breadcrumb ─────────────────────────────────────────────────────────
+  function renderCrumbs() {
+    var box = $('cart-crumbs');
+    if (!box) return;
+    var html = '<span class="cart-crumb' +
+      (st.level.kind === 'users' ? ' is-here' : '') + '" data-nav="users">👥 Usuários</span>';
+    if (st.level.kind === 'user') {
+      var u = userById(st.level.id);
+      html += '<span class="cart-crumb-sep">›</span>' +
+        '<span class="cart-crumb is-here" title="' + esc(u ? u.name : '') + '">👤 ' +
+        esc(u ? u.name : '—') + '</span>';
+    } else if (st.level.kind === 'account') {
+      var a = stAccount(st.level.id);
+      var au = a ? userById(a.user_id) : null;
+      if (au) {
+        html += '<span class="cart-crumb-sep">›</span>' +
+          '<span class="cart-crumb" data-nav="user" data-id="' + esc(au.id) + '">👤 ' +
+          esc(au.name) + '</span>';
+      }
+      html += '<span class="cart-crumb-sep">›</span>' +
+        '<span class="cart-crumb is-here" title="' +
+        esc((a && a.broker) || '') + '">🏦 ' + esc(a ? a.name : '—') + '</span>';
+    }
+    box.innerHTML = html;
+    box.style.display = st.level.kind === 'users' ? 'none' : '';
+  }
+
+  // ── level dispatch ─────────────────────────────────────────────────────
+  function renderLevel() {
+    renderActions();
+    renderCrumbs();
+    if (st.level.kind === 'users') renderUsersPage();
+    else if (st.level.kind === 'user') renderUserPage();
+    else renderAccountPage();
+  }
+
+  // ── 👥 L0: the users landing (cards with their accounts' totals) ───────
+  function renderUsersPage() {
+    var box = $('cart-level');
+    var d = st.dir || {};
+    if (d._error) {
+      box.innerHTML = '<div class="error">' + esc(d._error) + '</div>';
+      return;
+    }
+    showNote(d);
+    if (d.empty === 'no_users' || !(d.users || []).length) {
+      hideNote();
+      box.innerHTML = emptyGuide('no_users');
+      return;
+    }
+    box.innerHTML = '<div class="cart-ucard-grid">' +
+      d.users.map(userCard).join('') + '</div>';
+  }
+
+  function statCell(label, val, tooltip) {
+    var v = (val === null || val === undefined || val === '')
+      ? '<span class="muted">—</span>' : valNumHtml(val);
+    return '<div class="cart-stat"' + (tooltip ? ' title="' + esc(tooltip) + '"' : '') + '>' +
+      '<span class="cart-stat-l">' + esc(label) + '</span>' +
+      '<span class="cart-stat-v">' + v + '</span></div>';
+  }
+
+  function userCard(u) {
+    return '<div class="cart-ucard" data-user="' + esc(u.id) + '" role="button" tabindex="0">' +
+      '<div class="cart-ucard-head">' +
+        '<span class="cart-ucard-name" title="' + esc(u.name) + '">👤 ' + esc(u.name) + '</span>' +
+        '<span class="cart-actions">' +
+          '<button class="cart-icon-btn" data-eu="' + esc(u.id) + '" title="✏️ Editar usuário">✏️</button>' +
+          '<button class="cart-icon-btn" data-du="' + esc(u.id) +
+            '" title="🗑️ Excluir usuário (contas e transações junto)">🗑️</button>' +
+        '</span></div>' +
+      '<div class="cart-ucard-stats">' +
+        statCell('Patrimônio', u.value, 'Soma das contas deste usuário ao último pregão com cotação') +
+        statCell('Lucro hoje', u.profit, 'Patrimônio − custo das posições abertas') +
+        statCell('Lucro %', u.profit_pct, 'Lucro sobre o custo (PM)') +
+      '</div>' +
+      '<div class="cart-ucard-meta">🏦 ' + esc(String(u.account_count)) + ' conta(s) · 📋 ' +
+        esc(String(u.asset_count)) + ' ativo(s) · 🧾 ' + esc(String(u.tx_count)) +
+        ' transação(ões) · 💰 custo ' + esc(u.cost || '—') + '</div>' +
+      '<div class="cart-ucard-open">Abrir contas →</div>' +
+      '</div>';
+  }
+
+  // ── 👤 L1: inside a user (KPIs + account cards) ────────────────────────
+  function renderUserPage() {
+    var box = $('cart-level');
+    var d = st.dir || {};
+    if (d._error) {
+      box.innerHTML = '<div class="error">' + esc(d._error) + '</div>';
+      return;
+    }
+    var u = dirUser(st.level.id);
+    if (!u) {                                   // deleted — back to L0
+      st.level = { kind: 'users' };
+      loadDirectory();
+      return;
+    }
+    showNote(d);
+    var kpis = [
+      { label: 'Patrimônio', value: u.value,
+        tooltip: 'Soma das contas deste usuário ao último pregão com cotação' },
+      { label: 'Custo (PM)', value: u.cost,
+        tooltip: 'Total original — quantidade × preço médio (taxas incluídas)' },
+      { label: 'Lucro não realizado', value: u.profit,
+        tooltip: 'Patrimônio − custo das posições abertas' },
+      { label: 'Lucro %', value: u.profit_pct,
+        tooltip: 'Lucro não realizado sobre o custo' },
+      { label: 'Lucro realizado', value: u.realized,
+        tooltip: 'Vendas já efetuadas: (preço de venda − PM) × quantidade − taxas' },
+    ];
+    var html = '<div class="cart-kpis">' + valKpisHtml(kpis) + '</div>';
+    html += '<div class="cart-sec-head"><h3>🏦 Contas de ' + esc(u.name) + '</h3>' +
+      '<button class="cart-btn primary" data-act="account">➕ Nova conta</button></div>';
+    if (!(u.accounts || []).length) {
+      html += emptyGuide('no_accounts');
+    } else {
+      html += '<div class="cart-ucard-grid">' + u.accounts.map(accountCard).join('') + '</div>';
+    }
+    box.innerHTML = html;
+  }
+
+  function accountCard(a) {
+    return '<div class="cart-ucard" data-acc="' + esc(a.id) + '" role="button" tabindex="0">' +
+      '<div class="cart-ucard-head">' +
+        '<span class="cart-ucard-name" title="' +
+          esc(a.name + (a.broker ? ' · ' + a.broker : '')) + '">🏦 ' + esc(a.name) +
+          (a.watch ? ' <span class="cart-flag" title="⭐ Conta exibida no Painel">⭐</span>' : '') +
+        '</span>' +
+        '<span class="cart-actions">' +
+          '<button class="cart-icon-btn" data-aw="' + esc(a.id) + '" ' +
+            (a.watch ? 'title="⭐ Retirar conta do Painel"' : 'title="☆ Exibir conta no Painel"') + '>' +
+            (a.watch ? '⭐' : '☆') + '</button>' +
+          '<button class="cart-icon-btn" data-ea="' + esc(a.id) + '" title="✏️ Editar conta">✏️</button>' +
+          '<button class="cart-icon-btn" data-da="' + esc(a.id) +
+            '" title="🗑️ Excluir conta (transações junto)">🗑️</button>' +
+        '</span></div>' +
+      (a.broker ? '<div class="cart-ucard-broker">🏢 ' + esc(a.broker) + '</div>' : '') +
+      '<div class="cart-ucard-stats">' +
+        statCell('Patrimônio', a.value, 'Posições desta conta ao último pregão com cotação') +
+        statCell('Lucro hoje', a.profit, 'Patrimônio − custo das posições abertas') +
+        statCell('Lucro %', a.profit_pct, 'Lucro sobre o custo (PM)') +
+      '</div>' +
+      '<div class="cart-ucard-meta">📋 ' + esc(String(a.asset_count)) + ' ativo(s) · 🧾 ' +
+        esc(String(a.tx_count)) + ' transação(ões) · 💰 custo ' + esc(a.cost || '—') + '</div>' +
+      '<div class="cart-ucard-open">Abrir posições →</div>' +
+      '</div>';
+  }
+
+  // ── 🏦 L2: inside an account (KPIs + posições + transações) ────────────
+  function renderAccountPage() {
+    var box = $('cart-level');
+    var d = st.pos || {};
+    if (d._error) {
+      box.innerHTML = '<div class="error">' + esc(d._error) + '</div>';
+      return;
+    }
+    showNote(d);
+    if (d.empty) {
+      if (d.empty === 'no_txs') {
+        box.innerHTML = emptyGuide('no_txs');
+      } else {
+        box.innerHTML = '<div class="cart-empty"><h3>💡 Conta não encontrada</h3>' +
+          '<p>Esta conta não existe mais — volte aos usuários.</p>' +
+          '<button class="cart-btn" data-nav="users">👤 Usuários</button></div>';
+      }
+      return;
+    }
+
+    var labelBits = [];
+    if (d.scope_label) labelBits.push(d.scope_label);
+    if (d.session_date) labelBits.push('pregão ' + d.session_date);
+    var html = '<div class="cart-kpis">' + valKpisHtml(d.kpis || []) + '</div>';
+    html += '<div class="cart-viewbar"><div class="cart-pills" role="group" aria-label="Visão">' +
+      '<button class="cart-pill' + (st.view === 'positions' ? ' is-active' : '') +
+        '" data-view="positions">Posições</button>' +
+      '<button class="cart-pill' + (st.view === 'txs' ? ' is-active' : '') +
+        '" data-view="txs">Transações</button></div>' +
+      '<span class="cart-scope-label">' + esc(labelBits.join(' · ')) + '</span>' +
+      '<span class="cart-toolbar-spacer"></span>' +
+      '<button class="cart-btn primary" data-act="tx" ' +
+        'title="Registrar transação nesta conta">➕ Transação</button>' +
+      '<button class="cart-btn ghost" data-act="reload" aria-label="Recarregar" ' +
+        'title="Recarregar dados">🔄</button></div>';
+    html += '<div id="cart-positions" class="cart-view"' +
+      (st.view === 'positions' ? '' : ' hidden') + '></div>';
+    html += '<div id="cart-txs" class="cart-view"' +
+      (st.view === 'txs' ? '' : ' hidden') + '></div>';
+    box.innerHTML = html;
+    renderPositionsTable(d);
+    renderTxsTable(d);
+  }
+
+  function emptyGuide(kind) {
+    if (kind === 'no_users') {
+      return '<div class="cart-empty"><h3>💡 Comece pela estrutura</h3>' +
+        '<ol><li>Crie um <b>usuário</b> (você, cônjuge, empresa…)</li>' +
+        '<li>Adicione uma <b>conta</b> por corretora</li>' +
+        '<li>Registre <b>compras e vendas</b> — as posições e o preço médio ' +
+        'se montam sozinhos</li></ol>' +
+        '<button class="cart-btn primary" data-act="user">➕ Criar primeiro usuário</button></div>';
+    }
+    if (kind === 'no_accounts') {
+      return '<div class="cart-empty"><h3>💡 Sem contas ainda</h3>' +
+        '<p>Adicione uma conta de corretora para começar a lançar transações.</p>' +
+        '<button class="cart-btn primary" data-act="account">➕ Adicionar conta</button></div>';
+    }
+    return '<div class="cart-empty"><h3>💡 Sem transações</h3>' +
+      '<p>Registre uma compra ou venda — a posição, o preço médio e o lucro ' +
+      'aparecem aqui. ✅ compra · ❌ venda · preço 0 = ⚠️ bonificação.</p>' +
+      '<button class="cart-btn primary" data-act="tx">➕ Registrar transação</button></div>';
+  }
+
+  function signedHtml(s) {
+    if (s === null || s === undefined) return '<span class="muted">—</span>';
+    var cls = String(s).charAt(0) === '-' ? 'val-neg'
+            : (String(s).charAt(0) === '+' ? 'val-pos' : 'val-zero');
+    return '<span class="' + cls + '">' + esc(s) + '</span>';
+  }
+
+  function flagHtml(emoji, tip) {
+    return '<span class="cart-flag" title="' + esc(tip) + '">' + emoji + '</span>';
+  }
+
+  function renderPositionsTable(d) {
+    var box = $('cart-positions');
+    if (!box) return;
+    var head = '<tr>' +
+      '<th class="val-sortable">Ticker</th><th>Nome</th><th>Setor</th>' +
+      '<th class="th-num val-sortable" title="ℹ️ Preço médio de compra">PM</th>' +
+      '<th class="th-num val-sortable">Valor Hoje</th>' +
+      '<th class="th-num val-sortable">Qtd</th>' +
+      '<th class="th-num val-sortable">Total Original</th>' +
+      '<th class="th-num val-sortable">Total Hoje</th>' +
+      '<th class="th-num val-sortable">Lucro $</th>' +
+      '<th class="th-num val-sortable">Lucro %</th>' +
+      '<th></th></tr>';
+
+    var rows = (d.positions || []).map(function(r) {
+      var shortFlag = r.short
+        ? ' ' + flagHtml('🚨', 'Posição vendida a descoberto (short) — a ' +
+            'quantidade está negativa; a cobertura exige compras.') : '';
+      var qtyCell = esc(r.qty) + shortFlag;
+      var sellTitle = r.short
+        ? '❌ Vender mais ' + esc(r.ticker) + ' (aumentar o short)'
+        : '❌ Vender ' + esc(r.ticker) + ' — fecha a posição (ajuste a quantidade para vender menos)';
+      var buyTitle = r.short
+        ? '✅ Comprar ' + esc(r.ticker) + ' — cobre o short (ajuste a quantidade)'
+        : '✅ Comprar mais ' + esc(r.ticker) + ' (aumenta a posição)';
+      var sellQty = r.short ? '' : Math.abs(r.raw_qty || 0);
+      var buyQty = r.short ? Math.abs(r.raw_qty || 0) : '';
+      return '<tr>' +
+        '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(r.ticker) + '">' +
+          esc(r.ticker) + '</a></td>' +
+        '<td class="cart-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
+        '<td class="cart-sector" title="' + esc(r.sector) + '">' + esc(r.sector) + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.pm) + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.price) + '</td>' +
+        '<td class="val-val">' + qtyCell + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.cost) + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.value) + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.profit) + '</td>' +
+        '<td class="val-val">' + signedHtml(r.profit_pct) + '</td>' +
+        '<td class="cart-actions">' +
+          '<button class="cart-icon-btn" data-qb="' + esc(r.ticker) + '" data-qq="' +
+            esc(String(buyQty)) + '" title="' + esc(buyTitle) + '">✅</button>' +
+          '<button class="cart-icon-btn" data-qs="' + esc(r.ticker) + '" data-qq="' +
+            esc(String(sellQty)) + '" title="' + esc(sellTitle) + '">❌</button>' +
+        '</td></tr>';
+    }).join('');
+
+    var t = d.totals || {};
+    var foot = '<tr class="cart-total">' +
+      '<td colspan="7">Total</td>' +
+      '<td class="val-val">' + valNumHtml(t.value) + '</td>' +
+      '<td class="val-val">' + valNumHtml(t.profit) + '</td>' +
+      '<td class="val-val">' + signedHtml(t.profit_pct) + '</td>' +
+      '<td></td></tr>';
+
+    box.innerHTML = (d.positions && d.positions.length)
+      ? '<div class="cart-table-wrap"><table class="val-table cart-table"><thead>' + head +
+        '</thead><tbody>' + rows + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
+      : '<div class="cart-empty"><h3>Posição zerada</h3><p>Todas as posições ' +
+        'já foram vendidas — registre uma nova compra para vê-la aqui.</p></div>';
+  }
+
+  function renderTxsTable(d) {
+    var box = $('cart-txs');
+    if (!box) return;
+    var rows = (d.txs || []).map(function(t) {
+      var buy = t.type === 'buy';
+      var flags = '';
+      if (t.zero) {
+        flags += ' ' + flagHtml('⚠️', 'Preço R$ 0,00 — bonificação: os ativos ' +
+                 'entraram sem custo no preço médio.');
+      }
+      if (t.short) {
+        flags += ' ' + flagHtml('🚨', 'Esta venda deixou a posição negativa ' +
+                 '(venda a descoberto / short).');
+      }
+      var dateCell = t.note
+        ? '<span title="📝 ' + esc(t.note) + '">' + esc(t.date) + ' ' +
+          flagHtml('📝', esc(t.note)) + '</span>'
+        : esc(t.date);
+      return '<tr>' +
+        '<td>' + dateCell + flags + '</td>' +
+        '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(t.ticker) + '">' +
+          esc(t.ticker) + '</a></td>' +
+        '<td><span class="cart-type ' + (buy ? 'is-buy' : 'is-sell') + '">' +
+          (buy ? '✅ Compra' : '❌ Venda') + '</span></td>' +
+        '<td class="val-val">' + esc(t.qty) + '</td>' +
+        '<td class="val-val">' + valNumHtml(t.price) + '</td>' +
+        '<td class="val-val">' + valNumHtml(t.fees) + '</td>' +
+        '<td class="val-val">' + valNumHtml(t.total) + '</td>' +
+        '<td class="cart-actions">' +
+          '<button class="cart-icon-btn" data-et="' + esc(t.id) + '" title="✏️ Editar transação">✏️</button>' +
+          '<button class="cart-icon-btn" data-dt="' + esc(t.id) + '" title="🗑️ Excluir transação">🗑️</button>' +
+        '</td></tr>';
+    }).join('');
+
+    box.innerHTML = rows
+      ? '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
+        '<th class="val-sortable">🗓️ Data</th><th>Ticker</th><th>Tipo</th>' +
+        '<th class="th-num val-sortable">Qtd</th><th class="th-num val-sortable">Preço</th>' +
+        '<th class="th-num val-sortable">Taxas</th><th class="th-num val-sortable">Total</th>' +
+        '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        '<p class="cart-note-line">ℹ️ Ordem cronológica (mais antigas primeiro) — ' +
+        'clique no cabeçalho 🗓️ Data para inverter.</p>'
+      : '<div class="cart-empty"><h3>Nenhuma transação</h3>' +
+        '<p>Use “➕ Transação” para registrar a primeira compra ou venda.</p></div>';
+  }
+
+  // ── BR-standard input masks ────────────────────────────────────────────
+  function centsFmt(n) {
+    var s = String(n);
+    var dec = s.length <= 2 ? ('00' + s).slice(-2) : s.slice(-2);
+    var int = s.length <= 2 ? '0' : s.slice(0, s.length - 2);
+    var t = int.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return t + ',' + dec;
+  }
+
+  // [fix 2] Programmatic money write — sets the value AND the right
+  // mask mode (edit prefill, paste): >2 decimals (penny stocks) enter
+  // the explicit-decimals mode; anything else cents-fill.
+  function setMoney(el, n) {
+    if (n === null || n === undefined || isNaN(n)) {
+      el.value = '';
+      el._explicit = false;
+      return;
+    }
+    el.value = moneyStr(n);
+    el._explicit = ((el.value.split(',')[1] || '').length > 2);
+  }
+
+  function brCents(el) {
+    // [fix 2] POS-style money mask, CORRECTED: digits fill from the
+    // cents — typing 1·2·3·4 reads 0,01 → 0,12 → 1,23 → 12,34. The
+    // fix 1 version appended AFTER its own mask comma ("0,01" + "2"
+    // → "0,012" — you had to click on the 0, to keep typing). The
+    // digits of the WHOLE value (mask comma stripped) re-feed
+    // centsFmt on every input, so each keystroke shifts left —
+    // backspace shifts right, exactly like a Brazilian POS.
+    // A typed ',' (or '.') switches to EXPLICIT decimals (penny
+    // stocks, 0,0432): the integer part stops shifting and digits
+    // extend the decimals; deleting the comma (or clearing the field)
+    // returns to the cents-fill mode.
+    el.addEventListener('keydown', function(e) {
+      if (e.key === ',' || e.key === '.') {
+        e.preventDefault();          // never a literal '.'/second ','
+        if (!el._explicit) {
+          el._explicit = true;
+          if (!el.value.replace(/\D/g, '')) el.value = '0,';
+          // cents mode already displays a comma — the value stands
+          // as-is; further digits now extend the decimals.
+        }
+      }
+    });
+    el.addEventListener('paste', function(e) {
+      var txt = e.clipboardData ? e.clipboardData.getData('text') : '';
+      e.preventDefault();
+      setMoney(el, parseBr(txt));    // "3,65"/"3.65"/"0,0432" all land right
+      updateHints();
+    });
+    el.addEventListener('input', function() {
+      var v = el.value;
+      if (el._explicit) {
+        var hasComma = v.indexOf(',') >= 0;
+        if (!hasComma) {             // comma removed → back to cents-fill
+          el._explicit = false;
+          var back = v.replace(/\D/g, '').slice(0, 11);
+          el.value = back === '' ? '' : centsFmt(parseInt(back, 10));
+        } else {
+          var parts = v.split(',');
+          var int = parts[0].replace(/\D/g, '');
+          var dec = (parts[1] || '').replace(/\D/g, '').slice(0, 4);
+          el.value = int + ',' + dec;
+        }
+      } else {
+        var dd = v.replace(/\D/g, '').slice(0, 11);
+        el.value = dd === '' ? '' : centsFmt(parseInt(dd, 10));
+      }
+      updateHints();
+    });
+  }
+
+  function brQtyMask(el) {
+    // Quantity: digits + ONE comma (fractional lots), max 4 decimals.
+    el.addEventListener('input', function() {
+      var v = el.value;
+      var parts = v.split(',');
+      var int = parts[0].replace(/\D/g, '');
+      var dec = parts.length > 1 ? ',' + parts[1].replace(/\D/g, '').slice(0, 4) : '';
+      el.value = int + dec;
+      updateHints();
+    });
+  }
+
+  function brDateMask(el) {
+    // dd/mm/aaaa — the BR standard (the native date input follows the
+    // BROWSER locale, which read as mm/dd/aaaa on en-US systems).
+    el.addEventListener('input', function() {
+      var dd = el.value.replace(/\D/g, '').slice(0, 8);
+      el.value = dd.length > 4
+        ? dd.slice(0, 2) + '/' + dd.slice(2, 4) + '/' + dd.slice(4)
+        : dd.length > 2 ? dd.slice(0, 2) + '/' + dd.slice(2) : dd;
+    });
+  }
+
+  function brToIso(s) {
+    var m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s || '');
+    if (!m) return null;
+    var d = +m[1], mo = +m[2], y = +m[3];
+    var dt = new Date(y, mo - 1, d);
+    if (dt.getDate() !== d || dt.getMonth() !== mo - 1) return null;
+    return y + '-' + m[2] + '-' + m[1];
+  }
+
+  function isoToBr(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : (s || '');
+  }
+
+  function todayBr() {
+    var d = new Date();
+    return ('0' + d.getDate()).slice(-2) + '/' +
+           ('0' + (d.getMonth() + 1)).slice(-2) + '/' + d.getFullYear();
+  }
+
+  function parseBr(v) {
+    var s = String(v === null || v === undefined ? '' : v).trim()
+      .replace(/\./g, '').replace(',', '.');
+    var n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  }
+
+  function moneyStr(v) {
+    if (v === null || v === undefined) return '';
+    var dec = (v > 0 && v < 1) ? 4 : 2;
+    var n = Math.round(v * Math.pow(10, dec)) / Math.pow(10, dec);
+    return String(n).replace('.', ',');
+  }
+
+  // ── tx modal ───────────────────────────────────────────────────────────
+  function findPos(ticker) {
+    if (st.level.kind !== 'account' || !st.pos || !st.pos.positions) return null;
+    return st.pos.positions.filter(function(p) {
+      return p.ticker === ticker;
+    })[0] || null;
+  }
+
+  function updatePosCtx() {
+    var box = $('cart-tx-posctx');
+    if (!box) return;
+    var tk = ($('cart-tx-ticker').value || '').trim().toUpperCase();
+    var pos = tk ? findPos(tk) : null;
+    if (!tk || !pos) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = '📋 <b>Posição atual nesta conta:</b> ' + esc(pos.qty) + ' ' +
+      esc(tk) + ' @ PM ' + (pos.pm ? esc(pos.pm) : '—') +
+      ' · Lucro hoje: ' + signedHtml(pos.profit) + ' (' + signedHtml(pos.profit_pct) + ')';
+  }
+
+  function updateHints() {
+    var box = $('cart-tx-hints');
+    if (!box) return;
+    var hints = [];
+    var type = $('cart-tx-type').value;
+    var tk = ($('cart-tx-ticker').value || '').trim().toUpperCase();
+    var qty = parseBr($('cart-tx-qty').value);
+    var priceRaw = $('cart-tx-price').value;
+    var price = priceRaw === '' ? null : parseBr(priceRaw);
+    if (type === 'sell' && qty !== null && tk) {
+      var pos = findPos(tk);
+      var cur = pos ? (pos.raw_qty || 0) : 0;
+      if (qty > cur + 1e-9) {
+        var rest = Math.round((cur - qty) * 10000) / 10000;
+        hints.push('🚨 <b>Venda a descoberto (short):</b> a posição de ' +
+          esc(pos ? String(pos.qty) : '0') + ' ficará em ' + esc(String(rest)) +
+          ' ' + esc(tk) + '.');
+      }
+    }
+    if (price === 0) {
+      hints.push('⚠️ <b>Preço R$ 0,00 — bonificação?</b> Os ativos entram ' +
+        'sem custo no preço médio.');
+    }
+    box.innerHTML = hints.join('<br>');
+    box.hidden = !hints.length;
+  }
+
+  function openTxModal(txId, prefill) {
+    st.editTx = txId || null;
+    prefill = prefill || {};
+    var m = $('cart-tx-modal');
+    var tx = null;
+    if (txId) {
+      tx = ((st.pos && st.pos.txs) || []).filter(function(t) {
+        return t.id === txId;
+      })[0];
+    }
+    m.querySelector('#cart-tx-title').textContent =
+      tx ? '✏️ Editar transação' : '➕ Nova transação';
+    // Account options — RELATIVE to where you are: inside an account,
+    // just that account; inside a user, their accounts grouped.
+    var groups = {};
+    var accs = st.accounts || [];
+    if (st.level.kind === 'account') {
+      accs = accs.filter(function(a) { return a.id === st.level.id; });
+    } else if (st.level.kind === 'user') {
+      accs = accs.filter(function(a) { return a.user_id === st.level.id; });
+    }
+    accs.forEach(function(a) {
+      var g = a.user_name || a.user_id;
+      (groups[g] = groups[g] || []).push(a);
+    });
+    var html = '';
+    Object.keys(groups).forEach(function(g) {
+      html += '<optgroup label="' + esc(g) + '">';
+      groups[g].forEach(function(a) {
+        html += '<option value="' + esc(a.id) + '">' +
+          esc(a.name + (a.broker ? ' · ' + a.broker : '')) + '</option>';
+      });
+      html += '</optgroup>';
+    });
+    var accSel = $('cart-tx-account');
+    accSel.innerHTML = st.accounts.length && html
+      ? html : '<option value="">— crie uma conta primeiro —</option>';
+    var preferred = tx ? tx.account_id
+      : (prefill.account_id ||
+         (st.level.kind === 'account' ? st.level.id : null));
+    if (preferred) accSel.value = preferred;
+    $('cart-tx-ticker').value = tx ? tx.ticker : (prefill.ticker || '');
+    $('cart-tx-type').value = tx ? tx.type : (prefill.type || 'buy');
+    $('cart-tx-date').value = tx ? isoToBr(tx.date_iso) : todayBr();
+    var prefQty = prefill.qty;
+    $('cart-tx-qty').value = tx ? String(tx.quantity).replace('.', ',')
+      : (prefQty !== undefined && prefQty !== '' && prefQty !== null
+          ? String(prefQty).replace('.', ',') : '');
+    // [fix 2] setMoney also primes the mask mode (a 4-decimal PM edit
+    // opens in explicit mode; a fresh form starts in cents-fill).
+    setMoney($('cart-tx-price'), tx ? tx.raw_price : null);
+    setMoney($('cart-tx-fees'), tx ? (tx.raw_fees || 0) : null);
+    $('cart-tx-note').value = tx ? (tx.note || '') : '';
+    fieldErrs(m, {});
+    $('cart-tx-msg').textContent = '';
+    updatePosCtx();
+    updateHints();
+    m.showModal();
+    if (!tx && !prefill.ticker) $('cart-tx-ticker').focus();
+  }
+
+  // ── user / account modals ──────────────────────────────────────────────
+  function openUserModal(id) {
+    st.editUser = id || null;
+    var m = $('cart-user-modal');
+    var u = id ? userById(id) : null;
+    m.querySelector('#cart-user-title').textContent =
+      u ? '✏️ Editar usuário' : '👤 Novo usuário';
+    $('cart-user-name').value = u ? u.name : '';
+    fieldErrs(m, {});
+    $('cart-user-msg').textContent = '';
+    m.showModal();
+    $('cart-user-name').focus();
+  }
+
+  function openAccountModal(id) {
+    st.editAccount = id || null;
+    var m = $('cart-account-modal');
+    var a = id ? stAccount(id) : null;
+    m.querySelector('#cart-account-title').textContent =
+      a ? '✏️ Editar conta' : '🏦 Nova conta';
+    var uSel = $('cart-account-user');
+    var users = st.users || [];
+    if (st.level.kind === 'user') {          // relative: this user preselected
+      users = users.filter(function(u) { return u.id === st.level.id; });
+    }
+    uSel.innerHTML = users.map(function(u) {
+      return '<option value="' + esc(u.id) + '">' + esc(u.name) + '</option>';
+    }).join('');
+    if (!users.length) {
+      uSel.innerHTML = '<option value="">— crie um usuário primeiro —</option>';
+    }
+    var uid = a ? a.user_id
+      : (st.level.kind === 'user' ? st.level.id : null);
+    if (uid) uSel.value = uid;
+    $('cart-account-name').value = a ? a.name : '';
+    $('cart-account-broker').value = a ? (a.broker || '') : '';
+    $('cart-account-watch').checked = a ? !!a.watch : false;
+    fieldErrs(m, {});
+    $('cart-account-msg').textContent = '';
+    m.showModal();
+    $('cart-account-name').focus();
+  }
+
+  // ── saves ──────────────────────────────────────────────────────────────
+  function saveUser() {
+    var m = $('cart-user-modal');
+    var body = { name: $('cart-user-name').value };
+    var call = st.editUser
+      ? api('PUT', '/users/' + st.editUser, body)
+      : api('POST', '/users', body);
+    call.then(function(res) {
+      if (!res.ok) {
+        fieldErrs(m, res.j);
+        $('cart-user-msg').textContent = (res.j && res.j._error) || '';
+        return;
+      }
+      m.close();
+      reload();
+    }).catch(function() {
+      $('cart-user-msg').textContent = 'Erro de rede.';
+    });
+  }
+
+  function saveAccount() {
+    var m = $('cart-account-modal');
+    var body = {
+      user_id: $('cart-account-user').value,
+      name: $('cart-account-name').value,
+      broker: $('cart-account-broker').value,
+      watch: $('cart-account-watch').checked,
+    };
+    var call = st.editAccount
+      ? api('PUT', '/accounts/' + st.editAccount, body)
+      : api('POST', '/accounts', body);
+    call.then(function(res) {
+      if (!res.ok) {
+        fieldErrs(m, res.j);
+        $('cart-account-msg').textContent = (res.j && res.j._error) || '';
+        return;
+      }
+      m.close();
+      reload();
+    }).catch(function() {
+      $('cart-account-msg').textContent = 'Erro de rede.';
+    });
+  }
+
+  function saveTx() {
+    var m = $('cart-tx-modal');
+    var iso = brToIso($('cart-tx-date').value);
+    if (!iso) {
+      fieldErrs(m, { date: 'Data inválida — use dd/mm/aaaa.' });
+      return;
+    }
+    var qv = parseBr($('cart-tx-qty').value);
+    var pv = parseBr($('cart-tx-price').value);
+    var fv = parseBr($('cart-tx-fees').value);
+    var body = {
+      account_id: $('cart-tx-account').value,
+      ticker: $('cart-tx-ticker').value,
+      type: $('cart-tx-type').value,
+      date: iso,
+      quantity: qv === null ? $('cart-tx-qty').value : qv,
+      price: pv === null ? $('cart-tx-price').value : pv,
+      fees: fv === null ? '' : fv,
+      note: $('cart-tx-note').value,
+    };
+    var call = st.editTx
+      ? api('PUT', '/txs/' + st.editTx, body)
+      : api('POST', '/txs', body);
+    call.then(function(res) {
+      if (!res.ok) {
+        fieldErrs(m, res.j);
+        $('cart-tx-msg').textContent = (res.j && res.j._error) || '';
+        return;
+      }
+      m.close();
+      reload();
+    }).catch(function() {
+      $('cart-tx-msg').textContent = 'Erro de rede.';
+    });
+  }
+
+  // ── deletes / watch toggle ─────────────────────────────────────────────
+  // [fix 2] ALL destructive ops go through the styled 🗑️ confirmation
+  // (dead-center <dialog>, same language as the other modals — the
+  // window.confirm popup is gone) and spell out the blast radius.
+  var confirmAction = null;
+
+  function askConfirm(title, textHtml, okLabel, cb) {
+    var m = $('cart-confirm-modal');
+    if (!m) {                          // template drift — native fallback
+      if (window.confirm(textHtml.replace(/<[^>]+>/g, ' '))) cb();
+      return;
+    }
+    $('cart-confirm-title').textContent = title;
+    $('cart-confirm-text').innerHTML = textHtml;
+    $('cart-confirm-ok').textContent = okLabel;
+    confirmAction = cb;
+    m.showModal();
+  }
+
+  function confirmDeleteUser(id) {
+    var u = userById(id);
+    var n = st.accounts.filter(function(a) { return a.user_id === id; }).length;
+    askConfirm('🗑️ Excluir usuário',
+      'Excluir o usuário <b>' + esc(u ? u.name : '—') + '</b>' +
+      (n ? ' e suas <b>' + n + ' conta(s)</b> com <b>todas as transações</b>' : '') + '?<br>' +
+      '<span class="cart-warn-line">ℹ️ Não há como desfazer.</span>',
+      '🗑️ Excluir usuário', function() {
+        api('DELETE', '/users/' + id).then(function(res) {
+          if (!res.ok) window.alert((res.j && res.j._error) || 'Erro ao excluir.');
+          else reload();
+        });
+      });
+  }
+
+  function confirmDeleteAccount(id) {
+    var a = stAccount(id);
+    var n = a ? (a.tx_count || 0) : 0;
+    askConfirm('🗑️ Excluir conta',
+      'Excluir a conta <b>' + esc(a ? a.name : '—') + '</b>' +
+      (a && a.broker ? ' (' + esc(a.broker) + ')' : '') +
+      (n ? ' e suas <b>' + n + ' transação(ões)</b>' : '') + '?<br>' +
+      '<span class="cart-warn-line">ℹ️ Não há como desfazer.</span>',
+      '🗑️ Excluir conta', function() {
+        api('DELETE', '/accounts/' + id).then(function(res) {
+          if (!res.ok) window.alert((res.j && res.j._error) || 'Erro ao excluir.');
+          else reload();
+        });
+      });
+  }
+
+  function confirmDeleteTx(id) {
+    var tx = ((st.pos && st.pos.txs) || []).filter(function(t) {
+      return t.id === id;
+    })[0];
+    askConfirm('🗑️ Excluir transação',
+      'Excluir ' + (tx
+        ? 'a <b>' + (tx.type === 'buy' ? 'compra' : 'venda') + '</b> de <b>' +
+          esc(tx.qty) + ' ' + esc(tx.ticker) + '</b> em ' + esc(tx.date)
+        : 'esta transação') +
+      '?<br><span class="cart-warn-line">ℹ️ O preço médio e o lucro são recalculados.</span>',
+      '🗑️ Excluir transação', function() {
+        api('DELETE', '/txs/' + id).then(function(res) {
+          if (!res.ok) window.alert((res.j && res.j._error) || 'Erro ao excluir.');
+          else reload();
+        });
+      });
+  }
+
+  function toggleWatchAccount(id) {
+    var a = stAccount(id);
+    if (!a) return;
+    api('PUT', '/accounts/' + id, { watch: !a.watch }).then(function() { reload(); });
+  }
+
+  // ── manage modal (⭐ observados + 📇 cadastro) ──────────────────────────
+  function renderManage() {
+    var box = $('cart-manage-body');
+    var html = '';
+
+    // ⭐ Tickers observados
+    html += '<section class="cart-manage-sec"><h4>⭐ Tickers observados no Painel</h4>' +
+      '<div class="cart-watch-add">' +
+      '<input type="text" id="cart-watch-input" maxlength="8" placeholder="PETR4" ' +
+      'style="text-transform: uppercase;" aria-label="Ticker">' +
+      '<button class="cart-btn" id="cart-watch-add">➕ Adicionar</button></div>';
+    html += st.watchlist.length ? '<ul class="cart-manage-list">' +
+      st.watchlist.map(function(w) {
+        return '<li><span class="cart-mname">' + esc(w.ticker) + '</span>' +
+          '<span class="cart-actions">' +
+          '<button class="cart-icon-btn" data-dw="' + esc(w.ticker) +
+          '" title="🗑️ Remover dos observados">🗑️</button>' +
+          '</span></li>';
+      }).join('') + '</ul>'
+      : '<p class="cart-muted">💡 Nenhum ticker observado — adicione pelo campo ' +
+        'acima ou pela ⭐ na página da empresa.</p>';
+    html += '</section>';
+
+    // 📇 Cadastro (ticker metadata)
+    html += '<section class="cart-manage-sec"><h4>📇 Cadastro de tickers</h4>' +
+      '<p class="cart-muted">💡 Nome e setor vêm do CVM (FCA/CAD) na primeira ' +
+      'transação; use 🔄 para buscar de novo.</p>';
+    html += st.tickers.length ? '<div class="cart-table-wrap"><table class="val-table">' +
+      '<thead><tr><th>Ticker</th><th>Nome</th><th>Setor</th><th></th></tr></thead><tbody>' +
+      st.tickers.map(function(t) {
+        return '<tr><td class="cart-tk">' + esc(t.ticker) + '</td>' +
+          '<td class="cart-name" title="' + esc(t.name) + '">' + esc(t.name || '—') + '</td>' +
+          '<td class="cart-sector" title="' + esc(t.sector) + '">' + esc(t.sector || '—') + '</td>' +
+          '<td class="cart-actions"><button class="cart-icon-btn" data-rt="' + esc(t.ticker) +
+          '" title="🔄 Buscar nome/setor no CVM">🔄</button></td></tr>';
+      }).join('') + '</tbody></table></div>'
+      : '<p class="cart-muted">Os tickers aparecem aqui após a primeira transação.</p>';
+    html += '</section>';
+
+    box.innerHTML = html;
+
+    box.querySelectorAll('[data-dw]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var tk = b.getAttribute('data-dw');
+        // [fix 2] confirmation for the watchlist removal too (it was a
+        // one-click silent delete before).
+        askConfirm('🗑️ Remover dos observados',
+          'Remover <b>' + esc(tk) + '</b> dos Tickers Observados no Painel?',
+          '🗑️ Remover', function() {
+            api('DELETE', '/watchlist/' + encodeURIComponent(tk))
+              .then(function(res) {
+                if (!res.ok) $('cart-manage-msg').textContent = (res.j && res.j._error) || 'Erro.';
+                else { $('cart-manage-msg').textContent = ''; reload(); }
+              });
+          });
+      });
+    });
+    box.querySelectorAll('[data-rt]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var tk = b.getAttribute('data-rt');
+        b.disabled = true; b.textContent = '⏳';
+        api('POST', '/tickers/' + encodeURIComponent(tk) + '/refresh', {})
+          .then(function() { setTimeout(loadState, 1200); });
+      });
+    });
+    var addBtn = box.querySelector('#cart-watch-add');
+    var addInput = box.querySelector('#cart-watch-input');
+    function doAddWatch() {
+      var v = (addInput.value || '').trim().toUpperCase();
+      if (!v) return;
+      api('POST', '/watchlist', { ticker: v }).then(function(res) {
+        if (!res.ok) {
+          $('cart-manage-msg').textContent =
+            (res.j && res.j.errors && res.j.errors.ticker) || 'Ticker inválido.';
+          return;
+        }
+        $('cart-manage-msg').textContent = '';
+        reload();
+      });
+    }
+    if (addBtn) addBtn.addEventListener('click', doAddWatch);
+    if (addInput) addInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); doAddWatch(); }
+    });
+  }
+
+  // ── ONE delegated click handler for the whole page ─────────────────────
+  root.addEventListener('click', function(e) {
+    var el = e.target && e.target.closest ? e.target.closest(
+      '[data-act],[data-nav],[data-view],[data-eu],[data-du],[data-aw],' +
+      '[data-ea],[data-da],[data-qb],[data-qs],[data-et],[data-dt],' +
+      '.cart-ucard') : null;
+    if (!el) return;
+
+    if (el.hasAttribute('data-act')) {
+      var act = el.getAttribute('data-act');
+      if (act === 'user') openUserModal();
+      else if (act === 'account') openAccountModal();
+      else if (act === 'tx') openTxModal();
+      else if (act === 'manage') {
+        $('cart-manage-msg').textContent = '';
+        renderManage();
+        $('cart-manage-modal').showModal();
+      } else if (act === 'reload') reload();
+      return;
+    }
+    if (el.hasAttribute('data-nav')) {
+      goto(el.getAttribute('data-nav'), el.getAttribute('data-id'));
+      return;
+    }
+    if (el.hasAttribute('data-view')) {
+      st.view = el.getAttribute('data-view');
+      root.querySelectorAll('.cart-pill').forEach(function(p) {
+        p.classList.toggle('is-active', p === el);
+      });
+      var pv = $('cart-positions'), tv = $('cart-txs');
+      if (pv) pv.hidden = st.view !== 'positions';
+      if (tv) tv.hidden = st.view !== 'txs';
+      return;
+    }
+    if (el.hasAttribute('data-eu')) { openUserModal(el.getAttribute('data-eu')); return; }
+    if (el.hasAttribute('data-du')) { confirmDeleteUser(el.getAttribute('data-du')); return; }
+    if (el.hasAttribute('data-aw')) { toggleWatchAccount(el.getAttribute('data-aw')); return; }
+    if (el.hasAttribute('data-ea')) { openAccountModal(el.getAttribute('data-ea')); return; }
+    if (el.hasAttribute('data-da')) { confirmDeleteAccount(el.getAttribute('data-da')); return; }
+    if (el.hasAttribute('data-et')) { openTxModal(el.getAttribute('data-et')); return; }
+    if (el.hasAttribute('data-dt')) { confirmDeleteTx(el.getAttribute('data-dt')); return; }
+    if (el.hasAttribute('data-qb')) {
+      var q = el.getAttribute('data-qq');
+      openTxModal(null, { ticker: el.getAttribute('data-qb'), type: 'buy',
+                          qty: q ? parseFloat(q) : '' });
+      return;
+    }
+    if (el.hasAttribute('data-qs')) {
+      var q2 = el.getAttribute('data-qq');
+      openTxModal(null, { ticker: el.getAttribute('data-qs'), type: 'sell',
+                          qty: q2 ? parseFloat(q2) : '' });
+      return;
+    }
+    // Card click (not on a button) → drill in.
+    if (el.classList.contains('cart-ucard') && !e.target.closest('button')) {
+      if (el.hasAttribute('data-user')) goto('user', el.getAttribute('data-user'));
+      else if (el.hasAttribute('data-acc')) goto('account', el.getAttribute('data-acc'));
+    }
+  });
+
+  root.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    var card = e.target && e.target.closest ? e.target.closest('.cart-ucard') : null;
+    if (card && e.target === card) {
+      if (card.hasAttribute('data-user')) goto('user', card.getAttribute('data-user'));
+      else if (card.hasAttribute('data-acc')) goto('account', card.getAttribute('data-acc'));
+    }
+  });
+
+  // ── boot wiring (static elements) ──────────────────────────────────────
+  root.querySelectorAll('dialog.cart-modal').forEach(function(m) {
+    m.querySelectorAll('[data-close]').forEach(function(b) {
+      b.addEventListener('click', function() { m.close(); });
+    });
+    // [fix 2] Click OUTSIDE the box (the backdrop) cancels — the classic
+    // modal affordance, for every dialog: ➕ Novo usuário, 🏦 Nova conta,
+    // ➕/✏️ Transação, ⚙️ Gerenciar and the 🗑️ confirmação. Clicks land on
+    // the dialog element itself when they miss the inner form; the
+    // mousedown guard keeps a text-selection drag that ends outside
+    // from being read as a cancel.
+    var downOnDialog = false;
+    m.addEventListener('mousedown', function(e) {
+      downOnDialog = (e.target === m);
+    });
+    m.addEventListener('click', function(e) {
+      if (e.target === m && downOnDialog) m.close();
+    });
+  });
+  $('cart-user-modal').querySelector('[data-save]').addEventListener('click', saveUser);
+  $('cart-account-modal').querySelector('[data-save]').addEventListener('click', saveAccount);
+  $('cart-tx-modal').querySelector('[data-save]').addEventListener('click', saveTx);
+  // [fix 2] the 🗑️ confirmation's OK runs the stored action
+  $('cart-confirm-ok').addEventListener('click', function() {
+    var cb = confirmAction;
+    confirmAction = null;
+    $('cart-confirm-modal').close();
+    if (cb) cb();
+  });
+  $('cart-user-name').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); saveUser(); }
+  });
+
+  // BR masks — attached once; the modal is static in the DOM.
+  brDateMask($('cart-tx-date'));
+  brQtyMask($('cart-tx-qty'));
+  brCents($('cart-tx-price'));
+  brCents($('cart-tx-fees'));
+  ['cart-tx-ticker', 'cart-tx-account'].forEach(function(id) {
+    $(id).addEventListener('input', function() { updatePosCtx(); });
+  });
+  $('cart-tx-type').addEventListener('change', function() { updateHints(); });
+  $('cart-tx-ticker').addEventListener('input', function() { updateHints(); });
+
+  reload();
+}
+
+// ── [v1.21 fix 1] Painel widget — ⭐ Tickers Observados (its OWN box,
+// first — it is NOT part of Minhas Carteiras) then 💼 Minhas Carteiras
+// (contas observadas grouped by user, per-user subtotals — never across
+// users). The old single "Minhas Carteiras" box mixed both. ─────────────
+function loadPortfolioWidget() {
+  var box = document.getElementById('home-portfolio');
+  if (!box || box._booted) return;
+  box._booted = true;
+  fetch('/api/webui/portfolio/overview?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d || d._error || !d.has_data) { box.innerHTML = ''; return; }
+      var html = '';
+
+      // ⭐ Tickers observados — own box, FIRST.
+      if (d.tickers && d.tickers.length) {
+        html += '<div class="cart-widget"><div class="cart-widget-head"><h2>⭐ Tickers Observados' +
+          (d.session_date ? ' <span class="cart-widget-sub">· pregão ' + esc(d.session_date) + '</span>' : '') +
+          '</h2><a class="cart-widget-link" href="/webui/carteira">Gerenciar ⭐ →</a></div>';
+        if (d.quotes_note) html += '<div class="home-note">' + esc(d.quotes_note) + '</div>';
+        html += '<table class="val-table"><thead><tr><th>Ticker</th><th>Nome</th>' +
+          '<th class="th-num">Preço</th><th class="th-num">Var. dia</th></tr></thead><tbody>' +
+          d.tickers.map(function(t) {
+            var v = t.variation;
+            var cls = v && v.charAt(0) === '-' ? 'val-neg'
+                    : (v && v.charAt(0) === '+' ? 'val-pos' : 'val-zero');
+            return '<tr><td class="cart-tk"><a href="/webui/company/' +
+              encodeURIComponent(t.ticker) + '">' + esc(t.ticker) + '</a></td>' +
+              '<td class="cart-name" title="' + esc(t.name) + '">' + esc(t.name) + '</td>' +
+              '<td class="val-val">' + valNumHtml(t.price) + '</td>' +
+              '<td class="val-val"><span class="' + cls + '">' + esc(v || '—') + '</span></td></tr>';
+          }).join('') + '</tbody></table></div>';
+      }
+
+      // 💼 Minhas Carteiras — contas observadas, grouped by user.
+      if (d.groups && d.groups.length) {
+        html += '<div class="cart-widget"><div class="cart-widget-head"><h2>💼 Minhas Carteiras' +
+          (d.session_date ? ' <span class="cart-widget-sub">· pregão ' + esc(d.session_date) + '</span>' : '') +
+          '</h2><a class="cart-widget-link" href="/webui/carteira">Abrir carteira →</a></div>';
+        if (d.quotes_note) html += '<div class="home-note">' + esc(d.quotes_note) + '</div>';
+        d.groups.forEach(function(g) {
+          html += '<div class="cart-widget-block"><h3>👤 ' + esc(g.user) + '</h3>' +
+            '<table class="val-table"><thead><tr><th>Conta</th>' +
+            '<th class="th-num">Patrimônio</th><th class="th-num">Lucro $</th>' +
+            '<th class="th-num">Lucro %</th></tr></thead><tbody>';
+          (g.accounts || []).forEach(function(a) {
+            var pct = a.profit_pct;
+            var cls = pct && pct.charAt(0) === '-' ? 'val-neg'
+                    : (pct && pct.charAt(0) === '+' ? 'val-pos' : 'val-zero');
+            html += '<tr class="cart-wrow" data-acc="' + esc(a.id) + '" ' +
+              'title="Abrir esta conta na Carteira">' +
+              '<td class="cart-name" title="' + esc(a.label) + '">' + esc(a.label) + '</td>' +
+              '<td class="val-val">' + valNumHtml(a.value) + '</td>' +
+              '<td class="val-val">' + valNumHtml(a.profit) + '</td>' +
+              '<td class="val-val"><span class="' + cls + '">' + esc(pct || '—') + '</span></td></tr>';
+          });
+          if (g.subtotal) {
+            var s = g.subtotal;
+            var scls = s.profit_pct && s.profit_pct.charAt(0) === '-' ? 'val-neg'
+                     : (s.profit_pct && s.profit_pct.charAt(0) === '+' ? 'val-pos' : 'val-zero');
+            html += '<tr class="cart-subrow">' +
+              '<td class="cart-name">Σ ' + esc(s.label) + '</td>' +
+              '<td class="val-val">' + valNumHtml(s.value) + '</td>' +
+              '<td class="val-val">' + valNumHtml(s.profit) + '</td>' +
+              '<td class="val-val"><span class="' + scls + '">' + esc(s.profit_pct || '—') + '</span></td></tr>';
+          }
+          html += '</tbody></table></div>';
+        });
+        html += '</div>';
+      }
+
+      box.innerHTML = html;
+      box.querySelectorAll('[data-acc]').forEach(function(tr) {
+        tr.addEventListener('click', function() {
+          // [fix 2] ONE-SHOT deep link: entering Carteira via the
+          // sidebar always lands on 👥 Usuários now — only this click
+          // drills straight into the account (sessionStorage key,
+          // consumed by readLevel on the next boot).
+          try {
+            sessionStorage.setItem('webui_carteira_goto',
+              'account:' + tr.getAttribute('data-acc'));
+          } catch (err) {}
+          window.location.href = '/webui/carteira';
+        });
+      });
+    })
+    .catch(function() { box.innerHTML = ''; });
+}
+
+// ── [v1.21 fix 1] Company page — the ⭐ watch button (tab bar, every tab
+// including Visão Geral). Toggles the ticker in/out of the Painel's
+// Tickers Observados; state boots from GET /state (light, no compute). ──
+function initCompanyWatch() {
+  var btn = document.getElementById('company-watch-star');
+  if (!btn || btn._booted) return;
+  btn._booted = true;
+  var ticker = (btn.getAttribute('data-ticker') || '').toUpperCase();
+  if (!ticker) return;
+
+  function paint(on) {
+    btn.textContent = on ? '⭐' : '☆';
+    btn.classList.toggle('is-on', on);
+    btn.title = on
+      ? '⭐ Remover ' + ticker + ' dos Tickers Observados'
+      : '☆ Adicionar ' + ticker + ' aos Tickers Observados (Painel)';
+    btn.setAttribute('aria-label', btn.title);
+  }
+
+  fetch('/api/webui/portfolio/state?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(st) {
+      if (!st || st._error) return;
+      var on = (st.watchlist || []).some(function(w) {
+        return (w.ticker || '').toUpperCase() === ticker;
+      });
+      paint(on);
+      btn.addEventListener('click', function() {
+        on = !on;
+        paint(on);
+        var call = on
+          ? fetch('/api/webui/portfolio/watchlist', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ticker: ticker }),
+            })
+          : fetch('/api/webui/portfolio/watchlist/' + encodeURIComponent(ticker),
+              { method: 'DELETE' });
+        call.then(function(r) { return r.json(); })
+          .then(function(j) {
+            if (!j || !j.ok) { on = !on; paint(on); }
+          })
+          .catch(function() { on = !on; paint(on); });
+      });
+    })
+    .catch(function() { /* portfolio API down — the star stays inert */ });
+}
+
 // ── Auto-init after HTMX settle ──
 function initApp() {
   // [v1.5] htmx.config.includeScriptTags = true is GONE — it disabled
@@ -3642,6 +4943,13 @@ function initApp() {
     // [v1.19] Painel — the landing page's KPI row + ticker cards (no-op
     // everywhere else: only /webui carries the panes).
     loadHomeData();
+    // [v1.21] Painel — the carteira widget (⭐ Tickers Observados own
+    // box first, then Minhas Carteiras grouped by user; no-op elsewhere
+    // and hides itself when nothing is watched).
+    loadPortfolioWidget();
+    // [v1.21 fix 1] Company page — the ⭐ watch button in the tab bar
+    // (no-op everywhere else: only company pages carry the button).
+    initCompanyWatch();
     // [v1.13/v1.14] Fluxo/Índices — NOT booted eagerly (fluxo precedent:
     // only the first family boots; the others load on family-pill click,
     // with the data-lazy hover prefetch hiding the latency).
@@ -3652,6 +4960,9 @@ function initApp() {
     // on every HTMX settle after the first).
     initSyslogDrawer();
     initSettingsPage();
+    // [v1.21] Carteira page (idempotent — the _booted guard no-ops
+    // everywhere but /webui/carteira).
+    initCarteiraPage();
   });
 
   initPriceRangeBar();
@@ -3665,6 +4976,12 @@ function initApp() {
   // everywhere else).
   initSyslogDrawer();
   initSettingsPage();
+  // [v1.21] Carteira — direct full-page load (the /webui/carteira page
+  // is server-rendered; the loader no-ops on every other page) + the
+  // Painel's carteira widget + the company page's ⭐ watch button.
+  initCarteiraPage();
+  loadPortfolioWidget();
+  initCompanyWatch();
   // [v1.11] Macro — direct full-page load (the /webui/macro page is
   // server-rendered; no HTMX settle fires, so the first subtab boots
   // here — the loader no-ops on every other page).

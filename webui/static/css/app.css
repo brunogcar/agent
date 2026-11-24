@@ -423,6 +423,16 @@ a:hover { text-decoration: underline; }
 
 /* ── Company tabs ── */
 .company-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--color-border); }
+/* [v1.21 fix 1] ⭐ watch slot — pushed to the right end of the tab bar
+   (present on every company tab, Visão Geral included). */
+.company-watch-slot { margin-left: auto; display: flex; align-items: center; padding: 0 var(--space-2); }
+.company-watch-star {
+  background: none; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  width: 34px; height: 30px; cursor: pointer; font-size: 15px; line-height: 1;
+  color: var(--color-text-sec); transition: color 0.15s, border-color 0.15s;
+}
+.company-watch-star:hover { color: var(--color-text); border-color: var(--color-brand); }
+.company-watch-star.is-on { color: var(--color-brand); border-color: var(--color-brand); }
 .tab-btn {
   padding: var(--space-2) var(--space-4);
   background: none; border: none; border-bottom: 2px solid transparent;
@@ -1239,4 +1249,360 @@ td[title], .kpi-card[title] { cursor: help; }
   .syslog-pill { padding: 6px 14px; }
   .setting-row { flex-direction: column; gap: var(--space-2); }
   .setting-control { width: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/* [v1.21] Carteira (portfolio) — page + dialogs + Painel widget      */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Toolbar (scope selectors + create/manage buttons) ── */
+.cart-toolbar {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; margin-bottom: var(--space-4);
+}
+.cart-toolbar-spacer { flex: 1; }
+.cart-select {
+  background: var(--color-bg-card); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 8px 10px; font-size: 13px; font-family: inherit;
+  max-width: 240px; cursor: pointer;
+}
+.cart-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.cart-select:focus { outline: none; border-color: var(--color-brand); }
+.cart-btn {
+  background: none; border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 8px 14px;
+  font-size: 13px; cursor: pointer; color: var(--color-text);
+  white-space: nowrap;
+}
+.cart-btn:hover { border-color: var(--color-brand); }
+.cart-btn.primary {
+  background: var(--color-brand); border-color: var(--color-brand);
+  color: #fff; font-weight: 600;
+}
+.cart-btn.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.cart-btn.ghost { border-color: transparent; color: var(--color-text-sec); }
+.cart-btn.ghost:hover { border-color: var(--color-border); color: var(--color-text); }
+/* [v1.21 fix 2] the destructive confirm — same shape as .primary,
+   danger-colored. */
+.cart-btn.danger {
+  background: var(--color-danger); color: #fff;
+  border-color: var(--color-danger);
+}
+.cart-btn.danger:hover { filter: brightness(1.1); }
+.cart-btn.danger:active { filter: brightness(0.95); }
+
+/* ── KPI row / notes / viewbar ── */
+.cart-kpis { margin-bottom: var(--space-4); }
+.cart-note {
+  font-size: 12px; color: var(--color-warning);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-warning); border-radius: var(--radius-md);
+  margin-bottom: var(--space-4); line-height: 1.5;
+}
+.cart-viewbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; margin-bottom: var(--space-3);
+}
+.cart-pills { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.cart-pill {
+  background: none; border: 1px solid var(--color-border);
+  border-radius: 999px; padding: 5px 14px;
+  font-size: 12px; cursor: pointer; color: var(--color-text-sec);
+}
+.cart-pill:hover { color: var(--color-text); border-color: var(--color-brand); }
+.cart-pill.is-active {
+  background: var(--color-brand); border-color: var(--color-brand);
+  color: #fff; font-weight: 600;
+}
+.cart-scope-label {
+  font-size: 12px; color: var(--color-text-sec);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 420px;
+}
+.cart-note-line { font-size: 11px; color: var(--color-text-sec); padding-top: var(--space-2); }
+
+/* ── Tables ── */
+.cart-table-wrap { overflow-x: auto; }
+.cart-table td { vertical-align: top; }
+.cart-tk { font-family: var(--font-mono); font-weight: 700; white-space: nowrap; }
+.cart-tk a { color: var(--color-text); }
+.cart-tk a:hover { color: var(--color-brand); text-decoration: none; }
+.cart-name {
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cart-sector {
+  color: var(--color-text-sec); font-size: 11.5px;
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cart-accounts { font-size: 11.5px; color: var(--color-text-sec); max-width: 200px; }
+.cart-table tfoot .cart-total td {
+  border-top: 2px solid var(--color-border); font-weight: 700;
+  color: var(--color-text); background: var(--color-bg-sec);
+}
+.cart-type {
+  display: inline-block; border-radius: 999px; padding: 2px 10px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.cart-type.is-buy { color: var(--color-success); border: 1px solid var(--color-success); }
+.cart-type.is-sell { color: var(--color-danger); border: 1px solid var(--color-danger); }
+.cart-actions { white-space: nowrap; text-align: right; }
+.cart-icon-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; padding: 3px 6px; border-radius: var(--radius-sm);
+  color: var(--color-text-sec); min-width: 28px; min-height: 28px;
+}
+.cart-icon-btn:hover { background: var(--color-bg-sec); color: var(--color-text); }
+.cart-icon-btn:disabled { opacity: 0.4; cursor: wait; }
+
+/* ── Empty states (setup guides) ── */
+.cart-empty {
+  border: 1px dashed var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-6); text-align: center; color: var(--color-text-sec);
+}
+.cart-empty h3 { color: var(--color-text); margin-bottom: var(--space-3); font-size: 15px; }
+.cart-empty ol {
+  display: inline-block; text-align: left; margin: var(--space-3) 0 var(--space-4);
+  padding-left: var(--space-5); line-height: 2;
+}
+.cart-empty .cart-btn { margin-top: var(--space-2); }
+
+/* ── Dialogs (native <dialog>) ── */
+dialog.cart-modal {
+  background: var(--color-bg-card); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: var(--space-5); width: min(440px, calc(100vw - 32px));
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  /* [v1.21 fix 1] DEAD-CENTER: fixed inset 0 + margin auto + fit-content
+     height — the UA default could leave the box off-center (it read as
+     opening "to the right side"); this is the canonical centering. */
+  position: fixed; inset: 0; margin: auto; height: fit-content;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+dialog.cart-modal::backdrop { background: rgba(0, 0, 0, 0.55); }
+/* [v1.21 fix 2] Wide modals (Gerenciar): the dialog itself NEVER
+   scrolls — it is a flex column and .cart-manage-body is the ONE
+   scroller, so the ⚙️ title and the Fechar actions stay pinned. The
+   fix 1 pairing (dialog overflow-y + body max-height) drew TWO
+   nested scrollbars — an outer one that only scrolled the title.
+   [v1.21 fix 3] The flex layout is scoped to [open] — applying it
+   unconditionally OVERRODE the UA's dialog:not([open]){display:none},
+   so Gerenciar rendered as a ghost box on the carteira page (title +
+   "Carregando carteira…") that no close() could hide: close() only
+   manages the open attribute. Now: closed = UA display:none (no
+   ghost), open = the flex column, single scroller. */
+dialog.cart-modal.cart-modal-wide {
+  width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
+  overflow: hidden;
+}
+dialog.cart-modal.cart-modal-wide[open] {
+  display: flex; flex-direction: column;
+}
+.cart-modal-col {
+  display: flex; flex-direction: column; min-height: 0; flex: 1;
+}
+dialog.cart-modal.cart-modal-sm { width: min(400px, calc(100vw - 32px)); }
+dialog.cart-modal h3 { margin-bottom: var(--space-4); font-size: 15px; }
+.cart-field { display: block; margin-bottom: var(--space-3); }
+.cart-field > span {
+  display: block; font-size: 12px; color: var(--color-text-sec);
+  margin-bottom: var(--space-1); font-weight: 600;
+}
+.cart-field input[type="text"], .cart-field input[type="number"],
+.cart-field input[type="date"], .cart-field .cart-select {
+  width: 100%; background: var(--color-bg); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 9px 10px; font-size: 13px; font-family: inherit;
+}
+.cart-field input:focus, .cart-field .cart-select:focus {
+  outline: none; border-color: var(--color-brand);
+}
+.cart-grid-2 {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-3);
+}
+.cart-err {
+  display: block; font-size: 11.5px; color: var(--color-danger);
+  font-style: normal; margin-top: var(--space-1);
+}
+.cart-check {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: 13px; margin-bottom: var(--space-3); cursor: pointer;
+  color: var(--color-text);
+}
+.cart-check input { accent-color: var(--color-brand); width: 16px; height: 16px; }
+.cart-modal-actions {
+  display: flex; align-items: center; gap: var(--space-2);
+  justify-content: flex-end; margin-top: var(--space-4);
+}
+.cart-modal-msg { flex: 1; font-size: 12px; color: var(--color-danger); }
+/* [v1.21 fix 2] the 🗑️ confirmation box */
+.cart-confirm-text {
+  font-size: 13.5px; line-height: 1.55; margin: 0 0 var(--space-2);
+  color: var(--color-text);
+}
+.cart-confirm-text b { font-weight: 600; }
+.cart-warn-line {
+  display: block; margin-top: var(--space-2);
+  font-size: 12px; color: var(--color-text-sec);
+}
+
+/* ── Manage modal ── */
+/* [fix 2] max-height is gone — the flex column above caps it; this is
+   the single scrollbar of the box. */
+.cart-manage-body { overflow-y: auto; min-height: 0; flex: 1; }
+.cart-manage-sec { margin-bottom: var(--space-5); }
+.cart-manage-sec h4 {
+  font-size: 13px; margin-bottom: var(--space-2);
+  color: var(--color-text-sec); text-transform: none;
+}
+.cart-manage-list { list-style: none; }
+.cart-manage-list li {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border);
+}
+.cart-mname {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px;
+}
+.cart-mmeta { font-size: 11px; color: var(--color-text-sec); white-space: nowrap; }
+.cart-muted { font-size: 12px; color: var(--color-text-sec); }
+.cart-watch-add { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+.cart-watch-add input {
+  flex: 1; background: var(--color-bg); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 8px 10px; font-size: 13px; font-family: inherit;
+}
+.cart-watch-add input:focus { outline: none; border-color: var(--color-brand); }
+
+/* ── Painel widget (⭐ Tickers Observados box + Minhas Carteiras box) ── */
+.home-portfolio-slot:not(:empty) { margin-top: var(--space-5); }
+.cart-widget {
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  background: var(--color-bg-card); padding: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.cart-widget:last-child { margin-bottom: 0; }
+.cart-widget-head {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.cart-widget-head h2 { font-size: 15px; }
+.cart-widget-sub { font-size: 12px; color: var(--color-text-sec); font-weight: 400; }
+.cart-widget-link { margin-left: auto; font-size: 12.5px; white-space: nowrap; }
+.cart-widget-block { margin-bottom: var(--space-4); }
+.cart-widget-block:last-child { margin-bottom: 0; }
+.cart-widget-block h3 {
+  font-size: 12px; color: var(--color-text-sec); margin-bottom: var(--space-2);
+}
+.cart-widget-block .val-table td { padding: 6px var(--space-2); font-size: 12px; }
+.cart-wrow { cursor: pointer; }
+.cart-wrow:hover td { background: var(--color-bg-sec); }
+.cart-subrow td {
+  border-top: 1px solid var(--color-border); font-weight: 600;
+  background: var(--color-bg-sec);
+}
+
+/* ── [v1.21 fix 1] Drill-down page: header / breadcrumb / cards ── */
+.cart-head {
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  margin-bottom: var(--space-4); flex-wrap: wrap;
+}
+.cart-head-title { flex: 1; min-width: 220px; }
+.cart-head-title h1 { margin-bottom: var(--space-2); }
+.cart-head-actions {
+  display: flex; gap: var(--space-2); flex-wrap: wrap;
+  justify-content: flex-end; align-items: center;
+}
+.cart-crumbs {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-4); flex-wrap: wrap;
+}
+.cart-crumb {
+  font-size: 13px; color: var(--color-text-sec); cursor: pointer;
+  padding: 3px 8px; border-radius: var(--radius-md);
+}
+.cart-crumb:hover { color: var(--color-text); background: var(--color-bg-sec); }
+.cart-crumb.is-here { color: var(--color-text); font-weight: 600; cursor: default; }
+.cart-crumb.is-here:hover { background: none; }
+.cart-crumb-sep { color: var(--color-text-sec); font-size: 12px; }
+.cart-sec-head {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: var(--space-5) 0 var(--space-3);
+}
+.cart-sec-head h3 { font-size: 14px; }
+.cart-ucard-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: var(--space-4); align-items: stretch;
+}
+.cart-ucard {
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg); padding: var(--space-4);
+  cursor: pointer; transition: border-color 0.15s;
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.cart-ucard:hover { border-color: var(--color-brand); }
+.cart-ucard:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.cart-ucard-head {
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.cart-ucard-name {
+  flex: 1; font-size: 14px; font-weight: 700; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.cart-ucard-broker {
+  font-size: 11.5px; color: var(--color-text-sec); margin-top: -6px;
+}
+.cart-ucard-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2);
+}
+.cart-stat { min-width: 0; }
+.cart-stat-l {
+  display: block; font-size: 10px; text-transform: uppercase;
+  color: var(--color-text-sec); margin-bottom: 2px;
+}
+.cart-stat-v {
+  display: block; font-size: 13px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cart-ucard-meta {
+  font-size: 11.5px; color: var(--color-text-sec); line-height: 1.5;
+}
+.cart-ucard-open {
+  font-size: 12px; color: var(--color-brand); margin-top: auto;
+}
+.cart-flag {
+  cursor: help; white-space: nowrap;
+}
+/* tx modal — position context + live warnings */
+.cart-posctx {
+  font-size: 12.5px; color: var(--color-text);
+  background: var(--color-bg-sec);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.cart-hints {
+  font-size: 12.5px; line-height: 1.6;
+  background: var(--color-bg-sec);
+  border: 1px solid var(--color-warning, #b45309);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+/* ── Mobile ── */
+@media (max-width: 720px) {
+  .cart-ucard-grid { grid-template-columns: 1fr; }
+  .cart-grid-2 { grid-template-columns: 1fr; }
+  .cart-name { max-width: 150px; }
+  .cart-sector { max-width: 110px; }
+  .cart-scope-label { max-width: 180px; }
+  .cart-head-actions { width: 100%; justify-content: flex-start; }
+  .cart-head-actions .cart-btn { padding: 8px 10px; font-size: 12.5px; }
+  .cart-ucard-stats { grid-template-columns: repeat(3, 1fr); gap: var(--space-1); }
+  .cart-stat-v { font-size: 12px; }
+  .company-tabs { flex-wrap: wrap; }
+  .company-watch-slot { margin-left: 0; }
 }

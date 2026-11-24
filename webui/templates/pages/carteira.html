@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.carteira") }} — Agent{% endblock %}
+{% block content %}
+{# [v1.21 fix 1] Carteira — the DRILL-DOWN rework. The confusing
+   everything-at-once toolbar is gone; the page is a 3-level hierarchy:
+
+     👥 Usuários (landing)  →  user cards with the totals of THEIR
+                              accounts (never across users) + ✏️ 🗑️ ➕
+     👤 Usuário             →  account cards (ativos, transações,
+                              patrimônio, lucro) + ⭐ ✏️ 🗑️ ➕
+     🏦 Conta               →  the KPI row + posições/transações tables
+                              (scoped to THIS account) + ➕ Transação
+
+   The header actions are CONTEXTUAL (exactly one relevant create per
+   level — 👤 Usuários link, 🏦 Conta inside usuário, ➕ Transação
+   relative à conta) and every <dialog> is dead-center (fixed inset 0 +
+   margin auto). The tx form is BR-standard: money fills from the cents
+   (3,6 5 → 3,65), dates are dd/mm/aaaa, and the rows carry 🚨 (short)
+   and ⚠️ (bonificação R$ 0,00) flags with tooltips.
+
+   [v1.21 fix 2] Fine-tuning: the sidebar entry ALWAYS lands on 👥
+   Usuários (one-shot sessionStorage deep link for the Painel rows),
+   Gerenciar scrolls in ONE place (the body — title and actions stay
+   pinned), a click outside any box cancels it, the money mask truly
+   fills from the cents (1·2·3·4 → 0,01 → 0,12 → 1,23 → 12,34), and
+   every destructive op asks first in a styled 🗑️ dialog.
+
+   Data flow (initCarteiraPage in app.js): GET /directory (users/user
+   levels), GET /positions?scope=account:ID (account level), a re-render
+   after every mutation. PM math = webui/services/portfolio.py. #}
+<div class="page-carteira" id="carteira-root">
+  <div class="cart-head">
+    <div class="cart-head-title">
+      <h1>💼 {{ t("nav.carteira") }}</h1>
+      <p class="subtitle">{{ t("carteira.subtitle") }}</p>
+    </div>
+    <div class="cart-head-actions" id="cart-actions"></div>
+  </div>
+
+  {# ── Breadcrumb: 👥 Usuários › 👤 {user} › 🏦 {account} ── #}
+  <nav class="cart-crumbs" id="cart-crumbs" aria-label="{{ t('carteira.crumbs') }}"></nav>
+
+  <div id="cart-note" class="cart-note" hidden></div>
+
+  {# ── The current level's content (JS renders users / accounts / account) ── #}
+  <div id="cart-level" class="cart-level">
+    <span class="loading">{{ t("carteira.loading") }}</span>
+  </div>
+
+  {# ══════════════════ CRUD dialogs (native <dialog>, dead-center) ══════════ #}
+
+  {# ── Usuário ── #}
+  <dialog id="cart-user-modal" class="cart-modal" aria-labelledby="cart-user-title">
+    <form method="dialog" novalidate>
+      <h3 id="cart-user-title">👤 {{ t("carteira.new_user") }}</h3>
+      <label class="cart-field">
+        <span>{{ t("carteira.user_name") }}</span>
+        <input type="text" id="cart-user-name" maxlength="60" autocomplete="off">
+        <em class="cart-err" data-err="name" hidden></em>
+      </label>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-user-msg"></span>
+        <button type="button" value="cancel" class="cart-btn"
+                data-close>{{ t("common.cancel") }}</button>
+        <button type="button" value="save" class="cart-btn primary"
+                data-save>💾 {{ t("common.save") }}</button>
+      </div>
+    </form>
+  </dialog>
+
+  {# ── Conta ── #}
+  <dialog id="cart-account-modal" class="cart-modal" aria-labelledby="cart-account-title">
+    <form method="dialog" novalidate>
+      <h3 id="cart-account-title">🏦 {{ t("carteira.new_account") }}</h3>
+      <label class="cart-field">
+        <span>{{ t("carteira.scope_user") }}</span>
+        <select id="cart-account-user" class="cart-select"></select>
+        <em class="cart-err" data-err="user_id" hidden></em>
+      </label>
+      <label class="cart-field">
+        <span>{{ t("carteira.account_name") }}</span>
+        <input type="text" id="cart-account-name" maxlength="60" autocomplete="off"
+               placeholder="{{ t('carteira.account_placeholder') }}">
+        <em class="cart-err" data-err="name" hidden></em>
+      </label>
+      <label class="cart-field">
+        <span>{{ t("carteira.broker") }}</span>
+        <input type="text" id="cart-account-broker" maxlength="40" autocomplete="off"
+               placeholder="{{ t('carteira.broker_placeholder') }}">
+        <em class="cart-err" data-err="broker" hidden></em>
+      </label>
+      <label class="cart-check">
+        <input type="checkbox" id="cart-account-watch">
+        <span>⭐ {{ t("carteira.watch_account") }}</span>
+      </label>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-account-msg"></span>
+        <button type="button" value="cancel" class="cart-btn"
+                data-close>{{ t("common.cancel") }}</button>
+        <button type="button" value="save" class="cart-btn primary"
+                data-save>💾 {{ t("common.save") }}</button>
+      </div>
+    </form>
+  </dialog>
+
+  {# ── Transação — BR-standard inputs (money fills from the cents,
+        dd/mm/aaaa date, ✅ compra / ❌ venda) + live position context. ── #}
+  <dialog id="cart-tx-modal" class="cart-modal" aria-labelledby="cart-tx-title">
+    <form method="dialog" novalidate>
+      <h3 id="cart-tx-title">➕ {{ t("carteira.new_tx") }}</h3>
+      <div id="cart-tx-posctx" class="cart-posctx" hidden></div>
+      <label class="cart-field">
+        <span>{{ t("carteira.account") }}</span>
+        <select id="cart-tx-account" class="cart-select"></select>
+        <em class="cart-err" data-err="account_id" hidden></em>
+      </label>
+      <div class="cart-grid-2">
+        <label class="cart-field">
+          <span>{{ t("carteira.ticker") }}</span>
+          <input type="text" id="cart-tx-ticker" maxlength="8" autocomplete="off"
+                 placeholder="POMO4" style="text-transform: uppercase;">
+          <em class="cart-err" data-err="ticker" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>{{ t("carteira.type") }}</span>
+          <select id="cart-tx-type" class="cart-select">
+            <option value="buy">✅ {{ t("carteira.buy") }}</option>
+            <option value="sell">❌ {{ t("carteira.sell") }}</option>
+          </select>
+          <em class="cart-err" data-err="type" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>🗓️ {{ t("carteira.date") }} (dd/mm/aaaa)</span>
+          <input type="text" id="cart-tx-date" inputmode="numeric"
+                 placeholder="dd/mm/aaaa" maxlength="10" autocomplete="off">
+          <em class="cart-err" data-err="date" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>{{ t("carteira.quantity") }}</span>
+          <input type="text" id="cart-tx-qty" inputmode="decimal"
+                 placeholder="0" autocomplete="off">
+          <em class="cart-err" data-err="quantity" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>{{ t("carteira.price") }}</span>
+          <input type="text" id="cart-tx-price" inputmode="decimal"
+                 placeholder="0,00" autocomplete="off">
+          <em class="cart-err" data-err="price" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>{{ t("carteira.fees") }}</span>
+          <input type="text" id="cart-tx-fees" inputmode="decimal"
+                 placeholder="0,00" autocomplete="off">
+          <em class="cart-err" data-err="fees" hidden></em>
+        </label>
+      </div>
+      <label class="cart-field">
+        <span>{{ t("carteira.note") }}</span>
+        <input type="text" id="cart-tx-note" maxlength="200" autocomplete="off">
+        <em class="cart-err" data-err="note" hidden></em>
+      </label>
+      <div id="cart-tx-hints" class="cart-hints" hidden></div>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-tx-msg"></span>
+        <button type="button" value="cancel" class="cart-btn"
+                data-close>{{ t("common.cancel") }}</button>
+        <button type="button" value="save" class="cart-btn primary"
+                data-save>💾 {{ t("common.save") }}</button>
+      </div>
+    </form>
+  </dialog>
+
+  {# ── Gerenciar — reorganized: ⭐ observados + 📇 cadastro (users and
+        accounts are managed on their own cards now). [fix 2] the body
+        is the ONE scroller (title + actions pinned — no more nested
+        scrollbars). ── #}
+  <dialog id="cart-manage-modal" class="cart-modal cart-modal-wide"
+          aria-labelledby="cart-manage-title">
+    <div class="cart-modal-col">
+      <h3 id="cart-manage-title">⚙️ {{ t("carteira.manage") }}</h3>
+      <div id="cart-manage-body" class="cart-manage-body">
+        <span class="loading">{{ t("carteira.loading") }}</span>
+      </div>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-manage-msg"></span>
+        <button type="button" value="close" class="cart-btn"
+                data-close>{{ t("common.close") }}</button>
+      </div>
+    </div>
+  </dialog>
+
+  {# ── [v1.21 fix 2] Exclusão — styled confirmation, dead-center like
+        the rest; replaces window.confirm for EVERY destructive op
+        (usuário, conta, transação, ticker observado). ── #}
+  <dialog id="cart-confirm-modal" class="cart-modal cart-modal-sm"
+          aria-labelledby="cart-confirm-title">
+    <div class="cart-modal-col">
+      <h3 id="cart-confirm-title">🗑️ {{ t("common.delete") }}</h3>
+      <p id="cart-confirm-text" class="cart-confirm-text"></p>
+      <div class="cart-modal-actions">
+        <button type="button" value="cancel" class="cart-btn"
+                data-close>{{ t("common.cancel") }}</button>
+        <button type="button" value="ok" class="cart-btn danger"
+                id="cart-confirm-ok">🗑️ {{ t("common.delete") }}</button>
+      </div>
+    </div>
+  </dialog>
+</div>
+{% endblock %}

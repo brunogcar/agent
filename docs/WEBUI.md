@@ -13,6 +13,7 @@ Brazilian Financial Data WebUI — a live, server-rendered web interface that re
 - **Real-time sync** — SSE (Server-Sent Events) for live sync progress
 - **System log** — a 📜 top-bar button opens a right-side drawer with the live request/sync/error tail (SSE while open, badge-polling while closed) [v1.20]
 - **Settings as data** — schema-driven Configurações page; sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale and log controls, all wired [v1.20]
+- **Carteira (portfolio)** — multiple users → brokerage accounts → buy/sell transactions, consolidated into preço-médio positions (KPIs, per-account and geral views, CRUD dialogs); watched accounts + tickers display live on the Painel [v1.21]
 - **No build step** — vanilla JS + HTMX + Alpine.js, no Node.js, no bundler
 
 ## Quick Start

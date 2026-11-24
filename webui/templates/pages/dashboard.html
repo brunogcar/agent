@@ -25,6 +25,12 @@
     <span class="loading">{{ t("dashboard.loading_cards") }}</span>
   </div>
 
+  {# [v1.21] Carteira widget — watched accounts + watchlist tickers
+     (GET /api/webui/portfolio/overview; loadPortfolioWidget() in app.js).
+     Renders NOTHING when no account is watched and the watchlist is
+     empty — the landing page stays exactly as v1.19 left it. #}
+  <div id="home-portfolio" class="home-portfolio-slot"></div>
+
   {# [v1.7] Pre-flight banner — one-line system diagnosis (DBs, schema,
      WAL, vendor assets, adapters, config) linking to the Sync page for
      the full panel. Loads once per view — checks don't change on a 30s

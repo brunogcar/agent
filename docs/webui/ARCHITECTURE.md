@@ -114,11 +114,16 @@ agent/
 | `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
 | `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
+| `webui/services/syslog.py` | [v1.20] System log — the in-memory ring buffer behind the 📜 drawer (request middleware + root-logger handler + explicit points) |
+| `webui/services/settings.py` | [v1.20] Schema-driven settings — SCHEMA dict + JSON store (`memory_db/webui_settings.json`) |
+| `webui/services/portfolio.py` | [v1.21] Carteira — users/accounts/txs/watchlist JSON store, the PM (preço médio) position engine, `quotes_for()` enrichment, CVM ticker-metadata cache |
 | `tools/migrations/rekey_itr_snapshots.py` | [v1.7.1] One-time ITR snapshot re-key for DBs synced before v1.7.1 (dry-run + `--apply`: batched rowid UPDATEs, WAL checkpoint, engine-cache wipe) |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
 | `webui/routes/preflight.py` | [v1.7] Pre-flight endpoints — JSON report + panel/banner partials |
+| `webui/routes/system.py` | [v1.20] System surface — logs (+SSE stream) + settings GET/PUT |
+| `webui/routes/portfolio.py` | [v1.21] Carteira REST — state/positions/overview + users/accounts/txs/watchlist CRUD + ticker-metadata refresh |
 | `webui/templates/base.html` | Shell — sidebar, topbar, FOUC prevention, vendor JS |
 | `webui/static/css/app.css` | 3-layer CSS: primitives (from theme JSON) → semantic → component |
 | `webui/static/js/app.js` | Tab/subtab loaders + generic section renderer + Chart.js lifecycle |
