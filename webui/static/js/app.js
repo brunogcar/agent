@@ -3803,6 +3803,10 @@ function initCarteiraPage() {
     if (st.level.kind === 'account') {
       html += '<button class="cart-btn primary" data-act="tx" ' +
               'title="Registrar transação nesta conta">➕ Transação</button>';
+      // [v1.22.2] the onboarding killer feature at arm's reach: import
+      // the broker PDF instead of typing each trade.
+      html += '<button class="cart-btn" data-act="import" ' +
+              'title="Importar nota de corretagem (PDF) nesta conta">📥 Importar nota</button>';
     }
     if (st.level.kind === 'users') {
       html += '<button class="cart-btn primary" data-act="user" ' +
@@ -3933,6 +3937,105 @@ function initCarteiraPage() {
     } else {
       html += '<div class="cart-ucard-grid">' + u.accounts.map(accountCard).join('') + '</div>';
     }
+    // [v1.22.2] IR mês a mês — collapsed by default, lazy-loaded on
+    // first open (the walk replays the user's whole history).
+    html += '<details id="cart-ir" class="cart-ir">' +
+      '<summary>🧾 IR — mês a mês (swing × day trade, estimativa)</summary>' +
+      '<div id="cart-ir-body"><span class="loading">⏳ Carregando…</span></div></details>';
+    box.innerHTML = html;
+    var irBox = $('cart-ir');
+    if (irBox) irBox.addEventListener('toggle', onIrToggle);
+  }
+
+  function onIrToggle() {
+    var box = $('cart-ir');
+    if (!box || !box.open) return;
+    loadIR();
+  }
+
+  function loadIR() {
+    var box = $('cart-ir-body');
+    if (!box) return;
+    api('GET', '/ir?scope=' + encodeURIComponent(scopeStr())).then(function(res) {
+      if (res.ok && res.j && !res.j._error) renderIR(res.j);
+      else box.innerHTML = '<div class="error">' +
+        esc((res.j && res.j._error) || 'Erro ao carregar o IR.') + '</div>';
+    }).catch(function(err) {
+      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function renderIR(j) {
+    var box = $('cart-ir-body');
+    if (!box) return;
+    var html = '';
+    if (j.partial_account) {
+      html += '<div class="cart-ir-partial">⚠️ Parcial — apenas a conta <b>' +
+        esc(j.partial_account) + '</b>. O IR é por CPF: some todas as ' +
+        'contas do usuário (veja o nível 👤 do usuário).</div>';
+    }
+    var any = false;
+    (j.users || []).forEach(function(u) {
+      if (!u.months.length) return;
+      any = true;
+      html += '<h4 class="cart-ir-user">👤 ' + esc(u.user_name || '—') + '</h4>';
+      html += '<div class="cart-table-wrap"><table class="val-table cart-table cart-ir-table">' +
+        '<thead><tr><th>Mês</th>' +
+        '<th class="th-num" title="Valor bruto das compras do mês (informativo)">Compras</th>' +
+        '<th class="th-num" title="Vendas fora de day trade — a base da isenção de R$ 20 mil">Vendas swing</th>' +
+        '<th class="th-num" title="Resultado swing: vendas − custo médio − taxas">Result. swing</th>' +
+        '<th class="th-num" title="Vendas casadas no mesmo dia (compra + venda)">Vendas day</th>' +
+        '<th class="th-num" title="Resultado day trade do mês">Result. day</th>' +
+        '<th class="th-num" title="IRRF estimado: 0,005% das vendas swing + 1% do resultado day">IRRF</th>' +
+        '<th class="th-num" title="IR estimado a pagar (alíquota − IRRF)">IR a pagar</th>' +
+        '<th title="Código DARF e vencimento (último dia útil do mês seguinte)">DARF · venc.</th>' +
+        '</tr></thead><tbody>';
+      u.months.forEach(function(m) {
+        var irrfTotal = (m.irrf_s || 0) + (m.irrf_d || 0);
+        var darf = (m.darfs || []).map(function(d) {
+          return d.code + ' · R$ ' + d.value_br;
+        }).join('<br>') || '<span class="muted">—</span>';
+        html += '<tr>' +
+          '<td><b>' + esc(m.month_br) + '</b>' +
+            (m.in_progress ? ' ' + flagHtml('⏳', 'Mês em andamento — os números ainda mudam') : '') + '</td>' +
+          '<td class="val-val">' + valNumHtml(m.buy_vol_br) + '</td>' +
+          '<td class="val-val">' + valNumHtml(m.swing_vol_br) +
+            (m.exempt && m.swing_vol > 0
+              ? ' ' + flagHtml('🛡️', 'Vendas swing até R$ 20 mil — isento (Lei 11.033)')
+              : '') + '</td>' +
+          '<td class="val-val">' + signedHtml(m.swing_res_br) +
+            (m.carry_used_s > 0 ? ' ' + flagHtml('↩️',
+              'Compensado R$ ' + String(m.carry_used_s).replace('.', ',') +
+              ' de prejuízo swing anterior') : '') + '</td>' +
+          '<td class="val-val">' + valNumHtml(m.day_vol_br) + '</td>' +
+          '<td class="val-val">' + signedHtml(m.day_res_br) +
+            (m.carry_used_d > 0 ? ' ' + flagHtml('↩️',
+              'Compensado R$ ' + String(m.carry_used_d).replace('.', ',') +
+              ' de prejuízo day trade anterior') : '') + '</td>' +
+          '<td class="val-val" title="Swing R$ ' + m.irrf_s_br + ' · Day R$ ' + m.irrf_d_br + '">' +
+            (irrfTotal > 0 ? valNumHtml(fmtBRL(irrfTotal)) : '<span class="muted">—</span>') + '</td>' +
+          '<td class="val-val"><b>' + (m.due_total > 0
+              ? valNumHtml(m.due_total_br)
+              : '<span class="muted">—</span>') + '</b></td>' +
+          '<td>' + darf + '<br><span class="muted">' + esc(fmtDate(m.due_date)) + '</span></td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+      if (u.months.some(function(m) { return m.carry_s_after > 0 || m.carry_d_after > 0; })) {
+        var last = u.months[u.months.length - 1];
+        html += '<p class="cart-note-line">↩️ Prejuízo a compensar (acumulado até ' +
+          esc(last.month_br) + '): swing ' + valNumHtml(last.carry_s_after_br) +
+          ' · day trade ' + valNumHtml(last.carry_d_after_br) + '.</p>';
+      }
+    });
+    if (!any) {
+      html += '<div class="cart-empty"><h3>Nada por aqui ainda</h3>' +
+        '<p>O IR mês a mês aparece quando houver transações — vendas ' +
+        'swing (com isenção até R$ 20 mil) e day trade (20%).</p></div>';
+    }
+    html += '<ul class="cart-ir-notes">' + (j.notes || []).map(function(n) {
+      return '<li>' + esc(n) + '</li>';
+    }).join('') + '</ul>';
     box.innerHTML = html;
   }
 
@@ -3996,15 +4099,20 @@ function initCarteiraPage() {
       '<span class="cart-toolbar-spacer"></span>' +
       '<button class="cart-btn primary" data-act="tx" ' +
         'title="Registrar transação nesta conta">➕ Transação</button>' +
+      '<button class="cart-btn" data-act="import" ' +
+        'title="Importar nota de corretagem (PDF) nesta conta">📥 Importar nota</button>' +
       '<button class="cart-btn ghost" data-act="reload" aria-label="Recarregar" ' +
         'title="Recarregar dados">🔄</button></div>';
     html += '<div id="cart-positions" class="cart-view"' +
       (st.view === 'positions' ? '' : ' hidden') + '></div>';
     html += '<div id="cart-txs" class="cart-view"' +
       (st.view === 'txs' ? '' : ' hidden') + '></div>';
+    // [v1.22.2] imported-notas registry (undo/dedup visibility).
+    html += '<div id="cart-notas" class="cart-notas"></div>';
     box.innerHTML = html;
     renderPositionsTable(d);
     renderTxsTable(d);
+    loadNotas();
   }
 
   function emptyGuide(kind) {
@@ -4024,7 +4132,8 @@ function initCarteiraPage() {
     return '<div class="cart-empty"><h3>💡 Sem transações</h3>' +
       '<p>Registre uma compra ou venda — a posição, o preço médio e o lucro ' +
       'aparecem aqui. ✅ compra · ❌ venda · preço 0 = ⚠️ bonificação.</p>' +
-      '<button class="cart-btn primary" data-act="tx">➕ Registrar transação</button></div>';
+      '<button class="cart-btn primary" data-act="tx">➕ Registrar transação</button> ' +
+      '<button class="cart-btn" data-act="import">📥 Importar nota de corretagem</button></div>';
   }
 
   function signedHtml(s) {
@@ -4616,6 +4725,332 @@ function initCarteiraPage() {
     api('PUT', '/accounts/' + id, { watch: !a.watch }).then(function() { reload(); });
   }
 
+  // ── 📥 nota import (PDF → preview → commit) [v1.22.2] ──────────────────
+  // The dry-run discipline of a money engine: the PDF is parsed on the
+  // server into a PREVIEW (nothing written), specs without ticker
+  // (modelo B3) get mapped by hand, and only then the commit — one
+  // atomic bulk insert with dedup (cnpj + nº nota + pregão) and undo.
+  function normSpecKey(market, spec) {
+    return (String(market || '').split(' ')[0] + '|' + String(spec || '')).toUpperCase();
+  }
+
+  function importMsg(text) {
+    $('cart-import-msg').textContent = text || '';
+  }
+
+  function openImportModal() {
+    if (st.level.kind !== 'account') return;
+    st.import = null;
+    $('cart-import-file').value = '';
+    $('cart-import-preview').innerHTML = '';
+    $('cart-import-commit').hidden = true;
+    importMsg('');
+    $('cart-import-modal').showModal();
+  }
+
+  function readImportFile(file) {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      importMsg('PDF muito grande (limite 5 MB).');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function() {
+      var b64 = String(reader.result || '').split(',')[1] || '';
+      $('cart-import-preview').innerHTML = '<span class="loading">⏳ Lendo a nota…</span>';
+      $('cart-import-commit').hidden = true;
+      importMsg('');
+      api('POST', '/import/nota', { pdf_b64: b64 }).then(function(res) {
+        if (!res.ok || !res.j || !res.j.ok) {
+          $('cart-import-preview').innerHTML = '';
+          importMsg((res.j && res.j._error) || 'Não foi possível ler a nota.');
+          return;
+        }
+        st.import = res.j;
+        renderImportPreview();
+      }).catch(function(err) {
+        importMsg('Erro: ' + err.message);
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function knownTickerList() {
+    var seen = {};
+    (st.tickers || []).forEach(function(t) { seen[t.ticker] = 1; });
+    (st.watchlist || []).forEach(function(w) { seen[w.ticker] = 1; });
+    ((st.pos && st.pos.positions) || []).forEach(function(p) { seen[p.ticker] = 1; });
+    return Object.keys(seen).sort();
+  }
+
+  function renderImportPreview() {
+    var p = st.import;
+    var box = $('cart-import-preview');
+    if (!p) return;
+    var acc = stAccount(st.level.id);
+    var html = '';
+
+    // header facts
+    html += '<div class="cart-import-grid">' +
+      importCell('Corretora', p.broker + (p.broker_cnpj ? ' · CNPJ ' + p.broker_cnpj : '')) +
+      importCell('Nota nº', p.nota + (p.folhas ? ' · folha ' + p.folhas : '')) +
+      importCell('Pregão', p.pregao_br) +
+      importCell('Cliente', p.client_name + (p.client_cpf ? ' · ' + p.client_cpf : '')) +
+      importCell('Conta na corretora', p.account_code || '—') +
+      importCell('Destino', '🏦 ' + (acc ? acc.name : '—') +
+        ' (usuário ' + esc((userById(acc && acc.user_id) || {}).name || '—') + ')') +
+      '</div>';
+
+    // dedup — the same nota in two layouts (XP vs modelo B3) is the
+    // same import; refuse BEFORE any write.
+    if (p.dedup && p.dedup.imported) {
+      var ex = p.dedup.existing || {};
+      html += '<div class="cart-import-banner is-error">🚫 <b>Esta nota já foi ' +
+        'importada</b>' + (ex.imported_at_br ? ' em ' + esc(ex.imported_at_br) : '') +
+        (ex.account_name ? ' para a conta ' + esc(ex.account_name) : '') + '. ' +
+        'Use ↩️ Desfazer na lista de notas para reimportar.</div>';
+    }
+
+    if ((p.warnings || []).length) {
+      html += '<div class="cart-import-banner is-warn">⚠️ ' +
+        p.warnings.map(esc).join('<br>⚠️ ') + '</div>';
+    }
+
+    // ticker mapping (modelo B3 prints no ticker in the spec)
+    var nm = p.needs_mapping || {};
+    var keys = Object.keys(nm);
+    if (keys.length) {
+      html += '<div class="cart-import-map"><h4>🔎 Informe o ticker de cada ' +
+        'especificação</h4>' +
+        '<datalist id="cart-import-datalist">' + knownTickerList().map(function(tk) {
+          return '<option value="' + esc(tk) + '"></option>';
+        }).join('') + '</datalist>';
+      keys.forEach(function(k, i) {
+        var s = nm[k];
+        html += '<label class="cart-import-maprow">' +
+          '<span class="cart-import-mapsec" title="' + esc(s.market + ' — ' + s.spec) + '">' +
+          esc(s.spec) + ' <em>(' + esc(s.market.toLowerCase()) + ')</em></span>' +
+          '<input type="text" class="cart-import-mapinput" data-map="' + esc(k) +
+          '" list="cart-import-datalist" maxlength="8" placeholder="' +
+          esc(s.suggest || 'TICKER') + '" value="' + esc(s.suggest || '') +
+          '" style="text-transform: uppercase;" autocomplete="off">' +
+          '</label>';
+      });
+      html += '</div>';
+    }
+
+    // options
+    var hasFrac = (p.trades || []).some(function(t) { return t.fractional && t.ticker; });
+    html += '<div class="cart-import-opts">' +
+      '<label class="cart-check"><input type="checkbox" id="cart-import-merge"' +
+      (hasFrac ? ' checked' : ' disabled') + '> Unificar fracionário com o lote ' +
+      'padrão (KLBN4F → KLBN4 — mesmo papel, PM único)</label>' +
+      '<span class="cart-muted">' + (p.pages || '?') + ' página(s) · extração ' +
+      esc(p.engine || '?') + '</span></div>';
+
+    // trades table
+    html += '<div class="cart-table-wrap"><table class="val-table cart-table">' +
+      '<thead><tr><th>Mercado</th><th>Especificação</th><th>Ticker</th>' +
+      '<th>C/V</th><th class="th-num">Qtd</th><th class="th-num">Preço</th>' +
+      '<th class="th-num">Valor</th><th class="th-num">Taxas</th></tr></thead><tbody id="cart-import-rows">';
+    html += importRowsHtml(p, {});
+    html += '</tbody></table></div>';
+    html += '<p class="cart-note-line">💰 Taxas da nota (R$ ' +
+      esc(String(p.fees_total).replace('.', ',')) + ') rateadas pelo valor de cada ' +
+      'negócio — a soma fecha exata no centavo.' +
+      (p.irrf ? ' IRRF retido: R$ ' + esc(String(p.irrf).replace('.', ',')) +
+        ' (não entra nas taxas — compensável no IR anual).' : '') +
+      (p.unsupported_count ? ' ⛔ ' + p.unsupported_count +
+        ' negócio(s) em mercado não suportado ficam de fora.' : '') + '</p>';
+
+    box.innerHTML = html;
+
+    // live mapping → table ticker cells + spec auto-copy between markets
+    box.querySelectorAll('[data-map]').forEach(function(inp) {
+      inp.addEventListener('input', function() {
+        var k = inp.getAttribute('data-map');
+        var v = (inp.value || '').trim().toUpperCase();
+        // same spec in another market → copy (VISTA + FRACIONARIO of the
+        // same paper are two keys, one ticker)
+        var spec = k.split('|').slice(1).join('|');
+        box.querySelectorAll('[data-map]').forEach(function(other) {
+          var ok2 = other.getAttribute('data-map');
+          if (other !== inp && ok2.split('|').slice(1).join('|') === spec && !other.value) {
+            other.value = v;
+          }
+        });
+        refreshImportRows();
+      });
+    });
+    var merge = $('cart-import-merge');
+    if (merge) merge.addEventListener('change', refreshImportRows);
+
+    var dup = p.dedup && p.dedup.imported;
+    var btn = $('cart-import-commit');
+    btn.hidden = !!dup;
+    btn.textContent = '✅ Importar ' + (p.trades || []).length + ' negócio(s)';
+  }
+
+  function importCell(label, valueHtml) {
+    return '<div class="cart-import-cell"><span>' + esc(label) + '</span>' +
+      '<b>' + (valueHtml || '—') + '</b></div>';
+  }
+
+  function importMapping() {
+    var map = {};
+    document.querySelectorAll('#cart-import-preview [data-map]').forEach(function(inp) {
+      map[inp.getAttribute('data-map')] = (inp.value || '').trim().toUpperCase();
+    });
+    return map;
+  }
+
+  function importRowsHtml(p, map) {
+    var merge = !!($('cart-import-merge') && $('cart-import-merge').checked);
+    return (p.trades || []).map(function(t) {
+      var tk = t.ticker;
+      if (!tk) tk = map[normSpecKey(t.market, t.spec)] || '';
+      if (tk && merge && t.ticker_base && t.ticker !== t.ticker_base) tk = t.ticker_base;
+      var ok = /^[A-Z][A-Z0-9]{3,5}\d{1,2}[A-Z]?$/.test(tk);
+      return '<tr' + (tk && !ok ? ' class="is-map-bad"' : '') + '>' +
+        '<td>' + esc(t.market === 'FRACIONARIO' ? 'Fracionário' : 'À vista') + '</td>' +
+        '<td class="cart-name" title="' + esc(t.spec) + '">' + esc(t.spec) + '</td>' +
+        '<td class="cart-tk">' + (ok ? esc(tk)
+          : (tk ? '<span class="val-neg">' + esc(tk) + '</span>'
+                : '<span class="muted">⚠️ mapear</span>')) + '</td>' +
+        '<td><span class="cart-type ' + (t.side === 'buy' ? 'is-buy' : 'is-sell') + '">' +
+          (t.side === 'buy' ? '✅ C' : '❌ V') + '</span>' + (t.day ? ' ' +
+          flagHtml('⏱️', 'Negócio marcado como day trade na nota') : '') + '</td>' +
+        '<td class="val-val">' + esc(String(t.qty).replace('.', ',')) + '</td>' +
+        '<td class="val-val">' + valNumHtml(moneyStr(t.price)) + '</td>' +
+        '<td class="val-val">' + valNumHtml(moneyStr(t.value)) + '</td>' +
+        '<td class="val-val">' + valNumHtml(moneyStr(t.fees)) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function refreshImportRows() {
+    var rows = $('cart-import-rows');
+    if (rows && st.import) {
+      rows.innerHTML = importRowsHtml(st.import, importMapping());
+    }
+  }
+
+  function commitImport() {
+    var p = st.import;
+    if (!p) return;
+    var map = importMapping();
+    var merge = !!($('cart-import-merge') && $('cart-import-merge').checked);
+    var trades = (p.trades || []).map(function(t) {
+      var tk = t.ticker;
+      if (!tk) tk = map[normSpecKey(t.market, t.spec)] || '';
+      if (tk && merge && t.ticker_base && t.ticker !== t.ticker_base) tk = t.ticker_base;
+      return { ticker: tk, type: t.side, quantity: t.qty,
+               price: t.price, fees: t.fees, date: p.pregao };
+    });
+    var missing = trades.some(function(t) { return !t.ticker; });
+    if (missing) {
+      importMsg('Informe o ticker de todas as especificações antes de importar.');
+      return;
+    }
+    var btn = $('cart-import-commit');
+    btn.disabled = true;
+    btn.textContent = '⏳ Importando…';
+    api('POST', '/import/commit', {
+      account_id: st.level.id,
+      broker: p.broker_short || p.broker, broker_cnpj: p.broker_cnpj,
+      nota: p.nota, pregao: p.pregao, client_name: p.client_name,
+      fees_total: p.fees_total, irrf: p.irrf, trades: trades,
+    }).then(function(res) {
+      btn.disabled = false;
+      btn.textContent = '✅ Importar';
+      if (!res.ok) {
+        var j = res.j || {};
+        if (j.errors && j.errors.trades) {
+          var first = Object.keys(j.errors.trades)[0];
+          var fe = j.errors.trades[first];
+          var fld = Object.keys(fe)[0];
+          importMsg('Negócio ' + (Number(first) + 1) + ': ' + fe[fld]);
+        } else {
+          importMsg(j._error || 'Erro ao importar.');
+        }
+        return;
+      }
+      $('cart-import-modal').close();
+      st.pendingNote = {
+        text: 'Nota ' + p.nota + ' importada: ' + res.j.created +
+              ' negócio(s) em ' + (stAccount(st.level.id) || {}).name + '.',
+        until: Date.now() + 15000,
+      };
+      reload();
+    }).catch(function(err) {
+      btn.disabled = false;
+      btn.textContent = '✅ Importar';
+      importMsg('Erro: ' + err.message);
+    });
+  }
+
+  // ── imported-notas registry (per account) ───────────────────────────────
+  function loadNotas() {
+    var box = $('cart-notas');
+    if (!box || st.level.kind !== 'account') return;
+    api('GET', '/import/notas?account_id=' + encodeURIComponent(st.level.id))
+      .then(function(res) {
+        if (!res.ok || !res.j || !res.j.ok) return;
+        renderNotas(res.j.notas || []);
+      });
+  }
+
+  function renderNotas(notas) {
+    var box = $('cart-notas');
+    if (!box) return;
+    if (!notas.length) {
+      box.innerHTML = '';
+      return;
+    }
+    var rows = notas.map(function(n) {
+      return '<tr>' +
+        '<td class="cart-tk" title="CNPJ ' + esc(n.broker_cnpj) + '">' + esc(n.nota) + '</td>' +
+        '<td>' + esc(n.broker || '—') + '</td>' +
+        '<td>' + esc(fmtDate(n.pregao)) + '</td>' +
+        '<td class="val-val">' + esc(String(n.alive)) + (n.alive !== n.trade_count
+            ? ' <span class="muted" title="Negócios da nota que ainda existem (algum foi editado/excluído)">' +
+              'de ' + esc(String(n.trade_count)) + '</span>' : '') + '</td>' +
+        '<td class="val-val">' + valNumHtml(moneyStr(n.fees_total || 0)) + '</td>' +
+        '<td class="val-val">' + (n.irrf ? valNumHtml(moneyStr(n.irrf)) : '<span class="muted">—</span>') + '</td>' +
+        '<td class="cart-actions">' +
+          '<button class="cart-icon-btn" data-un="' + esc(n.id) +
+            '" title="↩️ Desfazer importação (remove os negócios da nota)">↩️</button>' +
+        '</td></tr>';
+    }).join('');
+    box.innerHTML = '<div class="cart-sec-head"><h3>📥 Notas importadas nesta conta</h3></div>' +
+      '<div class="cart-table-wrap"><table class="val-table cart-table">' +
+      '<thead><tr><th>Nota</th><th>Corretora</th><th>Pregão</th>' +
+      '<th class="th-num">Negócios</th><th class="th-num">Taxas</th>' +
+      '<th class="th-num">IRRF</th><th></th></tr></thead><tbody>' + rows +
+      '</tbody></table></div>' +
+      '<p class="cart-note-line">ℹ️ Cada transação importada carrega a etiqueta ' +
+      '📝 “NC &lt;nº&gt; · corretora · data”. ↩️ remove TODOS os negócios da nota ' +
+      '(transações editadas mantêm as alterações fora da nota… confira o contador).</p>';
+  }
+
+  function confirmUndoNota(id) {
+    askConfirm('↩️ Desfazer importação',
+      'Remover <b>todos os negócios importados</b> desta nota?<br>' +
+      '<span class="cart-warn-line">ℹ️ O preço médio e o lucro são recalculados.</span>',
+      '↩️ Desfazer', function() {
+        api('DELETE', '/import/nota/' + encodeURIComponent(id)).then(function(res) {
+          if (!res.ok) window.alert((res.j && res.j._error) || 'Erro ao desfazer.');
+          else {
+            if (res.j && res.j.warnings && res.j.warnings.length) {
+              st.pendingNote = { text: res.j.warnings.join(' '),
+                                 until: Date.now() + 15000 };
+            }
+            reload();
+          }
+        });
+      });
+  }
+
   // ── manage modal (⭐ observados + 📇 cadastro) ──────────────────────────
   function renderManage() {
     var box = $('cart-manage-body');
@@ -4706,7 +5141,7 @@ function initCarteiraPage() {
   root.addEventListener('click', function(e) {
     var el = e.target && e.target.closest ? e.target.closest(
       '[data-act],[data-nav],[data-view],[data-eu],[data-du],[data-aw],' +
-      '[data-ea],[data-da],[data-qb],[data-qs],[data-et],[data-dt],' +
+      '[data-ea],[data-da],[data-qb],[data-qs],[data-et],[data-dt],[data-un],' +
       '.cart-ucard') : null;
     if (!el) return;
 
@@ -4715,6 +5150,7 @@ function initCarteiraPage() {
       if (act === 'user') openUserModal();
       else if (act === 'account') openAccountModal();
       else if (act === 'tx') openTxModal();
+      else if (act === 'import') openImportModal();
       else if (act === 'manage') {
         $('cart-manage-msg').textContent = '';
         renderManage();
@@ -4743,6 +5179,7 @@ function initCarteiraPage() {
     if (el.hasAttribute('data-da')) { confirmDeleteAccount(el.getAttribute('data-da')); return; }
     if (el.hasAttribute('data-et')) { openTxModal(el.getAttribute('data-et')); return; }
     if (el.hasAttribute('data-dt')) { confirmDeleteTx(el.getAttribute('data-dt')); return; }
+    if (el.hasAttribute('data-un')) { confirmUndoNota(el.getAttribute('data-un')); return; }
     if (el.hasAttribute('data-qb')) {
       var q = el.getAttribute('data-qq');
       openTxModal(null, { ticker: el.getAttribute('data-qb'), type: 'buy',
@@ -4814,6 +5251,13 @@ function initCarteiraPage() {
   });
   $('cart-tx-type').addEventListener('change', function() { updateHints(); });
   $('cart-tx-ticker').addEventListener('input', function() { updateHints(); });
+
+  // [v1.22.2] nota import — the file input and commit button are static
+  // in the template; the preview inside is re-rendered per file.
+  $('cart-import-file').addEventListener('change', function() {
+    readImportFile(this.files && this.files[0]);
+  });
+  $('cart-import-commit').addEventListener('click', commitImport);
 
   reload();
 }

@@ -140,7 +140,7 @@ def _portfolio_path() -> Path:
 
 def _empty_store() -> dict[str, Any]:
     return {"users": [], "accounts": [], "txs": [],
-            "watchlist": [], "tickers": {}}
+            "watchlist": [], "tickers": {}, "notas": []}
 
 
 class PortfolioStoreError(RuntimeError):
@@ -171,6 +171,13 @@ def _parse_store(data: Any) -> dict[str, Any]:
         if not isinstance(data["tickers"], dict):
             raise ValueError("'tickers' deve ser um objeto")
         store["tickers"] = data["tickers"]
+    # [v1.22.2] Nota-import registry (dedup + undo). Optional like
+    # 'tickers' — pre-v1.22.2 stores simply have no notas yet.
+    if "notas" in data:
+        if not isinstance(data["notas"], list) or any(
+                not isinstance(x, dict) for x in data["notas"]):
+            raise ValueError("'notas' deve ser uma lista de objetos")
+        store["notas"] = data["notas"]
     _ensure_seq(store)
     return store
 
@@ -437,6 +444,7 @@ class PortfolioService:
                 "txs": [dict(t) for t in self._store["txs"]],
                 "watchlist": [dict(w) for w in self._store["watchlist"]],
                 "tickers": {k: dict(v) for k, v in self._store["tickers"].items()},
+                "notas": [dict(n) for n in self._store.get("notas") or []],
             }
 
     # ── lookups ──────────────────────────────────────────────────────────────
@@ -936,6 +944,187 @@ class PortfolioService:
         if warnings:
             out["warnings"] = warnings
         return out
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Notas de Corretagem — import (bulk, dedup, single save) / undo
+    # [v1.22.2] webui/services/nota_import.py owns the PDF → trades
+    # parsing; THIS method owns the write: all-or-nothing, one atomic
+    # _save, a notas registry row keyed (cnpj|broker, nº nota, pregão)
+    # for dedup + undo, and the per-trade validation reused verbatim
+    # from _validate_tx (an import is just many txs born together).
+    # ════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _nota_key(cnpj: Any, nota: Any, pregao: Any) -> tuple[str, str, str]:
+        """Dedup identity: broker CNPJ (falls back to broker name) +
+        nº nota + pregão. The same nota in two layouts (XP vs modelo
+        B3) lands on the SAME key — importing both is the classic
+        double-count and gets refused."""
+        return ((str(cnpj or "").strip() or "SEM-CNPJ"),
+                str(nota or "").strip(), str(pregao or "").strip())
+
+    def nota_dedup_status(self, cnpj: str, nota: str,
+                          pregao: str) -> dict[str, Any]:
+        """Read-only pre-check for the preview UI (commit re-checks
+        under the lock — the preview is advisory, the commit is law)."""
+        key = self._nota_key(cnpj, nota, pregao)
+        for n in self._snapshot()["notas"]:
+            if self._nota_key(n.get("broker_cnpj"), n.get("nota"),
+                              n.get("pregao")) == key:
+                return {"imported": True, "existing": n}
+        return {"imported": False}
+
+    def import_nota(self, body: dict) -> dict:
+        """Bulk tx insert from a parsed nota — all-or-nothing.
+
+        Body: {account_id, broker, broker_cnpj, nota, pregao (ISO),
+        client_name?, fees_total?, irrf?, trades: [{ticker, type,
+        quantity, price, fees, date, note?, day?}]}. Errors come back
+        per trade row ({"errors": {"trades": {row: {field: msg}}}}) —
+        the same PT-BR messages the single-tx form produces.
+        """
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
+            store = self._store
+
+            account = self._account(store, str(body.get("account_id") or ""))
+            if account is None:
+                return {"ok": False, "_error": "Selecione uma conta "
+                        "válida para importar a nota."}
+            trades = body.get("trades")
+            if not isinstance(trades, list) or not trades:
+                return {"ok": False, "_error": "Nenhuma negociação para "
+                        "importar."}
+
+            key = self._nota_key(body.get("broker_cnpj"), body.get("nota"),
+                                 body.get("pregao"))
+            for n in store.get("notas") or []:
+                if self._nota_key(n.get("broker_cnpj"), n.get("nota"),
+                                  n.get("pregao")) == key:
+                    return {"ok": False, "status": 409,
+                            "_error": "Esta nota já foi importada "
+                            f"({n.get('nota')} · {n.get('broker')} · "
+                            f"{_fmt_date(n.get('pregao'))}) — use "
+                            "\u21a9 Desfazer na lista de notas se quiser "
+                            "refazer."}
+
+            # Validate every trade BEFORE writing anything (all-or-nothing).
+            rows: list[dict] = []
+            errs: dict[str, dict[str, str]] = {}
+            for i, t in enumerate(trades):
+                if not isinstance(t, dict):
+                    errs[str(i)] = {"ticker": "Negócio inválido."}
+                    continue
+                fields, e = self._validate_tx(store, {
+                    "account_id": account["id"],
+                    "ticker": t.get("ticker"),
+                    "type": t.get("type") or t.get("side"),
+                    "quantity": t.get("quantity"),
+                    "price": t.get("price"),
+                    "fees": t.get("fees"),
+                    "date": t.get("date") or body.get("pregao"),
+                    "note": t.get("note") or "",
+                })
+                if e:
+                    errs[str(i)] = e
+                else:
+                    rows.append(fields)
+            if errs:
+                return {"ok": False, "errors": {"trades": errs}}
+
+            # One atomic save: txs + the notas registry row.
+            nota_id = _new_id()
+            tx_ids: list[str] = []
+            seq = self._next_seq(store)
+            stamp = date.today().isoformat() + "T" + \
+                time.strftime("%H:%M:%S")
+            note_tag = (f"NC {body.get('nota')} · "
+                        f"{str(body.get('broker') or '')[:24]} · "
+                        f"{_fmt_date(body.get('pregao'))}")
+            for fields in rows:
+                tx = {"id": _new_id(), "seq": seq,
+                      "created_at": stamp, **fields,
+                      "note": (fields.get("note") or note_tag)[:200]}
+                tx_ids.append(tx["id"])
+                seq += 1
+                store["txs"].append(tx)
+                self._ensure_ticker_meta(store, tx["ticker"])
+            store.setdefault("notas", []).append({
+                "id": nota_id,
+                "broker": str(body.get("broker") or "")[:60],
+                "broker_cnpj": key[0],
+                "nota": key[1], "pregao": key[2],
+                "client_name": str(body.get("client_name") or "")[:60],
+                "account_id": account["id"],
+                "tx_ids": tx_ids, "trade_count": len(tx_ids),
+                "fees_total": round(float(body.get("fees_total") or 0.0), 2),
+                "irrf": body.get("irrf"),
+                "imported_at": stamp,
+            })
+            self._save()
+        self._syslog("info", f"nota {key[1]} importada: {len(tx_ids)} "
+                             f"negócios ({key[0]}, "
+                             f"{_fmt_date(key[2])})")
+        return {"ok": True, "created": len(tx_ids), "nota_id": nota_id}
+
+    def undo_import(self, nota_id: str) -> dict:
+        """Remove a nota's txs + its registry row (the import undo)."""
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
+            store = self._store
+            nota = next((n for n in store.get("notas") or []
+                         if n.get("id") == nota_id), None)
+            if nota is None:
+                return {"ok": False, "_error": "Nota importada não "
+                        "encontrada.", "status": 404}
+            shorts_before = self._short_flags(store)
+            ids = set(nota.get("tx_ids") or [])
+            alive = [t for t in store["txs"] if t.get("id") in ids]
+            store["txs"] = [t for t in store["txs"]
+                            if t.get("id") not in ids]
+            store["notas"] = [n for n in store.get("notas") or []
+                              if n.get("id") != nota_id]
+            self._save()
+            warnings = self._short_warnings(shorts_before)
+        self._syslog("info", f"importação da nota {nota.get('nota')} "
+                             "desfeita")
+        # [v1.22.2] The honest count: txs actually removed (a manually
+        # deleted tx is not removed again — the registry row still goes).
+        out: dict[str, Any] = {"ok": True, "removed": len(alive)}
+        if warnings:
+            out["warnings"] = warnings
+        return out
+
+    def notas_registry(self, account_id: str | None = None) -> dict:
+        """The imported-notas list for the account view (undo UI)."""
+        snap = self._snapshot()
+        acc_by_id = {a["id"]: a for a in snap["accounts"]}
+        rows = []
+        for n in snap["notas"]:
+            if account_id and n.get("account_id") != account_id:
+                continue
+            acc = acc_by_id.get(n.get("account_id") or "")
+            alive = sum(1 for t in snap["txs"]
+                        if t.get("id") in set(n.get("tx_ids") or []))
+            rows.append({**n, "account_name": acc["name"] if acc else "—",
+                         "alive": alive,
+                         "imported_at_br": (n.get("imported_at") or "")[:10]
+                         .replace("-", "/")})
+        rows.sort(key=lambda n: (n.get("pregao") or "",
+                                 n.get("nota") or ""), reverse=True)
+        return {"ok": True, "notas": rows}
 
     # ════════════════════════════════════════════════════════════════════════
     # CRUD — watchlist (tickers followed on the Painel)

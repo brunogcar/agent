@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-11-23 (v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
+Last updated: 2026-11-24 (v1.22.2 — nota de corretagem PDF import + IR/DARF helper; v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
 
 ---
 
@@ -365,6 +365,11 @@ The user's own money: users → accounts → transactions → PM (preço médio)
 | POST | `/api/webui/portfolio/watchlist` | Add ticker `{ticker}` |
 | DELETE | `/api/webui/portfolio/watchlist/{ticker}` | Remove ticker |
 | POST | `/api/webui/portfolio/tickers/{ticker}/refresh` | Re-fetch the CVM name/sector (background thread) |
+| POST | `/api/webui/portfolio/import/nota` | [v1.22.2] `{pdf_b64}` → nota PREVIEW (dry-run — nothing written): broker/CNPJ, nº nota, pregão, client, parsed trades with pro-rata fees, `needs_mapping` (modelo B3 specs without ticker + suggestions), IRRF, warnings, and the dedup pre-check (`dedup.imported`). XP / modelo B3 / BTG layouts; à vista + fracionário; pdfplumber (pypdf fallback) |
+| POST | `/api/webui/portfolio/import/commit` | [v1.22.2] Parsed nota (mapped by the user) → ALL txs in ONE atomic save: `{account_id, broker, broker_cnpj, nota, pregao, trades: [{ticker, type, quantity, price, fees, date}]}`. Dedup law: the same (CNPJ, nº nota, pregão) is refused `409`; per-row PT-BR validation errors, all-or-nothing; every tx carries the `NC nº · corretora · data` note tag |
+| GET | `/api/webui/portfolio/import/notas?account_id=` | [v1.22.2] The imported-notas registry (one account or all): broker, pregão, `alive` count (txs still present), fees, IRRF — the undo UI |
+| DELETE | `/api/webui/portfolio/import/nota/{id}` | [v1.22.2] Undo an import: removes the nota's txs + its registry row (PM/lucro recalculated; short warnings like any delete) |
+| GET | `/api/webui/portfolio/ir?scope=all\|user:{id}\|account:{id}` | [v1.22.2] IR mês a mês per user (CPF level — accounts summed): swing × day-trade split (day carve-out: matched same-day pairs never touch the PM), R$ 20k exemption, separate swing/day loss carry pools, IRRF estimates (0,005% swing / 1% day per account), 15%/20%, DARF 6015/6120 with due dates (último dia útil do mês seguinte)
 
 ### `GET /api/webui/portfolio/positions?scope=all` (sample)
 

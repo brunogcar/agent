@@ -96,6 +96,7 @@
     "price": "Unit price (R$)",
     "fees": "Fees (R$, optional)",
     "note": "Note (optional)",
-    "manage": "Manage"
+    "manage": "Manage",
+    "import_nota": "Import brokerage note"
   }
 }

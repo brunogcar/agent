@@ -1592,6 +1592,85 @@ dialog.cart-modal h3 { margin-bottom: var(--space-4); font-size: 15px; }
   margin-bottom: var(--space-2);
 }
 
+/* ── Carteira v1.22.2 — 📥 importar nota + 🧾 IR mês a mês ── */
+.cart-import-file { font-size: 13px; margin: var(--space-2) 0; }
+.cart-import-preview { margin-top: var(--space-3); display: grid; gap: var(--space-3); }
+.cart-import-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2) var(--space-3);
+}
+.cart-import-cell span {
+  display: block; font-size: 10px; text-transform: uppercase;
+  color: var(--color-text-sec); margin-bottom: 2px;
+}
+.cart-import-cell b {
+  display: block; font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cart-import-banner {
+  font-size: 12.5px; line-height: 1.6; border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); border: 1px solid;
+}
+.cart-import-banner.is-error {
+  background: color-mix(in srgb, var(--color-danger, #b91c1c) 8%, transparent);
+  border-color: var(--color-danger, #b91c1c);
+}
+.cart-import-banner.is-warn {
+  background: color-mix(in srgb, var(--color-warning, #b45309) 8%, transparent);
+  border-color: var(--color-warning, #b45309);
+}
+.cart-import-map { display: grid; gap: var(--space-2); }
+.cart-import-map h4 { font-size: 13px; }
+.cart-import-maprow {
+  display: flex; align-items: center; gap: var(--space-3);
+  background: var(--color-bg-sec);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+.cart-import-mapsec {
+  flex: 1; font-size: 13px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.cart-import-mapsec em {
+  font-style: normal; color: var(--color-text-sec); font-size: 11px;
+}
+.cart-import-mapinput {
+  width: 110px; font-weight: 700; text-align: center;
+}
+.cart-import-opts {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; font-size: 12.5px;
+}
+.cart-check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+#cart-import-rows tr.is-map-bad td { background: color-mix(in srgb, var(--color-danger, #b91c1c) 7%, transparent); }
+.cart-notas:empty { display: none; }
+.cart-ir {
+  margin-top: var(--space-4); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: var(--color-bg-sec);
+}
+.cart-ir > summary {
+  cursor: pointer; padding: var(--space-3); font-size: 14px; font-weight: 600;
+  list-style: none; display: flex; align-items: center; gap: 8px;
+}
+.cart-ir > summary::-webkit-details-marker { display: none; }
+.cart-ir > summary::after {
+  content: '▾'; margin-left: auto; color: var(--color-text-sec);
+  transition: transform 0.15s ease;
+}
+.cart-ir[open] > summary::after { transform: rotate(180deg); }
+.cart-ir > summary:hover { color: var(--color-brand); }
+#cart-ir-body { padding: 0 var(--space-3) var(--space-3); display: grid; gap: var(--space-3); }
+.cart-ir-user { font-size: 13.5px; }
+.cart-ir-partial {
+  font-size: 12.5px; border: 1px solid var(--color-warning, #b45309);
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-3);
+}
+.cart-ir-notes {
+  margin: 0; padding-left: 18px; font-size: 11.5px;
+  color: var(--color-text-sec); line-height: 1.6;
+}
+
 /* ── Mobile ── */
 @media (max-width: 720px) {
   .cart-ucard-grid { grid-template-columns: 1fr; }
@@ -1605,4 +1684,8 @@ dialog.cart-modal h3 { margin-bottom: var(--space-4); font-size: 15px; }
   .cart-stat-v { font-size: 12px; }
   .company-tabs { flex-wrap: wrap; }
   .company-watch-slot { margin-left: 0; }
+  .cart-import-grid { grid-template-columns: 1fr 1fr; }
+  .cart-import-maprow { flex-direction: column; align-items: stretch; gap: 4px; }
+  .cart-import-mapinput { width: 100%; text-align: left; }
+  .cart-ir-table { font-size: 11.5px; }
 }

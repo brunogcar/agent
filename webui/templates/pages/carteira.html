@@ -189,6 +189,32 @@
     </div>
   </dialog>
 
+  {# ── [v1.22.2] Importar Nota de Corretagem (PDF → dry-run → commit).
+        XP / modelo B3 / BTG layouts; specs sem ticker (modelo B3) are
+        mapped by hand ONCE per import; the same nota in two layouts is
+        the same dedup key (cnpj + nº nota + pregão). ── #}
+  <dialog id="cart-import-modal" class="cart-modal cart-modal-wide"
+          aria-labelledby="cart-import-title">
+    <div class="cart-modal-col">
+      <h3 id="cart-import-title">📥 {{ t("carteira.import_nota") }}</h3>
+      <div id="cart-import-body" class="cart-manage-body">
+        <p class="cart-muted">📄 Selecione o PDF da nota de corretagem
+          (XP, modelo B3 ou BTG) — a importação é só para
+          <b>à vista e fracionário</b>.</p>
+        <input type="file" id="cart-import-file" accept="application/pdf,.pdf"
+               class="cart-import-file">
+        <div id="cart-import-preview" class="cart-import-preview"></div>
+      </div>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-import-msg"></span>
+        <button type="button" value="close" class="cart-btn"
+                data-close>{{ t("common.close") }}</button>
+        <button type="button" class="cart-btn primary"
+                id="cart-import-commit" hidden>✅ Importar</button>
+      </div>
+    </div>
+  </dialog>
+
   {# ── [v1.21 fix 2] Exclusão — styled confirmation, dead-center like
         the rest; replaces window.confirm for EVERY destructive op
         (usuário, conta, transação, ticker observado). ── #}

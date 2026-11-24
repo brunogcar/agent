@@ -96,6 +96,7 @@
     "price": "Preço unitário (R$)",
     "fees": "Taxas (R$, opcional)",
     "note": "Observação (opcional)",
-    "manage": "Gerenciar"
+    "manage": "Gerenciar",
+    "import_nota": "Importar nota de corretagem"
   }
 }

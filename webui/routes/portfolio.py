@@ -215,6 +215,67 @@ def delete_tx(tx_id: Id):
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 404))
 
 
+# ── notas de corretagem — import (PDF → preview → commit) [v1.22.2] ──────────
+
+@router.post("/import/nota")
+async def import_nota_preview(request: Request):
+    """base64 PDF → parsed preview (NO store write — the dry-run).
+
+    Body: {pdf_b64}. The response merges the dedup pre-check
+    (advisory) — the commit endpoint re-checks under the lock.
+    """
+    body = await _json_body(request)
+    if body is None:
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
+    from webui.services.nota_import import preview_from_b64
+    out = preview_from_b64(str(body.get("pdf_b64") or ""))
+    if not out.get("ok"):
+        return _bad(out, status_code=400)
+    dedup = _svc.nota_dedup_status(out.get("broker_cnpj") or "",
+                                   out.get("nota") or "",
+                                   out.get("pregao") or "")
+    out["dedup"] = dedup
+    return JSONResponse(out)
+
+
+@router.post("/import/commit")
+async def import_nota_commit(request: Request):
+    """Parsed nota (mapped by the user in the preview) → txs, one save."""
+    body = await _json_body(request)
+    if body is None:
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
+    res = _svc.import_nota(body)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
+
+
+@router.get("/import/notas")
+def get_imported_notas(account_id: str | None = None):
+    """The imported-notas registry (dedup/undo UI) — optionally one account."""
+    return JSONResponse(_svc.notas_registry(account_id))
+
+
+@router.delete("/import/nota/{nota_id}")
+def undo_import(nota_id: Id):
+    """Undo an import: removes the nota's txs + registry row."""
+    res = _svc.undo_import(nota_id)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 404))
+
+
+# ── IR / DARF helper [v1.22.2] ───────────────────────────────────────────────
+
+@router.get("/ir")
+def get_ir(scope: str = "all"):
+    """Month-by-month swing × day-trade IR estimate per user (CPF)."""
+    if not _SCOPE_RE.match(scope or ""):
+        return JSONResponse(
+            {"_error": "Escopo inválido — use all, user:<id> ou "
+                       "account:<id>."}, status_code=400)
+    from webui.services.ir_helper import ir_report
+    out = ir_report(scope)
+    return JSONResponse(out if out.get("ok") else out,
+                        status_code=200 if out.get("ok") else 400)
+
+
 # ── watchlist ────────────────────────────────────────────────────────────────
 
 @router.post("/watchlist")
