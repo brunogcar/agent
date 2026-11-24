@@ -49,6 +49,10 @@
 [WebUI v1.22] ?v=66 (app.js: hardening wave — store-safety banner,
   mixed long+short 🔀 PM/pct '—', short-creation warnings, sell@R$0
   hint, parseBr paste fix; see CHANGELOG)
+[WebUI v1.22.1] ?v=67 (app.js: latent-XSS closings — safeColor on the
+  heatmap cell colors, escaped fmtDate/fmtMonth fallthroughs, the
+  valuation subnav pills on data-valsub + ONE delegated listener
+  instead of interpolated onclick args; see CHANGELOG)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -221,6 +225,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=66"></script>
+  <script src="/static/js/app.js?v=67"></script>
 </body>
 </html>

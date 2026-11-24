@@ -13,7 +13,7 @@ Brazilian Financial Data WebUI — a live, server-rendered web interface that re
 - **Real-time sync** — SSE (Server-Sent Events) for live sync progress
 - **System log** — a 📜 top-bar button opens a right-side drawer with the live request/sync/error tail (SSE while open, badge-polling while closed) [v1.20]
 - **Settings as data** — schema-driven Configurações page; sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale and log controls, all wired [v1.20]
-- **Carteira (portfolio)** — multiple users → brokerage accounts → buy/sell transactions, consolidated into preço-médio positions (KPIs, per-account and geral views, CRUD dialogs); watched accounts + tickers display live on the Painel [v1.21]
+- **Carteira (portfolio)** — multiple users → brokerage accounts → buy/sell transactions, consolidated into preço-médio positions (the 👥 usuários → 👤 contas → 🏦 conta drill-down; sums never across users); shorts 🚨 / bonificações ⚠️ first-class; watched accounts + tickers display live on the Painel [v1.21]; [v1.22] hardening — shorts count in the totals, deterministic replay `(date, created_at, seq)`, corrupt-store quarantine (the store never wipes), flip fee split, one ticker regex (B3SA3/BDRs pass), cross-user moves blocked
 - **No build step** — vanilla JS + HTMX + Alpine.js, no Node.js, no bundler
 
 ## Quick Start
@@ -32,10 +32,19 @@ python webui.py --reload
 python webui.py --no-sync
 ```
 
-> **Security note (v1.5):** the app is loopback-only by default. Binding a
-> non-loopback host additionally requires `WEBUI_ALLOW_LAN=1` — the mounted
-> gateway routes (`/task`, `/chat`, `/ws`) execute agent tools unauthenticated,
-> so an accidental `--host 0.0.0.0` must stay opt-in.
+> **Security note (v1.5, hardened v1.22):** the app is loopback-only by
+> default. Binding a non-loopback host additionally requires
+> `WEBUI_ALLOW_LAN=1` — the mounted gateway routes (`/task`, `/chat`, `/ws`)
+> execute agent tools unauthenticated, so an accidental `--host 0.0.0.0` must
+> stay opt-in. [v1.22] the same flag now also gates the CSRF guard
+> (`CrossSiteGuardMiddleware`, pure ASGI, every router): cross-site mutations
+> are always rejected (`Sec-Fetch-Site: cross-site`), a non-loopback `Origin`
+> needs the flag, and JSON bodies must be `application/json` — a malicious
+> page opened in your browser cannot drive the WebUI's write endpoints.
+>
+> **LAN quick start:** `WEBUI_ALLOW_LAN=1 python webui.py --host 0.0.0.0` —
+> then open `http://<machine-ip>:8000/webui` from another device on the same
+> network (know the risks above: the gateway routes are unauthenticated).
 
 ## Architecture
 

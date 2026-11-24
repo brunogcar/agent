@@ -267,6 +267,14 @@ def _num(value: Any) -> float | None:
         s = value.strip()
         if "," in s:
             s = s.replace(".", "").replace(",", ".")
+        elif re.fullmatch(r"-?\d{1,3}(\.\d{3})+", s):
+            # [v1.22.1] Dot-only BUT strictly 3-digit groups is PT-BR
+            # thousands ("1.234" → 1234) — the SAME rule the client's
+            # parseBr applies on paste (v1.22); the server half of the
+            # "'1.234' stays thousands" promise (it parsed as 1,234 —
+            # caught by the regression suite). "3.65"/"0.0432" (not
+            # 3-digit groups) stay US decimals.
+            s = s.replace(".", "")
         try:
             f = float(s)
         except ValueError:
@@ -300,6 +308,12 @@ class PortfolioService:
         self._quotes_ok: bool | None = None
         # Background ticker-metadata refreshes (dedup in-flight).
         self._meta_inflight: set[str] = set()
+        # [v1.22.1] The inflight check-then-add raced: _ensure_ticker_meta
+        # runs under the MAIN lock but refresh_ticker spawns OUTSIDE it —
+        # two concurrent calls could both see "not inflight" and fetch
+        # twice. A dedicated lock makes the dedup atomic from every caller
+        # (and never nests with the main lock, so no ordering exists).
+        self._meta_lock = threading.Lock()
 
     # ── store plumbing ───────────────────────────────────────────────────────
 
@@ -514,9 +528,10 @@ class PortfolioService:
 
     def _spawn_meta_refresh(self, ticker: str) -> None:
         """Background FCA/CAD metadata fetch (deduped, daemon thread)."""
-        if ticker in self._meta_inflight:
-            return
-        self._meta_inflight.add(ticker)
+        with self._meta_lock:                    # [v1.22.1] atomic dedup
+            if ticker in self._meta_inflight:
+                return
+            self._meta_inflight.add(ticker)
 
         def _work() -> None:
             try:
@@ -542,7 +557,8 @@ class PortfolioService:
                 print(f"[webui] portfolio meta({ticker}) failed: {e}\n"
                       f"{traceback.format_exc()}")
             finally:
-                self._meta_inflight.discard(ticker)
+                with self._meta_lock:            # [v1.22.1] matched discard
+                    self._meta_inflight.discard(ticker)
 
         threading.Thread(target=_work, daemon=True,
                          name=f"portfolio-meta-{ticker}").start()
@@ -791,13 +807,22 @@ class PortfolioService:
         else:
             out["price"] = p
 
-        fees = _num(body.get("fees"))
-        if fees is None:
+        # [v1.22.1] A PRESENT-but-unparseable fees value errors like
+        # quantity/price — it used to fall into the absent-fees default
+        # and silently book R$ 0,00 (NaN string → None → 0.0; caught by
+        # the regression suite). Absent/blank keeps meaning "no fees".
+        raw_fees = body.get("fees")
+        fees = _num(raw_fees)
+        if raw_fees is None or (isinstance(raw_fees, str)
+                                and not raw_fees.strip()):
             fees = 0.0
-        if fees < 0 or fees > 1e9:
-            errs["fees"] = "Taxas não podem ser negativas."
-        else:
-            out["fees"] = fees
+        elif fees is None:
+            errs["fees"] = "Taxas devem ser um número maior ou igual a zero."
+        if "fees" not in errs:
+            if fees < 0 or fees > 1e9:
+                errs["fees"] = "Taxas não podem ser negativas."
+            else:
+                out["fees"] = fees
 
         d = str(body.get("date") or "").strip()
         if not _ISO_DATE_RE.match(d):

@@ -26,8 +26,9 @@ flow rows (DRE/DFC/DVA, which DO have DT_INI_EXERC) report a 3/6/9-month
 period has its snapshot rows moved into the matching quarter bucket —
 the flow months of the filing, not the calendar month of DT_FIM_EXERC,
 drive the bucket (fiscal-year filers with quarter ends in May/Aug/Nov are
-handled by the same rule). Existing DBs are fixed by
-``python -m tools.migrations.rekey_itr_snapshots --apply``.
+handled by the same rule). Existing DBs are fixed by a force re-sync —
+the ITR engine re-keys each year as it re-parses (the whole history at
+once: ``sync(full_history=True, force=True)``).
 
 FLOW VS SNAPSHOT
 ----------------

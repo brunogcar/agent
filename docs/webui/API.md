@@ -121,6 +121,30 @@ Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w
 
 Each family also has dedicated endpoints over the same service methods — `financials-overview`, `financials-statements`, `valuation-overview|-multiples|-intrinsic|-fundamentals|-all`, `proventos-overview|-historico|-anual`. Same payloads as `/sections/{key}`; kept for the existing client loaders.
 
+### Section families (the registry keys)
+
+[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (15 families, 66 keys):
+
+| Family | Keys | Loaded by |
+|---|---|---|
+| `preco` | `cotacao`, `indicadores`, `volatilidade`, `volume`, `fibonacci` | Company · Preço tab (5 subtabs) |
+| `financials` | `overview`, `demonstracoes` | Company · Financeiro tab |
+| `valuation` | `overview`, `multiples`, `intrinsic`, `fundamentals`, `all` | Company · Valuation tab (5 subtabs) |
+| `proventos` | `overview`, `historico`, `anual` | Company · Proventos tab |
+| `options` | `overview`, `chain`, `iv`, `activity`, `positions` | Company · Opções tab |
+| `shareholders` | `overview`, `holders`, `free_float`, `equity` | Company · Acionistas tab |
+| `insiders` | `overview`, `transactions`, `monthly`, `by_role` | Company · Insiders tab |
+| `macro` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `retorno_real`, `focus`, `curva` | Macro page (8 lazy subtabs) |
+| `focus` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `fiscal`, `externo` | Mercado · Focus |
+| `fluxo` | `overview`, `mensal`, `anual`, `por_investidor` | Mercado · Fluxo |
+| `indices` | `overview`, `ibov`, `smll`, `idiv`, `ifix`, `bdrx` | Mercado · Índices |
+| `inflacao` | `overview`, `ipca`, `igpm`, `inpc` | Mercado · Inflação |
+| `juros` | `overview`, `selic`, `cdi`, `meta_selic` | Mercado · Juros |
+| `acoes` | `overview`, `evolucao` | Mercado · Ações |
+| `dividendos` | `overview`, `empresas`, `calendario`, `bdrs` | Mercado · Proventos |
+
+The company page's 8 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `proventos`, `options`, `shareholders`, `insiders` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click).
+
 ---
 
 ## Pre-flight Routes
@@ -192,7 +216,38 @@ Company header — returns the 3-part header HTML fragment (identity card + 4 re
 Tab content — returns the HTML fragment for a specific company tab.
 
 **Parameters:**
-- `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `proventos`
+- `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `proventos` | `options` | `shareholders` | `insiders` — the company page's 8 tabs
+
+---
+
+## Carteira Routes [v1.21]
+
+The portfolio REST surface (`webui/routes/portfolio.py`, all under `/api/webui/portfolio`; the store + PM engine in `webui/services/portfolio.py`). Every number is a pre-formatted PT-BR string; validation is all-or-nothing with per-field PT-BR errors (`400` + `{"_error": …, "errors": {field: message}}`). [v1.22] every mutation additionally passes the CSRF guard (cross-site origins and non-JSON bodies are rejected before the handler runs) and a degraded store (unreadable JSON on disk) refuses writes with a PT-BR `503`.
+
+### Reads
+
+- `GET /state` — users + accounts + watchlist + ticker metadata (the Gerenciar UI + selectors; `store_error` carries the degraded-store banner)
+- `GET /directory` — the users → accounts tree with live KPIs (per-USER sums only, never across users)
+- `GET /positions?scope=all|user:{id}|account:{id}` — PM positions + KPI cards + totals + recent transactions for a scope (shorts count in the totals; a mixed long+short of one ticker shows PM/Lucro % as "—" with a 🔀 flag)
+- `GET /overview` — the Painel widget payload (watched accounts grouped by user + watchlist tickers)
+
+### Users / accounts
+
+- `POST /users` `{name}` — create · `PUT /users/{id}` — rename · `DELETE /users/{id}` — cascade (accounts + txs)
+- `POST /accounts` `{user_id, name, broker, watch}` — create · `PUT /accounts/{id}` — update (any field incl. the ⭐ watch toggle) · `DELETE /accounts/{id}` — cascade (txs)
+
+### Transactions
+
+- `POST /txs` `{account_id, ticker, type: buy|sell, quantity, price, fees?, date, note?}` — create (sells are free to short — qty goes negative; buys at R$ 0,00 are bonificações; sells at R$ 0,00 and NaN/±inf values are rejected)
+- `PUT /txs/{id}` — update (same-user accounts only — moving a tx to ANOTHER user's account is refused; `warnings` returns when the edit leaves shorts open)
+- `DELETE /txs/{id}` — delete (PM/lucro recalculated by the replay; `warnings` when the delete leaves shorts open; nonexistent id → `404`)
+
+Replay semantics [v1.22]: transactions replay in `(date, created_at, seq)` order — `seq` is the monotonic insertion counter (backfilled for pre-v1.22 files), so same-second entries keep their insertion order. A buy that covers a short and flips long splits its fees (covered share → realizado, excess share → the new long's PM).
+
+### Watchlist + ticker metadata
+
+- `POST /watchlist` `{ticker}` — add · `DELETE /watchlist/{ticker}` — remove
+- `POST /tickers/{ticker}/refresh` — re-fetch the CVM name/sector in a background thread
 
 ---
 

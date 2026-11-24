@@ -46,7 +46,7 @@
 
 2. **Always wrap engine calls in `engine_cache_scope()`.** The calculations engines use `@engine_cached` which checks a ContextVar cache. Without `engine_cache_scope()`, shared engines (earnings, pl, debt) get re-queried N times.
 
-3. **Always set `data-theme` before CSS loads.** FOUC (Flash-Of-Unstyled-Content) prevention: inline script in `<head>` reads `localStorage.theme` and sets `data-theme` on `<html>` before any CSS loads.
+3. **Always set `data-theme` before CSS loads.** FOUC (Flash-Of-Unstyled-Content) prevention: the `<html data-theme>` is SERVER-rendered from the `webui_theme` COOKIE — the cookie is the single source of truth (v1.5: the FOUC script's old `localStorage.theme` read was never written anywhere, so a stale value could override the selected theme). The only localStorage uses are the sidebar-collapse flag and one-shot navigation keys — never theme/locale.
 
 4. **Always init charts after HTMX swaps.** Inline `<script>` tags in HTMX-swapped content don't execute. `app.js` listens for `htmx:afterSwap` and calls `initChartsInElement()`. Any new chart must use the `data-chart-type` attribute pattern.
 
@@ -66,6 +66,6 @@
 
 12. **Always get service instances from `webui.adapters.registry.service(cls)`.** It's the memoized singleton factory — routes and adapters share ONE instance (PriceService carries the shared OHLCV cache). Constructing `PriceService()` directly duplicates the cache.
 
-13. **Always check the pre-flight panel when data seems missing.** `/webui/sync` shows the Diagnóstico do Sistema card (DB existence, schema, WAL, row counts, adapter registry). `GET /api/webui/preflight/` returns the same report as JSON for scripting. A "re-key pendente" warn on itr.db means the DB predates v1.7.1 — run `python -m tools.migrations.rekey_itr_snapshots --apply` (close the WebUI first; the migration wipes the engine cache and restart makes in-memory caches die).
+13. **Always check the pre-flight panel when data seems missing.** `/webui/sync` shows the Diagnóstico do Sistema card (DB existence, schema, WAL, row counts, adapter registry). `GET /api/webui/preflight/` returns the same report as JSON for scripting. A "re-key pendente" warn on itr.db means the DB predates v1.7.1 — sync the `itr` source (the per-source button force re-downloads current+previous year and the engine re-keys as it re-parses); for the full history run the engine once: `python -c "from data_sources.cvm.itr.sync_engine import sync; sync(full_history=True, force=True)"` (idempotent — only rows still at meses=12 are touched; close the WebUI first, the pass wipes the engine cache).
 
 14. **Always re-key snapshot semantics from the filing's flow rows, never the calendar month.** A BPA/BPP row has no period of its own — its bucket comes from the DRE/DFC rows of the same filing (see `data_sources/cvm/_meses.py`'s snapshot corollary and Design Decision 12). Calendar-month mappings silently mis-bucket fiscal-year filers (May/Aug/Nov quarter ends).

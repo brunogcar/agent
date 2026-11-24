@@ -13,7 +13,7 @@
 
 ---
 
-## ✅ Built (v1 → v1.21)
+## ✅ Built (v1 → v1.22)
 
 ### The app today
 
@@ -35,14 +35,24 @@
 - Pure-ASGI request logging middleware (SSE-safe), threadpool `def` handlers
 - Vendored JS (HTMX + Alpine + Chart.js, no CDN), no build step
 - CSS variables 3-layer theme system; JSON i18n (shell bilingual, content pt-BR)
-- Security posture: loopback-only by default (LAN = `WEBUI_ALLOW_LAN=1`), ticker regex at every company route, allow-lists for tabs/adapters, reflected-XSS closed
+- Security posture: loopback-only by default (LAN = `WEBUI_ALLOW_LAN=1`), ticker regex at every company route (ONE definition, `webui/validators.py` [v1.22] — B3SA3/BDRs pass), allow-lists for tabs/adapters, reflected-XSS closed; [v1.22] CSRF guard on every router (`CrossSiteGuardMiddleware` — cross-site mutations rejected, JSON-only bodies) + NaN/±inf rejected at the numeric boundary
 - **Settings as data** [v1.20] — one dict entry in `webui/services/settings.py` SCHEMA = a new setting (form auto-renders; storage `memory_db/webui_settings.json`); sync preferences (auto-sync at boot, stale threshold, periodic schedule), Painel knobs, theme/locale, log level/buffer — all wired, no dead knobs
 - **System log** [v1.20] — one in-memory ring buffer (`webui/services/syslog.py`) fed by three capture paths (request middleware, root-logger handler, explicit points); SSE while the drawer is open, 15s poll + unseen-error badge while closed
-- **Carteira store** [v1.21] — `memory_db/webui_portfolio.json` (users/accounts/txs/watchlist/ticker-metadata; the settings.py storage pattern) + the PM engine and `quotes_for()` quote enrichment in `webui/services/portfolio.py`; CRUD validated all-or-nothing with replay-checked sells
+- **Carteira store** [v1.21] — `memory_db/webui_portfolio.json` (users/accounts/txs/watchlist/ticker-metadata; the settings.py storage pattern) + the PM engine and `quotes_for()` quote enrichment in `webui/services/portfolio.py`; CRUD validated all-or-nothing (PT-BR per-field errors; sells free to short — the replay never rejects, it computes). [v1.22] deterministic replay — `(date, created_at, seq)` order, seq a monotonic insertion counter backfilled for pre-v1.22 files; shorts count in the totals; corrupt-store quarantine + `.bak` + PT-BR 503 writes-refusal (the store never wipes); flip fee split; mixed long+short PM "—"; cross-user tx moves blocked; edit/delete short-open warnings; regression tests (`tests/webui/test_portfolio_engine.py`) — the money engine never gets touched again without them
 
 ---
 
 ## 🔄 Next Up
+
+### Carteira — the money roadmap (the 4-review feature picks, rough value order)
+- [ ] **Broker CSV import** — preview + dedup + dry-run: paste/upload a broker export (CEI/B3, XP, Clear…) and see the transactions it WOULD create before anything is written. The onboarding killer feature — every one of the 4 adversarial reviews picked it first. Natural fit: the Gerenciar modal, staged as a table + diff against existing txs (same-second dedup via `seq`).
+- [ ] **Proventos per position / yield-on-cost** — dividends received per position over its holding period, DY on cost basis; the data is two joins away (carteira txs × dividends.db events by ticker + ex-date inside the position window).
+- [ ] **IR/DARF helper** — swing-trade × day-trade split (same-day buys+sells = day), the R$ 20k monthly exemption rule, per-month realized totals + darf estimate per owner. Pure replay arithmetic over the existing store.
+- [ ] **Performance: TWR/XIRR vs CDI/IBOV** — money-weighted (XIRR over the tx cashflows) and time-weighted returns, benchmarked against CDI (juros.db) and IBOV (indexes.db) over the same window; the patrimônio evolution curve (replay the book to every date × quote map — the engine already computes per-tx state).
+- [ ] **Corporate actions ingestion** — splits / bonificações / grupamentos as a tx type that re-bases quantities and PM without a synthetic trade (today a bonificação is a manual buy at R$ 0,00; a 2:1 split needs editing every earlier tx).
+- [ ] **Allocation & concentration** — per-setor/per-ticker concentration table (the CVM sector cache already lands in the store); alerts (price thresholds via the quote map); what-if simulator ("sell X at Y" → resulting KPIs without writing).
+- [ ] **Ledger polish** — pagination + filters on the transações table (the 200-cap keeps the newest), undo toast after every mutation (delete/edit), export/restore the store JSON in Gerenciar, per-symbol quote dates ("cotação de 21/11" when the paper is illiquid), gross long/short exposure KPIs, "Lucro hoje" → "Lucro não realizado" relabel, position-detail drawer (the full PM ladder per ticker).
+- [ ] **Engine perf/precision** — threadpool `def` mutation handlers (the async mutation path holds the event loop during the atomic write), QuoteSet immutability, replay memoization (invalidate on mutation), Decimal reconciliation at the store boundary (float today — fine at B3 magnitudes, but the day someone types a 17-digit quantity…). After correctness lands — never before.
 
 ### Company Tabs
 - [ ] **Historical tab** — 5Y price chart with overlays (P/L bands, Graham Number, moving averages), metric time series (revenue, earnings, margins). Reuse `skills/cvm/historical/` engines.

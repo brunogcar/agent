@@ -35,13 +35,17 @@ if (typeof Chart !== 'undefined' && typeof ChartZoom !== 'undefined') {
 
 // ── Helpers ──
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
-function fmtDate(iso) { return iso && iso.match(/^\d{4}-\d{2}-\d{2}$/) ? iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : iso; }
+// [v1.22.1] fmtDate/fmtMonth: the NON-matching fallthrough used to
+// return the raw string — every call site is a Chart.js canvas callback
+// today (no HTML), but one future use in an innerHTML template would
+// turn a crafted label into markup. The fallthrough now escapes.
+function fmtDate(iso) { return iso && iso.match(/^\d{4}-\d{2}-\d{2}$/) ? iso.slice(8)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4) : esc(iso); }
 // [v1.15] ISO month "2026-07" → "jul/2026" (same short PT-BR month form
 // the tables use — sortable by _valSortKey, readable on the x-axis).
 var _MONTH_NAMES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 function fmtMonth(iso) {
   var m = iso && iso.match(/^(\d{4})-(\d{2})$/);
-  if (!m) return iso;
+  if (!m) return esc(iso);   // [v1.22.1] escaped fallthrough (fmtDate)
   var i = Number(m[2]) - 1;
   return (i >= 0 && i < 12 ? _MONTH_NAMES[i] : m[2]) + '/' + m[1];
 }
@@ -62,6 +66,18 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 var valEsc = esc;  // legacy alias (v1.4 renderer name)
+
+// [v1.22.1] safeColor (the minimax latent-XSS one-liner): heatmap cell
+// colors come from the server payload straight into a style attribute —
+// only well-formed color VALUES pass (hex / rgb() / hsl() / a short bare
+// CSS name); anything carrying a quote, semicolon, paren-with-letters
+// (url(...), expression(...)) falls back, so a crafted payload can never
+// break out of the attribute.
+var _SAFE_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.,\s%]+\s*\)|hsla?\(\s*[\d.,\s%]+\s*\)|transparent|inherit|initial|currentcolor|[a-z]{1,20})$/;
+function safeColor(v, fb) {
+  v = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+  return _SAFE_COLOR_RE.test(v) ? v : (fb || 'transparent');
+}
 
 function chartTheme() { return { grid: cssVar('--chart-grid') || 'rgba(128,128,128,0.1)', text: cssVar('--chart-text') || '#888' }; }
 
@@ -1825,6 +1841,17 @@ window.valSubNav = function(btn, targetId) {
   });
 };
 
+// [v1.22.1] Latent-XSS hardening (minimax wave 3): the subnav pills used
+// to interpolate their target id into an INLINE onclick — data-valsub +
+// ONE delegated listener instead (nothing executable is ever built into
+// an attribute; the listener lives on document, so htmx-swapped content
+// is covered without re-wiring).
+document.addEventListener('click', function(ev) {
+  var t = ev.target;
+  var btn = t && t.closest ? t.closest('[data-valsub]') : null;
+  if (btn) window.valSubNav(btn, btn.getAttribute('data-valsub'));
+});
+
 // Grouped payload renderer — groups become pills; a group carrying 2+
 // subsections gets a second pill row (Retornos | Margens …). Chart configs
 // are stashed on panel._valChartCfgs exactly like the flat path, so
@@ -1836,7 +1863,7 @@ function renderValGrouped(panel, data) {
   var html = '<div class="val-subnav">';
   groups.forEach(function(g, gi) {
     html += '<button class="subtab-btn' + (gi === 0 ? ' active' : '') +
-            '" onclick="valSubNav(this,\'val-' + panel.id + '-g' + gi + '\')">' + valEsc(g.name) + '</button>';
+            '" data-valsub="' + esc('val-' + panel.id + '-g' + gi) + '">' + valEsc(g.name) + '</button>';
   });
   html += '</div>';
   groups.forEach(function(g, gi) {
@@ -1847,7 +1874,7 @@ function renderValGrouped(panel, data) {
       html += '<div class="val-subnav val-subnav2">';
       subs.forEach(function(s, si) {
         html += '<button class="subtab-btn' + (si === 0 ? ' active' : '') +
-                '" onclick="valSubNav(this,\'val-' + panel.id + '-g' + gi + 's' + si + '\')">' + valEsc(s.name) + '</button>';
+                '" data-valsub="' + esc('val-' + panel.id + '-g' + gi + 's' + si) + '">' + valEsc(s.name) + '</button>';
       });
       html += '</div>';
       subs.forEach(function(s, si) {
@@ -2025,8 +2052,8 @@ function valSectionHtml(sec) {
         if (ci === 0) {
           h += '<td class="val-metric">' + valEsc(String(cell)) + '</td>';
         } else if (cell && typeof cell === 'object') {
-          h += '<td class="val-heat" style="background:' + (cell.bg || 'transparent') +
-               ';color:' + (cell.color || 'inherit') + '" title="' + valEsc(cell.tooltip || '') + '">' +
+          h += '<td class="val-heat" style="background:' + safeColor(cell.bg) +
+               ';color:' + safeColor(cell.color, 'inherit') + '" title="' + valEsc(cell.tooltip || '') + '">' +
                valEsc(cell.text || '—') + '</td>';
         } else {
           h += '<td class="val-val">' + valEsc(String(cell)) + '</td>';

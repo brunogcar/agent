@@ -19,8 +19,9 @@ Same fixes as DFP sync_engine.py:
     This is what every consumer (financials fetchers._snap, the bpa/* and
     bpp/* calculation engines) expects: quarter buckets 3/6/9 hold the
     period-end balances. PRAGMA user_version is bumped to 2 as a marker
-    (pre-flight warns when an existing itr.db predates the re-key — see
-    tools/migrations/rekey_itr_snapshots.py for the one-time bulk fix).
+    (pre-flight warns when an existing itr.db predates the re-key — a
+    force re-sync re-downloads and re-keys as it re-parses; the whole
+    history at once: sync(full_history=True, force=True)).
 """
 
 from __future__ import annotations

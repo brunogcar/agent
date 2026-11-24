@@ -101,7 +101,7 @@ agent/
 |------|---------|
 | `webui.py` | Entry point — parses CLI args, runs WAL setup, launches uvicorn |
 | `core/db_wal.py` | Sets `PRAGMA journal_mode=WAL` on every SQLite DB at startup |
-| `webui/app.py` | FastAPI app factory — mounts routes, static files, existing gateway |
+| `webui/app.py` | FastAPI app factory — mounts routes, static files, existing gateway; [v1.22] `CrossSiteGuardMiddleware` (pure ASGI, every router): cross-site mutations rejected (`Sec-Fetch-Site: cross-site` always; non-loopback `Origin` unless `WEBUI_ALLOW_LAN=1`) + JSON bodies must be `application/json` |
 | `webui/adapters/contract.py` | [v1.7] Section payload contract — shapes, builders, validation |
 | `webui/adapters/registry.py` | [v1.7] Subtab adapter registry + `dispatch()` + memoized service singletons |
 | `webui/i18n.py` | JSON i18n — `t()` function, locale negotiation, `available_locales()` |
@@ -116,8 +116,19 @@ agent/
 | `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
 | `webui/services/syslog.py` | [v1.20] System log — the in-memory ring buffer behind the 📜 drawer (request middleware + root-logger handler + explicit points) |
 | `webui/services/settings.py` | [v1.20] Schema-driven settings — SCHEMA dict + JSON store (`memory_db/webui_settings.json`) |
-| `webui/services/portfolio.py` | [v1.21] Carteira — users/accounts/txs/watchlist JSON store, the PM (preço médio) position engine, `quotes_for()` enrichment, CVM ticker-metadata cache |
-| `tools/migrations/rekey_itr_snapshots.py` | [v1.7.1] One-time ITR snapshot re-key for DBs synced before v1.7.1 (dry-run + `--apply`: batched rowid UPDATEs, WAL checkpoint, engine-cache wipe) |
+| `webui/services/portfolio.py` | [v1.21] Carteira — users/accounts/txs/watchlist JSON store, the PM (preço médio) position engine, `quotes_for()` enrichment, CVM ticker-metadata cache; [v1.22] hardening — shorts in the totals, corrupt-store quarantine/.bak/PT-BR-503, deterministic replay `(date, created_at, seq)`, flip fee split, mixed-leg PM "—", cross-user move block, short-open warnings |
+| `webui/validators.py` | [v1.22] ONE ticker definition for every layer (`TICKER_RE` — digits in the stem, so B3SA3 and BDRs pass; option-shaped strings pass too — the documented price of B3SA3/A1MD34; unknown symbols simply get no quote) — a strict superset: the four drifted copies it replaced each rejected a different slice of B3 |
+| `webui/services/acoes.py` | [v1.17] Mercado page / Ações family — the stocks_history evolution store + overview (DDM) |
+| `webui/services/dividendos.py` | [v1.18] Mercado page / Proventos family — overview, por empresa, calendário, BDR split (DDM) |
+| `webui/services/fluxo.py` | [v1.13] Mercado page / Fluxo family — B3 investment flow: overview, mensal, anual, por investidor (DDM) |
+| `webui/services/focus.py` | [v1.12] Mercado page / Focus family — Boletim Focus: juros, inflação, câmbio, atividade, fiscal, externo (DDM) |
+| `webui/services/indexes.py` | [v1.14] Mercado page / Índices family — IBOV, SMLL, IDIV, IFIX, BDRX (b3-index) |
+| `webui/services/inflation.py` | [v1.15] Mercado page / Inflação family — IPCA, IGP-M, INPC (DDM) |
+| `webui/services/insiders.py` | [v1.10] Company Insiders tab — CVM insider trading: transações, mensal, por cargo |
+| `webui/services/juros.py` | [v1.16] Mercado page / Juros family — Selic, CDI, meta Selic (DDM) |
+| `webui/services/macro.py` | [v1.11] Macro page — BCB SGS + Focus in 8 lazy subtabs; home.py imports its numerics (the no-forked-numerics rule) |
+| `webui/services/options.py` | [v1.8] Company Opções tab — B3 options: chain, IV, activity, positions |
+| `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
@@ -262,7 +273,7 @@ class CompanyService:
 
 ### 12. Data Re-key Over Query-Layer Patching (v1.7.1)
 
-**Decision:** The quarterly-balanços bug (ITR BPA/BPP snapshots all stamped `meses=12`, quarter buckets 3/6/9 empty, every consumer carrying year-end values forward) was fixed by re-keying the DATA — the sync engine re-keys each filing's snapshots into the bucket its own flow rows report, and existing DBs run `tools/migrations/rekey_itr_snapshots --apply` — with ZERO changes to the query layer.
+**Decision:** The quarterly-balanços bug (ITR BPA/BPP snapshots all stamped `meses=12`, quarter buckets 3/6/9 empty, every consumer carrying year-end values forward) was fixed by re-keying the DATA — the sync engine re-keys each filing's snapshots into the bucket its own flow rows report, and existing DBs are healed by a FORCE re-sync (the engine re-keys each year as it re-parses — the per-source `itr` button covers current+previous year; `sync(full_history=True, force=True)` covers the whole history; the re-key is idempotent, only rows still at `meses=12` are touched) — with ZERO changes to the query layer.
 
 **Rationale:**
 - Every consumer (`fetchers._snap`, `_get_snapshot_value`, the bpa/* + bpp/* engines' `meses IN (3,6,9)` lookups) was already written for the correct semantics — patching them to work around mis-keyed data would have doubled the code paths and left the DB wrong

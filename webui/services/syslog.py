@@ -50,7 +50,10 @@ class SystemLog:
     """Thread-safe in-memory log ring buffer."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # [v1.22.1] RLock (B118): reentrant — a future log() call from
+        # inside a locked helper (or a settings callback while the lock
+        # is held) would deadlock on a plain Lock.
+        self._lock = threading.RLock()
         self._buf: deque[dict[str, Any]] = deque(maxlen=500)
         self._next_id = 1
 
@@ -61,14 +64,18 @@ class SystemLog:
         return _LEVELS.get(
             settings_service().get("logs.level", "info"), 0)
 
-    def _retrim(self) -> None:
-        """Apply a logs.buffer change (caller holds the lock)."""
+    def _buffer_size(self) -> int:
+        """logs.buffer clamped to [100, 5000] — a settings READ, so the
+        [v1.22.1] rule is: call this with NO syslog lock held."""
         size = settings_service().get("logs.buffer", 500)
         try:
             size = int(size)
         except (TypeError, ValueError):
             size = 500
-        size = max(100, min(5000, size))
+        return max(100, min(5000, size))
+
+    def _retrim(self, size: int) -> None:
+        """Apply a logs.buffer change (caller holds the lock)."""
         if self._buf.maxlen != size:
             self._buf = deque(self._buf, maxlen=size)
 
@@ -79,8 +86,14 @@ class SystemLog:
         if _LEVELS.get(level, 0) < self._min_level():
             return
         msg = str(message).replace("\n", " ")[:_MAX_MSG]
+        # [v1.22.1] B118: EVERY settings read happens BEFORE the syslog
+        # lock is taken (_min_level above, _buffer_size here) — the syslog
+        # lock is never held across a settings-lock acquisition, so no
+        # lock ordering between the two services can be armed into a
+        # cross-lock deadlock (both locks are RLock for reentrancy).
+        size = self._buffer_size()
         with self._lock:
-            self._retrim()
+            self._retrim(size)
             self._buf.append({
                 "id": self._next_id,
                 "ts": datetime.now().strftime("%H:%M:%S"),
@@ -151,7 +164,12 @@ class RequestLoggingMiddleware:
     """Log every HTTP request (method, path, status, duration) to syslog."""
 
     # Paths that never show up (assets, docs, CORS preflights).
-    _SKIP_PREFIXES = ("/static/", "/favicon", "/docs", "/openapi.json")
+    # [v1.22.1] B127: /api/webui/logs is in the list too — the log
+    # endpoints were capturing THEMSELVES (every drawer poll appended
+    # "GET /api/webui/logs → 200", so watching the log spammed the log;
+    # the /stream SSE open line went the same way — prefix covers both).
+    _SKIP_PREFIXES = ("/static/", "/favicon", "/docs", "/openapi.json",
+                      "/api/webui/logs")
     _SKIP_METHODS = ("OPTIONS", "HEAD")
 
     def __init__(self, app) -> None:

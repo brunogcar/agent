@@ -232,6 +232,20 @@ See [`docs/SKILLS.md`](docs/SKILLS.md) for the full skills architecture and how 
 
 ---
 
+## 🖥️ WebUI
+
+The **Brazilian Financial Data WebUI** — a live, server-rendered dashboard over the data sources and calculation engines (no MCP round-trips). One process, one port:
+
+```powershell
+python webui.py        # → http://127.0.0.1:8000/webui
+```
+
+7 pages: **Painel** (the Brazil one-screen summary — SGS KPIs + ranked ticker cards), **Carteira** (the portfolio: users → brokerage accounts → transactions → preço-médio positions, shorts and bonificações included), **Empresa** (8 tabs per ticker: preço, financeiro, valuation, proventos, opções, acionistas, insiders), **Macro** (BCB SGS + Focus), **Mercado** (7 DDM/B3 families), **Sincronização** (live sync + pre-flight diagnostics) and **Configurações** — plus a 📜 system-log drawer on every page. Loopback-only by default (LAN access is opt-in via `WEBUI_ALLOW_LAN=1`).
+
+See [`docs/WEBUI.md`](docs/WEBUI.md) for the full overview.
+
+---
+
 ## 📊 Benchmark
 
 The `benchmark/` package measures which local model is best for each role. Useful when swapping models in LM Studio — find the right fit per role instead of guessing.
@@ -286,6 +300,7 @@ Every component follows the **5-file documentation standard**: `INDEX` (overview
 | [`docs/CORE.md`](docs/CORE.md) | All 13 core subsystems — architecture layers, module map |
 | [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) | CVM + B3 data sources — sync, query, bridge |
 | [`docs/SKILLS.md`](docs/SKILLS.md) | Skills layer — analytical views combining data sources |
+| [`docs/WEBUI.md`](docs/WEBUI.md) | The WebUI — live dashboard over the data sources (Carteira portfolio engine, 22 services, adapter registry) |
 | [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Role benchmarking tool, task catalog |
 | [`docs/SESSION_WORKFLOW.md`](docs/SESSION_WORKFLOW.md) | AI-assisted dev session workflow (how to work on this repo) |
 | [`docs/DOCUMENTATION_GUIDE.md`](docs/DOCUMENTATION_GUIDE.md) | The 5-file standard itself |

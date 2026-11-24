@@ -141,9 +141,16 @@ class SettingsService:
     """Schema-driven settings store — one JSON file, in-memory cache."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # [v1.22.1] RLock (B118): get()/values()/update() all take the
+        # lock and call _maybe_reload() inside it — a future nested call
+        # (get inside update, a settings-read helper) would deadlock on a
+        # plain Lock. Reentrant defuses the armed trap.
+        self._lock = threading.RLock()
         self._values: dict[str, Any] = {}       # stored overrides only
-        self._loaded_mtime: float | None = None
+        # [v1.22.1] st_mtime_ns (int nanoseconds): the float st_mtime
+        # loses precision on fast successive saves — a same-second
+        # atomic_write could read as "unchanged" and serve stale values.
+        self._loaded_mtime: int | None = None
 
     # ── reads ────────────────────────────────────────────────────────────────
 
@@ -151,7 +158,7 @@ class SettingsService:
         """Re-read the file when its mtime changed (external edit / reload)."""
         path = _settings_path()
         try:
-            mtime = path.stat().st_mtime
+            mtime = path.stat().st_mtime_ns    # [v1.22.1] int, not float
         except OSError:
             # No file yet — defaults everywhere (a fresh install).
             if self._values:
@@ -224,7 +231,7 @@ class SettingsService:
             self._values = merged
             # The atomic write's mtime becomes the new baseline.
             try:
-                self._loaded_mtime = _settings_path().stat().st_mtime
+                self._loaded_mtime = _settings_path().stat().st_mtime_ns
             except OSError:
                 pass
         return {"ok": True, "applied": sorted(coerced.keys()),

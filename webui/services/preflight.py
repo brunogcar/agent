@@ -58,7 +58,8 @@ _MIN_FREE_GB = 2           # syncs download CVM ZIPs (hundreds of MB)
 # (domain, file, sync source key, PT-BR label, expected tables, rows table,
 #  core?, rekey?) — core DBs fail the panel when missing; feature DBs only
 #  warn. rekey=True → the DB carries a user_version marker that must be
-#  >= _REKEY_VERSION (see tools/migrations/rekey_itr_snapshots.py).
+#  >= _REKEY_VERSION (set by the ITR engine's re-key pass — the sync
+#  re-keys each year as it re-parses; see ARCHITECTURE.md decision 12).
 
 _REKEY_VERSION = 2  # ITR snapshot re-key marker [v1.7.1]
 
@@ -286,8 +287,11 @@ class PreflightService:
             return self._check(
                 cid, label, _WARN, " · ".join(parts) + " · re-key pendente",
                 hint="balanços trimestrais exibem valores de fim de ano — "
-                     "rode `python -m tools.migrations.rekey_itr_snapshots "
-                     "--apply` (veja CHANGELOG v1.7.1)")
+                     "sincronize a fonte 'itr' (o botão por fonte força o "
+                     "re-download e o motor re-chaveia os snapshots na "
+                     "passada); histórico completo: "
+                     "sync(full_history=True, force=True) do motor ITR "
+                     "(decisão 12 da ARCHITECTURE.md)")
         if rows_txt == "0":
             return self._check(
                 cid, label, _WARN,
