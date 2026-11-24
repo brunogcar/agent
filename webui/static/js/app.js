@@ -1816,6 +1816,32 @@ function renderValSubtab(sub, panel, data) {
   mountValCharts(panel);
 }
 
+// ── [v1.24] Histórico tab — the company vs its OWN 5A history ─────────────
+// 4 lazy subtabs (Visão Geral / Valuation 5A / Rentabilidade e Crescimento /
+// Alavancagem e Risco) over the generic /sections/historical:<sub> endpoint.
+// Flat payloads ({kpis?, sections}) — the SAME generic renderer as
+// Valuation/Proventos/Opções (renderValSubtab: KPI cards + heatmap +
+// side-by-side chart grids via fin-charts-grid + the collapsed tables).
+window.loadHistSubtab = function(sub) {
+  var panel = document.getElementById('tab-hist-' + sub);
+  if (!panel || panel._loaded || panel._loading) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  panel._loading = true;
+  fetch('/api/webui/company/' + encodeURIComponent(ticker) +
+        '/sections/historical:' + encodeURIComponent(sub) + '?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      panel._loading = false;
+      panel._loaded = true;   // only after a successful render (v1.5 rule)
+      renderValSubtab(sub, panel, data);
+    })
+    .catch(function(err) {
+      panel._loading = false;
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
 // [v1.4 fix2] Nested subtab picker for grouped payloads (Múltiplos +
 // Fundamentos). Toggles the panes that share the nav's parent scope —
 // works at both levels (top pills toggle .val-pane siblings, sub-pills
@@ -2050,7 +2076,18 @@ function valSectionHtml(sec) {
       h += '<tr>';
       row.forEach(function(cell, ci) {
         if (ci === 0) {
-          h += '<td class="val-metric">' + valEsc(String(cell)) + '</td>';
+          // [v1.24] Column 0 accepts {text, tooltip} cells too (the
+          // table branch precedent) — the Histórico heatmap puts the
+          // formula tooltip on the metric name. Plain strings pass
+          // through untouched (the Valuation heatmap's shape).
+          if (cell && typeof cell === 'object') {
+            var tip0 = cell.tooltip || '';
+            h += '<td class="val-metric"' + (tip0 ? ' title="' + valEsc(tip0) + '"' : '') + '>' +
+                 valEsc(cell.text || '—') +
+                 (tip0 ? ' <span class="val-info">ⓘ</span>' : '') + '</td>';
+          } else {
+            h += '<td class="val-metric">' + valEsc(String(cell)) + '</td>';
+          }
         } else if (cell && typeof cell === 'object') {
           h += '<td class="val-heat" style="background:' + safeColor(cell.bg) +
                ';color:' + safeColor(cell.color, 'inherit') + '" title="' + valEsc(cell.tooltip || '') + '">' +
@@ -2288,6 +2325,19 @@ function renderValChart(canvas, cd) {
     if (srvLegend && typeof srvLegend === 'object') {
       if (typeof srvLegend.display === 'boolean') plugins.legend.display = srvLegend.display;
       if (typeof srvLegend.position === 'string') plugins.legend.position = srvLegend.position;
+    }
+    // [v1.24] Per-dataset `hideLegend` — datasets flagged true stay in
+    // the chart (tooltips included) but drop out of the legend. The
+    // Histórico 5A band charts draw the mín–máx band as TWO datasets
+    // (the fill runs from one to the other); one legend entry tells
+    // the story, the second line would only duplicate it.
+    var _hideDs = (cd.data.datasets || []).map(function(d) {
+      return !!(d && d.hideLegend);
+    });
+    if (_hideDs.some(function(h) { return h; })) {
+      plugins.legend.labels.filter = function(item) {
+        return !(_hideDs && _hideDs[item.datasetIndex]);
+      };
     }
     // [v1.14] Honor the server's tooltipUnit — a JSON-safe way to give
     // pie/doughnut tooltips a suffix with pt-BR value formatting (the
@@ -3600,7 +3650,8 @@ function prefetchSubtab(e) {
               ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab,
               jur: window.loadJurosSubtab, pou: window.loadPoupancaSubtab,
               aco: window.loadAcoesSubtab,
-              div: window.loadDividendosSubtab };
+              div: window.loadDividendosSubtab,
+              hist: window.loadHistSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -6603,6 +6654,9 @@ function initApp() {
     loadShSubtab('overview');
     // [v1.10] Insiders — first subtab of the insiders tab.
     loadInsSubtab('overview');
+    // [v1.24] Histórico — first subtab of the historical tab (the
+    // KPI row + heatmap; the heavy 5A charts load on subtab click).
+    loadHistSubtab('overview');
     // [v1.11] Macro — first subtab of the macro page (no-op elsewhere:
     // the loader guards on the pane's existence).
     loadMacroSubtab('overview');

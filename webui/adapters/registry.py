@@ -339,6 +339,23 @@ def _register_builtins() -> None:
     register("insiders:monthly", _bind(InsiderService, "monthly"),
              family="insiders", label="Insiders — Mensal")
 
+    # [v1.24] Histórico — the company-vs-its-own-history tab (reference:
+    # skills/cvm/historical static report + PETR4_historical_dashboard
+    # .html, reshaped per the user's ask: 9 dashboard tabs → 4 subtabs,
+    # charts side by side, the Percentile Analysis reborn as the
+    # direction-aware colored heatmap of the Visão Geral). All four
+    # subtabs are FLAT payloads → generic renderer.
+    from webui.services.historical import HistoricalService
+    register("historical:overview", _bind(HistoricalService, "overview"),
+             family="historical", label="Histórico — Visão Geral")
+    register("historical:valuation", _bind(HistoricalService, "valuation"),
+             family="historical", label="Histórico — Valuation 5A")
+    register("historical:profitability",
+             _bind(HistoricalService, "profitability"),
+             family="historical", label="Histórico — Rentabilidade e Crescimento")
+    register("historical:leverage", _bind(HistoricalService, "leverage"),
+             family="historical", label="Histórico — Alavancagem e Risco")
+
     # [v1.11] Macro — the /webui/macro page (reference: skills/bcb/macro
     # static report + macro_dashboard.html). Ticker-less FLAT payloads
     # (market-wide — no company scope) served by the dedicated

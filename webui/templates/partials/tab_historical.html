@@ -1,0 +1,56 @@
+{# webui/templates/partials/tab_historical.html — Histórico tab with subtabs.
+
+[WebUI v1.24] The company vs its OWN history ("PETR4 está barata vs os
+últimos 5 anos dela mesma?"). Reference: the uploaded
+PETR4_historical_dashboard.html — the static dashboard's 9 tabs (Overview,
+Valuation, Profitability, Liquidez e Alavancagem, Eficiência e Crescimento,
+Risco de Mercado, Advanced Valuation, Ratio Grid, Percentile Analysis), each
+carrying a Percentil / Gráfico / Tendência / per-metric 5A subtab row,
+reshaped per the user's ask into 4 lazy subtabs:
+
+- Visão Geral: 6 KPI cards + Heatmap de Valoração — Indicadores Coloridos
+  (the dashboard's "Percentile Analysis"/"Análise de Percentis (5A)" reborn
+  as ONE direction-aware colored table — green = lado favorável da própria
+  faixa histórica, red = desfavorável) + Tendência (all metrics, COLLAPSED)
+- Valuation 5A: P/L | P/VPA | EV/EBITDA | Div Yield — line charts SIDE BY
+  SIDE (each with the 5A mín–máx band + mediana) + the Tendência subset
+  (combines the dashboard's Percentil + Gráfico + Tendência + P/L 5A +
+  P/VPA 5A + EV/EBITDA 5A subtabs into one screen)
+- Rentabilidade e Crescimento: ROE | ROIC | Marg. Bruta | Marg. Líquida |
+  Cresc. Receita | Cresc. Lucro side by side + Tendência (Profitability +
+  Eficiência e Crescimento combined)
+- Alavancagem e Risco: Dívida/PL | Dív. Líq./EBITDA | Cobertura Juros |
+  COE | Beta side by side + Tendência + Avançado (WACC/DuPont/Altman Z)
+
+Data: HistoricalService — summaries + quartiles + month-end series via
+skills/cvm/historical (ONE engine-cache-scoped build per ticker, 10-min
+TTL), rendered client-side by the ONE generic section renderer.
+#}
+<div class="tab-historical" x-data="{ subtab: 'overview' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadHistSubtab('overview')" data-lazy="hist:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'valuation' }" @click="subtab='valuation'" onclick="loadHistSubtab('valuation')" data-lazy="hist:valuation">Valuation 5A</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'profitability' }" @click="subtab='profitability'" onclick="loadHistSubtab('profitability')" data-lazy="hist:profitability">Rentabilidade e Crescimento</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'leverage' }" @click="subtab='leverage'" onclick="loadHistSubtab('leverage')" data-lazy="hist:leverage">Alavancagem e Risco</button>
+  </nav>
+
+  {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-hist-overview" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Valuation 5A subtab ── #}
+  <div x-show="subtab === 'valuation'" style="display: none;" id="tab-hist-valuation" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Rentabilidade e Crescimento subtab ── #}
+  <div x-show="subtab === 'profitability'" style="display: none;" id="tab-hist-profitability" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Alavancagem e Risco subtab ── #}
+  <div x-show="subtab === 'leverage'" style="display: none;" id="tab-hist-leverage" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

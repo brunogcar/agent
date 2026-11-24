@@ -123,7 +123,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 
 ### Section families (the registry keys)
 
-[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (16 families, 68 keys):
+[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (17 families, 73 keys — [v1.24] + the historical family):
 
 | Family | Keys | Loaded by |
 |---|---|---|
@@ -134,6 +134,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `options` | `overview`, `chain`, `iv`, `activity`, `positions` | Company · Opções tab |
 | `shareholders` | `overview`, `holders`, `free_float`, `equity` | Company · Acionistas tab |
 | `insiders` | `overview`, `transactions`, `monthly`, `by_role` | Company · Insiders tab |
+| `historical` | `overview`, `valuation`, `profitability`, `leverage` | Company · Histórico tab [v1.24] |
 | `macro` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `retorno_real`, `focus`, `curva` | Macro page (8 lazy subtabs) |
 | `focus` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `fiscal`, `externo` | Mercado · Focus |
 | `fluxo` | `overview`, `mensal`, `anual`, `por_investidor` | Mercado · Fluxo |

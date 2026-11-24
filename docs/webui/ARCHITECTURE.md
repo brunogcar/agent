@@ -35,6 +35,7 @@ agent/
 │   │   ├── price.py                  # Preço tab (OHLCV, indicators, volatility, volume, Fibonacci)
 │   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch)
 │   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
+│   │   ├── historical.py             # [v1.24] Histórico tab (17 metrics × 5A — heatmap/bands/trend)
 │   │   ├── proventos.py              # Proventos tab (dividends.db + yield at ex-date)
 │   │   ├── options.py                # [v1.8] Opções tab (chain, activity, IV, positions)
 │   │   ├── shareholders.py           # [v1.9] Acionistas tab (fre.db + dfp.db)
@@ -111,6 +112,7 @@ agent/
 | `webui/services/price.py` | Price data — wraps `ohlcv_series` + `compute_sma` + indicators + Bollinger + Fibonacci |
 | `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch |
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
+| `webui/services/historical.py` | [v1.24] Histórico tab — 17 metrics vs their own 5A history (direction-aware heatmap + band charts + trend), ONE engine-cache-scoped build per ticker w/ TTL | 
 | `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
 | `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |

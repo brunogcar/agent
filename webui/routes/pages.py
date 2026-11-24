@@ -37,8 +37,9 @@ from webui.templating import templates
 router = APIRouter(prefix="/webui", tags=["webui-pages"])
 
 # Tabs that have a page shell (must match api.py's _ALLOWED_TABS).
-# [v1.9] shareholders. [v1.10] insiders.
-_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "proventos", "options", "shareholders", "insiders"}
+# [v1.9] shareholders. [v1.10] insiders. [v1.24] historical (the
+# company-vs-its-own-history tab — between Valuation and Proventos).
+_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "historical", "proventos", "options", "shareholders", "insiders"}
 
 
 def _ctx(request: Request, **extra) -> dict:

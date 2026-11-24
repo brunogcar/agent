@@ -47,6 +47,18 @@
             hx-swap="innerHTML">
       {{ t("company.valuation") }}
     </button>
+    {# [WebUI v1.24] Histórico tab — the company vs its OWN 5A history
+       (percentis, band charts side by side, tendência; reference:
+       PETR4_historical_dashboard.html / skills/cvm/historical — the
+       9 static tabs reshaped into 4 subtabs). Sits right after
+       Valuation: "vs o setor" → "vs ela mesma". #}
+    <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
+            @click="tab='historical'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/historical"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.historical") }}
+    </button>
     <button class="tab-btn" :class="{ 'active': tab === 'proventos' }"
             @click="tab='proventos'"
             hx-get="/api/webui/company/{{ ticker }}/tab/proventos"
@@ -82,15 +94,6 @@
             hx-swap="innerHTML">
       {{ t("company.insiders") }}
     </button>
-    {# Re-enable when implemented:
-    <button class="tab-btn" :class="{ 'active': tab === 'historical' }"
-            @click="tab='historical'"
-            hx-get="/api/webui/company/{{ ticker }}/tab/historical"
-            hx-target="#tab-content"
-            hx-swap="innerHTML">
-      {{ t("company.historical") }}
-    </button>
-    #}
     {# [v1.21 fix 1] ⭐ Watch button — adds/removes this ticker on the
        Painel's Tickers Observados (initCompanyWatch() in app.js owns the
        state + toggle). Lives in the tab bar so it's on EVERY tab,

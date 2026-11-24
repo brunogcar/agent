@@ -148,7 +148,8 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 # Tabs with a rendered partial (historical is future work —
 # company.html hides its button until it exists). [v1.6] proventos.
 # [v1.8] options. [v1.9] shareholders. [v1.10] insiders.
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "proventos", "options", "shareholders", "insiders"}
+# [v1.24] historical SHIPS (the 4-subtab Histórico tab).
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -435,6 +436,16 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_preco.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "historical":
+        # [v1.24] Shell only — subtabs fetch through the generic
+        # /sections/historical:<sub> endpoint (overview/valuation/
+        # profitability/leverage — the 9 static-dashboard tabs
+        # reshaped into 4, charts side by side).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_historical.html",
             {"ticker": ticker, "t": tr},
         )
     elif tab == "proventos":
