@@ -36,9 +36,18 @@ continue to use server.py (MCP stdio) separately.
     sync.auto_on_startup (sync the stale sources at boot — the
     "Sincronizar tudo" semantics), and starts the periodic auto-sync
     scheduler (sync.schedule_hours; 0 = off) unless --no-sync.
+
+[v1.22] CrossSiteGuardMiddleware (pure ASGI): cross-site MUTATIONS
+(POST/PUT/DELETE/PATCH) are rejected at the gate — browsers send
+"simple" cross-site requests (text/plain bodies) with no CORS
+preflight, and request.json() parses any content type, so any web
+page could create users/transactions on a loopback-bound server.
+Sec-Fetch-Site: cross-site is always rejected; a non-loopback Origin
+is rejected unless WEBUI_ALLOW_LAN=1 (an explicit trust decision).
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -53,6 +62,68 @@ from fastapi.staticfiles import StaticFiles
 
 def _allow_lan() -> bool:
     return os.environ.get("WEBUI_ALLOW_LAN", "") == "1"
+
+
+# ── [v1.22] CSRF guard ─────────────────────────────────────────────────────
+
+class CrossSiteGuardMiddleware:
+    """Reject cross-site MUTATIONS before they reach any route.
+
+    Browsers send "simple" cross-site requests (POST with text/plain or
+    form bodies) WITHOUT a CORS preflight, and Starlette's
+    request.json() parses any content type — so any web page could
+    create users/accounts/transactions on a loopback-bound server (the
+    response is unreadable cross-origin, but the WRITE is not). Two
+    signals close it:
+      - ``Sec-Fetch-Site: cross-site`` → always reject (modern
+        browsers; the WebUI's own fetches are same-origin);
+      - ``Origin`` present and not loopback → reject unless
+        WEBUI_ALLOW_LAN=1 (a LAN-exposed instance is an explicit trust
+        decision; LAN browsers navigate same-origin and pass).
+    Non-browser clients (curl, the gateway SDKs) send neither header
+    and pass untouched. GET/HEAD are never touched — SSE included.
+    Pure ASGI (the RequestLoggingMiddleware posture — no
+    BaseHTTPMiddleware event-loop tax).
+    """
+
+    _MUTATING = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+    _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("method") in self._MUTATING:
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                       for k, v in scope.get("headers", [])}
+            if headers.get("sec-fetch-site", "").lower() == "cross-site":
+                await self._forbid(send)
+                return
+            origin = headers.get("origin") or ""
+            if origin and not _allow_lan():
+                host = origin.split("//", 1)[-1].split("/", 1)[0].strip()
+                if host.startswith("["):                 # http://[::1]:8000
+                    host = host[1:host.find("]")] if "]" in host else host
+                else:
+                    host = host.split(":", 1)[0]
+                if host.lower() not in self._LOOPBACK:
+                    await self._forbid(send)
+                    return
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _forbid(send) -> None:
+        body = json.dumps(
+            {"_error": "Requisição entre sites bloqueada — abra o WebUI "
+                      "diretamente em http://127.0.0.1:8000/webui."}
+        ).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [(b"content-type", b"application/json; charset=utf-8"),
+                        (b"content-length", str(len(body)).encode("ascii"))],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 def _syslog():
@@ -196,6 +267,11 @@ def create_app() -> FastAPI:
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    # ── [v1.22] CSRF guard: cross-site mutations rejected at the gate ─────
+    # Added BEFORE the logging middleware so rejections are logged too
+    # (add_middleware prepends: last added = outermost).
+    app.add_middleware(CrossSiteGuardMiddleware)
 
     # ── [v1.20] System log capture: requests + Python logging WARNING+ ──────
     # Outermost middleware (last added = first to see the request) so even

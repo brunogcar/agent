@@ -123,10 +123,18 @@ async def put_settings(request: Request):
     async def: the body must be awaited (the file write itself is a
     sub-millisecond atomic replace of a tiny JSON).
     """
-    try:
-        patch = await request.json()
-    except Exception:
+    # [v1.22 CSRF] request.json() parses ANY content type; demanding
+    # application/json means a cross-site text/plain POST (a CORS-simple
+    # request, no preflight) can never reach the store. (The app-level
+    # CrossSiteGuardMiddleware covers Sec-Fetch-Site/Origin globally.)
+    if "application/json" not in (request.headers.get("content-type")
+                                  or "").lower():
         patch = None
+    else:
+        try:
+            patch = await request.json()
+        except Exception:
+            patch = None
     if not isinstance(patch, dict) or not patch:
         return JSONResponse(
             {"_error": "Corpo inválido — esperado um objeto {chave: valor}."},

@@ -19,13 +19,43 @@ Painel summarizes.
     double-×100 bug is gone (``_signed_pct`` takes the RATIO).
   - ``_tx_rows()``: chronological ASC (oldest → newest) by default.
 
+[v1.22] HARDENING (the adversarial-review wave — money math + store):
+  - SHORTS count in the totals: ``positions()`` used to drop negative
+    market values from Patrimônio while keeping their negative cost —
+    the KPIs lied about the whole book (``directory``/``overview``
+    didn't). The ``-1.0`` "no quote" sentinel died with it (it
+    collided with any real negative value).
+  - the store NEVER answers a corrupt file with an empty store (the
+    next save would silently destroy the portfolio): the damaged file
+    is quarantined (``.corrupt-<ts>`` copies, capped at 7), the last
+    good in-memory store keeps serving reads, the ``.bak`` of the
+    previous good save is a boot fallback, and writes are refused
+    with a PT-BR error until the file on disk parses again.
+  - NaN/Infinity are rejected at the ``_num()`` boundary (they passed
+    every range comparison — ``nan <= 0`` is False — got persisted as
+    bare ``NaN`` tokens and poisoned every position of the account).
+  - same-second transactions replay in INSERTION order (monotonic
+    ``seq``; the uuid tiebreak made PM/realized nondeterministic).
+  - a buy that covers a short and flips long SPLITS its fees between
+    the realized cover and the new long's PM (the "buy fees enter
+    the PM" rule applied to the flip — sell fees stay in realized,
+    the short-open convention).
+  - sells at R$ 0,00 are rejected (bonificação is a BUY at 0).
+  - a never-traded ticker no longer defeats the 30s quote cache.
+  - consolidated scopes with a long AND a short leg of the same ticker
+    show PM/Lucro % as "—" (the blended number existed in no broker).
+  - ``update_tx`` refuses moving a transaction to ANOTHER USER's
+    account; edits/deletes that leave shorts open return warnings.
+
 Model (one JSON file, the settings.py storage pattern — atomic_write +
 mtime refresh + in-memory cache under a lock):
 
     users    [{id, name, created_at}]
     accounts [{id, user_id, name, broker, watch, created_at}]
     txs      [{id, account_id, ticker, type: buy|sell, quantity, price,
-               fees, date, note, created_at}]
+               fees, date, note, created_at, seq}]
+               (seq: [v1.22] monotonic insertion order — the
+               same-second replay tiebreak; never the uuid)
     watchlist [{ticker, added_at}]
     tickers  {TICKER: {name, sector, updated_at}}   # cached metadata
 
@@ -53,12 +83,15 @@ naming the cotahist source; no users/accounts → the payload says so
 CRUD is validated ALL-OR-NOTHING (settings.py pattern: every field
 checked before anything is written; PT-BR error per field). Sells are
 free to short (negative position — flagged, never rejected); only
-negative prices/quantities and future dates are refused.
+negative prices/quantities, zero-price SELLS and future dates are
+refused.
 """
 from __future__ import annotations
 
 import json
+import math
 import re
+import shutil
 import threading
 import time
 import traceback
@@ -69,6 +102,9 @@ from typing import Any
 
 from core.atomic_write import atomic_write
 from webui.adapters.contract import kpi
+# [v1.22] ONE ticker definition for every layer (webui/validators.py) —
+# the old letters-only stem rejected B3's own ticker (B3SA3) and BDRs.
+from webui.validators import TICKER_RE as _TICKER_RE
 
 # ── formatting helpers (macro.py owns the PT-BR numerics — no forks) ─────────
 from webui.services.macro import _brl2, _fmt_date, _pct
@@ -82,7 +118,6 @@ from tools.report_ops.formats import fmt_num
 # needs the honest "Valor Hoje", not the landing-page actives window).
 from data_sources.b3.cotahist.query_engine import quotes_for as _quotes_for
 
-_TICKER_RE = re.compile(r"^[A-Z]{4,6}\d{1,2}[A-Z]?$")   # B3 symbol (api.py's pattern)
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _QUOTE_TTL = 30.0            # seconds the filtered quote map stays memoized
 _COTAHIST_ERR = ("Cotações do pregão indisponíveis — sincronize a fonte "
@@ -106,6 +141,55 @@ def _portfolio_path() -> Path:
 def _empty_store() -> dict[str, Any]:
     return {"users": [], "accounts": [], "txs": [],
             "watchlist": [], "tickers": {}}
+
+
+class PortfolioStoreError(RuntimeError):
+    """[v1.22] A mutation was attempted while the store is degraded
+    (the file on disk is corrupt/unreadable and writes are refused)."""
+
+
+_MAX_QUARANTINE = 7        # newest .corrupt-<ts> copies kept as evidence
+
+
+def _parse_store(data: Any) -> dict[str, Any]:
+    """Validated store shape — anything else is corruption.
+
+    [v1.22] Pre-v1.22 loaded leniently: a wrong-typed key was silently
+    DROPPED (``{"users": {...}}`` read as "no users") and the next
+    save destroyed the data on disk. Wrong shapes now raise — the
+    caller quarantines instead of ever answering with a partial store.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("store deve ser um objeto JSON")
+    store = _empty_store()
+    for key in ("users", "accounts", "txs", "watchlist"):
+        val = data.get(key, [])
+        if not isinstance(val, list) or any(not isinstance(x, dict) for x in val):
+            raise ValueError(f"{key!r} deve ser uma lista de objetos")
+        store[key] = val
+    if "tickers" in data:
+        if not isinstance(data["tickers"], dict):
+            raise ValueError("'tickers' deve ser um objeto")
+        store["tickers"] = data["tickers"]
+    _ensure_seq(store)
+    return store
+
+
+def _ensure_seq(store: dict) -> None:
+    """[v1.22] Backfill a monotonic insertion ``seq`` on transactions.
+
+    The txs list IS insertion order (append-only store; filters keep
+    relative order), so pre-v1.22 files get seq = list position —
+    idempotent when seq is already present, and the random uuid is
+    never a replay tiebreak again.
+    """
+    txs = store.get("txs") or []
+    nxt = 1 + max((t.get("seq") for t in txs
+                   if isinstance(t.get("seq"), int)), default=-1)
+    for t in txs:
+        if not isinstance(t.get("seq"), int):
+            t["seq"] = nxt
+            nxt += 1
 
 
 def _now_iso() -> str:
@@ -173,17 +257,25 @@ def _num(value: Any) -> float | None:
     """
     if isinstance(value, bool):
         return None
+    f: float | None = None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        try:
+            f = float(value)
+        except (ValueError, OverflowError):     # absurd ints
+            return None
+    elif isinstance(value, str):
         s = value.strip()
         if "," in s:
             s = s.replace(".", "").replace(",", ".")
         try:
-            return float(s)
+            f = float(s)
         except ValueError:
             return None
-    return None
+    # [v1.22] NaN/±inf pass EVERY range comparison (nan <= 0 is False,
+    # nan > 1e9 is False) — they sailed through validation, persisted
+    # as bare NaN tokens (invalid strict JSON) and poisoned whole
+    # accounts. The coercion boundary is the one place to stop them.
+    return f if f is not None and math.isfinite(f) else None
 
 
 class PortfolioService:
@@ -192,12 +284,18 @@ class PortfolioService:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._store: dict[str, Any] = _empty_store()
-        self._loaded_mtime: float | None = None
+        self._loaded_mtime: int | None = None      # st_mtime_ns
+        # [v1.22] Degraded mode: the file on disk failed to parse.
+        # Reads keep serving the last good store; writes are refused.
+        self._load_error: str | None = None
         # Filtered quote map memoization (the v1.19-fix-1 single-flight idea,
         # scoped to the tiny ticker set the portfolio needs).
         self._q_lock = threading.Lock()
         self._quotes: dict[str, dict[str, Any]] | None = None
         self._quotes_at: float = 0.0
+        # [v1.22] Requested-set memo: tickers ALREADY looked up (found or
+        # not) — a never-traded paper no longer defeats the TTL cache.
+        self._quotes_seen: set[str] = set()
         self._session_date: str = ""
         self._quotes_ok: bool | None = None
         # Background ticker-metadata refreshes (dedup in-flight).
@@ -206,40 +304,114 @@ class PortfolioService:
     # ── store plumbing ───────────────────────────────────────────────────────
 
     def _maybe_reload(self) -> None:
-        """Re-read the JSON when its mtime changed (external edit / reload)."""
+        """Re-read the JSON when its mtime changed (external edit / reload).
+
+        [v1.22] A file that cannot be read/parsed is NEVER answered with
+        an empty store — the next mutation would save that emptiness and
+        silently destroy the portfolio. See ``_degrade``.
+        """
         path = _portfolio_path()
         try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            if self._store != _empty_store():
+            mtime = path.stat().st_mtime_ns
+        except FileNotFoundError:
+            # No file on disk. Degraded mode keeps serving the last good
+            # store (the damaged file was quarantined away); otherwise a
+            # missing file is simply the empty portfolio.
+            if not self._load_error:
                 self._store = _empty_store()
                 self._loaded_mtime = None
+            return
+        except OSError:
+            # Transient stat failure (AV / backup locks on Windows) —
+            # keep whatever we have; never reset memory on unknown I/O.
             return
         if mtime == self._loaded_mtime:
             return
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            store = _empty_store()
-            for key in ("users", "accounts", "txs", "watchlist"):
-                if isinstance(data.get(key), list):
-                    store[key] = data[key]
-            if isinstance(data.get("tickers"), dict):
-                store["tickers"] = data["tickers"]
-            self._store = store
-            self._loaded_mtime = mtime
+            store = _parse_store(json.loads(path.read_text(encoding="utf-8")))
+        except Exception as e:
+            self._degrade(path, mtime, e)
+            return
+        self._store = store
+        self._loaded_mtime = mtime
+        if self._load_error:
+            self._syslog("info", "arquivo da carteira voltou a ler — "
+                                 "modo degradado encerrado")
+        self._load_error = None
+
+    def _degrade(self, path: Path, mtime: int, err: Exception) -> None:
+        """Corrupt/unreadable store — the [v1.22] never-wipe contract.
+
+        1. quarantine a copy (``webui_portfolio.json.corrupt-<ts>``,
+           newest 7 kept) so nothing is ever overwritten away;
+        2. keep the last good in-memory store serving reads — or boot
+           from the ``.bak`` of the previous good save when memory is
+           empty (fresh start against a damaged file);
+        3. refuse every mutation (``_load_error`` → PT-BR 503) until
+           the file on disk parses again — replacing it (the .bak
+           serves) changes the mtime and self-heals.
+        """
+        qname = ""
+        try:
+            q = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
+            shutil.copy2(path, q)
+            qname = q.name
+            olds = sorted(path.parent.glob(f"{path.name}.corrupt-*"))
+            for old in olds[:-_MAX_QUARANTINE]:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
         except Exception:
-            # Corrupt file — keep defaults (the next save rewrites it clean).
-            self._store = _empty_store()
-            self._loaded_mtime = mtime
+            qname = ""
+        self._loaded_mtime = mtime      # same mtime → no re-parse loop
+        served = ""
+        empty_now = not self._store.get("txs") and not self._store.get("users")
+        bak = path.with_name(path.name + ".bak")
+        if empty_now and bak.exists():
+            try:
+                self._store = _parse_store(
+                    json.loads(bak.read_text(encoding="utf-8")))
+                served = "Servindo, em modo leitura, o último backup (.bak). "
+            except Exception:
+                pass
+        self._load_error = (
+            "Arquivo da carteira corrompido ou ilegível — "
+            + (f"cópia preservada em {qname}. " if qname
+               else "não foi possível preservar uma cópia. ")
+            + served
+            + "As alterações estão desativadas: substitua o arquivo por uma "
+            "cópia válida (o .bak serve) e o erro se limpa sozinho.")
+        self._syslog("error", f"arquivo da carteira ilegível: {err!r}"
+                              + (f" — cópia em {qname}" if qname else ""))
 
     def _save(self) -> None:
-        """Persist the store (caller holds the lock)."""
-        atomic_write(_portfolio_path(),
-                     json.dumps(self._store, indent=2, ensure_ascii=False))
+        """Persist the store (caller holds the lock).
+
+        [v1.22] Never writes while degraded (overwriting a file we
+        could not read is the data-loss bug), and keeps a ``.bak`` of
+        the previous good file on every write (best-effort — a locked
+        .bak logs a warning but must not block the save).
+        """
+        if self._load_error:
+            raise PortfolioStoreError(self._load_error)
+        path = _portfolio_path()
         try:
-            self._loaded_mtime = _portfolio_path().stat().st_mtime
+            if path.exists():
+                shutil.copy2(path, path.with_name(path.name + ".bak"))
+        except OSError as e:
+            self._syslog("warning", f"backup .bak da carteira falhou: {e}")
+        atomic_write(path, json.dumps(self._store, indent=2, ensure_ascii=False))
+        try:
+            self._loaded_mtime = path.stat().st_mtime_ns
         except OSError:
             pass
+
+    def _write_guard(self) -> dict | None:
+        """None = writable; otherwise the PT-BR error payload to return."""
+        if self._load_error:
+            return {"ok": False, "_error": self._load_error, "status": 503}
+        return None
 
     def _snapshot(self) -> dict[str, Any]:
         """Deep-enough copy for readers (lists of dicts are re-copied)."""
@@ -265,8 +437,23 @@ class PortfolioService:
 
     @staticmethod
     def _tx_order_key(t: dict) -> tuple:
-        """Chronological replay order: date, then insertion."""
-        return (t.get("date") or "", t.get("created_at") or "", t.get("id") or "")
+        """Chronological replay order: date, then created_at, then seq.
+
+        [v1.22] The final tiebreak is the monotonic insertion ``seq`` —
+        NEVER the uuid id: created_at has 1-second resolution, and two
+        txs inside the same second used to replay in RANDOM order
+        (same trades, different PM/realized). Callers pass lists in
+        store (= insertion) order and sorted() is stable on top of seq.
+        """
+        return (t.get("date") or "", t.get("created_at") or "",
+                t.get("seq") or 0)
+
+    @staticmethod
+    def _next_seq(store: dict) -> int:
+        """[v1.22] Next insertion sequence (see ``_tx_order_key``)."""
+        txs = store.get("txs") or []
+        return 1 + max((t.get("seq") for t in txs
+                        if isinstance(t.get("seq"), int)), default=-1)
 
     # ── quotes (cotahist quotes_for, memoized) ────────────────────────────────
 
@@ -280,11 +467,16 @@ class PortfolioService:
         the stragglers.
         """
         with self._q_lock:
+            # [v1.22] The memo covers the tickers already LOOKED UP
+            # (found or not): a delisted/never-traded/typo ticker used
+            # to fail ``issubset(self._quotes)`` forever and re-query
+            # cotahist on every single request.
             if (self._quotes is not None
                     and time.monotonic() - self._quotes_at < _QUOTE_TTL
-                    and tickers.issubset(self._quotes.keys())):
+                    and tickers.issubset(self._quotes_seen)):
                 return
             res = _quotes_for(sorted(tickers))
+            self._quotes_seen |= set(tickers)
             if res.get("status") != "ok":
                 # Keep the old map (if any) for the tickers it covers; the
                 # NEW tickers get no quote and the note names the source.
@@ -297,6 +489,7 @@ class PortfolioService:
             for s in res.get("symbols", []):
                 quotes[s["ticker"]] = s
             self._quotes = quotes
+            self._quotes_seen = set(quotes.keys()) | set(tickers)
             self._quotes_ok = True
             self._quotes_at = time.monotonic()
             self._session_date = res.get("session_date") or ""
@@ -327,6 +520,8 @@ class PortfolioService:
 
         def _work() -> None:
             try:
+                if self._load_error:
+                    return                # degraded store — writes refused
                 meta = self._fetch_meta(ticker)
                 if not meta:
                     return
@@ -391,7 +586,13 @@ class PortfolioService:
         if errs:
             return {"ok": False, "errors": errs}
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()      # reload may have degraded us
+            if guard:
+                return guard
             user = {"id": _new_id(), "name": name, "created_at": _now_iso()}
             self._store["users"].append(user)
             self._save()
@@ -400,7 +601,13 @@ class PortfolioService:
 
     def update_user(self, user_id: str, body: dict) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             user = self._user(self._store, user_id)
             if user is None:
                 return {"ok": False, "_error": "Usuário não encontrado."}
@@ -417,7 +624,13 @@ class PortfolioService:
 
     def delete_user(self, user_id: str) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             user = self._user(self._store, user_id)
             if user is None:
                 return {"ok": False, "_error": "Usuário não encontrado."}
@@ -458,7 +671,13 @@ class PortfolioService:
 
     def create_account(self, body: dict) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             errs = self._validate_account(self._store, body)
             if errs:
                 return {"ok": False, "errors": errs}
@@ -477,7 +696,13 @@ class PortfolioService:
 
     def update_account(self, account_id: str, body: dict) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             account = self._account(self._store, account_id)
             if account is None:
                 return {"ok": False, "_error": "Conta não encontrada."}
@@ -498,7 +723,13 @@ class PortfolioService:
 
     def delete_account(self, account_id: str) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             account = self._account(self._store, account_id)
             if account is None:
                 return {"ok": False, "_error": "Conta não encontrada."}
@@ -546,11 +777,17 @@ class PortfolioService:
             out["quantity"] = q
 
         p = _num(body.get("price"))
-        # [v1.21 fix 1] price 0 is a bonificação — valid; only negative
-        # (or absurd) prices are rejected.
+        # [v1.21 fix 1] price 0 is a bonificação — valid for BUYS; only
+        # negative (or absurd) prices are rejected.
+        # [v1.22] …but a SELL at R$ 0,00 books the whole position cost
+        # as a phantom realized loss (one blank price field away).
         if p is None or p < 0 or p > 1e9:
             errs["price"] = ("Preço não pode ser negativo — use 0 para "
                              "bonificação (sem custo).")
+        elif p == 0 and ttype == "sell":
+            errs["price"] = ("Preço de venda não pode ser R$ 0,00 — "
+                             "bonificação se registra como COMPRA a "
+                             "R$ 0,00.")
         else:
             out["price"] = p
 
@@ -579,11 +816,18 @@ class PortfolioService:
 
     def create_tx(self, body: dict) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             fields, errs = self._validate_tx(self._store, body)
             if errs:
                 return {"ok": False, "errors": errs}
-            tx = {"id": _new_id(), "created_at": date.today().isoformat() +
+            tx = {"id": _new_id(), "seq": self._next_seq(self._store),
+                  "created_at": date.today().isoformat() +
                    "T" + time.strftime("%H:%M:%S"), **fields}
             self._store["txs"].append(tx)
             self._ensure_ticker_meta(self._store, tx["ticker"])
@@ -596,7 +840,13 @@ class PortfolioService:
 
     def update_tx(self, tx_id: str, body: dict) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             tx = next((t for t in self._store["txs"]
                        if t.get("id") == tx_id), None)
             if tx is None:
@@ -606,6 +856,22 @@ class PortfolioService:
                            if k in ("account_id", "ticker", "type",
                                     "quantity", "price", "fees", "date",
                                     "note")})
+            # [v1.22] A tx may move between accounts of the SAME user
+            # only — a cross-user move silently changes every per-user
+            # sum (the tx vanishes from one user's series and appears
+            # in another's, with no trace).
+            new_aid = str(merged.get("account_id") or "")
+            old_aid = str(tx.get("account_id") or "")
+            if new_aid != old_aid:
+                old_acc = self._account(self._store, old_aid)
+                new_acc = self._account(self._store, new_aid)
+                if old_acc and new_acc and \
+                        old_acc.get("user_id") != new_acc.get("user_id"):
+                    return {"ok": False, "errors": {
+                        "account_id": "A conta de destino pertence a outro "
+                                      "usuário — mova a transação apenas "
+                                      "entre contas do mesmo usuário."}}
+            shorts_before = self._short_flags(self._store)
             fields, errs = self._validate_tx(self._store, merged)
             if errs:
                 return {"ok": False, "errors": errs}
@@ -613,23 +879,38 @@ class PortfolioService:
             tx.update(merged)
             self._ensure_ticker_meta(self._store, tx["ticker"])
             self._save()
+            warnings = self._short_warnings(shorts_before)
         self._syslog("info", f"transação atualizada: {tx['ticker']} "
                              f"{_fmt_date(tx['date'])}")
-        return {"ok": True, "tx": tx}
+        out: dict[str, Any] = {"ok": True, "tx": tx}
+        if warnings:
+            out["warnings"] = warnings
+        return out
 
     def delete_tx(self, tx_id: str) -> dict:
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             tx = next((t for t in self._store["txs"]
                        if t.get("id") == tx_id), None)
             if tx is None:
                 return {"ok": False, "_error": "Transação não encontrada."}
+            shorts_before = self._short_flags(self._store)
             self._store["txs"] = [t for t in self._store["txs"]
                                   if t.get("id") != tx_id]
             self._save()
+            warnings = self._short_warnings(shorts_before)
         self._syslog("info", f"transação excluída: {tx['ticker']} "
                              f"{_fmt_date(tx['date'])}")
-        return {"ok": True}
+        out: dict[str, Any] = {"ok": True}
+        if warnings:
+            out["warnings"] = warnings
+        return out
 
     # ════════════════════════════════════════════════════════════════════════
     # CRUD — watchlist (tickers followed on the Painel)
@@ -642,7 +923,13 @@ class PortfolioService:
                     "errors": {"ticker": "Ticker inválido — use o padrão B3 "
                                          "(ex: PETR4, BOVA11)."}}
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             if any(w.get("ticker") == ticker for w in self._store["watchlist"]):
                 return {"ok": True, "watch": {"ticker": ticker},
                         "already": True}
@@ -656,7 +943,13 @@ class PortfolioService:
     def remove_watch(self, ticker: str) -> dict:
         ticker = (ticker or "").strip().upper()
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             before = len(self._store["watchlist"])
             self._store["watchlist"] = [w for w in self._store["watchlist"]
                                         if w.get("ticker") != ticker]
@@ -672,7 +965,13 @@ class PortfolioService:
         if not _TICKER_RE.match(ticker):
             return {"ok": False, "_error": "Ticker inválido."}
         with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
             self._store["tickers"].setdefault(
                 ticker, {"name": "", "sector": "", "updated_at": _now_iso()})
             self._save()
@@ -691,6 +990,8 @@ class PortfolioService:
         corp_name when the CVM metadata is still empty/partial.
         """
         snap = self._snapshot()
+        with self._lock:
+            store_error = self._load_error
         needed = {t.get("ticker") for t in snap["txs"]}
         needed.update(w.get("ticker") for w in snap["watchlist"])
         needed = {t for t in needed if t}
@@ -712,7 +1013,10 @@ class PortfolioService:
         return {"users": users, "accounts": accounts,
                 "watchlist": sorted(snap["watchlist"],
                                     key=lambda w: w.get("ticker") or ""),
-                "tickers": tickers}
+                "tickers": tickers,
+                # [v1.22] Degraded-store banner (corrupt file on disk —
+                # writes refused). Null when healthy.
+                "store_error": store_error}
 
     def _ticker_table(self, snap: dict) -> list[dict]:
         """Held + watched tickers with their cached metadata (manage UI).
@@ -772,14 +1076,29 @@ class PortfolioService:
                 else:
                     # Covering a short (possibly flipping long).
                     covered = min(q, -pos["qty"])
-                    pos["realized"] += covered * (pos["pm"] - p) - fees
+                    excess = q - covered
+                    # [v1.22] Fee split on the flip: the covered share
+                    # goes to realized; the excess share enters the new
+                    # long's PM — the "buy fees enter the PM" rule
+                    # applied to the flip (it used to charge the WHOLE
+                    # fee to realized and open the long feeless).
+                    fee_cov = fees * (covered / q) if q > 0 else fees
+                    fee_exc = fees - fee_cov
+                    pos["realized"] += covered * (pos["pm"] - p) - fee_cov
                     pos["qty"] += q
                     if pos["qty"] > 1e-9:
-                        pos["pm"] = p        # the excess opens a long at p
+                        # the excess opens a long at p + its fee share
+                        pos["pm"] = ((p * excess + fee_exc) / excess
+                                     if excess > 1e-9 else 0.0)
                     # still short → the average entry price stands
             else:
                 if pos["qty"] >= -1e-9:
-                    # Selling long (possibly opening a short).
+                    # Selling long (possibly opening a short). ALL sell
+                    # fees stay in realized — including the share of a
+                    # short-opening sell: that is the pure-short-open
+                    # convention (the entry price is the SELL price; the
+                    # fee is a cost of getting into the trade), so a
+                    # flip decomposes exactly into covered-sell + open.
                     covered = min(q, pos["qty"])
                     pos["realized"] += covered * (p - pos["pm"]) - fees
                     pos["qty"] -= q
@@ -794,6 +1113,31 @@ class PortfolioService:
                 if short_ids is not None and pos["qty"] < -1e-9:
                     short_ids.add(t.get("id") or "")
         return out
+
+    def _short_flags(self, store: dict) -> set[str]:
+        """[v1.22] Tx ids that first pushed THEIR account's position
+        below zero (per-account replay — a global replay would net
+        longs against shorts across accounts and flag the wrong txs)."""
+        flags: set[str] = set()
+        by_acc: dict[str, list[dict]] = {}
+        for t in store.get("txs") or []:
+            by_acc.setdefault(t.get("account_id") or "", []).append(t)
+        for txs in by_acc.values():
+            self._positions_raw(txs, flags)
+        return flags
+
+    def _short_warnings(self, shorts_before: set[str]) -> list[str]:
+        """[v1.22] PT-BR warnings when an edit/delete left new shorts
+        open (caller holds the lock, the mutation already happened)."""
+        new = self._short_flags(self._store) - shorts_before
+        if not new:
+            return []
+        tickers = sorted({(t.get("ticker") or "") for t in self._store["txs"]
+                          if t.get("id") in new})
+        return ["Atenção: esta alteração deixou {} transação(ões) em venda "
+                "a descoberto ({}) — posições negativas, linhas 🚨 na "
+                "tabela de transações.".format(
+                    len(new), ", ".join(tickers) or "?")]
 
     @staticmethod
     def _scope_accounts(snap: dict, scope: str) -> list[dict]:
@@ -840,10 +1184,15 @@ class PortfolioService:
             by_account[acc["id"]] = raw
             for tk, pos in raw.items():
                 m = merged.setdefault(tk, {"qty": 0.0, "cost": 0.0,
-                                           "realized": 0.0})
+                                           "realized": 0.0,
+                                           "long": 0.0, "short": 0.0})
                 m["qty"] += pos["qty"]
                 m["cost"] += pos["qty"] * pos["pm"]
                 m["realized"] += pos["realized"]
+                if pos["qty"] > 1e-9:
+                    m["long"] += pos["qty"]
+                elif pos["qty"] < -1e-9:
+                    m["short"] += -pos["qty"]
 
         # Quotes for the union of held tickers (shorts included — a
         # negative position still needs its Valor Hoje).
@@ -870,33 +1219,47 @@ class PortfolioService:
                     holders.append(" · ".join(x for x in (
                         user["name"] if user else None,
                         acc.get("name")) if x))
+            # [v1.22] A ticker held LONG in one account and SHORT in
+            # another has no consolidated PM — Σ(qty·pm)/Σqty blends a
+            # long base with a short entry into a number that exists in
+            # no broker. Honest "—" for PM and Lucro % (qty/cost/value/
+            # profit stay: value − cost is still the per-leg profit sum).
+            mixed = m["long"] > 1e-9 and m["short"] > 1e-9
             row = {
                 "ticker": tk,
                 "name": meta.get("name") or (q.get("name") if q else "") or tk,
                 "sector": meta.get("sector") or "—",
-                "pm": _px(m["cost"] / m["qty"]) if m["qty"] else None,
+                "pm": None if mixed else
+                      (_px(m["cost"] / m["qty"]) if m["qty"] else None),
                 "price": _px(price),
                 "qty": _qty(m["qty"]),
                 "raw_qty": m["qty"],
                 "short": m["qty"] < -1e-9,
+                "mixed": mixed,
                 "cost": _brl_auto(m["cost"]),
                 "value": _brl_auto(value),
                 "profit": _signed_brl(profit),
-                "profit_pct": _signed_pct(
+                "profit_pct": None if mixed else _signed_pct(
                     profit / abs(m["cost"]) if profit is not None
                     and abs(m["cost"]) > 1e-9 else None),
                 "accounts": holders,
                 # sort keys (raw floats; the formatted cells also parse)
-                "_v": value if value is not None else -1.0,
+                "_v": value,          # None = no quote → sorts last
             }
             rows.append(row)
-        rows.sort(key=lambda r: -r["_v"])
+        rows.sort(key=lambda r: -(r["_v"] if r["_v"] is not None
+                                  else float("-inf")))
 
         # Totals + KPIs — "—" whenever ANY held ticker lacks a quote (a
         # partial patrimônio would read as a fake loss). Shorts enter
         # with negative qty/value/cost (|cost| anchors the %).
+        # [v1.22] SIGNED sum: shorts have NEGATIVE market value and
+        # must enter the Patrimônio — the old `if _v >= 0` filter was
+        # built to skip the (now dead) -1.0 no-quote sentinel and
+        # silently DROPPED every short while keeping its negative cost.
+        # `complete` already gates the display when quotes are missing.
         total_cost = sum(m["cost"] for m in merged.values())
-        total_value = sum(r["_v"] for r in rows if r["_v"] >= 0)
+        total_value = sum(r["_v"] for r in rows if r["_v"] is not None)
         total_realized = sum(m["realized"] for m in merged.values())
         lucro = total_value - total_cost if complete else None
         lucro_pct = (lucro / abs(total_cost) * 100.0
@@ -982,10 +1345,11 @@ class PortfolioService:
         acc_by_id = {a["id"]: a for a in snap["accounts"]}
         user_by_id = {u["id"]: u for u in snap["users"]}
         rows = [t for t in snap["txs"] if t.get("account_id") in account_ids]
-        rows.sort(key=lambda t: (t.get("date") or "", t.get("created_at") or "",
-                                 t.get("id") or ""), reverse=True)
-        recent = rows[:limit]
-        recent.reverse()                     # oldest → newest
+        # [v1.22] Ascending + stable, the SAME total order as the replay
+        # (date, created_at, seq — the uuid tiebreak scrambled same-
+        # second rows); keep the NEWEST `limit`.
+        rows.sort(key=self._tx_order_key)
+        recent = rows[-limit:]               # newest `limit`, oldest first
         short_ids = short_ids or set()
         out = []
         for t in recent:

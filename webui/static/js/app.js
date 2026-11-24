@@ -3596,6 +3596,8 @@ function initCarteiraPage() {
     level: readLevel(),
     view: 'positions',
     editUser: null, editAccount: null, editTx: null,
+    storeError: null,   // [v1.22] degraded-store banner (corrupt file)
+    pendingNote: null,  // [v1.22] {text, until} — post-mutation warnings
   };
 
   function $(id) { return document.getElementById(id); }
@@ -3684,10 +3686,14 @@ function initCarteiraPage() {
       st.accounts = res.j.accounts || [];
       st.watchlist = res.j.watchlist || [];
       st.tickers = res.j.tickers || [];
+      st.storeError = res.j.store_error || null;   // [v1.22]
       reconcileLevel();
       renderActions();
       renderCrumbs();
       if ($('cart-manage-modal').open) renderManage();
+      // [v1.22] The store banner must show even if the level payload
+      // rendered first — showNote is idempotent per current state.
+      showNote(st.level.kind === 'account' ? (st.pos || {}) : (st.dir || {}));
     });
   }
 
@@ -3721,16 +3727,37 @@ function initCarteiraPage() {
   function reload() { loadState(); loadLevel(); }
 
   // ── notes ──────────────────────────────────────────────────────────────
+  // [v1.22] Three layers: the degraded-store banner (sticky — it is a
+  // MODE, cleared only by a healthy /state), post-mutation warnings
+  // (time-boxed ~15s — they must survive the reload race) and the
+  // quotes note. hideNote() keeps the store banner visible.
   function hideNote() {
     var n = $('cart-note');
-    if (n) { n.hidden = true; n.textContent = ''; }
+    if (!n) return;
+    if (st.storeError) {
+      n.hidden = false;
+      n.innerHTML = '🚨 ' + esc(st.storeError);
+      return;
+    }
+    n.hidden = true;
+    n.textContent = '';
   }
 
   function showNote(d) {
     var n = $('cart-note');
     if (!n) return;
-    if (d && d.quotes_note) { n.hidden = false; n.textContent = d.quotes_note; }
-    else { n.hidden = true; n.textContent = ''; }
+    var bits = [];
+    if (st.storeError) bits.push('🚨 ' + esc(st.storeError));
+    if (st.pendingNote && Date.now() < st.pendingNote.until) {
+      bits.push('⚠️ ' + esc(st.pendingNote.text));
+    }
+    if (d && d.quotes_note) bits.push(esc(d.quotes_note));
+    if (bits.length) {
+      n.hidden = false;
+      n.innerHTML = bits.join('<br>');
+    } else {
+      hideNote();
+    }
   }
 
   // ── header actions (contextual: one create per level) ─────────────────
@@ -4002,7 +4029,16 @@ function initCarteiraPage() {
       var shortFlag = r.short
         ? ' ' + flagHtml('🚨', 'Posição vendida a descoberto (short) — a ' +
             'quantidade está negativa; a cobertura exige compras.') : '';
-      var qtyCell = esc(r.qty) + shortFlag;
+      // [v1.22] Long in one account + short in another: no consolidated PM.
+      var mixFlag = r.mixed
+        ? ' ' + flagHtml('🔀', 'Posição mista: long em uma conta e short ' +
+            'em outra — o PM consolidado não se aplica; veja por conta.') : '';
+      var qtyCell = esc(r.qty) + shortFlag + mixFlag;
+      var pmCell = r.pm == null
+        ? '<span class="muted" title="' + esc(r.mixed
+            ? 'Sem PM consolidado — o mesmo ticker está comprado em uma conta e vendido em outra.'
+            : 'Sem cotação') + '">—</span>'
+        : valNumHtml(r.pm);
       var sellTitle = r.short
         ? '❌ Vender mais ' + esc(r.ticker) + ' (aumentar o short)'
         : '❌ Vender ' + esc(r.ticker) + ' — fecha a posição (ajuste a quantidade para vender menos)';
@@ -4016,7 +4052,7 @@ function initCarteiraPage() {
           esc(r.ticker) + '</a></td>' +
         '<td class="cart-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
         '<td class="cart-sector" title="' + esc(r.sector) + '">' + esc(r.sector) + '</td>' +
-        '<td class="val-val">' + valNumHtml(r.pm) + '</td>' +
+        '<td class="val-val">' + pmCell + '</td>' +
         '<td class="val-val">' + valNumHtml(r.price) + '</td>' +
         '<td class="val-val">' + qtyCell + '</td>' +
         '<td class="val-val">' + valNumHtml(r.cost) + '</td>' +
@@ -4209,8 +4245,17 @@ function initCarteiraPage() {
   }
 
   function parseBr(v) {
-    var s = String(v === null || v === undefined ? '' : v).trim()
-      .replace(/\./g, '').replace(',', '.');
+    var raw = String(v === null || v === undefined ? '' : v).trim();
+    // [v1.22] A paste like "3.65" / "0.0432" / "12.5" (no comma, ONE
+    // dot, not a 3-digit group) is a US-style decimal: stripping the
+    // dot read it as 365 (100×). Masked fields always carry a comma,
+    // so typed input is unaffected; "1.234" stays PT-BR thousands.
+    if (raw.indexOf(',') < 0 && /^\d+\.\d+$/.test(raw) &&
+        !/^\d{1,3}\.\d{3}$/.test(raw)) {
+      var dn = parseFloat(raw);
+      return isNaN(dn) ? null : dn;
+    }
+    var s = raw.replace(/\./g, '').replace(',', '.');
     var n = parseFloat(s);
     return isNaN(n) ? null : n;
   }
@@ -4262,8 +4307,13 @@ function initCarteiraPage() {
       }
     }
     if (price === 0) {
-      hints.push('⚠️ <b>Preço R$ 0,00 — bonificação?</b> Os ativos entram ' +
-        'sem custo no preço médio.');
+      // [v1.22] Sell at R$ 0,00 is refused by the server — say it here
+      // too (bonificação is a BUY at 0).
+      hints.push(type === 'sell'
+        ? '🚫 <b>Venda a R$ 0,00 não é válida</b> — bonificações se ' +
+          'registram como COMPRA a R$ 0,00.'
+        : '⚠️ <b>Preço R$ 0,00 — bonificação?</b> Os ativos entram ' +
+          'sem custo no preço médio.');
     }
     box.innerHTML = hints.join('<br>');
     box.hidden = !hints.length;
@@ -4446,6 +4496,11 @@ function initCarteiraPage() {
         $('cart-tx-msg').textContent = (res.j && res.j._error) || '';
         return;
       }
+      // [v1.22] Edit left shorts open? Show the server's warning.
+      if (res.j && res.j.warnings && res.j.warnings.length) {
+        st.pendingNote = { text: res.j.warnings.join(' '),
+                           until: Date.now() + 15000 };
+      }
       m.close();
       reload();
     }).catch(function() {
@@ -4516,7 +4571,14 @@ function initCarteiraPage() {
       '🗑️ Excluir transação', function() {
         api('DELETE', '/txs/' + id).then(function(res) {
           if (!res.ok) window.alert((res.j && res.j._error) || 'Erro ao excluir.');
-          else reload();
+          else {
+            // [v1.22] Delete left shorts open? Show the server's warning.
+            if (res.j && res.j.warnings && res.j.warnings.length) {
+              st.pendingNote = { text: res.j.warnings.join(' '),
+                                 until: Date.now() + 15000 };
+            }
+            reload();
+          }
         });
       });
   }

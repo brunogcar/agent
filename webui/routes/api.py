@@ -109,6 +109,8 @@ from webui.services.financials import FinancialsService
 from webui.services.valuation import ValuationService
 from webui.services.proventos import ProventosService
 from webui.templating import templates
+# [v1.22] ONE ticker definition (webui/validators.py).
+from webui.validators import TICKER_PATTERN
 
 router = APIRouter(prefix="/api/webui", tags=["webui-api"])
 
@@ -128,11 +130,14 @@ _valuation_service = _svc(ValuationService)
 _proventos_service = _svc(ProventosService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
-# B3 symbols: 4-6 letters + 1-2 digits + optional trailing letter
-# (PETR4, BOVA11, UNIT11, AAPL34, …). Validated at the route boundary so
-# garbage never reaches the engines, SQL LIKE patterns, Jinja contexts or
-# client JS strings. FastAPI returns 422 automatically on mismatch.
-Ticker = Annotated[str, Path(pattern=r"^[A-Za-z]{4,6}\d{1,2}[A-Za-z]?$")]
+# B3 symbols: letter + 3-5 alphanumerics + 1-2 digits + optional
+# trailing letter (PETR4, BOVA11, UNIT11, AAPL34, B3SA3, A1MD34, …).
+# [v1.22] The old letters-only stem rejected B3's own ticker (B3SA3)
+# and BDRs — a digit in the stem is legal B3 symbology. Validated at
+# the route boundary so garbage never reaches the engines, SQL LIKE
+# patterns, Jinja contexts or client JS strings. FastAPI returns 422
+# automatically on mismatch.
+Ticker = Annotated[str, Path(pattern=TICKER_PATTERN)]
 
 # [v1.7] Adapter key validation — "<family>:<sub>" (colon is a legal path
 # character, RFC 3986). Checked BEFORE dispatch; unknown keys get a 404
