@@ -1,0 +1,27 @@
+{# webui/templates/partials/tab_backtest.html — the Backtest tab shell.
+
+[v1.25] The interactive simulator — the static PETR4_backtest_dashboard
+.html reborn with parameters, multiple scenarios and comparison. This
+shell carries the three areas; ALL dynamics live in app.js
+(initBacktestTab — the Carteira pattern of a self-contained client
+module, not the generic section renderer: the form + scenario list are
+interactive state, not server-shaped sections):
+
+1. Parâmetros — the form card. Strategy select + the strategy's OWN
+   threshold inputs (rendered from /backtest/meta's entry/exit
+   condition specs), period presets (1A/3A/5A/10A/Máximo + manual
+   dates), capital, % de posição, dias máximos, stop-loss, take-profit,
+   corretagem por operação and the "sair quando o sinal reverter"
+   toggle. Executar → POST /backtest/run.
+2. Resultado — KPI cards (CAGR, Retorno Total, Max Drawdown, Sharpe,
+   Win Rate, Alpha, Fator de Lucro, Trades), Curva de Capital with the
+   buy & hold overlay, Drawdown + Preço com marcas de entrada/saída
+   side by side, and the trade log table.
+3. Cenários — the saved-run manager: every executed scenario can be
+   pinned here (localStorage per ticker), compared in one table and
+   overlaid on ONE equity chart. The static report was one frozen
+   scenario; this is the "different scenarios" ask.
+#}
+<div class="tab-backtest" id="bt-root" data-ticker="{{ ticker }}">
+  <div class="loading">{{ t("common.loading") }}</div>
+</div>

@@ -94,6 +94,18 @@
             hx-swap="innerHTML">
       {{ t("company.insiders") }}
     </button>
+    {# [v1.25] Backtest tab — the interactive simulator (reference:
+       PETR4_backtest_dashboard.html / skills/cvm/backtest, reborn with
+       parameters, scenarios and comparison). Last tab: the reading
+       flow ends in simulation — you backtest AFTER studying the
+       company. #}
+    <button class="tab-btn" :class="{ 'active': tab === 'backtest' }"
+            @click="tab='backtest'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/backtest"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.backtest") }}
+    </button>
     {# [v1.21 fix 1] ⭐ Watch button — adds/removes this ticker on the
        Painel's Tickers Observados (initCompanyWatch() in app.js owns the
        state + toggle). Lives in the tab bar so it's on EVERY tab,

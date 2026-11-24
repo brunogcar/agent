@@ -117,6 +117,16 @@ Returns volume data for the Volume subtab (10Y): volume bars + trade count + con
 
 Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w) + levels + trade setups + dividend adjustments.
 
+### `GET /api/webui/company/{ticker}/backtest/meta`
+
+[v1.25] The Backtest form catalog — ONE fetch primes the whole interactive form: the 8 strategies (label/description/kind + each one's parametrizable entry/exit conditions as `{key, label, default, min, max, step, scale, suffix}` specs; thresholds in % convert via `scale`), the ticker's available price range (`range.first/last`) and the engine defaults (3A window clamped, capital R$ 10.000, 100% position, 252 dias máx.).
+
+### `POST /api/webui/company/{ticker}/backtest/run`
+
+[v1.25] Runs ONE parametrized scenario. Body MUST be `application/json` (the v1.22 CSRF rule — a cross-site text/plain POST must not parse); the engine (cotahist scan + the signal precompute) runs via `run_in_threadpool`. Params: `strategy` (one of the meta catalog), `start_date`/`end_date` (clamped to the ticker's range), `initial_capital`, `position_pct`, `max_holding_days` (0 = ilimitado), `stop_loss_pct`, `take_profit_pct` (both verified on the daily close), `fee_brl` (per operação — buy and sell each pay), `exit_on_signal`, and the strategy's own `thresholds` (`{key: value}` from the meta specs). Validation failures answer `{"_error": "mensagem PT-BR"}` with 400.
+
+**Response (ok):** `performance` (retorno total, CAGR, max drawdown, Sharpe rf=0, win rate, trades, buy&hold, alpha, fator de lucro, retorno médio, tempo médio, capital final), `trades` (entrada/saída/preços/ações/PnL/retorno/dias/motivo — `stop_loss|take_profit|signal|max_holding|end_of_period`), `curves` (labels + equity + buy_hold + drawdown + price + entry/exit markers, downsampled to ≤1200 pts) and `warnings` (missing DFP/ITR series → "sincronize CVM"; no entries → "ajuste os limiares"). The price series is bdi_code=2 (lote padrão), ONE row per session — DIR/REC rights rows never poison the simulation.
+
 ### Lazy subtab endpoints (aliases of `/sections/{key}`)
 
 Each family also has dedicated endpoints over the same service methods — `financials-overview`, `financials-statements`, `valuation-overview|-multiples|-intrinsic|-fundamentals|-all`, `proventos-overview|-historico|-anual`. Same payloads as `/sections/{key}`; kept for the existing client loaders.
@@ -145,7 +155,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `acoes` | `overview`, `evolucao` | Mercado · Ações |
 | `dividendos` | `overview`, `empresas`, `calendario`, `bdrs` | Mercado · Proventos |
 
-The company page's 8 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `proventos`, `options`, `shareholders`, `insiders` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click).
+The company page's 10 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `historical`, `proventos`, `options`, `shareholders`, `insiders`, `backtest` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click).
 
 ---
 

@@ -90,6 +90,8 @@ Routes:
   GET /api/webui/company/{ticker}/proventos-overview    → Proventos Visão Geral (JSON)
   GET /api/webui/company/{ticker}/proventos-historico   → Proventos Histórico completo (JSON)
   GET /api/webui/company/{ticker}/proventos-anual       → Proventos Anual (JSON)
+  GET /api/webui/company/{ticker}/backtest/meta         → Backtest form catalog (JSON) [v1.25]
+  POST /api/webui/company/{ticker}/backtest/run         → run ONE parametrized scenario (JSON) [v1.25]
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
 """
 from __future__ import annotations
@@ -108,6 +110,7 @@ from webui.services.price import PriceService
 from webui.services.financials import FinancialsService
 from webui.services.valuation import ValuationService
 from webui.services.proventos import ProventosService
+from webui.services.backtest import BacktestService
 from webui.templating import templates
 # [v1.22] ONE ticker definition (webui/validators.py).
 from webui.validators import TICKER_PATTERN
@@ -128,6 +131,7 @@ _price_service = _svc(PriceService)
 _financials_service = _svc(FinancialsService)
 _valuation_service = _svc(ValuationService)
 _proventos_service = _svc(ProventosService)
+_backtest_service = _svc(BacktestService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: letter + 3-5 alphanumerics + 1-2 digits + optional
@@ -149,7 +153,8 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 # company.html hides its button until it exists). [v1.6] proventos.
 # [v1.8] options. [v1.9] shareholders. [v1.10] insiders.
 # [v1.24] historical SHIPS (the 4-subtab Histórico tab).
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders"}
+# [v1.25] backtest (the interactive simulator tab).
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders", "backtest"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -402,6 +407,46 @@ def company_proventos_anual(ticker: Ticker):
     return JSONResponse(data)
 
 
+# ── [v1.25] Backtest — the interactive simulator ─────────────────────────
+
+@router.get("/company/{ticker}/backtest/meta")
+def company_backtest_meta(ticker: Ticker):
+    """[v1.25] The Backtest form catalog — strategies (with their
+    parametrizable entry/exit conditions), the ticker's price range and
+    the engine defaults. One fetch primes the whole form."""
+    data = _backtest_service.meta(ticker.upper())
+    return JSONResponse(data)
+
+
+@router.post("/company/{ticker}/backtest/run")
+async def company_backtest_run(request: Request, ticker: Ticker):
+    """[v1.25] Run ONE parametrized scenario → full interactive payload
+    (KPIs, equity × buy&hold, drawdown, price-with-markers, trade log).
+
+    The body MUST be application/json (the v1.22 CSRF rule — a
+    cross-site text/plain POST must not parse). The handler stays async
+    only to await the body; the engine (SQLite scans + the signal
+    precompute) runs via run_in_threadpool so the event loop never
+    blocks on a 10-year backtest.
+    """
+    from starlette.concurrency import run_in_threadpool
+    if "application/json" not in (request.headers.get("content-type")
+                                   or "").lower():
+        return JSONResponse({"_error": "Corpo inválido — esperado um objeto JSON."},
+                            status_code=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"_error": "Corpo inválido — esperado um objeto JSON."},
+                            status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"_error": "Corpo inválido — esperado um objeto JSON."},
+                            status_code=400)
+    data = await run_in_threadpool(_backtest_service.run, ticker.upper(), body)
+    status = 400 if (data.get("_error") and data.get("status") != "ok") else 200
+    return JSONResponse(data, status_code=status)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
     """Tab content — HTML fragment for HTMX swap.
@@ -454,6 +499,15 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_proventos.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "backtest":
+        # [v1.25] The interactive simulator shell — the form, the result
+        # area and the scenario manager. The client fetches /backtest/meta
+        # (form catalog) on load and POSTs /backtest/run per simulation.
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_backtest.html",
             {"ticker": ticker, "t": tr},
         )
     elif tab == "options":

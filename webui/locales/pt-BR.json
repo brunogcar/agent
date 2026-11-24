@@ -25,7 +25,8 @@
     "historical": "Histórico",
     "options": "Opções",
     "shareholders": "Acionistas",
-    "insiders": "Insiders"
+    "insiders": "Insiders",
+    "backtest": "Backtest"
   },
   "sync": {
     "checking": "Verificando fontes...",

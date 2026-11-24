@@ -25,7 +25,8 @@
     "historical": "Historical",
     "options": "Options",
     "shareholders": "Shareholders",
-    "insiders": "Insiders"
+    "insiders": "Insiders",
+    "backtest": "Backtest"
   },
   "sync": {
     "checking": "Checking sources...",

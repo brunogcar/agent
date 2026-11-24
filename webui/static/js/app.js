@@ -1842,6 +1842,618 @@ window.loadHistSubtab = function(sub) {
     });
 };
 
+// ── [v1.25] Backtest tab — the interactive simulator ──────────────────────
+// The static PETR4_backtest_dashboard.html was ONE frozen scenario per
+// HTML file (fixed thresholds, no costs, no stops, no comparison). This
+// module is the interactive rebirth: a parameter form fed by
+// /backtest/meta (every strategy ships its own threshold specs), runs
+// via POST /backtest/run, renders KPIs + equity × buy&hold + drawdown +
+// price-with-trade-markers + the trade log, and keeps a PINNED SCENARIO
+// list (localStorage, per ticker) with a comparison table + overlaid
+// equity curves — the "different scenarios" the static report could
+// never do. All server strings pass through esc(); charts are destroyed
+// via canvas._chart (destroyChartsIn covers the HTMX tab swap).
+var btState = { meta: null, ticker: '', result: null, running: false };
+
+// scenario pin colors (fixed roster — the overlay legend stays readable)
+var BT_SCEN_COLORS = ['#0d9488', '#2563eb', '#d97706', '#7c3aed', '#dc2626',
+                      '#0891b2', '#65a30d', '#db2777'];
+var BT_SCEN_MAX = 8;
+
+function _btPct(v, dec) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return Number(v).toLocaleString('pt-BR',
+    { minimumFractionDigits: dec === undefined ? 2 : dec,
+      maximumFractionDigits: dec === undefined ? 2 : dec }) + '%';
+}
+function _btNum(v, dec) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return Number(v).toLocaleString('pt-BR',
+    { minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0 });
+}
+function _btSignClass(v) { return v > 0 ? 'pos' : (v < 0 ? 'neg' : 'neu'); }
+
+window.initBacktestTab = function() {
+  var root = document.getElementById('bt-root');
+  if (!root || root._booted) return;
+  root._booted = true;
+  btState.ticker = root.getAttribute('data-ticker') || '';
+  btState.meta = null;
+  btState.result = null;
+  fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) +
+        '/backtest/meta?_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(meta) {
+      if (meta._error) {
+        root.innerHTML = '<div class="error">Erro: ' + esc(meta._error) + '</div>';
+        return;
+      }
+      btState.meta = meta;
+      _btRenderShell();
+    })
+    .catch(function(err) {
+      root.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+};
+
+function _btRenderShell() {
+  var root = document.getElementById('bt-root');
+  if (!root) return;
+  var m = btState.meta;
+  var d = m.defaults || {};
+  var html = '';
+
+  // ── 1. Parâmetros ──
+  html += '<div class="bt-card bt-form-card">';
+  html += '<div class="bt-card-title">Parâmetros</div>';
+  html += '<div class="bt-form">';
+  // strategy + period row
+  html += '<div class="bt-field"><span>Estratégia</span>' +
+    '<select id="bt-strategy" class="bt-select" onchange="btStrategyChange()">';
+  (m.strategies || []).forEach(function(s) {
+    html += '<option value="' + esc(s.name) + '">' + esc(s.label) + '</option>';
+  });
+  html += '</select><div class="bt-field-note" id="bt-strategy-desc"></div></div>';
+  // period presets + dates
+  html += '<div class="bt-field"><span>Período</span>' +
+    '<div class="bt-presets" id="bt-presets">';
+  (m.presets || []).forEach(function(p, i) {
+    html += '<button type="button" class="bt-preset-btn' +
+      (p.label === '3A' ? ' active' : '') + '" data-start="' + esc(p.start) +
+      '" data-end="' + esc(p.end) + '" onclick="btPreset(this)">' + esc(p.label) + '</button>';
+  });
+  html += '</div><div class="bt-dates">' +
+    '<input type="date" id="bt-start" value="' + esc(d.start_date || '') + '">' +
+    '<span class="bt-dates-sep">→</span>' +
+    '<input type="date" id="bt-end" value="' + esc(d.end_date || '') + '">' +
+    '</div></div>';
+  // engine params
+  html += '<div class="bt-params-grid">';
+  html += '<div class="bt-field"><span>Capital inicial (R$)</span>' +
+    '<input type="number" id="bt-capital" min="100" step="500" value="' +
+    esc(String(d.initial_capital || 10000)) + '"></div>';
+  html += '<div class="bt-field"><span>% do capital por entrada</span>' +
+    '<input type="number" id="bt-position" min="5" max="100" step="5" value="' +
+    esc(String(d.position_pct || 100)) + '"></div>';
+  html += '<div class="bt-field" id="bt-field-mh"><span>Dias máx. de posição (0 = sem limite)</span>' +
+    '<input type="number" id="bt-maxhold" min="0" max="2520" step="21" value="' +
+    esc(String(d.max_holding_days || 0)) + '"></div>';
+  html += '<div class="bt-field" id="bt-field-st"><span>Stop-loss % (0 = desligado)</span>' +
+    '<input type="number" id="bt-stop" min="0" max="95" step="1" value="0"></div>';
+  html += '<div class="bt-field" id="bt-field-tp"><span>Take-profit % (0 = desligado)</span>' +
+    '<input type="number" id="bt-take" min="0" max="1000" step="5" value="0"></div>';
+  html += '<div class="bt-field"><span>Corretagem por operação (R$)</span>' +
+    '<input type="number" id="bt-fee" min="0" step="1" value="0"></div>';
+  html += '</div>'; // bt-params-grid
+  // dynamic thresholds + exit toggle
+  html += '<div id="bt-thresholds"></div>';
+  html += '<div class="bt-exit-row" id="bt-exit-row">' +
+    '<label class="bt-check"><input type="checkbox" id="bt-exitsignal">' +
+    ' Sair quando o sinal reverter (usa os limiares de saída abaixo)</label></div>';
+  // run button + notes
+  html += '<div class="bt-actions"><button type="button" class="bt-run-btn" id="bt-run-btn" onclick="btRun()">▶ Executar backtest</button></div>';
+  html += '<div class="bt-note">Decisões no fechamento do pregão (sem look-ahead intradiário); ' +
+    'stop/take verificados no fechamento diário; proventos não são reinvestidos; ' +
+    'Sharpe com taxa livre de risco = 0. Preços do COTAHIST (lote padrão).</div>';
+  html += '</div></div>'; // bt-form / card
+
+  // ── 2. Resultado ──
+  html += '<div id="bt-result"><div class="bt-empty">Configure os parâmetros e execute para ver o resultado.</div></div>';
+
+  // ── 3. Cenários ──
+  html += '<div id="bt-scenarios"></div>';
+
+  root.innerHTML = html;
+  btStrategyChange();          // primes thresholds + kind-specific visibility
+  _btRenderScenarios();
+}
+
+// strategy change → thresholds + which engine fields apply
+window.btStrategyChange = function() {
+  var sel = document.getElementById('bt-strategy');
+  if (!sel || !btState.meta) return;
+  var spec = null;
+  (btState.meta.strategies || []).forEach(function(s) {
+    if (s.name === sel.value) spec = s;
+  });
+  if (!spec) return;
+  var d = spec.defaults || {};
+  var desc = document.getElementById('bt-strategy-desc');
+  if (desc) desc.textContent = spec.description || '';
+  var mh = document.getElementById('bt-maxhold');
+  if (mh) mh.value = d.max_holding_days !== undefined ? d.max_holding_days : 252;
+  var es = document.getElementById('bt-exitsignal');
+  if (es) es.checked = !!d.exit_on_signal;
+
+  // thresholds (entry + exit conditions, labeled groups)
+  var box = document.getElementById('bt-thresholds');
+  var html = '';
+  function condField(c) {
+    return '<div class="bt-field"><span>' + esc(c.label) + '</span>' +
+      '<input type="number" id="bt-th-' + esc(c.key) + '" min="' + esc(String(c.min)) +
+      '" max="' + esc(String(c.max)) + '" step="' + esc(String(c.step)) +
+      '" value="' + esc(String(c.default)) + '"></div>';
+  }
+  if ((spec.entry || []).length) {
+    html += '<div class="bt-th-group"><div class="bt-th-title">Entrada</div>' +
+      '<div class="bt-params-grid">' + spec.entry.map(condField).join('') + '</div></div>';
+  }
+  if ((spec.exit || []).length) {
+    html += '<div class="bt-th-group"><div class="bt-th-title">Saída por sinal</div>' +
+      '<div class="bt-params-grid">' + spec.exit.map(condField).join('') + '</div></div>';
+  }
+  if (box) box.innerHTML = html;
+
+  // kind-specific visibility: buy_hold ignores stops/holding/exit-signal;
+  // ma_cross exits by the cross itself (no exit thresholds)
+  var isBh = spec.kind === 'buy_hold';
+  ['bt-field-mh', 'bt-field-st', 'bt-field-tp'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = isBh ? 'none' : '';
+  });
+  var xr = document.getElementById('bt-exit-row');
+  if (xr) xr.style.display = (spec.kind === 'fundamental') ? '' : 'none';
+};
+
+window.btPreset = function(btn) {
+  var s = document.getElementById('bt-start');
+  var e = document.getElementById('bt-end');
+  if (!s || !e) return;
+  s.value = btn.getAttribute('data-start');
+  e.value = btn.getAttribute('data-end');
+  Array.prototype.forEach.call(btn.parentNode.querySelectorAll('.bt-preset-btn'), function(b) {
+    b.classList.toggle('active', b === btn);
+  });
+};
+
+// collect the form → params object (numbers coerced; absent thresholds skipped)
+function _btCollect() {
+  var val = function(id) {
+    var el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  var num = function(id) {
+    var v = parseFloat(val(id));
+    return isNaN(v) ? null : v;
+  };
+  var spec = null;
+  (btState.meta.strategies || []).forEach(function(s) {
+    if (s.name === val('bt-strategy')) spec = s;
+  });
+  var p = {
+    strategy: val('bt-strategy'),
+    start_date: val('bt-start'),
+    end_date: val('bt-end'),
+    initial_capital: num('bt-capital'),
+    position_pct: num('bt-position'),
+    max_holding_days: num('bt-maxhold') || 0,
+    stop_loss_pct: num('bt-stop') || 0,
+    take_profit_pct: num('bt-take') || 0,
+    fee_brl: num('bt-fee') || 0,
+    exit_on_signal: false,
+    thresholds: {}
+  };
+  if (spec) {
+    (spec.entry || []).concat(spec.exit || []).forEach(function(c) {
+      var v = num('bt-th-' + c.key);
+      if (v !== null) p.thresholds[c.key] = v;
+    });
+    if (spec.kind === 'fundamental') {
+      var es = document.getElementById('bt-exitsignal');
+      p.exit_on_signal = !!(es && es.checked);
+    }
+  }
+  return p;
+}
+
+window.btRun = function() {
+  var root = document.getElementById('bt-root');
+  var box = document.getElementById('bt-result');
+  if (!root || !box || btState.running) return;
+  var params = _btCollect();
+  btState.running = true;
+  var btn = document.getElementById('bt-run-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Executando…'; }
+  box.innerHTML = '<div class="loading">Rodando o backtest…</div>';
+  fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) + '/backtest/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btState.running = false;
+      if (btn) { btn.disabled = false; btn.textContent = '▶ Executar backtest'; }
+      if (data._error) {
+        box.innerHTML = '<div class="bt-card"><div class="error">Erro: ' +
+          esc(data._error) + '</div></div>';
+        return;
+      }
+      btState.result = data;
+      _btRenderResult(data);
+    })
+    .catch(function(err) {
+      btState.running = false;
+      if (btn) { btn.disabled = false; btn.textContent = '▶ Executar backtest'; }
+      box.innerHTML = '<div class="bt-card"><div class="error">Erro: ' +
+        esc(err.message) + '</div></div>';
+    });
+};
+
+// compact one-line scenario summary (labels come from the meta specs)
+function _btParamSummary(p) {
+  var spec = null;
+  (btState.meta.strategies || []).forEach(function(s) {
+    if (s.name === p.strategy) spec = s;
+  });
+  var bits = [];
+  if (spec) {
+    (spec.entry || []).forEach(function(c) {
+      var v = p.thresholds[c.key];
+      if (v !== undefined)
+        bits.push(c.label.replace(/ de entrada/, '') + ' ' +
+          _btNum(v, String(v).indexOf('.') >= 0 ? 1 : 0) + (c.suffix || ''));
+    });
+  }
+  if (p.position_pct && p.position_pct < 100) bits.push(_btNum(p.position_pct) + '% do capital');
+  if (p.max_holding_days > 0) bits.push('máx ' + _btNum(p.max_holding_days) + 'd');
+  if (p.stop_loss_pct > 0) bits.push('stop ' + _btNum(p.stop_loss_pct) + '%');
+  if (p.take_profit_pct > 0) bits.push('take ' + _btNum(p.take_profit_pct) + '%');
+  if (p.fee_brl > 0) bits.push('taxa R$ ' + _btNum(p.fee_brl, 2));
+  return bits.join(' · ') || 'padrões da estratégia';
+}
+
+function _btRenderResult(r) {
+  var box = document.getElementById('bt-result');
+  if (!box) return;
+  var perf = r.performance || {};
+  var html = '<div class="bt-card">';
+  html += '<div class="bt-card-title-row"><div class="bt-card-title">Resultado — ' +
+    esc(r.label) + '</div>' +
+    '<button type="button" class="bt-pin-btn" onclick="btPinScenario()">📌 Fixar cenário</button></div>';
+  html += '<div class="bt-sub">' + esc(_btParamSummary(r.params)) + ' · ' +
+    esc(fmtDate(r.period.start)) + ' → ' + esc(fmtDate(r.period.end)) +
+    ' · ' + _btNum(r.period.bars) + ' pregões</div>';
+
+  // warnings
+  (r.warnings || []).forEach(function(w) {
+    html += '<div class="bt-warn">⚠ ' + esc(w) + '</div>';
+  });
+
+  // KPI grid
+  var kpis = [
+    { label: 'Retorno Total', value: _btPct(perf.total_return_pct), cls: _btSignClass(perf.total_return_pct) },
+    { label: 'CAGR', value: _btPct(perf.cagr_pct), cls: _btSignClass(perf.cagr_pct) },
+    { label: 'Max Drawdown', value: '−' + _btPct(perf.max_drawdown_pct), cls: 'neg' },
+    { label: 'Sharpe', value: _btNum(perf.sharpe_ratio, 2), cls: perf.sharpe_ratio >= 1 ? 'pos' : 'neu' },
+    { label: 'Win Rate', value: _btPct(perf.win_rate_pct, 1), cls: _btSignClass(perf.win_rate_pct - 50) },
+    { label: 'Alpha vs B&H', value: _btPct(perf.alpha_vs_buy_hold), cls: _btSignClass(perf.alpha_vs_buy_hold) },
+    { label: 'Fator de Lucro', value: perf.profit_factor === null ? '∞' : _btNum(perf.profit_factor, 2), cls: perf.profit_factor >= 1 ? 'pos' : 'neg' },
+    { label: 'Trades', value: _btNum(perf.num_trades), cls: 'neu' },
+    { label: 'Capital Final', value: fmtBRL(perf.final_equity), cls: _btSignClass(perf.final_equity - perf.initial_capital) }
+  ];
+  html += '<div class="kpi-grid">';
+  kpis.forEach(function(k) {
+    html += '<div class="kpi-card"><div class="kpi-label">' + esc(k.label) +
+      '</div><div class="kpi-value ' + (k.cls === 'pos' ? 'bt-pos' : (k.cls === 'neg' ? 'bt-neg' : '')) +
+      '">' + esc(k.value) + '</div></div>';
+  });
+  html += '</div>';
+
+  // equity chart
+  html += '<div class="chart-section bt-chart-block"><div class="chart-header"><div class="reg-title">Curva de Capital — Estratégia × Buy &amp; Hold</div></div>' +
+    '<div class="chart-container"><canvas id="bt-equity-chart"></canvas></div></div>';
+
+  // drawdown + price side by side
+  html += '<div class="bt-pair">';
+  html += '<div class="chart-section bt-chart-block"><div class="chart-header"><div class="reg-title">Drawdown (Underwater)</div></div>' +
+    '<div class="chart-container"><canvas id="bt-dd-chart"></canvas></div></div>';
+  html += '<div class="chart-section bt-chart-block"><div class="chart-header"><div class="reg-title">Preço + Entradas/Saídas</div></div>' +
+    '<div class="chart-container"><canvas id="bt-price-chart"></canvas></div></div>';
+  html += '</div>';
+
+  // trade log
+  var trades = r.trades || [];
+  html += '<div class="bt-table-wrap"><div class="reg-title">Trade Log — ' +
+    trades.length + ' operação(ões)</div>' +
+    '<table class="val-table"><thead><tr><th>Entrada</th><th>Preço</th><th>Saída</th>' +
+    '<th>Preço</th><th>Ações</th><th>Resultado</th><th>Retorno</th><th>Dias</th><th>Motivo</th></tr></thead><tbody>';
+  trades.forEach(function(t) {
+    html += '<tr><td>' + esc(fmtDate(t.entry_date)) + '</td>' +
+      '<td class="val-val">' + _btNum(t.entry_price, 2) + '</td>' +
+      '<td>' + esc(fmtDate(t.exit_date)) + '</td>' +
+      '<td class="val-val">' + _btNum(t.exit_price, 2) + '</td>' +
+      '<td class="val-val">' + _btNum(t.shares) + '</td>' +
+      '<td class="val-val ' + (t.pnl > 0 ? 'bt-pos' : (t.pnl < 0 ? 'bt-neg' : '')) + '">' +
+      (t.pnl >= 0 ? '+' : '') + fmtBRL(t.pnl) + '</td>' +
+      '<td class="val-val ' + (t.return_pct > 0 ? 'bt-pos' : (t.return_pct < 0 ? 'bt-neg' : '')) + '">' +
+      _btPct(t.return_pct) + '</td>' +
+      '<td class="val-val">' + _btNum(t.holding_days) + '</td>' +
+      '<td><span class="bt-reason ' + esc(String(t.exit_reason)) + '">' +
+      esc(_btReasonLabel(t.exit_reason)) + '</span></td></tr>';
+  });
+  if (!trades.length) html += '<tr><td colspan="9">Nenhum trade executado.</td></tr>';
+  html += '</tbody></table></div>';
+
+  html += '</div>'; // card
+  box.innerHTML = html;
+  _btMountCharts(r);
+}
+
+function _btReasonLabel(reason) {
+  return { stop_loss: 'stop', take_profit: 'take profit', signal: 'sinal',
+           max_holding: 'prazo máx.', end_of_period: 'fim do período' }[reason] || reason;
+}
+
+function _btMountCharts(r) {
+  var th = chartTheme();
+  var c = r.curves || {};
+  var labels = c.labels || [];
+
+  // equity × buy&hold
+  var eq = document.getElementById('bt-equity-chart');
+  if (eq) {
+    if (eq._chart) eq._chart.destroy();
+    eq._chart = new Chart(eq.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: 'Estratégia', data: c.equity || [], borderColor: '#0d9488',
+          backgroundColor: 'rgba(13,148,136,0.10)', borderWidth: 2, pointRadius: 0,
+          tension: 0.1, fill: true },
+        { label: 'Buy & Hold', data: c.buy_hold || [], borderColor: '#6b7280',
+          borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, tension: 0.1, fill: false }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false,
+        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 10 } },
+                  y: { grid: { color: th.grid }, ticks: { color: th.text } } },
+        plugins: { legend: { position: 'top' },
+          tooltip: { callbacks: { label: function(ctx) {
+            return ctx.dataset.label + ': ' + fmtBRL(ctx.parsed.y);
+          } } } } }
+    });
+  }
+
+  // drawdown (underwater, % below peak)
+  var dd = document.getElementById('bt-dd-chart');
+  if (dd) {
+    if (dd._chart) dd._chart.destroy();
+    dd._chart = new Chart(dd.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: 'Drawdown %', data: c.drawdown || [], borderColor: '#ef4444',
+          backgroundColor: 'rgba(239,68,68,0.15)', borderWidth: 1.5, pointRadius: 0,
+          tension: 0.1, fill: { target: 'origin' } }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false,
+        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 6 } },
+                  y: { grid: { color: th.grid }, ticks: { color: th.text,
+                    callback: function(v) { return v + '%'; } } } },
+        plugins: { legend: { display: false } } }
+    });
+  }
+
+  // price + entry/exit markers (object data keyed by label — Chart.js
+  // category parsing places them on the right session)
+  var pc = document.getElementById('bt-price-chart');
+  if (pc) {
+    if (pc._chart) pc._chart.destroy();
+    var entries = (c.entries || []).map(function(e) {
+      return { x: e.date, y: e.price };
+    });
+    var exits = (c.exits || []).map(function(e) {
+      return { x: e.date, y: e.price };
+    });
+    pc._chart = new Chart(pc.getContext('2d'), {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: 'Preço', data: c.price || [], borderColor: '#0d9488',
+          borderWidth: 1.5, pointRadius: 0, tension: 0.1, fill: false },
+        { label: 'Compra', data: entries, showLine: false,
+          pointStyle: 'triangle', rotation: 0, radius: 7,
+          backgroundColor: '#22c55e', borderColor: '#16a34a' },
+        { label: 'Venda', data: exits, showLine: false,
+          pointStyle: 'triangle', rotation: 180, radius: 7,
+          backgroundColor: '#ef4444', borderColor: '#dc2626' }
+      ]},
+      options: { responsive: true, maintainAspectRatio: false,
+        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 6 } },
+                  y: { grid: { color: th.grid }, ticks: { color: th.text,
+                    callback: function(v) { return 'R$ ' + _btNum(v, 2); } } } },
+        plugins: { legend: { position: 'top' } } }
+    });
+  }
+}
+
+// ── scenario pinning + comparison ──────────────────────────────────────────
+function _btScenKey() { return 'webui_bt_scenarios_' + (btState.ticker || ''); }
+function _btScenLoad() {
+  try {
+    var v = JSON.parse(localStorage.getItem(_btScenKey()) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+function _btScenSave(list) {
+  try { localStorage.setItem(_btScenKey(), JSON.stringify(list)); }
+  catch (e) { /* quota — keep going with the in-memory copy */ }
+}
+
+window.btPinScenario = function() {
+  var r = btState.result;
+  if (!r) return;
+  var list = _btScenLoad();
+  if (list.length >= BT_SCEN_MAX) {
+    _btScenToast('Máximo de ' + BT_SCEN_MAX + ' cenários fixados — remova um antes.');
+    return;
+  }
+  list.push({ id: Date.now(), label: r.label, summary: _btParamSummary(r.params),
+              params: r.params, performance: r.performance,
+              curves: r.curves, period: r.period });
+  _btScenSave(list);
+  _btRenderScenarios();
+  _btScenToast('Cenário fixado — ' + list.length + '/' + BT_SCEN_MAX);
+};
+
+window.btRemoveScenario = function(id) {
+  var list = _btScenLoad().filter(function(s) { return String(s.id) !== String(id); });
+  _btScenSave(list);
+  _btRenderScenarios();
+};
+
+// load a pinned scenario's params back into the form
+window.btLoadScenario = function(id) {
+  var sc = null;
+  _btScenLoad().forEach(function(s) { if (String(s.id) === String(id)) sc = s; });
+  if (!sc) return;
+  var p = sc.params || {};
+  var set = function(id, v) {
+    var el = document.getElementById(id);
+    if (el && v !== undefined && v !== null) el.value = v;
+  };
+  set('bt-strategy', p.strategy);
+  btStrategyChange();
+  set('bt-start', p.start_date);
+  set('bt-end', p.end_date);
+  set('bt-capital', p.initial_capital);
+  set('bt-position', p.position_pct);
+  set('bt-maxhold', p.max_holding_days);
+  set('bt-stop', p.stop_loss_pct);
+  set('bt-take', p.take_profit_pct);
+  set('bt-fee', p.fee_brl);
+  var es = document.getElementById('bt-exitsignal');
+  if (es) es.checked = !!p.exit_on_signal;
+  Object.keys(p.thresholds || {}).forEach(function(k) {
+    set('bt-th-' + k, p.thresholds[k]);
+  });
+  // clear preset chips — the dates are now manual
+  var bar = document.getElementById('bt-presets');
+  if (bar) Array.prototype.forEach.call(
+    bar.querySelectorAll('.bt-preset-btn'), function(b) { b.classList.remove('active'); });
+  _btScenToast('Parâmetros carregados — execute para revalidar.');
+};
+
+function _btScenToast(msg) {
+  var root = document.getElementById('bt-root');
+  if (!root) return;
+  var t = document.createElement('div');
+  t.className = 'bt-toast';
+  t.textContent = msg;
+  root.appendChild(t);
+  setTimeout(function() { t.classList.add('show'); }, 10);
+  setTimeout(function() {
+    t.classList.remove('show');
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+  }, 2600);
+}
+
+function _btRenderScenarios() {
+  var box = document.getElementById('bt-scenarios');
+  if (!box) return;
+  var list = _btScenLoad();
+  var html = '<div class="bt-card">';
+  html += '<div class="bt-card-title-row"><div class="bt-card-title">Cenários Fixados — ' +
+    list.length + '/' + BT_SCEN_MAX + '</div></div>';
+  if (!list.length) {
+    html += '<div class="bt-empty">Execute um backtest e clique em “📌 Fixar cenário” para comparar estratégias, períodos e parâmetros lado a lado.</div>';
+    html += '</div>';
+    box.innerHTML = html;
+    return;
+  }
+
+  // comparison table
+  html += '<div class="bt-table-wrap"><table class="val-table bt-scen-table"><thead><tr>' +
+    '<th>Cenário</th><th>Retorno</th><th>CAGR</th><th>Max DD</th><th>Sharpe</th>' +
+    '<th>Win Rate</th><th>Alpha</th><th>Trades</th><th></th></tr></thead><tbody>';
+  list.forEach(function(s, i) {
+    var p = s.performance || {};
+    var color = BT_SCEN_COLORS[i % BT_SCEN_COLORS.length];
+    html += '<tr>' +
+      '<td><span class="bt-scen-dot" style="background:' + color + '"></span>' +
+      '<span class="bt-scen-name">' + esc(s.label) + '</span>' +
+      '<div class="bt-scen-sub">' + esc(s.summary) + '</div></td>' +
+      '<td class="val-val ' + _btPctCls(p.total_return_pct) + '">' + _btPct(p.total_return_pct) + '</td>' +
+      '<td class="val-val ' + _btPctCls(p.cagr_pct) + '">' + _btPct(p.cagr_pct) + '</td>' +
+      '<td class="val-val bt-neg">' + _btPct(p.max_drawdown_pct) + '</td>' +
+      '<td class="val-val">' + _btNum(p.sharpe_ratio, 2) + '</td>' +
+      '<td class="val-val">' + _btPct(p.win_rate_pct, 1) + '</td>' +
+      '<td class="val-val ' + _btPctCls(p.alpha_vs_buy_hold) + '">' + _btPct(p.alpha_vs_buy_hold) + '</td>' +
+      '<td class="val-val">' + _btNum(p.num_trades) + '</td>' +
+      '<td class="bt-scen-actions">' +
+      '<button type="button" class="bt-mini-btn" title="Carregar parâmetros no formulário" onclick="btLoadScenario(' + Number(s.id) + ')">↺</button>' +
+      '<button type="button" class="bt-mini-btn bt-mini-danger" title="Remover" onclick="btRemoveScenario(' + Number(s.id) + ')">✕</button>' +
+      '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // overlaid equity curves (union of dates; per-scenario map lookup)
+  html += '<div class="chart-section bt-chart-block"><div class="chart-header">' +
+    '<div class="reg-title">Curvas de Capital — Cenários Sobrepostos</div></div>' +
+    '<div class="chart-container"><canvas id="bt-scen-chart"></canvas></div></div>';
+  html += '</div>';
+  box.innerHTML = html;
+  _btMountScenChart(list);
+}
+
+function _btPctCls(v) {
+  return v > 0 ? 'bt-pos' : (v < 0 ? 'bt-neg' : '');
+}
+
+function _btMountScenChart(list) {
+  var cv = document.getElementById('bt-scen-chart');
+  if (!cv) return;
+  // union of all labels (sorted ISO dates), each scenario → aligned series
+  var union = {};
+  list.forEach(function(s) {
+    ((s.curves || {}).labels || []).forEach(function(l) { union[l] = true; });
+  });
+  var labels = Object.keys(union).sort();
+  var th = chartTheme();
+  var datasets = list.map(function(s, i) {
+    var cur = s.curves || {};
+    var byDate = {};
+    (cur.labels || []).forEach(function(l, j) { byDate[l] = (cur.equity || [])[j]; });
+    return {
+      label: s.label,
+      data: labels.map(function(l) {
+        return byDate.hasOwnProperty(l) ? byDate[l] : null;
+      }),
+      borderColor: BT_SCEN_COLORS[i % BT_SCEN_COLORS.length],
+      borderWidth: 1.6, pointRadius: 0, tension: 0.1, fill: false, spanGaps: false
+    };
+  });
+  if (cv._chart) cv._chart.destroy();
+  cv._chart = new Chart(cv.getContext('2d'), {
+    type: 'line',
+    data: { labels: labels, datasets: datasets },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 10 } },
+                y: { grid: { color: th.grid }, ticks: { color: th.text } } },
+      plugins: { legend: { position: 'top' },
+        tooltip: { callbacks: { label: function(ctx) {
+          return ctx.dataset.label + ': ' + fmtBRL(ctx.parsed.y);
+        } } } } }
+  });
+}
+
 // [v1.4 fix2] Nested subtab picker for grouped payloads (Múltiplos +
 // Fundamentos). Toggles the panes that share the nav's parent scope —
 // works at both levels (top pills toggle .val-pane siblings, sub-pills
@@ -6657,6 +7269,9 @@ function initApp() {
     // [v1.24] Histórico — first subtab of the historical tab (the
     // KPI row + heatmap; the heavy 5A charts load on subtab click).
     loadHistSubtab('overview');
+    // [v1.25] Backtest — the interactive simulator (no-op elsewhere:
+    // only the backtest tab carries #bt-root; the guard is on the pane).
+    initBacktestTab();
     // [v1.11] Macro — first subtab of the macro page (no-op elsewhere:
     // the loader guards on the pane's existence).
     loadMacroSubtab('overview');
