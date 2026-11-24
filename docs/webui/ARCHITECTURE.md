@@ -45,6 +45,7 @@ agent/
 │   │   ├── indexes.py                # [v1.14] Mercado Índices family
 │   │   ├── inflation.py              # [v1.15] Mercado Inflação family
 │   │   ├── juros.py                  # [v1.16] Mercado Juros family
+│   │   ├── poupanca.py               # [v1.23] Mercado Poupança family (× IPCA × CDI)
 │   │   ├── acoes.py                  # [v1.17] Mercado Ações family
 │   │   ├── dividendos.py             # [v1.18] Mercado Proventos family (BDR split)
 │   │   ├── home.py                   # [v1.19] Painel landing (SGS KPIs + 5 ranked cards, TTL memo)
@@ -129,6 +130,7 @@ agent/
 | `webui/services/inflation.py` | [v1.15] Mercado page / Inflação family — IPCA, IGP-M, INPC (DDM) |
 | `webui/services/insiders.py` | [v1.10] Company Insiders tab — CVM insider trading: transações, mensal, por cargo |
 | `webui/services/juros.py` | [v1.16] Mercado page / Juros family — Selic, CDI, meta Selic (DDM) |
+| `webui/services/poupanca.py` | [v1.23] Mercado page / Poupança family — the caderneta vs IPCA/CDI (12m compounded) + the per-index view with matrix-before-collapsed-histórico (DDM) |
 | `webui/services/macro.py` | [v1.11] Macro page — BCB SGS + Focus in 8 lazy subtabs; home.py imports its numerics (the no-forked-numerics rule) |
 | `webui/services/options.py` | [v1.8] Company Opções tab — B3 options: chain, IV, activity, positions |
 | `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição |

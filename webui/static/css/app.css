@@ -335,6 +335,11 @@ a:hover { text-decoration: underline; }
   .ticker-row,
   .ticker-row.has-extra { grid-template-columns: 48px minmax(0, 1fr) 68px 54px; }
   .ticker-row .tk-extra { display: none; }
+  /* [v1.23] the topbar's search box had the input's default min-width
+     (~170px) — logo + search + the 3 icon buttons overflowed 390px
+     screens by 13px (every page, since v1.20). Let it shrink. */
+  .search-box { flex: 1 1 90px; min-width: 0; }
+  .search-box input { min-width: 0; width: 100%; }
 }
 
 /* ── Company page ── */
@@ -804,6 +809,11 @@ a:hover { text-decoration: underline; }
   margin: var(--space-1) 0 var(--space-3); line-height: 1.45;
 }
 .val-section { margin-bottom: var(--space-5); }
+/* [WebUI v1.23] Wide tables (the ano × mês heatmaps — 14 columns, the
+   proventos/ledger tables) scroll WITHIN their section on mobile
+   instead of stretching the page (the prov-table-wrap precedent). */
+.val-section { overflow-x: auto; }
+.val-collapse { overflow-x: auto; }
 .val-section .reg-title { margin-bottom: var(--space-2); }
 
 /* Two-column blocks (Mercado|Resultado, Balanço|Per-share) */
@@ -910,6 +920,27 @@ td[title], .kpi-card[title] { cursor: help; }
 .val-cat .val-table { margin: 0; }
 .val-cat .val-table tr:last-child td { border-bottom: none; }
 .val-count { color: var(--color-text-sec); font-weight: 400; font-size: 11px; }
+
+/* [WebUI v1.23] Collapsible table sections (the Histórico mensal
+   convention — the matrix heatmap above carries the same data): the
+   val-cat box with a flex summary — title left, row count + chevron
+   right; the chevron rotates on open. */
+.val-collapse summary {
+  display: flex; align-items: center; gap: var(--space-2);
+  list-style: none; user-select: none;
+}
+.val-collapse summary::-webkit-details-marker { display: none; }
+.val-collapse summary::marker { content: ''; }
+.val-collapse .val-collapse-title { font-weight: 600; font-size: 13px; }
+.val-collapse .val-collapse-chev {
+  margin-left: auto; font-size: 10px; line-height: 1;
+  color: var(--color-text-sec);
+  transition: transform 0.15s ease;
+}
+.val-collapse[open] .val-collapse-chev { transform: rotate(90deg); }
+.val-collapse .val-desc { padding: var(--space-3) var(--space-3) 0; }
+.val-collapse .val-table { margin: var(--space-3); margin-bottom: 0; }
+.val-collapse .val-note { margin: var(--space-2) var(--space-3) var(--space-3); }
 
 /* [WebUI v1.5] Dashboard ribbon: cap the freshness table height (21 sources
    would stretch the dashboard) — scrolls instead. */

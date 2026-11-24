@@ -471,6 +471,28 @@ def _register_builtins() -> None:
     register("juros:cdi", _bind(JurosService, "cdi"),
              family="juros", label="Mercado — Juros: CDI")
 
+    # [v1.23] Mercado — Poupança family (the Brazilian savings-account
+    # monthly yield from dadosdemercado.com.br; reference:
+    # skills/ddm/poupanca static report + poupanca_dashboard.html). The
+    # static's single Poupanca tab (Historico + Matriz subtabs) becomes
+    # 2 subtabs: the Visão Geral is the COMPARISON the static never drew
+    # (Poupança × IPCA — does the caderneta beat inflation? — × CDI, the
+    # opportunity cost, compounded to a 12m return so all lines share
+    # the same unit), and the Poupança subtab is the family's per-index
+    # pattern (evolução + matriz BEFORE the histórico, the table
+    # COLLAPSED — the v1.23 convention). Placed BETWEEN Juros and Ações
+    # (renda fixa: after the rates that drive it, before equities).
+    # Ticker-less FLAT payloads served by the same
+    # GET /api/webui/mercado/sections/{key} endpoint as the other
+    # families. Data: ddm poupanca.db (+ optional inflation.db/juros.db
+    # reads for the comparison) through the same query engine the
+    # skill's modes use.
+    from webui.services.poupanca import PoupancaService
+    register("poupanca:overview", _bind(PoupancaService, "overview"),
+             family="poupanca", label="Mercado — Poupança: Visão Geral")
+    register("poupanca:poupanca", _bind(PoupancaService, "poupanca"),
+             family="poupanca", label="Mercado — Poupança: Poupança")
+
     # [v1.17] Mercado — Ações family (the B3 listed stocks from
     # dadosdemercado.com.br; reference: skills/ddm/acoes static report +
     # acoes_dashboard.html). The static's single tab becomes 2 subtabs:

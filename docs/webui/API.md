@@ -123,7 +123,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 
 ### Section families (the registry keys)
 
-[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (15 families, 66 keys):
+[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (16 families, 68 keys):
 
 | Family | Keys | Loaded by |
 |---|---|---|
@@ -140,6 +140,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `indices` | `overview`, `ibov`, `smll`, `idiv`, `ifix`, `bdrx` | Mercado · Índices |
 | `inflacao` | `overview`, `ipca`, `igpm`, `inpc` | Mercado · Inflação |
 | `juros` | `overview`, `selic`, `cdi`, `meta_selic` | Mercado · Juros |
+| `poupanca` | `overview`, `poupanca` | Mercado · Poupança [v1.23] — the overview reads ddm-inflation (IPCA) + ddm-juros (CDI, compounded to 12m) OPTIONALLY; missing sources degrade to poupança-only and get named |
 | `acoes` | `overview`, `evolucao` | Mercado · Ações |
 | `dividendos` | `overview`, `empresas`, `calendario`, `bdrs` | Mercado · Proventos |
 

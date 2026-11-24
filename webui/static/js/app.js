@@ -2087,7 +2087,18 @@ function valSectionHtml(sec) {
   }
 
   if (t === 'table') {
-    var h = '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
+    // [v1.23] `collapsed` tables (the Histórico mensal convention — the
+    // matrix heatmap above carries the same data; the full ledger opens
+    // on demand) render inside a <details> that starts CLOSED: the
+    // summary carries the title + row count so the user knows what's
+    // inside before opening (the val-cat pattern — Todas as métricas).
+    var closed = !!sec.collapsed;
+    var h = closed
+      ? '<details class="val-cat val-collapse"><summary>' +
+        '<span class="val-collapse-title">' + valEsc(sec.title || '') + '</span>' +
+        '<span class="val-count">(' + (sec.rows || []).length + ' linhas — clique para expandir)</span>' +
+        '<span class="val-collapse-chev" aria-hidden="true">▸</span></summary>'
+      : '<div class="val-section"><div class="reg-title">' + valEsc(sec.title || '') + '</div>';
     if (sec.description) h += '<div class="val-desc">' + valEsc(sec.description) + '</div>';
     h += '<table class="val-table"><thead><tr>';
     // [v1.6 fix1] Numeric columns get th-num so the header aligns with the
@@ -2117,7 +2128,7 @@ function valSectionHtml(sec) {
     });
     h += '</tbody></table>';
     if (sec.note) h += '<div class="val-note">' + valEsc(sec.note) + '</div>';
-    return h + '</div>';
+    return h + (closed ? '</details>' : '</div>');
   }
 
   return '';
@@ -3374,6 +3385,7 @@ window.loadFluxoSubtab = mercadoLoader('fluxo');   // [v1.13] B3 flow
 window.loadIndicesSubtab = mercadoLoader('indices'); // [v1.14] B3 índices
 window.loadInflacaoSubtab = mercadoLoader('inflacao'); // [v1.15] índices de preços
 window.loadJurosSubtab = mercadoLoader('juros'); // [v1.16] taxas de juros
+window.loadPoupancaSubtab = mercadoLoader('poupanca'); // [v1.23] caderneta (× IPCA × CDI)
 window.loadAcoesSubtab = mercadoLoader('acoes'); // [v1.17] ações B3 + evolução
 window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos (BDR split)
 
@@ -3586,7 +3598,8 @@ function prefetchSubtab(e) {
               ins: window.loadInsSubtab, mac: window.loadMacroSubtab,
               foc: window.loadFocusSubtab, flx: window.loadFluxoSubtab,
               ind: window.loadIndicesSubtab, inf: window.loadInflacaoSubtab,
-              jur: window.loadJurosSubtab, aco: window.loadAcoesSubtab,
+              jur: window.loadJurosSubtab, pou: window.loadPoupancaSubtab,
+              aco: window.loadAcoesSubtab,
               div: window.loadDividendosSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }

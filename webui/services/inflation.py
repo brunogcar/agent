@@ -22,10 +22,11 @@ not copied:
   igpm/ipca/inpc → "como cada índice se move?"  (por índice: a evolução
               mensal — variação no mês (cheia), acumulado no ano
               (tracejada, reseta em janeiro) e acumulado 12m (pontilhada)
-              — + o histórico completo + a matriz ano × mês em heatmap;
-              as DUAS sub-abas do estático (Histórico + Matriz) viram
-              UMA — ler a evolução e a matriz do mesmo índice exigia
-              alternar)
+              — + a matriz ano × mês em heatmap ANTES do histórico completo
+              ([v1.23] — a leitura de um ano inteiro num relance primeiro;
+              o Histórico mensal vem RECOLHIDO, abre sob demanda) — as
+              DUAS sub-abas do estático (Histórico + Matriz) viram UMA —
+              ler a evolução e a matriz do mesmo índice exigia alternar)
 
 Improvements over the static dashboard:
   - The static's Comparativo (the 3-index 12m overlay) was the LAST tab
@@ -433,7 +434,27 @@ class InflationService:
             ),
         ]
 
-        # Full history table — newest first (static convention), sortable.
+        # [v1.23] The matrix comes FIRST — the year-at-a-glance read
+        # leads, and the full Histórico mensal follows COLLAPSED (the
+        # same numbers, one row per month; the summary carries the row
+        # count — opens on demand). The old order buried the matrix
+        # under ~322 table rows.
+        matrix = _matrix_rows(obs)
+        if matrix:
+            sections.append(heatmap_section(
+                "Matriz ano × mês",
+                ["Ano", *_MONTH_LABELS, "Ano"],
+                matrix,
+                description=(
+                    "Matriz ano × mês. Coluna final 'Ano' é o acumulado "
+                    "no ano. Cores: vermelho=negativo, branco=zero, "
+                    "verde=positivo (mensal); branco→azul (anual)."
+                ),
+            ))
+
+        # Full history table — newest first (static convention), sortable,
+        # COLLAPSED (v1.23: the matrix above already answers the year
+        # reads; the row-by-row ledger opens on demand).
         rows = [
             [_br_month(o["ref_date"]),
              _pct(o.get("month_value")),
@@ -452,26 +473,11 @@ class InflationService:
                 "cronologicamente."
             ),
             note=(f"{len(rows)} observações sincronizadas — a matriz "
-                  "ano × mês abaixo resume este histórico em heatmap."),
+                  "ano × mês acima resume este histórico em heatmap."),
         )
         tbl["sortable"] = True
+        tbl["collapsed"] = True
         sections.append(tbl)
-
-        # Year × month heatmap — computed from the DB (the static's
-        # monthly_matrix live-fetch stays in the skill; the WebUI is
-        # read-only against inflation.db).
-        matrix = _matrix_rows(obs)
-        if matrix:
-            sections.append(heatmap_section(
-                "Matriz ano × mês",
-                ["Ano", *_MONTH_LABELS, "Ano"],
-                matrix,
-                description=(
-                    "Matriz ano × mês. Coluna final 'Ano' é o acumulado "
-                    "no ano. Cores: vermelho=negativo, branco=zero, "
-                    "verde=positivo (mensal); branco→azul (anual)."
-                ),
-            ))
 
         return {"status": "ok", "kpis": kpis, "sections": sections}
 

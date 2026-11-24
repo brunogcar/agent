@@ -21,7 +21,7 @@
 - **Carteira** (`/webui/carteira`) — the portfolio: the 👥 usuários → 👤 contas → 🏦 conta drill-down (user/account cards with live totals — sums never across users), transações de compra/venda (BR-standard form, shorts 🚨 / bonificações ⚠️, quick ✅/❌ per position) → PM positions (preço médio brasileiro); ticker metadata from CVM; watched accounts + tickers surface on the Painel (grouped by user). [v1.21 + fix 1]
 - **Company page** (`/webui/company/{ticker}`) — identity card + 8 tabs: Visão Geral (candlestick 7 ranges, Ctrl+wheel zoom), Preço (5 subtabs), Financeiro (TTM + waterfall + all 5 Demonstrações), Valuation (5 subtabs), Proventos, Opções, Acionistas, Insiders. [v1.1–v1.10]
 - **Macro** (`/webui/macro`) — BCB SGS + Focus in 8 lazy subtabs. [v1.11]
-- **Mercado** (`/webui/mercado`) — the DDM families: Focus, Fluxo, Índices, Inflação, Juros, Ações (with the stocks_history evolution store), Proventos (BDR split). [v1.12–v1.18]
+- **Mercado** (`/webui/mercado`) — the DDM families: Focus, Fluxo, Índices, Inflação, Juros, Poupança (the caderneta vs IPCA/CDI + its own matrix — v1.23), Ações (with the stocks_history evolution store), Proventos (BDR split). [v1.12–v1.18, v1.23]
 - **Sincronização** (`/webui/sync`) — freshness table, per-source buttons ("Sincronizar tudo" = stale only), live SSE log, pre-flight diagnostics panel. [v1, v1.5, v1.7]
 - **Configurações** (`/webui/settings`) — schema-driven form (see below). [v1.20]
 - **System log drawer** — the 📜 top-bar button; a right-side panel on every page with the live request/sync/error tail. [v1.20]
@@ -81,7 +81,7 @@
 - [ ] **Export to Excel** — export ratios table to .xlsx.
 
 ### Data
-- [ ] **ddm poupança** — the last DDM indicator without a Mercado family (same recipe as v1.12–v1.18).
+- [x] ~~**ddm poupança**~~ **SHIPPED in v1.23** (the last DDM indicator gets its Mercado family — between Juros and Ações, the renda fixa slot): Visão Geral = the comparison the static never drew (Poupança × IPCA — the real yield, month by month and at 12m — × CDI compounded to a 12-month return so all lines share one unit; the month table's Poupança − IPCA column colors the losing-to-inflation months red), Poupança = the per-index pattern (evolução 3 lines + matriz ano × mês WITH the Ano column the source page lacks + Histórico mensal COLLAPSED — the v1.23 convention now shared with Inflação and Juros, where the matrix moved ABOVE the histórico). `webui/services/poupanca.py` + the `collapsed` table-section flag in the generic renderer.
 
 ---
 

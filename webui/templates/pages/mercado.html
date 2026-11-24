@@ -18,7 +18,10 @@ one level deeper):
   price range + the evolution of the distribution over time, fed by the
   snapshots each sync accumulates); v1.18 adds Proventos (the agenda de
   dividendos — family key "dividendos", display name "Proventos": the
-  B3 natives + the BDR split + the per-empresa and per-day aggregations).
+  B3 natives + the BDR split + the per-empresa and per-day aggregations);
+  v1.23 adds Poupança (the savings-account monthly yield — family key
+  "poupanca", placed BETWEEN Juros and Ações: renda fixa, after the
+  rates that drive the caderneta's rule, before the equity families).
 - Focus subtabs (level 2): the static focus_dashboard.html reorganized —
   its 13 flat tabs (Focus overview with 4 year subtabs + 12 per-indicator
   tabs) become 7 question-driven subtabs:
@@ -59,8 +62,10 @@ one level deeper):
     índices em dois charts (o Comparativo do estático, promovido a
     visão de chegada) + a tabela comparativa Mês × índice.
   - IGP-M/IPCA/INPC: a evolução mensal (variação + acumulado no ano +
-    12m) + o histórico completo + a matriz ano × mês em heatmap (as
-    duas sub-abas do estático, mescladas).
+    12m) + a matriz ano × mês em heatmap ANTES do histórico completo,
+    que vem RECOLHIDO ([v1.23] — o ano inteiro num relance primeiro; o
+    Histórico mensal abre sob demanda) (as duas sub-abas do estático,
+    mescladas).
 
 - Juros subtabs (level 2, v1.16): the static juros_dashboard.html
   reorganized — its 4 flat tabs (Selic, Meta Selic e CDI each with
@@ -70,9 +75,26 @@ one level deeper):
     em dois charts (o Comparativo do estático, promovido a visão de
     chegada) + a tabela comparativa Mês × taxa.
   - Selic/Meta Selic/CDI: a evolução mensal (taxa + média no ano +
-    média 12m) + o histórico completo + a matriz ano × mês em heatmap
-    (as duas sub-abas do estático, mescladas — SEM coluna 'Ano':
-    taxas, não acumulados).
+    média 12m) + a matriz ano × mês em heatmap ANTES do histórico
+    completo, que vem RECOLHIDO ([v1.23] — o ano inteiro num relance
+    primeiro; o Histórico mensal abre sob demanda) (as duas sub-abas
+    do estático, mescladas — SEM coluna 'Ano': taxas, não acumulados).
+
+- Poupança subtabs (level 2, v1.23): the static poupanca_dashboard.html
+  reorganized — its single Poupanca tab (Historico + Matriz subtabs)
+  becomes 2 subtabs:
+
+  - Visão Geral: o COMPARATIVO que o estático nunca desenhou — a
+    caderneta contra o IPCA (o rendimento real, mês a mês e no 12m) e
+    contra o CDI (o custo de oportunidade, composto para um retorno
+    de 12 meses na mesma unidade das outras linhas) + a tabela
+    mês a mês com a coluna Poupança − IPCA (negativos em vermelho —
+    os meses em que a caderneta perdeu poder de compra). Degrada para
+    poupança-quando-não-há-IPCA/CDI (cada fonte faltando é nomeada).
+  - Poupança: a evolução mensal (rendimento + acumulado no ano + 12m)
+    + a matriz ano × mês (COM a coluna 'Ano' — calculada do histórico,
+    a página da fonte não traz) ANTES do histórico completo, que vem
+    RECOLHIDO (a convenção v1.23, igual aos Juros e à Inflação).
 
 - Ações subtabs (level 2, v1.17): the static acoes_dashboard.html
   reorganized — its single flat tab (4 KPIs + the price-distribution
@@ -111,13 +133,14 @@ one level deeper):
 Every subtab loads lazily through the ticker-less generic endpoint
 /api/webui/mercado/sections/<family>:<sub> (loadFocusSubtab /
 loadFluxoSubtab / loadIndicesSubtab / loadInflacaoSubtab /
-loadJurosSubtab / loadAcoesSubtab / loadDividendosSubtab in app.js) and
-renders through the SAME generic renderer as every tab since v1.8
-(valKpisHtml + valSectionsHtml + mountValCharts).
-Data: DDM focus.db + fluxo.db + inflation.db + juros.db + acoes.db +
-dividends.db — sincronize as fontes ddm-focus / ddm-fluxo / ddm-inflation
-/ ddm-juros / ddm-acoes / ddm-dividends na página Sincronização; índices:
-b3-index (B3 indexProxy).
+loadJurosSubtab / loadPoupancaSubtab / loadAcoesSubtab /
+loadDividendosSubtab in app.js) and renders through the SAME generic
+renderer as every tab since v1.8 (valKpisHtml + valSectionsHtml +
+mountValCharts).
+Data: DDM focus.db + fluxo.db + inflation.db + juros.db + poupanca.db +
+acoes.db + dividends.db — sincronize as fontes ddm-focus / ddm-fluxo /
+ddm-inflation / ddm-juros / ddm-poupanca / ddm-acoes / ddm-dividends na
+página Sincronização; índices: b3-index (B3 indexProxy).
 #}
 <div class="page-mercado tab-mercado" x-data="{ family: 'focus', subtab: 'overview' }">
   <div class="macro-header">
@@ -131,12 +154,14 @@ b3-index (B3 indexProxy).
       doughnut e tabela), a trajetória dos índices de preços (IGP-M, IPCA
       e INPC — variação mensal, acumulados e a matriz ano × mês), as
       taxas de juros (Selic, Meta Selic e CDI — taxa efetiva, médias e a
-      matriz ano × mês), as ações listadas na B3 (o snapshot atual por
-      faixa de preço + a evolução da distribuição ao longo do tempo, um
-      snapshot por sincronização) e a agenda de proventos (dividendos e
-      JCP das ações B3 e dos BDRs, agregada por empresa e por data de
-      pagamento). Famílias: Focus, Fluxo, Índices, Inflação, Juros,
-      Ações e Proventos.
+      matriz ano × mês), o rendimento da caderneta de poupança (a
+      caderneta contra o IPCA e o CDI — o rendimento real e o custo de
+      oportunidade — + a matriz ano × mês), as ações listadas na B3 (o
+      snapshot atual por faixa de preço + a evolução da distribuição ao
+      longo do tempo, um snapshot por sincronização) e a agenda de
+      proventos (dividendos e JCP das ações B3 e dos BDRs, agregada por
+      empresa e por data de pagamento). Famílias: Focus, Fluxo, Índices,
+      Inflação, Juros, Poupança, Ações e Proventos.
     </p>
   </div>
 
@@ -167,6 +192,11 @@ b3-index (B3 indexProxy).
             @click="family='juros'; subtab='overview'"
             onclick="loadJurosSubtab('overview')"
             data-lazy="jur:overview">Juros</button>
+    <button class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'poupanca' }"
+            @click="family='poupanca'; subtab='overview'"
+            onclick="loadPoupancaSubtab('overview')"
+            data-lazy="pou:overview">Poupança</button>
     <button class="subtab-btn mercado-family-btn"
             :class="{ 'active': family === 'acoes' }"
             @click="family='acoes'; subtab='overview'"
@@ -355,6 +385,28 @@ b3-index (B3 indexProxy).
 
     {# ── CDI ── #}
     <div x-show="subtab === 'cdi'" style="display: none;" id="tab-juros-cdi">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+  </div>
+
+  {# ── Poupança family panel [v1.23] — between Juros and Ações (renda
+     fixa: the caderneta reads right after the rates that drive it).
+     Visão Geral = the COMPARISON (Poupança × IPCA × CDI); Poupança =
+     the per-index pattern (evolução + matriz before the collapsed
+     histórico — the v1.23 convention). #}
+  <div x-show="family === 'poupanca'" style="display: none;" id="family-poupanca">
+    <nav class="subtab-nav macro-subtab-nav" aria-label="Sub-abas da Poupança">
+      <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadPoupancaSubtab('overview')" data-lazy="pou:overview">Visão Geral</button>
+      <button class="subtab-btn" :class="{ 'active': subtab === 'poupanca' }" @click="subtab='poupanca'" onclick="loadPoupancaSubtab('poupanca')" data-lazy="pou:poupanca">Poupança</button>
+    </nav>
+
+    {# ── Visão Geral (a caderneta contra o IPCA e o CDI) ── #}
+    <div x-show="subtab === 'overview'" id="tab-poupanca-overview">
+      <div class="loading">{{ t("common.loading") }}</div>
+    </div>
+
+    {# ── Poupança (evolução + matriz + histórico recolhido) ── #}
+    <div x-show="subtab === 'poupanca'" style="display: none;" id="tab-poupanca-poupanca">
       <div class="loading">{{ t("common.loading") }}</div>
     </div>
   </div>
