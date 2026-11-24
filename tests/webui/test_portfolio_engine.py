@@ -305,7 +305,9 @@ def test_sell_zero_rejected_buy_zero_ok(svc):
     assert r["ok"], r                                  # bonificação: a BUY at 0
     r = _tx(svc, aid, type="sell", quantity=1, price=0.0)
     assert r["ok"] is False and "price" in r["errors"]
-    assert "COMPRA" in r["errors"]["price"]            # the PT-BR explanation
+    # [v1.22.3] The explanation now points to the CORPORATE ACTION (the
+    # roadmap-5 path) — with the buy-at-0 legacy still named.
+    assert "evento corporativo" in r["errors"]["price"].lower()
 
 
 # ── 9. cross-user move blocked (B125) ────────────────────────────────────────

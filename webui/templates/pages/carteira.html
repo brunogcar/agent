@@ -126,6 +126,7 @@
           <select id="cart-tx-type" class="cart-select">
             <option value="buy">✅ {{ t("carteira.buy") }}</option>
             <option value="sell">❌ {{ t("carteira.sell") }}</option>
+            <option value="corp">🔀 {{ t("carteira.corp") }}</option>
           </select>
           <em class="cart-err" data-err="type" hidden></em>
         </label>
@@ -152,6 +153,26 @@
           <input type="text" id="cart-tx-fees" inputmode="decimal"
                  placeholder="0,00" autocomplete="off">
           <em class="cart-err" data-err="fees" hidden></em>
+        </label>
+      </div>
+      {# [v1.22.3] Evento corporativo — desdobramento / grupamento /
+        bonificação: the factor re-bases quantity and PM (nothing is
+        traded; the custo total stays). Shown only when type=corp. #}
+      <div id="cart-tx-corp" class="cart-grid-2" hidden>
+        <label class="cart-field">
+          <span>{{ t("carteira.corp_action") }}</span>
+          <select id="cart-tx-action" class="cart-select">
+            <option value="split">✂️ {{ t("carteira.corp_split") }}</option>
+            <option value="group">🧲 {{ t("carteira.corp_group") }}</option>
+            <option value="bonus">🎁 {{ t("carteira.corp_bonus") }}</option>
+          </select>
+          <em class="cart-err" data-err="action" hidden></em>
+        </label>
+        <label class="cart-field">
+          <span>{{ t("carteira.corp_factor") }}</span>
+          <input type="text" id="cart-tx-factor" inputmode="decimal"
+                 placeholder="2" autocomplete="off">
+          <em class="cart-err" data-err="factor" hidden></em>
         </label>
       </div>
       <label class="cart-field">
@@ -231,5 +252,32 @@
       </div>
     </div>
   </dialog>
+
+  {# ── [v1.22.3] 🧪 Simulador what-if — hypothetical trades over the
+        current book, NOTHING written (the server replays the scope
+        with the simulated sells/buys and answers before/after). ── #}
+  <dialog id="cart-sim-modal" class="cart-modal cart-modal-wide"
+          aria-labelledby="cart-sim-title">
+    <div class="cart-modal-col">
+      <h3 id="cart-sim-title">🧪 {{ t("carteira.sim_title") }}</h3>
+      <div class="cart-manage-body">
+        <p class="cart-muted">🧪 O que acontece com a carteira se eu vender
+          X a Y? — simule quantas operações quiser; nada é gravado.</p>
+        <div id="cart-sim-form"></div>
+        <div id="cart-sim-results"></div>
+      </div>
+      <div class="cart-modal-actions">
+        <span class="cart-modal-msg" id="cart-sim-msg"></span>
+        <button type="button" value="close" class="cart-btn"
+                data-close>{{ t("common.close") }}</button>
+      </div>
+    </div>
+  </dialog>
+
+  {# ── [v1.22.3] 🔍 position-detail drawer (fixed right panel) + the
+        ↩️ undo toast — both live outside the level flow. ── #}
+  <aside id="cart-drawer" class="cart-drawer" hidden
+         aria-label="{{ t('carteira.drawer') }}"></aside>
+  <div id="cart-toast" class="cart-toast" hidden role="status"></div>
 </div>
 {% endblock %}

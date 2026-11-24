@@ -98,6 +98,7 @@ import traceback
 import uuid
 from datetime import date
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from core.atomic_write import atomic_write
@@ -140,7 +141,8 @@ def _portfolio_path() -> Path:
 
 def _empty_store() -> dict[str, Any]:
     return {"users": [], "accounts": [], "txs": [],
-            "watchlist": [], "tickers": {}, "notas": []}
+            "watchlist": [], "tickers": {}, "notas": [],
+            "alerts": []}
 
 
 class PortfolioStoreError(RuntimeError):
@@ -149,6 +151,7 @@ class PortfolioStoreError(RuntimeError):
 
 
 _MAX_QUARANTINE = 7        # newest .corrupt-<ts> copies kept as evidence
+_MAX_UNDO = 20              # [v1.22.3] undo-toast stack depth (in-memory)
 
 
 def _parse_store(data: Any) -> dict[str, Any]:
@@ -158,6 +161,13 @@ def _parse_store(data: Any) -> dict[str, Any]:
     DROPPED (``{"users": {...}}`` read as "no users") and the next
     save destroyed the data on disk. Wrong shapes now raise — the
     caller quarantines instead of ever answering with a partial store.
+
+    [v1.22.3] TX RECONCILIATION at the boundary: every numeric field of
+    every tx is checked FINITE and inside its magnitude cap (a hand
+    edit that plants ``1e999`` — json.loads parses it to inf — used to
+    sail into the replay). Numbers stored as strings that parse are
+    NORMALIZED in place (the canonical store leaves this function);
+    anything unparseable/out-of-range raises like any other corruption.
     """
     if not isinstance(data, dict):
         raise ValueError("store deve ser um objeto JSON")
@@ -178,8 +188,65 @@ def _parse_store(data: Any) -> dict[str, Any]:
                 not isinstance(x, dict) for x in data["notas"]):
             raise ValueError("'notas' deve ser uma lista de objetos")
         store["notas"] = data["notas"]
+    # [v1.22.3] Price alerts (roadmap 6). Optional like 'notas'.
+    if "alerts" in data:
+        if not isinstance(data["alerts"], list) or any(
+                not isinstance(x, dict) for x in data["alerts"]):
+            raise ValueError("'alerts' deve ser uma lista de objetos")
+        store["alerts"] = data["alerts"]
+    for t in store["txs"]:
+        _reconcile_tx(t)
     _ensure_seq(store)
     return store
+
+
+# [v1.22.3] Magnitude caps the CRUD itself enforces — the SAME numbers
+# guard the load path now (a store is only as good as its worst hand
+# edit). Factor is the corporate-action quantity multiplier.
+_QTY_MAX = 1e12
+_PX_MAX = 1e9
+_FACTOR_MIN, _FACTOR_MAX = 0.001, 1000.0
+
+
+def _reconcile_num(value: Any, cap: float, field: str) -> float:
+    """Store-boundary number check: finite, ≤ cap; strings normalized.
+
+    Returns the canonical float. Raises ValueError on anything the
+    replay must never see (NaN/±inf, out-of-range, unparseable).
+    """
+    f = _num(value)
+    if f is None or not math.isfinite(f) or f > cap or f < -cap:
+        raise ValueError(
+            f"número inválido em {field!r} ({value!r}) — campo fora "
+            f"dos limites ou não numérico")
+    return f
+
+
+def _reconcile_tx(t: dict) -> None:
+    """One tx normalized + range-checked IN PLACE (see _parse_store)."""
+    ttype = t.get("type")
+    if ttype not in ("buy", "sell", "corp"):
+        raise ValueError(f"tipo de transação inválido: {ttype!r}")
+    if ttype == "corp":
+        if t.get("action") not in ("split", "group", "bonus"):
+            raise ValueError(f"evento corporativo inválido: {t.get('action')!r}")
+        f = _reconcile_num(t.get("factor"), _FACTOR_MAX, "factor")
+        if f < _FACTOR_MIN or f == 1.0:
+            raise ValueError(f"fator de evento corporativo inválido: {f!r}")
+        t["factor"] = f
+        return
+    q = _reconcile_num(t.get("quantity"), _QTY_MAX, "quantity")
+    if q <= 0:
+        raise ValueError(f"quantidade inválida: {q!r}")
+    t["quantity"] = q
+    p = _reconcile_num(t.get("price"), _PX_MAX, "price")
+    if p < 0:
+        raise ValueError(f"preço inválido: {p!r}")
+    t["price"] = p
+    fees = _reconcile_num(t.get("fees") or 0.0, _PX_MAX, "fees")
+    if fees < 0:
+        raise ValueError(f"taxas inválidas: {fees!r}")
+    t["fees"] = fees
 
 
 def _ensure_seq(store: dict) -> None:
@@ -253,6 +320,15 @@ def _brl_auto(v: float | None) -> str | None:
     return _signed_brl(v) if v < 0 else _brl2(v)
 
 
+def _factor_br(f: float) -> str:
+    """[v1.22.3] Corporate-action factor, PT-BR, trailing zeros trimmed:
+    2 → '×2' · 0.5 → '×0,5' · 1.1 → '×1,1' · 1.5625 → '×1,5625'."""
+    s = fmt_num(f, decimals=4)
+    if "," in s:
+        s = s.rstrip("0").rstrip(",")
+    return "×" + s
+
+
 def _num(value: Any) -> float | None:
     """JSON value → float; None if not one.
 
@@ -303,10 +379,22 @@ class PortfolioService:
         # [v1.22] Degraded mode: the file on disk failed to parse.
         # Reads keep serving the last good store; writes are refused.
         self._load_error: str | None = None
+        # [v1.22.3] Store revision — bumped on every _save() and every
+        # actual reload; the replay memo (below) keys on it, so any
+        # mutation or external edit invalidates every cached walk.
+        self._rev: int = 0
+        # [v1.22.3] Replay memoization (roadmap 8): account_id →
+        # (rev, raw positions, short ids). _positions_raw itself stays
+        # pure; _replay_for() serves the memoized copy.
+        self._replay_cache: dict[str, tuple[int, dict, frozenset]] = {}
         # Filtered quote map memoization (the v1.19-fix-1 single-flight idea,
         # scoped to the tiny ticker set the portfolio needs).
         self._q_lock = threading.Lock()
-        self._quotes: dict[str, dict[str, Any]] | None = None
+        # [v1.22.3] QuoteSet immutability: the published map is a
+        # MappingProxyType — every refresh builds a NEW dict and swaps
+        # the reference (readers see the old or the new set, never a
+        # half-mutated one; nothing outside _refresh_quotes can write).
+        self._quotes: MappingProxyType | None = None
         self._quotes_at: float = 0.0
         # [v1.22] Requested-set memo: tickers ALREADY looked up (found or
         # not) — a never-traded paper no longer defeats the TTL cache.
@@ -321,6 +409,16 @@ class PortfolioService:
         # twice. A dedicated lock makes the dedup atomic from every caller
         # (and never nests with the main lock, so no ordering exists).
         self._meta_lock = threading.Lock()
+        # [v1.22.3] In-memory undo stack (roadmap 7 — the undo toast):
+        # token → restore data. Session-scoped by design (the toast lives
+        # seconds); nota imports keep their PERSISTED registry instead.
+        self._undo_stack: dict[str, dict] = {}
+        self._undo_order: list[str] = []
+
+    def _bump_rev(self) -> None:
+        """[v1.22.3] New store generation — drop every replay memo."""
+        self._rev += 1
+        self._replay_cache.clear()
 
     # ── store plumbing ───────────────────────────────────────────────────────
 
@@ -355,6 +453,7 @@ class PortfolioService:
             return
         self._store = store
         self._loaded_mtime = mtime
+        self._bump_rev()          # [v1.22.3] external edit = new generation
         if self._load_error:
             self._syslog("info", "arquivo da carteira voltou a ler — "
                                  "modo degradado encerrado")
@@ -423,6 +522,7 @@ class PortfolioService:
         except OSError as e:
             self._syslog("warning", f"backup .bak da carteira falhou: {e}")
         atomic_write(path, json.dumps(self._store, indent=2, ensure_ascii=False))
+        self._bump_rev()          # [v1.22.3] mutation = new generation
         try:
             self._loaded_mtime = path.stat().st_mtime_ns
         except OSError:
@@ -445,6 +545,8 @@ class PortfolioService:
                 "watchlist": [dict(w) for w in self._store["watchlist"]],
                 "tickers": {k: dict(v) for k, v in self._store["tickers"].items()},
                 "notas": [dict(n) for n in self._store.get("notas") or []],
+                "alerts": [dict(x) for x in self._store.get("alerts") or []],
+                "rev": self._rev,       # [v1.22.3] memoization key carrier
             }
 
     # ── lookups ──────────────────────────────────────────────────────────────
@@ -466,8 +568,17 @@ class PortfolioService:
         txs inside the same second used to replay in RANDOM order
         (same trades, different PM/realized). Callers pass lists in
         store (= insertion) order and sorted() is stable on top of seq.
+
+        [v1.22.3] CORPORATE ACTIONS sort FIRST within their date (the
+        0/1 type priority): a desdobramento/grupamento/bonificação is
+        effective BEFORE the session — the day's own trades already
+        happen in post-action quantities and prices (B3 ex-date
+        semantics), so the factor must hit the position before any
+        same-day buy/sell replays.
         """
-        return (t.get("date") or "", t.get("created_at") or "",
+        return (t.get("date") or "",
+                0 if t.get("type") == "corp" else 1,
+                t.get("created_at") or "",
                 t.get("seq") or 0)
 
     @staticmethod
@@ -487,6 +598,12 @@ class PortfolioService:
         cotahist note; a symbol simply absent from the synced history
         degrades PER-TICKER — the row shows "—" and the payload names
         the stragglers.
+
+        [v1.22.3] The published map is an immutable MappingProxyType:
+        each refresh COPIES the live map, adds the new symbols to the
+        copy, and swaps the reference under _q_lock — a published set
+        is never mutated in place (readers race-free by GIL-atomic
+        reference swap).
         """
         with self._q_lock:
             # [v1.22] The memo covers the tickers already LOOKED UP
@@ -503,14 +620,14 @@ class PortfolioService:
                 # Keep the old map (if any) for the tickers it covers; the
                 # NEW tickers get no quote and the note names the source.
                 if self._quotes is None:
-                    self._quotes = {}
+                    self._quotes = MappingProxyType({})
                 self._quotes_ok = False
                 self._quotes_at = time.monotonic()
                 return
             quotes = dict(self._quotes or {})
             for s in res.get("symbols", []):
                 quotes[s["ticker"]] = s
-            self._quotes = quotes
+            self._quotes = MappingProxyType(quotes)
             self._quotes_seen = set(quotes.keys()) | set(tickers)
             self._quotes_ok = True
             self._quotes_at = time.monotonic()
@@ -773,7 +890,17 @@ class PortfolioService:
     # ════════════════════════════════════════════════════════════════════════
 
     def _validate_tx(self, store: dict, body: dict) -> tuple[dict, dict[str, str]]:
-        """Field validation → (coerced tx fields, errors)."""
+        """Field validation → (coerced tx fields, errors).
+
+        [v1.22.3] A third tx type — CORP (evento corporativo: roadmap
+        5): {action: split|group|bonus, factor}. No quantity/price/
+        fees (nothing was traded): the replay re-bases qty ×= factor,
+        PM /= factor (the custo total qty·PM is invariant — a split
+        keeps the cost, a bonificação's new shares enter de graça, a
+        grupamento concentrates them). The old workaround (a manual
+        buy at R$ 0,00 for bonificação, or editing every earlier tx
+        for a split) is dead.
+        """
         errs: dict[str, str] = {}
         out: dict[str, Any] = {}
 
@@ -790,47 +917,74 @@ class PortfolioService:
         out["ticker"] = ticker
 
         ttype = str(body.get("type") or "").strip().lower()
-        if ttype not in ("buy", "sell"):
-            errs["type"] = "Tipo deve ser compra ou venda."
+        if ttype not in ("buy", "sell", "corp"):
+            errs["type"] = "Tipo deve ser compra, venda ou evento corporativo."
         out["type"] = ttype
 
-        q = _num(body.get("quantity"))
-        if q is None or q <= 0 or q > 1e12:
-            errs["quantity"] = "Quantidade deve ser um número maior que zero."
-        else:
-            out["quantity"] = q
-
-        p = _num(body.get("price"))
-        # [v1.21 fix 1] price 0 is a bonificação — valid for BUYS; only
-        # negative (or absurd) prices are rejected.
-        # [v1.22] …but a SELL at R$ 0,00 books the whole position cost
-        # as a phantom realized loss (one blank price field away).
-        if p is None or p < 0 or p > 1e9:
-            errs["price"] = ("Preço não pode ser negativo — use 0 para "
-                             "bonificação (sem custo).")
-        elif p == 0 and ttype == "sell":
-            errs["price"] = ("Preço de venda não pode ser R$ 0,00 — "
-                             "bonificação se registra como COMPRA a "
-                             "R$ 0,00.")
-        else:
-            out["price"] = p
-
-        # [v1.22.1] A PRESENT-but-unparseable fees value errors like
-        # quantity/price — it used to fall into the absent-fees default
-        # and silently book R$ 0,00 (NaN string → None → 0.0; caught by
-        # the regression suite). Absent/blank keeps meaning "no fees".
-        raw_fees = body.get("fees")
-        fees = _num(raw_fees)
-        if raw_fees is None or (isinstance(raw_fees, str)
-                                and not raw_fees.strip()):
-            fees = 0.0
-        elif fees is None:
-            errs["fees"] = "Taxas devem ser um número maior ou igual a zero."
-        if "fees" not in errs:
-            if fees < 0 or fees > 1e9:
-                errs["fees"] = "Taxas não podem ser negativas."
+        if ttype == "corp":
+            action = str(body.get("action") or "").strip().lower()
+            if action not in ("split", "group", "bonus"):
+                errs["action"] = ("Evento inválido — desdobramento, "
+                                  "grupamento ou bonificação.")
             else:
-                out["fees"] = fees
+                out["action"] = action
+            factor = _num(body.get("factor"))
+            if factor is None or not math.isfinite(factor):
+                errs["factor"] = "Fator deve ser um número (ex: 2 para 1→2)."
+            elif factor < _FACTOR_MIN or factor > _FACTOR_MAX:
+                errs["factor"] = ("Fator deve estar entre 0,001 e 1.000.")
+            elif abs(factor - 1.0) < 1e-9:
+                errs["factor"] = "Fator 1 não altera nada — informe a proporção real."
+            elif action == "split" and factor <= 1.0:
+                errs["factor"] = ("Desdobramento aumenta a quantidade — "
+                                  "fator maior que 1 (ex: 2 = cada ação vira 2).")
+            elif action == "group" and factor >= 1.0:
+                errs["factor"] = ("Grupamento reduz a quantidade — fator "
+                                  "menor que 1 (ex: 0,5 = 2 ações viram 1).")
+            elif action == "bonus" and factor <= 1.0:
+                errs["factor"] = ("Bonificação entrega ações novas — fator "
+                                  "maior que 1 (10% → 1,1).")
+            else:
+                out["factor"] = factor
+            # date/note shared below — corp rows carry no money fields.
+        else:
+            q = _num(body.get("quantity"))
+            if q is None or q <= 0 or q > 1e12:
+                errs["quantity"] = "Quantidade deve ser um número maior que zero."
+            else:
+                out["quantity"] = q
+
+            p = _num(body.get("price"))
+            # [v1.21 fix 1] price 0 is a bonificação — valid for BUYS; only
+            # negative (or absurd) prices are rejected.
+            # [v1.22] …but a SELL at R$ 0,00 books the whole position cost
+            # as a phantom realized loss (one blank price field away).
+            if p is None or p < 0 or p > 1e9:
+                errs["price"] = ("Preço não pode ser negativo — use 0 para "
+                                 "bonificação (sem custo).")
+            elif p == 0 and ttype == "sell":
+                errs["price"] = ("Preço de venda não pode ser R$ 0,00 — "
+                                 "bonificação se registra como evento "
+                                 "corporativo (ou compra a R$ 0,00).")
+            else:
+                out["price"] = p
+
+            # [v1.22.1] A PRESENT-but-unparseable fees value errors like
+            # quantity/price — it used to fall into the absent-fees default
+            # and silently book R$ 0,00 (NaN string → None → 0.0; caught by
+            # the regression suite). Absent/blank keeps meaning "no fees".
+            raw_fees = body.get("fees")
+            fees = _num(raw_fees)
+            if raw_fees is None or (isinstance(raw_fees, str)
+                                    and not raw_fees.strip()):
+                fees = 0.0
+            elif fees is None:
+                errs["fees"] = "Taxas devem ser um número maior ou igual a zero."
+            if "fees" not in errs:
+                if fees < 0 or fees > 1e9:
+                    errs["fees"] = "Taxas não podem ser negativas."
+                else:
+                    out["fees"] = fees
 
         d = str(body.get("date") or "").strip()
         if not _ISO_DATE_RE.match(d):
@@ -846,6 +1000,89 @@ class PortfolioService:
 
         out["note"] = str(body.get("note") or "").strip()[:200]
         return out, errs
+
+    def _push_undo(self, kind: str, label: str, restore: dict) -> str:
+        """[v1.22.3] Register a restorable mutation (caller holds the
+        lock, the mutation is already saved). Returns the undo token.
+
+        The stack is session-scoped memory (cap _MAX_UNDO): the undo
+        TOAST lives seconds — anything longer belongs to the persisted
+        nota registry or the .bak file. Restore payloads are plain data
+        the undo() method switches on.
+        """
+        token = uuid.uuid4().hex[:12]
+        self._undo_stack[token] = {"kind": kind, "label": label,
+                                   "restore": restore}
+        self._undo_order.append(token)
+        while len(self._undo_order) > _MAX_UNDO:
+            old = self._undo_order.pop(0)
+            self._undo_stack.pop(old, None)
+        return token
+
+    def undo_mutation(self, token: str) -> dict:
+        """[v1.22.3] One-shot undo of the last mutation (undo toast).
+
+        Supported: delete_tx (re-insert with the SAME id/seq — nota
+        registry links stay valid), update_tx (restore the previous
+        fields), create_tx (remove it). Undo is NOT itself undoable.
+        """
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
+            entry = self._undo_stack.pop(token, None)
+            if entry is None:
+                return {"ok": False,
+                        "_error": "Desfazer indisponível — a ação expirou "
+                                  "(o servidor reiniciou ou outra ação "
+                                  "a substituiu).", "status": 404}
+            if token in self._undo_order:
+                self._undo_order.remove(token)
+            data = entry["restore"]
+            try:
+                if entry["kind"] == "delete_tx":
+                    # Re-insert at the original seq position (insertion
+                    # order = seq order — a stable sort restores it).
+                    self._store["txs"].append(dict(data["tx"]))
+                    self._store["txs"].sort(
+                        key=lambda t: (t.get("seq") or 0))
+                    self._ensure_ticker_meta(self._store,
+                                             data["tx"]["ticker"])
+                    self._save()
+                elif entry["kind"] == "update_tx":
+                    tx = next((t for t in self._store["txs"]
+                               if t.get("id") == data["id"]), None)
+                    if tx is None:
+                        return {"ok": False, "_error":
+                                "Transação não encontrada — nada a desfazer.",
+                                "status": 404}
+                    tx.update(data["before"])
+                    self._save()
+                elif entry["kind"] == "create_tx":
+                    before = len(self._store["txs"])
+                    self._store["txs"] = [t for t in self._store["txs"]
+                                          if t.get("id") != data["id"]]
+                    if len(self._store["txs"]) == before:
+                        return {"ok": False, "_error":
+                                "Transação não encontrada — nada a desfazer.",
+                                "status": 404}
+                    self._save()
+                else:
+                    return {"ok": False, "_error": "Ação não desfazível.",
+                            "status": 400}
+            except PortfolioStoreError as e:
+                return {"ok": False, "_error": str(e), "status": 503}
+        self._syslog("info", f"desfeito: {entry['label']}")
+        out: dict[str, Any] = {"ok": True, "label": entry["label"]}
+        shorts = self._short_flags(self._store)
+        warnings = self._short_warnings(shorts)
+        if warnings:
+            out["warnings"] = warnings
+        return out
 
     def create_tx(self, body: dict) -> dict:
         with self._lock:
@@ -865,11 +1102,37 @@ class PortfolioService:
             self._store["txs"].append(tx)
             self._ensure_ticker_meta(self._store, tx["ticker"])
             self._save()
-        self._syslog("info", f"{'compra' if tx['type'] == 'buy' else 'venda'} "
-                             f"registrada: {_qty(tx['quantity'])} "
-                             f"{tx['ticker']} @ {_px(tx['price'])}"
-                             + (" (bonificação)" if not tx["price"] else ""))
-        return {"ok": True, "tx": tx}
+            # [v1.22.3] Undo toast — removing what was just created.
+            label = self._tx_label(tx)
+            token = self._push_undo("create_tx", label, {"id": tx["id"]})
+        self._syslog("info", self._tx_log(tx, "registrada"))
+        return {"ok": True, "tx": tx, "undo_token": token,
+                "undo_label": label}
+
+    @staticmethod
+    def _tx_label(tx: dict) -> str:
+        """[v1.22.3] Short PT-BR label for the undo toast."""
+        if tx.get("type") == "corp":
+            names = {"split": "desdobramento", "group": "grupamento",
+                     "bonus": "bonificação"}
+            return (f"{names.get(tx.get('action'), 'evento')} "
+                    f"{_factor_br(tx.get('factor') or 0.0)} {tx['ticker']} "
+                    f"({_fmt_date(tx.get('date'))})")
+        verb = "compra" if tx.get("type") == "buy" else "venda"
+        return (f"{verb} de {_qty(tx['quantity'])} {tx['ticker']} "
+                f"({_fmt_date(tx.get('date'))})")
+
+    @staticmethod
+    def _tx_log(tx: dict, verb: str) -> str:
+        """[v1.22.3] syslog line for any tx type."""
+        if tx.get("type") == "corp":
+            return f"evento corporativo {verb}: {tx['ticker']} " \
+                   f"{_factor_br(tx.get('factor') or 0.0)} " \
+                   f"({_fmt_date(tx.get('date'))})"
+        head = "compra" if tx.get("type") == "buy" else "venda"
+        return (f"{head} {verb}: {_qty(tx['quantity'])} {tx['ticker']} "
+                f"@ {_px(tx['price'])}"
+                + (" (bonificação)" if not tx.get("price") else ""))
 
     def update_tx(self, tx_id: str, body: dict) -> dict:
         with self._lock:
@@ -884,11 +1147,12 @@ class PortfolioService:
                        if t.get("id") == tx_id), None)
             if tx is None:
                 return {"ok": False, "_error": "Transação não encontrada."}
+            before = dict(tx)                 # [v1.22.3] undo snapshot
             merged = dict(tx)
             merged.update({k: v for k, v in body.items()
                            if k in ("account_id", "ticker", "type",
                                     "quantity", "price", "fees", "date",
-                                    "note")})
+                                    "note", "action", "factor")})
             # [v1.22] A tx may move between accounts of the SAME user
             # only — a cross-user move silently changes every per-user
             # sum (the tx vanishes from one user's series and appears
@@ -912,10 +1176,15 @@ class PortfolioService:
             tx.update(merged)
             self._ensure_ticker_meta(self._store, tx["ticker"])
             self._save()
+            label = self._tx_label(tx)
+            token = self._push_undo(
+                "update_tx", label,
+                {"id": tx_id, "before": before})
             warnings = self._short_warnings(shorts_before)
         self._syslog("info", f"transação atualizada: {tx['ticker']} "
                              f"{_fmt_date(tx['date'])}")
-        out: dict[str, Any] = {"ok": True, "tx": tx}
+        out: dict[str, Any] = {"ok": True, "tx": tx,
+                               "undo_token": token, "undo_label": label}
         if warnings:
             out["warnings"] = warnings
         return out
@@ -937,10 +1206,14 @@ class PortfolioService:
             self._store["txs"] = [t for t in self._store["txs"]
                                   if t.get("id") != tx_id]
             self._save()
+            label = self._tx_label(tx)
+            token = self._push_undo(
+                "delete_tx", label, {"tx": dict(tx)})
             warnings = self._short_warnings(shorts_before)
         self._syslog("info", f"transação excluída: {tx['ticker']} "
                              f"{_fmt_date(tx['date'])}")
-        out: dict[str, Any] = {"ok": True}
+        out: dict[str, Any] = {"ok": True, "undo_token": token,
+                               "undo_label": label}
         if warnings:
             out["warnings"] = warnings
         return out
@@ -1127,6 +1400,184 @@ class PortfolioService:
         return {"ok": True, "notas": rows}
 
     # ════════════════════════════════════════════════════════════════════════
+    # Ledger — the paginated/filtered tx endpoint (roadmap 7)
+    # [v1.22.3] positions() ships only page-1 (50 rows) + the count;
+    # the Transações view pages through THIS from the filter bar.
+    # ════════════════════════════════════════════════════════════════════════
+
+    _TX_TYPES = ("buy", "sell", "corp")
+
+    def txs_page(self, scope: str, page: int, per_page: int,
+                 ticker: str = "", ttype: str = "",
+                 date_from: str = "", date_to: str = "",
+                 query: str = "") -> dict:
+        """One ledger page + the short flags for the visible rows."""
+        if ttype and ttype not in self._TX_TYPES:
+            return {"ok": False, "_error": "Tipo inválido — compra, venda "
+                                           "ou evento.", "status": 400}
+        snap = self._snapshot()
+        accounts = self._scope_accounts(snap, scope)
+        account_ids = {a["id"] for a in accounts}
+        if not account_ids:
+            return {"ok": True, "rows": [], "total": 0, "page": 1,
+                    "pages": 0, "per_page": per_page}
+        # Short flags once per request (the memo makes this cheap).
+        shorts: set[str] = set()
+        by_acc: dict[str, list[dict]] = {}
+        for t in snap["txs"]:
+            if t.get("account_id") in account_ids:
+                by_acc.setdefault(t.get("account_id") or "", []).append(t)
+        for aid, txs in by_acc.items():
+            shorts |= set(self._replay_for(aid, txs)[1])
+        rows, total = self._tx_rows(
+            snap, account_ids, limit=per_page, short_ids=shorts,
+            page=page, ticker=ticker, ttype=ttype,
+            date_from=date_from, date_to=date_to, query=query)
+        pages = max(1, math.ceil(total / per_page)) if total else 0
+        return {"ok": True, "rows": rows, "total": total,
+                "page": min(page, pages) if pages else 1,
+                "pages": pages, "per_page": per_page}
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Export / restore — the Gerenciar backup pair (roadmap 7)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def export_store(self) -> dict[str, Any]:
+        """The raw store (JSON download — the client saves the file)."""
+        return self._snapshot()
+
+    def restore_store(self, payload: Any) -> dict:
+        """Replace the whole store with a user-supplied JSON.
+
+        [v1.22.3] Same contract as every write: validate EVERYTHING
+        first (_parse_store — the tx reconciliation included), refuse
+        on any error with the store untouched, then swap + ONE atomic
+        save (the .bak of the current file is automatic in _save).
+        """
+        if not isinstance(payload, dict):
+            return {"ok": False, "_error": "Conteúdo inválido — esperado "
+                                           "um objeto JSON da carteira."}
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            try:
+                candidate = _parse_store(json.loads(json.dumps(payload)))
+            except Exception as e:
+                return {"ok": False,
+                        "_error": "Arquivo rejeitado — não é uma carteira "
+                                  f"válida ({e}). Nada foi alterado."}
+            self._store = candidate
+            self._save()
+        self._syslog("info", "carteira restaurada de um arquivo "
+                             f"({len(candidate['txs'])} transações)")
+        return {"ok": True,
+                "counts": {"users": len(candidate["users"]),
+                           "accounts": len(candidate["accounts"]),
+                           "txs": len(candidate["txs"])}}
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Alerts — price thresholds over the quote map (roadmap 6)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _validate_alert(self, store: dict, body: dict) -> tuple[dict, dict]:
+        errs: dict[str, str] = {}
+        out: dict[str, Any] = {}
+        ticker = str(body.get("ticker") or "").strip().upper()
+        if not _TICKER_RE.match(ticker):
+            errs["ticker"] = "Ticker inválido — use o padrão B3."
+        else:
+            out["ticker"] = ticker
+        op = str(body.get("op") or "").strip().lower()
+        if op not in ("above", "below"):
+            errs["op"] = "Condição inválida — acima ou abaixo."
+        else:
+            out["op"] = op
+        price = _num(body.get("price"))
+        if price is None or price <= 0 or price > _PX_MAX:
+            errs["price"] = "Preço deve ser um número maior que zero."
+        else:
+            out["price"] = price
+        return out, errs
+
+    def add_alert(self, body: dict) -> dict:
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
+            fields, errs = self._validate_alert(self._store, body)
+            if errs:
+                return {"ok": False, "errors": errs}
+            # One alert per (ticker, op) — the new price replaces the old
+            # (two "PETR4 above" thresholds is a self-argument, not a need).
+            self._store.setdefault("alerts", [])
+            self._store["alerts"] = [
+                a for a in self._store["alerts"]
+                if not (a.get("ticker") == fields["ticker"]
+                        and a.get("op") == fields["op"])]
+            alert = {"id": _new_id(),
+                     "note": str(body.get("note") or "").strip()[:120],
+                     "created_at": date.today().isoformat(), **fields}
+            self._store["alerts"].append(alert)
+            self._save()
+        self._syslog("info", f"alerta criado: {alert['ticker']} "
+                             f"{'acima' if alert['op'] == 'above' else 'abaixo'} "
+                             f"de {_px(alert['price'])}")
+        return {"ok": True, "alert": alert}
+
+    def delete_alert(self, alert_id: str) -> dict:
+        with self._lock:
+            guard = self._write_guard()
+            if guard:
+                return guard
+            self._maybe_reload()
+            guard = self._write_guard()
+            if guard:
+                return guard
+            alerts = self._store.get("alerts") or []
+            if not any(a.get("id") == alert_id for a in alerts):
+                return {"ok": False, "_error": "Alerta não encontrado.",
+                        "status": 404}
+            self._store["alerts"] = [a for a in alerts
+                                     if a.get("id") != alert_id]
+            self._save()
+        self._syslog("info", "alerta removido")
+        return {"ok": True}
+
+    def alerts_status(self) -> dict:
+        """Every alert + its live evaluation (the quote map is warm)."""
+        snap = self._snapshot()
+        tickers = {a.get("ticker") for a in snap["alerts"] if a.get("ticker")}
+        if tickers:
+            self._refresh_quotes(set(tickers))
+        quotes_ok = bool(self._quotes_ok)
+        rows = []
+        for a in snap["alerts"]:
+            q = self._quote(a.get("ticker") or "")
+            price = q.get("close") if q else None
+            triggered = None
+            if price is not None:
+                triggered = (price >= a["price"] if a.get("op") == "above"
+                             else price <= a["price"])
+            rows.append({
+                **a,
+                "price_br": _px(a.get("price")),
+                "current": _px(price),
+                "triggered": triggered,   # None = no quote (unknown)
+                "quote_date": (q.get("refdate") or None) if q else None,
+            })
+        rows.sort(key=lambda r: (r.get("triggered") is not True,
+                                 r.get("ticker") or ""))
+        out = {"ok": True, "alerts": rows, "quotes_ok": quotes_ok}
+        if not quotes_ok:
+            out["quotes_note"] = _COTAHIST_ERR
+        return out
+
+    # ════════════════════════════════════════════════════════════════════════
     # CRUD — watchlist (tickers followed on the Painel)
     # ════════════════════════════════════════════════════════════════════════
 
@@ -1228,6 +1679,8 @@ class PortfolioService:
                 "watchlist": sorted(snap["watchlist"],
                                     key=lambda w: w.get("ticker") or ""),
                 "tickers": tickers,
+                # [v1.22.3] Price alerts (the Gerenciar + banner UI).
+                "alerts": snap.get("alerts") or [],
                 # [v1.22] Degraded-store banner (corrupt file on disk —
                 # writes refused). Null when healthy.
                 "store_error": store_error}
@@ -1278,6 +1731,21 @@ class PortfolioService:
         for t in sorted(txs, key=self._tx_order_key):
             tk = t.get("ticker") or ""
             pos = out.setdefault(tk, {"qty": 0.0, "pm": 0.0, "realized": 0.0})
+            # [v1.22.3] CORPORATE ACTION — desdobramento / grupamento /
+            # bonificação: re-base the quantity and the PM, keep the
+            # cost (qty·pm) invariant. No money moved, nothing realized;
+            # the SHORT side re-bases identically (a negative qty ×
+            # factor stays negative, its entry PM divides). A corp event
+            # on a FLAT position is a no-op (nothing to re-base — the
+            # tx stays in the ledger for the record).
+            # Same-day semantics: _tx_order_key replays corp BEFORE the
+            # day's trades (the session already quotes post-action).
+            if t.get("type") == "corp":
+                f = float(t.get("factor") or 1.0)
+                if abs(pos["qty"]) > 1e-9 and f > 0:
+                    pos["qty"] *= f
+                    pos["pm"] = pos["pm"] / f
+                continue
             q = float(t.get("quantity") or 0.0)
             p = float(t.get("price") or 0.0)
             fees = float(t.get("fees") or 0.0)
@@ -1328,17 +1796,123 @@ class PortfolioService:
                     short_ids.add(t.get("id") or "")
         return out
 
+    def _ticker_ladder(self, txs: list[dict],
+                       ticker: str) -> list[dict[str, Any]]:
+        """[v1.22.3] Per-tx PM ladder for ONE ticker (the position-detail
+        drawer, roadmap 7).
+
+        Mirrors ``_positions_raw`` branch-for-branch (same file, same
+        engine — never a forked numeric), emitting the running
+        (qty, PM, realized delta) after EVERY step so the drawer shows
+        how each trade moved the position. The final row's state MUST
+        equal ``_positions_raw``'s output for the same txs — pinned by
+        the regression suite (ladder final == engine final).
+        """
+        tk = (ticker or "").strip().upper()
+        steps = [t for t in txs if (t.get("ticker") or "").upper() == tk]
+        pos = {"qty": 0.0, "pm": 0.0, "realized": 0.0}
+        rows: list[dict[str, Any]] = []
+        for t in sorted(steps, key=self._tx_order_key):
+            delta = 0.0
+            row_note = t.get("note") or ""
+            if t.get("type") == "corp":
+                f = float(t.get("factor") or 1.0)
+                if abs(pos["qty"]) > 1e-9 and f > 0:
+                    pos["qty"] *= f
+                    pos["pm"] = pos["pm"] / f
+            else:
+                q = float(t.get("quantity") or 0.0)
+                p = float(t.get("price") or 0.0)
+                fees = float(t.get("fees") or 0.0)
+                if t.get("type") == "buy":
+                    if pos["qty"] >= -1e-9:
+                        total_cost = pos["qty"] * pos["pm"] + q * p + fees
+                        pos["qty"] += q
+                        pos["pm"] = total_cost / pos["qty"] \
+                            if pos["qty"] > 0 else 0.0
+                    else:
+                        covered = min(q, -pos["qty"])
+                        excess = q - covered
+                        fee_cov = fees * (covered / q) if q > 0 else fees
+                        fee_exc = fees - fee_cov
+                        delta = covered * (pos["pm"] - p) - fee_cov
+                        pos["realized"] += delta
+                        pos["qty"] += q
+                        if pos["qty"] > 1e-9:
+                            pos["pm"] = ((p * excess + fee_exc) / excess
+                                         if excess > 1e-9 else 0.0)
+                else:
+                    if pos["qty"] >= -1e-9:
+                        covered = min(q, pos["qty"])
+                        delta = covered * (p - pos["pm"]) - fees
+                        pos["realized"] += delta
+                        pos["qty"] -= q
+                        if pos["qty"] < -1e-9:
+                            pos["pm"] = p
+                    else:
+                        old = -pos["qty"]
+                        pos["pm"] = (old * pos["pm"] + q * p) / (old + q)
+                        pos["qty"] -= q
+                        delta = -fees
+                        pos["realized"] -= fees
+            rows.append({
+                "id": t.get("id") or "",
+                "date": t.get("date") or "",
+                "type": t.get("type") or "",
+                "action": t.get("action") or "",
+                "factor": t.get("factor"),
+                "factor_br": _factor_br(t["factor"])
+                if t.get("type") == "corp" else None,
+                "qty": t.get("quantity"),
+                "price": t.get("price"),
+                "fees": t.get("fees") or 0.0,
+                "delta_realized": round(delta, 2),
+                "run_qty": pos["qty"],
+                "run_pm": pos["pm"],
+                "note": row_note,
+            })
+        return rows
+
     def _short_flags(self, store: dict) -> set[str]:
         """[v1.22] Tx ids that first pushed THEIR account's position
         below zero (per-account replay — a global replay would net
-        longs against shorts across accounts and flag the wrong txs)."""
+        longs against shorts across accounts and flag the wrong txs).
+
+        [v1.22.3] Rides the replay memo (the flags depend only on the
+        account's txs; the store revision invalidates with them).
+        """
         flags: set[str] = set()
         by_acc: dict[str, list[dict]] = {}
         for t in store.get("txs") or []:
             by_acc.setdefault(t.get("account_id") or "", []).append(t)
-        for txs in by_acc.values():
-            self._positions_raw(txs, flags)
+        for aid, txs in by_acc.items():
+            _, shorts = self._replay_for(aid, txs)
+            flags |= set(shorts)
         return flags
+
+    def _replay_for(self, account_id: str,
+                    txs: list[dict]) -> tuple[dict[str, dict[str, float]],
+                                              frozenset]:
+        """[v1.22.3] Memoized per-account replay (roadmap 8).
+
+        Key: (account_id, store revision) — every mutation/reload bumps
+        the revision in _save()/_maybe_reload(), so a cached walk can
+        never outlive the data it was computed from. Returns FRESH
+        copies (the caller may not mutate the cache — the same rule as
+        _snapshot). The pure _positions_raw stays the engine; this is
+        only the serving layer.
+        """
+        hit = self._replay_cache.get(account_id)
+        if hit is not None and hit[0] == self._rev:
+            raw, shorts = hit[1], hit[2]
+            return ({tk: dict(p) for tk, p in raw.items()}, shorts)
+        shorts: set[str] = set()
+        raw = self._positions_raw(txs, shorts)
+        frozen = frozenset(shorts)
+        self._replay_cache[account_id] = (self._rev, raw, frozen)
+        # Cache the ORIGINALS (never handed out again) — the return
+        # above/below is always a copy.
+        return ({tk: dict(p) for tk, p in raw.items()}, frozen)
 
     def _short_warnings(self, shorts_before: set[str]) -> list[str]:
         """[v1.22] PT-BR warnings when an edit/delete left new shorts
@@ -1387,15 +1961,19 @@ class PortfolioService:
         # Per-account positions → merged by ticker (weighted PM).
         # [v1.21 fix 1] short_ids: txs that first pushed a position below
         # zero (the 🚨 flag on the transactions table).
-        merged: dict[str, dict[str, float]] = {}
+        # [v1.22.3] _replay_for: the memoized per-account walk (store-
+        # revision keyed); merged aggregates collect into lists and sum
+        # with math.fsum (catastrophic-cancellation-free accumulation).
+        merged: dict[str, dict[str, Any]] = {}
         by_account: dict[str, dict[str, dict[str, float]]] = {}
         short_ids: set[str] = set()
         for acc in accounts:
             acc_txs = [t for t in txs if t.get("account_id") == acc["id"]]
             if not acc_txs:
                 continue
-            raw = self._positions_raw(acc_txs, short_ids)
+            raw, acc_shorts = self._replay_for(acc["id"], acc_txs)
             by_account[acc["id"]] = raw
+            short_ids |= set(acc_shorts)
             for tk, pos in raw.items():
                 m = merged.setdefault(tk, {"qty": 0.0, "cost": 0.0,
                                            "realized": 0.0,
@@ -1439,6 +2017,11 @@ class PortfolioService:
             # no broker. Honest "—" for PM and Lucro % (qty/cost/value/
             # profit stay: value − cost is still the per-leg profit sum).
             mixed = m["long"] > 1e-9 and m["short"] > 1e-9
+            # [v1.22.3] Per-symbol quote date (roadmap 7): an illiquid
+            # paper's "Valor Hoje" is its LAST TRADED session, which may
+            # lag the map's session_date — the cell carries its own date
+            # so the UI can say "cotação de 21/11".
+            qdate = (q.get("refdate") or "") if q else ""
             row = {
                 "ticker": tk,
                 "name": meta.get("name") or (q.get("name") if q else "") or tk,
@@ -1446,6 +2029,9 @@ class PortfolioService:
                 "pm": None if mixed else
                       (_px(m["cost"] / m["qty"]) if m["qty"] else None),
                 "price": _px(price),
+                "quote_date": qdate or None,
+                "stale_quote": bool(qdate and self._session_date
+                                    and qdate != self._session_date),
                 "qty": _qty(m["qty"]),
                 "raw_qty": m["qty"],
                 "short": m["qty"] < -1e-9,
@@ -1472,9 +2058,18 @@ class PortfolioService:
         # built to skip the (now dead) -1.0 no-quote sentinel and
         # silently DROPPED every short while keeping its negative cost.
         # `complete` already gates the display when quotes are missing.
-        total_cost = sum(m["cost"] for m in merged.values())
-        total_value = sum(r["_v"] for r in rows if r["_v"] is not None)
-        total_realized = sum(m["realized"] for m in merged.values())
+        # [v1.22.3] fsum aggregates + GROSS EXPOSURE KPIs (roadmap 7):
+        # long = Σ positive market values, short = Σ |negative| — the
+        # exposure story a short book needs (patrimônio nets them).
+        total_cost = math.fsum(m["cost"] for m in merged.values())
+        total_value = math.fsum(r["_v"] for r in rows
+                                if r["_v"] is not None)
+        total_realized = math.fsum(m["realized"] for m in merged.values())
+        gross_long = math.fsum(r["_v"] for r in rows
+                               if r["_v"] is not None and r["_v"] > 0)
+        gross_short = math.fsum(-r["_v"] for r in rows
+                                if r["_v"] is not None and r["_v"] < 0)
+        has_short = any(m["qty"] < -1e-9 for m in merged.values())
         lucro = total_value - total_cost if complete else None
         lucro_pct = (lucro / abs(total_cost) * 100.0
                      if lucro is not None and abs(total_cost) > 1e-9 else None)
@@ -1487,8 +2082,8 @@ class PortfolioService:
                 + ". Posições vendidas a descoberto entram negativas."),
             kpi("Custo (PM)", _brl_auto(total_cost),
                 "Total original — quantidade × preço médio de compra "
-                "(taxas de compra incluídas no PM; bonificações entram "
-                "a R$ 0,00)."),
+                "(taxas de compra incluídas no PM; eventos corporativos "
+                "re-basam quantidade e PM sem alterar o custo total)."),
             kpi("Lucro não realizado",
                 _signed_brl(lucro) if complete else "—",
                 "Patrimônio − custo das posições abertas."),
@@ -1500,7 +2095,21 @@ class PortfolioService:
                 "Vendas já efetuadas: (preço de venda − PM) × quantidade "
                 "− taxas, acumulado."),
         ]
+        # [v1.22.3] Exposure cards only when a short book exists — for
+        # a long-only book they would just repeat Patrimônio twice.
+        if has_short:
+            kpis.append(kpi("Exposição long",
+                            _brl_auto(gross_long) if complete else "—",
+                            "Soma dos valores de mercado das posições "
+                            "compradas (bruto, sem abater os shorts)."))
+            kpis.append(kpi("Exposição short",
+                            _brl_auto(gross_short) if complete else "—",
+                            "Soma dos valores absolutos das posições "
+                            "vendidas a descoberto (entram negativas no "
+                            "patrimônio)."))
 
+        tx_rows, tx_total = self._tx_rows(snap, account_ids, limit=50,
+                                          short_ids=short_ids)
         payload: dict[str, Any] = {
             "status": "ok",
             "empty": None,
@@ -1517,9 +2126,13 @@ class PortfolioService:
                 "profit_pct": _signed_pct(lucro_pct / 100.0
                                           if lucro_pct is not None else None)
                 if complete else "—",
+                "gross_long": _brl_auto(gross_long) if complete else "—",
+                "gross_short": _brl_auto(gross_short) if complete else "—",
             },
-            "txs": self._tx_rows(snap, account_ids, limit=200,
-                                 short_ids=short_ids),
+            # [v1.22.3] The ledger page-1 (50) + the full count — the
+            # Transações view paginates via GET /txs from here on.
+            "txs": tx_rows,
+            "tx_total": tx_total,
         }
         if not quotes_ok:
             payload["quotes_note"] = _COTAHIST_ERR
@@ -1546,8 +2159,11 @@ class PortfolioService:
         return "Geral — todos os usuários e contas"
 
     def _tx_rows(self, snap: dict, account_ids: set[str],
-                 limit: int = 200,
-                 short_ids: set[str] | None = None) -> list[dict[str, Any]]:
+                 limit: int = 200, short_ids: set[str] | None = None,
+                 *, page: int = 1,
+                 ticker: str = "", ttype: str = "",
+                 date_from: str = "", date_to: str = "",
+                 query: str = "") -> tuple[list[dict[str, Any]], int]:
         """Transactions for the scope — chronological ASC (oldest first).
 
         [v1.21 fix 1] The default order is date ASCENDING (the ledger
@@ -1555,22 +2171,83 @@ class PortfolioService:
         then flips them for display. Flags: ``short`` (this sell first
         pushed the position below zero — 🚨) and ``zero`` (price
         R$ 0,00 — bonificação — ⚠️).
+
+        [v1.22.3] FILTERS + PAGINATION (roadmap 7): ticker / type
+        (buy|sell|corp) / date window / free-text (ticker or note,
+        case-insensitive) narrow BEFORE paging; ``page`` is 1-based
+        over the FILTERED list, newest-last, page size = limit. Returns
+        (page rows, filtered total) so the UI can render "1 de 4 · 173
+        transações". The old behavior (newest 200, oldest first) is
+        page 1 with no filters and limit=200.
         """
         acc_by_id = {a["id"]: a for a in snap["accounts"]}
         user_by_id = {u["id"]: u for u in snap["users"]}
         rows = [t for t in snap["txs"] if t.get("account_id") in account_ids]
+        # [v1.22.3] Filters (applied on the raw txs, before ordering).
+        if ticker:
+            rows = [t for t in rows
+                    if (t.get("ticker") or "") == ticker.upper()]
+        if ttype:
+            rows = [t for t in rows if t.get("type") == ttype]
+        if date_from:
+            rows = [t for t in rows if (t.get("date") or "") >= date_from]
+        if date_to:
+            rows = [t for t in rows if (t.get("date") or "") <= date_to]
+        if query:
+            needle = query.strip().lower()
+            if needle:
+                rows = [t for t in rows
+                        if needle in (t.get("ticker") or "").lower()
+                        or needle in (t.get("note") or "").lower()]
+        total = len(rows)
         # [v1.22] Ascending + stable, the SAME total order as the replay
         # (date, created_at, seq — the uuid tiebreak scrambled same-
-        # second rows); keep the NEWEST `limit`.
+        # second rows); paginate the NEWEST-last list from the END.
         rows.sort(key=self._tx_order_key)
-        recent = rows[-limit:]               # newest `limit`, oldest first
+        if page < 1:
+            page = 1
+        end = total - (page - 1) * limit      # slice end (exclusive)
+        start = end - limit
+        recent = rows[max(0, start):end] if end > 0 else []
         short_ids = short_ids or set()
         out = []
         for t in recent:
             acc = acc_by_id.get(t.get("account_id") or "")
             user = user_by_id.get(acc.get("user_id") or "") if acc else None
-            total = (t["quantity"] * t["price"]
-                     + (t["fees"] if t.get("type") == "buy" else -t["fees"]))
+            if t.get("type") == "corp":
+                # [v1.22.3] Corporate action row: the factor IS the cell
+                # (×2,00 · ×0,50 · ×1,10) — no money columns exist.
+                out.append({
+                    "id": t["id"],
+                    "date": _fmt_date(t.get("date")),
+                    "date_iso": t.get("date") or "",
+                    "ticker": t.get("ticker"),
+                    "account": " · ".join(x for x in (
+                        user["name"] if user else None,
+                        acc.get("name") if acc else None) if x) or "—",
+                    "account_id": t.get("account_id") or "",
+                    "type": "corp",
+                    "action": t.get("action") or "",
+                    "factor": t.get("factor") or 0.0,
+                    "factor_br": _factor_br(t.get("factor") or 0.0),
+                    "qty": _factor_br(t.get("factor") or 0.0),
+                    "quantity": 0.0,
+                    "price": None,
+                    "raw_price": None,
+                    "zero": False,
+                    "short": t.get("id") in short_ids,
+                    "fees": "—",
+                    "raw_fees": 0.0,
+                    "total": "—",
+                    "note": t.get("note") or "",
+                })
+                continue
+            # [v1.22.3] row_total — the per-row money column (the
+            # outer ``total`` is the FILTERED COUNT the pager returns;
+            # the shadowing fed the count to the UI as 3000.0).
+            row_total = (t["quantity"] * t["price"]
+                         + (t["fees"] if t.get("type") == "buy"
+                            else -t["fees"]))
             out.append({
                 "id": t["id"],
                 "date": _fmt_date(t.get("date")),
@@ -1589,10 +2266,10 @@ class PortfolioService:
                 "short": t.get("id") in short_ids,
                 "fees": _brl2(t["fees"]) if t.get("fees") else "—",
                 "raw_fees": t.get("fees") or 0.0,
-                "total": _brl2(total),
+                "total": _brl2(row_total),
                 "note": t.get("note") or "",
             })
-        return out
+        return out, total
 
     # ── the Painel widget payload ────────────────────────────────────────────
 
@@ -1622,27 +2299,29 @@ class PortfolioService:
         quotes_ok = bool(self._quotes_ok)
 
         # ── watched accounts, grouped by user ──
-        # Pre-compute each watched account's raw positions ONCE.
+        # Pre-compute each watched account's raw positions ONCE (the
+        # [v1.22.3] replay memo — same store revision, same walk).
         raw_by_acc: dict[str, dict[str, dict[str, float]]] = {}
         txs_by_acc: dict[str, list[dict]] = {}
         for acc in watched:
             txs = [t for t in snap["txs"] if t.get("account_id") == acc["id"]]
             txs_by_acc[acc["id"]] = txs
-            raw_by_acc[acc["id"]] = self._positions_raw(txs)
+            raw_by_acc[acc["id"]] = self._replay_for(acc["id"], txs)[0]
 
         def _acc_kpis(acc: dict, raw: dict) -> dict[str, Any]:
-            cost = sum(p["qty"] * p["pm"] for p in raw.values())
-            value = 0.0
+            cost = math.fsum(p["qty"] * p["pm"] for p in raw.values())
+            value_parts: list[float] = []
             complete = quotes_ok
             for tk, p in raw.items():
                 if abs(p["qty"]) <= 1e-9:
                     continue
                 q = self._quote(tk)
                 if q and q.get("close") is not None:
-                    value += q["close"] * p["qty"]
+                    value_parts.append(q["close"] * p["qty"])
                 else:
                     complete = False
-            realized = sum(p["realized"] for p in raw.values())
+            value = math.fsum(value_parts)
+            realized = math.fsum(p["realized"] for p in raw.values())
             lucro = (value - cost) if complete else None
             return {
                 "value": _brl_auto(value) if complete else None,
@@ -1682,24 +2361,27 @@ class PortfolioService:
             if len(g["accounts"]) < 2:
                 g["subtotal"] = None
                 continue
-            g_cost = 0.0
-            g_value = 0.0
-            g_realized = 0.0
+            g_cost_parts: list[float] = []
+            g_value_parts: list[float] = []
+            g_realized_parts: list[float] = []
             complete = quotes_ok
             for acc in watched:
                 if acc.get("user_id") != uid:
                     continue
                 raw = raw_by_acc[acc["id"]]
-                g_cost += sum(p["qty"] * p["pm"] for p in raw.values())
-                g_realized += sum(p["realized"] for p in raw.values())
+                g_cost_parts.extend(p["qty"] * p["pm"] for p in raw.values())
+                g_realized_parts.extend(p["realized"] for p in raw.values())
                 for tk, p in raw.items():
                     if abs(p["qty"]) <= 1e-9:
                         continue
                     q = self._quote(tk)
                     if q and q.get("close") is not None:
-                        g_value += q["close"] * p["qty"]
+                        g_value_parts.append(q["close"] * p["qty"])
                     else:
                         complete = False
+            g_cost = math.fsum(g_cost_parts)
+            g_value = math.fsum(g_value_parts)
+            g_realized = math.fsum(g_realized_parts)
             g_lucro = (g_value - g_cost) if complete else None
             g["subtotal"] = {
                 "id": None,
@@ -1766,23 +2448,26 @@ class PortfolioService:
 
         def _account_row(acc: dict) -> dict[str, Any]:
             txs = txs_by_acc.get(acc["id"], [])
-            raw = self._positions_raw(txs)
-            cost = 0.0
-            value = 0.0
-            realized = 0.0
+            raw = self._replay_for(acc["id"], txs)[0]
+            cost_parts: list[float] = []
+            value_parts: list[float] = []
+            realized_parts: list[float] = []
             assets = 0
             complete = quotes_ok
             for tk, p in raw.items():
-                realized += p["realized"]
+                realized_parts.append(p["realized"])
                 if abs(p["qty"]) <= 1e-9:
                     continue
                 assets += 1
-                cost += p["qty"] * p["pm"]
+                cost_parts.append(p["qty"] * p["pm"])
                 q = self._quote(tk)
                 if q and q.get("close") is not None:
-                    value += q["close"] * p["qty"]
+                    value_parts.append(q["close"] * p["qty"])
                 else:
                     complete = False
+            cost = math.fsum(cost_parts)
+            value = math.fsum(value_parts)
+            realized = math.fsum(realized_parts)
             lucro = (value - cost) if complete else None
             return {
                 "id": acc["id"],
@@ -1809,24 +2494,32 @@ class PortfolioService:
             account_rows = [_account_row(a) for a in accs]
 
             # Per-USER consolidation (sum of THEIR accounts only).
-            u_cost = u_value = u_realized = 0.0
+            # [v1.22.3] The memo makes the second walk free (the
+            # _account_row pass already replayed every account).
+            u_cost_parts: list[float] = []
+            u_value_parts: list[float] = []
+            u_realized_parts: list[float] = []
             u_txs = 0
             u_assets: set[str] = set()
             complete = quotes_ok
             for acc in accs:
-                raw = self._positions_raw(txs_by_acc.get(acc["id"], []))
-                u_realized += sum(p["realized"] for p in raw.values())
+                raw = self._replay_for(acc["id"],
+                                       txs_by_acc.get(acc["id"], []))[0]
+                u_realized_parts.extend(p["realized"] for p in raw.values())
                 u_txs += tx_count.get(acc["id"], 0)
                 for tk, p in raw.items():
                     if abs(p["qty"]) <= 1e-9:
                         continue
                     u_assets.add(tk)
-                    u_cost += p["qty"] * p["pm"]
+                    u_cost_parts.append(p["qty"] * p["pm"])
                     q = self._quote(tk)
                     if q and q.get("close") is not None:
-                        u_value += q["close"] * p["qty"]
+                        u_value_parts.append(q["close"] * p["qty"])
                     else:
                         complete = False
+            u_cost = math.fsum(u_cost_parts)
+            u_value = math.fsum(u_value_parts)
+            u_realized = math.fsum(u_realized_parts)
             lucro = (u_value - u_cost) if complete else None
             users_out.append({
                 "id": user["id"],

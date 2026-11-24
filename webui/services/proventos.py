@@ -165,6 +165,17 @@ class ProventosService:
 
     # ── shared: all events, deduped + enriched + cached ─────────────────────
 
+    def events_for(self, ticker: str) -> list[dict]:
+        """[v1.22.3] PUBLIC read of ``_events`` for the Carteira join
+        (proventos per position / yield-on-cost) — same deduped,
+        normalized, cached events; an empty list on any failure (the
+        Carteira view degrades to "sem proventos", never an error)."""
+        try:
+            return self._events(ticker)
+        except Exception as e:
+            _log_err("proventos events_for", e)
+            return []
+
     def _events(self, ticker: str) -> list[dict]:
         """All cash provents for `ticker` — deduped, normalized, enriched.
 

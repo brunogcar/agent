@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-11-24 (v1.22.2 — nota de corretagem PDF import + IR/DARF helper; v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
+Last updated: 2026-11-25 (v1.22.3 — the whole money roadmap: corporate actions, proventos/YOC, TWR/XIRR vs CDI/IBOV, allocation/alerts/what-if, ledger pagination+undo+backup, engine perf; v1.22.2 — nota de corretagem PDF import + IR/DARF helper; v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
 
 ---
 
@@ -359,9 +359,16 @@ The user's own money: users → accounts → transactions → PM (preço médio)
 | POST | `/api/webui/portfolio/accounts` | Create `{user_id, name, broker?, watch?}` |
 | PUT | `/api/webui/portfolio/accounts/{id}` | Update any field (incl. the ⭐ watch flag) |
 | DELETE | `/api/webui/portfolio/accounts/{id}` | Delete (cascades transactions) |
-| POST | `/api/webui/portfolio/txs` | Create `{account_id, ticker, type: buy\|sell, quantity, price, fees?, date, note?}` |
-| PUT | `/api/webui/portfolio/txs/{id}` | Update |
-| DELETE | `/api/webui/portfolio/txs/{id}` | Delete |
+| POST | `/api/webui/portfolio/txs` | Create `{account_id, ticker, type: buy\|sell\|corp, quantity, price, fees?, date, note?}` — `corp` (v1.22.3) is the corporate action: `{action: split\|group\|bonus, factor}` (qty ×= f, PM ÷= f, custo invariant; replays FIRST within its date). Mutation responses carry `undo_token` + `undo_label` (the ↩️ toast) |
+| PUT | `/api/webui/portfolio/txs/{id}` | Update (undo token included) |
+| DELETE | `/api/webui/portfolio/txs/{id}` | Delete (undo token included; the undo re-inserts with the SAME id/seq) |
+| GET | `/api/webui/portfolio/txs?scope=&page=&per_page=&ticker=&type=&date_from=&date_to=&q=` | [v1.22.3] The paginated/filtered ledger: filters narrow BEFORE paging; page 1 = the newest `per_page` (default 50, cap 200) rows, oldest-first inside the page; returns `{rows, total, page, pages}` |
+| POST | `/api/webui/portfolio/undo` | [v1.22.3] `{token}` → one-shot restore of the last tx mutation (create removes / update restores the previous fields / delete re-inserts); expired or unknown tokens → `404` |
+| GET | `/api/webui/portfolio/export` | [v1.22.3] The whole store JSON (the Gerenciar download) |
+| POST | `/api/webui/portfolio/restore` | [v1.22.3] Replace the whole store from an exported file — validate-everything-then-swap (`_parse_store` incl. the tx reconciliation); anything invalid → `400`, store untouched; the `.bak` of the current file is automatic |
+| GET | `/api/webui/portfolio/alerts` | [v1.22.3] Every price alert + its live evaluation against the quote map (`triggered: true\|false\|null`) |
+| POST | `/api/webui/portfolio/alerts` | [v1.22.3] Create `{ticker, op: above\|below, price}` — one alert per (ticker, op): the new price replaces the old |
+| DELETE | `/api/webui/portfolio/alerts/{id}` | [v1.22.3] Remove an alert |
 | POST | `/api/webui/portfolio/watchlist` | Add ticker `{ticker}` |
 | DELETE | `/api/webui/portfolio/watchlist/{ticker}` | Remove ticker |
 | POST | `/api/webui/portfolio/tickers/{ticker}/refresh` | Re-fetch the CVM name/sector (background thread) |
@@ -370,6 +377,11 @@ The user's own money: users → accounts → transactions → PM (preço médio)
 | GET | `/api/webui/portfolio/import/notas?account_id=` | [v1.22.2] The imported-notas registry (one account or all): broker, pregão, `alive` count (txs still present), fees, IRRF — the undo UI |
 | DELETE | `/api/webui/portfolio/import/nota/{id}` | [v1.22.2] Undo an import: removes the nota's txs + its registry row (PM/lucro recalculated; short warnings like any delete) |
 | GET | `/api/webui/portfolio/ir?scope=all\|user:{id}\|account:{id}` | [v1.22.2] IR mês a mês per user (CPF level — accounts summed): swing × day-trade split (day carve-out: matched same-day pairs never touch the PM), R$ 20k exemption, separate swing/day loss carry pools, IRRF estimates (0,005% swing / 1% day per account), 15%/20%, DARF 6015/6120 with due dates (último dia útil do mês seguinte)
+| GET | `/api/webui/portfolio/proventos?scope=` | [v1.22.3] Proventos per position / yield-on-cost: the txs × dividends.db join with the DATA COM entitlement rule (buys that day receive, sells don't; corp actions re-base first) — per-ticker received/pending/YOC + the full events table + notes (JCP bruto, short pays the dividend)
+| GET | `/api/webui/portfolio/position-detail?scope=&ticker=` | [v1.22.3] One ticker's full story in the scope: per-account PM LADDER (every tx with the running qty/PM and Δ realizado), the merged position, the live quote, and the proventos it paid — the 🔍 drawer
+| GET | `/api/webui/portfolio/performance?scope=` | [v1.22.3] TWR/XIRR vs CDI/IBOV + the patrimônio evolution curve (month-end grid): TWR chained between cashflow dates (the flow executes at the close), XIRR by bisection, CDI from the sgs daily series 12 (juros.db monthly fallback), IBOV proxied by BOVA11 — same window, same day-count annualization
+| GET | `/api/webui/portfolio/allocation?scope=` | [v1.22.3] Per-setor/per-ticker weights over the LONG book + HHI (×10.000) + maior posição/top-3 + the short exposure line + the doughnut chart data
+| POST | `/api/webui/portfolio/simulate` | [v1.22.3] The what-if simulator: `{scope, trades: [{ticker, type: sell\|buy, quantity, price}]}` → before/after KPIs (patrimônio, custo, lucro não realizado, lucro realizado) + per-ticker deltas — NOTHING is written |
 
 ### `GET /api/webui/portfolio/positions?scope=all` (sample)
 

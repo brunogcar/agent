@@ -48,7 +48,13 @@ DARF_DAY = "6120"
 
 
 def _order_key(t: dict) -> tuple:
-    return (t.get("date") or "", t.get("created_at") or "",
+    """[v1.22.3] Same total order as the engine's _tx_order_key —
+    corporate actions first within their date (the session already
+    trades post-action quantities/prices). The two walks must NEVER
+    disagree (the INSTRUCTIONS rule)."""
+    return (t.get("date") or "",
+            0 if t.get("type") == "corp" else 1,
+            t.get("created_at") or "",
             t.get("seq") or 0)
 
 
@@ -75,6 +81,17 @@ def _walk_account(txs: list[dict]) -> dict[str, dict[str, float]]:
             by_date.setdefault(t.get("date") or "", []).append(t)
         for d, day in sorted(by_date.items()):
             b = bucket(d[:7])
+            # [v1.22.3] Corporate actions apply BEFORE the day's trades
+            # (the engine's corp-first semantics). No buy/sell volume,
+            # no realized result — but the QUANTITY and the PM re-base,
+            # so the day's sells realize against the post-action PM.
+            for t in day:
+                if t.get("type") == "corp":
+                    f = float(t.get("factor") or 1.0)
+                    if abs(pos["qty"]) > 1e-9 and f > 0:
+                        pos["qty"] *= f
+                        pos["pm"] = pos["pm"] / f
+            day = [t for t in day if t.get("type") != "corp"]
             buys = [t for t in day if t.get("type") == "buy"]
             sells = [t for t in day if t.get("type") == "sell"]
             b_qty = sum(float(t.get("quantity") or 0) for t in buys)

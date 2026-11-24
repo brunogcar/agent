@@ -97,6 +97,14 @@
     "fees": "Taxas (R$, opcional)",
     "note": "Observação (opcional)",
     "manage": "Gerenciar",
-    "import_nota": "Importar nota de corretagem"
+    "import_nota": "Importar nota de corretagem",
+    "corp": "Evento corporativo",
+    "corp_action": "Tipo de evento",
+    "corp_split": "Desdobramento (1 ação vira N)",
+    "corp_group": "Grupamento (N ações viram 1)",
+    "corp_bonus": "Bonificação (ações novas de graça)",
+    "corp_factor": "Fator (×2 = cada ação vira 2)",
+    "sim_title": "Simular operações",
+    "drawer": "Detalhes da posição"
   }
 }

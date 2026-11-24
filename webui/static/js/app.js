@@ -3622,9 +3622,14 @@ function initCarteiraPage() {
     pos: null,          // GET /positions?scope=account:ID — account level
     level: readLevel(),
     view: 'positions',
+    // [v1.22.3] the ledger's own page + filters (GET /txs) — the
+    // positions payload ships only page-1 + the count.
+    txRows: null, txPage: 1, txPages: 1, txTotal: 0,
+    txFilters: { ticker: '', type: '', from: '', to: '', q: '' },
     editUser: null, editAccount: null, editTx: null,
     storeError: null,   // [v1.22] degraded-store banner (corrupt file)
     pendingNote: null,  // [v1.22] {text, until} — post-mutation warnings
+    undoTimer: null,    // [v1.22.3] the undo toast's expiry timer
   };
 
   function $(id) { return document.getElementById(id); }
@@ -3671,6 +3676,9 @@ function initCarteiraPage() {
     st.level = kind === 'users' ? { kind: 'users' }
              : { kind: kind, id: id };
     st.view = 'positions';
+    st.txPage = 1;                     // [v1.22.3] ledger state resets
+    st.txRows = null;
+    st.txFilters = { ticker: '', type: '', from: '', to: '', q: '' };
     $('cart-level').innerHTML = '<span class="loading">⏳ Carregando…</span>';
     hideNote();
     loadLevel();
@@ -3892,7 +3900,7 @@ function initCarteiraPage() {
         '</span></div>' +
       '<div class="cart-ucard-stats">' +
         statCell('Patrimônio', u.value, 'Soma das contas deste usuário ao último pregão com cotação') +
-        statCell('Lucro hoje', u.profit, 'Patrimônio − custo das posições abertas') +
+        statCell('Lucro não realizado', u.profit, 'Patrimônio − custo das posições abertas') +
         statCell('Lucro %', u.profit_pct, 'Lucro sobre o custo (PM)') +
       '</div>' +
       '<div class="cart-ucard-meta">🏦 ' + esc(String(u.account_count)) + ' conta(s) · 📋 ' +
@@ -4057,7 +4065,7 @@ function initCarteiraPage() {
       (a.broker ? '<div class="cart-ucard-broker">🏢 ' + esc(a.broker) + '</div>' : '') +
       '<div class="cart-ucard-stats">' +
         statCell('Patrimônio', a.value, 'Posições desta conta ao último pregão com cotação') +
-        statCell('Lucro hoje', a.profit, 'Patrimônio − custo das posições abertas') +
+        statCell('Lucro não realizado', a.profit, 'Patrimônio − custo das posições abertas') +
         statCell('Lucro %', a.profit_pct, 'Lucro sobre o custo (PM)') +
       '</div>' +
       '<div class="cart-ucard-meta">📋 ' + esc(String(a.asset_count)) + ' ativo(s) · 🧾 ' +
@@ -4090,15 +4098,28 @@ function initCarteiraPage() {
     if (d.scope_label) labelBits.push(d.scope_label);
     if (d.session_date) labelBits.push('pregão ' + d.session_date);
     var html = '<div class="cart-kpis">' + valKpisHtml(d.kpis || []) + '</div>';
+    // [v1.22.3] Alertas disparados — the banner between the KPIs and
+    // the view bar (loaded async; hidden when empty).
+    html += '<div id="cart-alert-banner"></div>';
+    // [v1.22.3] FIVE views now: Posições · Transações · Proventos ·
+    // Evolução · Alocação — each lazy (loaded on first open).
     html += '<div class="cart-viewbar"><div class="cart-pills" role="group" aria-label="Visão">' +
       '<button class="cart-pill' + (st.view === 'positions' ? ' is-active' : '') +
         '" data-view="positions">Posições</button>' +
       '<button class="cart-pill' + (st.view === 'txs' ? ' is-active' : '') +
-        '" data-view="txs">Transações</button></div>' +
+        '" data-view="txs">Transações</button>' +
+      '<button class="cart-pill' + (st.view === 'proventos' ? ' is-active' : '') +
+        '" data-view="proventos">🪙 Proventos</button>' +
+      '<button class="cart-pill' + (st.view === 'perf' ? ' is-active' : '') +
+        '" data-view="perf">📈 Evolução</button>' +
+      '<button class="cart-pill' + (st.view === 'alloc' ? ' is-active' : '') +
+        '" data-view="alloc">🥧 Alocação</button></div>' +
       '<span class="cart-scope-label">' + esc(labelBits.join(' · ')) + '</span>' +
       '<span class="cart-toolbar-spacer"></span>' +
+      '<button class="cart-btn" data-act="sim" ' +
+        'title="Simular vendas/compras sem gravar nada">🧪 Simular</button>' +
       '<button class="cart-btn primary" data-act="tx" ' +
-        'title="Registrar transação nesta conta">➕ Transação</button>' +
+        'title="Registrar transação ou evento corporativo nesta conta">➕ Transação</button>' +
       '<button class="cart-btn" data-act="import" ' +
         'title="Importar nota de corretagem (PDF) nesta conta">📥 Importar nota</button>' +
       '<button class="cart-btn ghost" data-act="reload" aria-label="Recarregar" ' +
@@ -4107,11 +4128,26 @@ function initCarteiraPage() {
       (st.view === 'positions' ? '' : ' hidden') + '></div>';
     html += '<div id="cart-txs" class="cart-view"' +
       (st.view === 'txs' ? '' : ' hidden') + '></div>';
+    // [v1.22.3] the three lazy views — filled on demand.
+    html += '<div id="cart-proventos" class="cart-view"' +
+      (st.view === 'proventos' ? '' : ' hidden') + '></div>';
+    html += '<div id="cart-perf" class="cart-view"' +
+      (st.view === 'perf' ? '' : ' hidden') + '></div>';
+    html += '<div id="cart-alloc" class="cart-view"' +
+      (st.view === 'alloc' ? '' : ' hidden') + '></div>';
     // [v1.22.2] imported-notas registry (undo/dedup visibility).
     html += '<div id="cart-notas" class="cart-notas"></div>';
     box.innerHTML = html;
     renderPositionsTable(d);
-    renderTxsTable(d);
+    // [v1.22.3] page-1 seeds the ledger; the filter bar re-fetches.
+    st.txRows = d.txs || [];
+    st.txTotal = d.tx_total || st.txRows.length;
+    st.txPages = Math.max(1, Math.ceil(st.txTotal / 50));
+    renderTxsTable();
+    if (st.view === 'proventos') loadProventos();
+    if (st.view === 'perf') loadPerf();
+    if (st.view === 'alloc') loadAlloc();
+    loadAlertBanner();
     loadNotas();
   }
 
@@ -4175,6 +4211,11 @@ function initCarteiraPage() {
             ? 'Sem PM consolidado — o mesmo ticker está comprado em uma conta e vendido em outra.'
             : 'Sem cotação') + '">—</span>'
         : valNumHtml(r.pm);
+      // [v1.22.3] Illiquid paper: the quote is from an OLDER session —
+      // say so next to the price ("cotação de 21/11").
+      var staleFlag = r.stale_quote && r.quote_date
+        ? ' ' + flagHtml('🕰️', 'Cotação de ' + esc(fmtDate(r.quote_date)) +
+                         ' — o papel não negociou na última sessão.') : '';
       var sellTitle = r.short
         ? '❌ Vender mais ' + esc(r.ticker) + ' (aumentar o short)'
         : '❌ Vender ' + esc(r.ticker) + ' — fecha a posição (ajuste a quantidade para vender menos)';
@@ -4189,13 +4230,17 @@ function initCarteiraPage() {
         '<td class="cart-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
         '<td class="cart-sector" title="' + esc(r.sector) + '">' + esc(r.sector) + '</td>' +
         '<td class="val-val">' + pmCell + '</td>' +
-        '<td class="val-val">' + valNumHtml(r.price) + '</td>' +
+        '<td class="val-val">' + valNumHtml(r.price) + staleFlag + '</td>' +
         '<td class="val-val">' + qtyCell + '</td>' +
         '<td class="val-val">' + valNumHtml(r.cost) + '</td>' +
         '<td class="val-val">' + valNumHtml(r.value) + '</td>' +
         '<td class="val-val">' + valNumHtml(r.profit) + '</td>' +
         '<td class="val-val">' + signedHtml(r.profit_pct) + '</td>' +
         '<td class="cart-actions">' +
+          // [v1.22.3] position-detail drawer — the full PM ladder +
+          // proventos of this ticker.
+          '<button class="cart-icon-btn" data-pd="' + esc(r.ticker) +
+            '" title="🔍 Detalhes da posição — escada de PM, proventos e lucro realizado">🔍</button>' +
           '<button class="cart-icon-btn" data-qb="' + esc(r.ticker) + '" data-qq="' +
             esc(String(buyQty)) + '" title="' + esc(buyTitle) + '">✅</button>' +
           '<button class="cart-icon-btn" data-qs="' + esc(r.ticker) + '" data-qq="' +
@@ -4218,11 +4263,71 @@ function initCarteiraPage() {
         'já foram vendidas — registre uma nova compra para vê-la aqui.</p></div>';
   }
 
-  function renderTxsTable(d) {
+  // [v1.22.3] The ledger view: FILTER BAR + PAGINATION over GET /txs.
+  // Page-1 comes seeded from the positions payload; any filter change
+  // re-fetches. Rows render buy/sell AND the corp-event rows (×2 etc).
+  var CORP_NAMES = { split: 'Desdobramento', group: 'Grupamento',
+                     bonus: 'Bonificação' };
+
+  function txFilter_qs() {
+    var f = st.txFilters;
+    var parts = ['scope=' + encodeURIComponent(scopeStr()),
+                 'page=' + st.txPage, 'per_page=50'];
+    if (f.ticker) parts.push('ticker=' + encodeURIComponent(f.ticker));
+    if (f.type) parts.push('type=' + encodeURIComponent(f.type));
+    if (f.from) parts.push('date_from=' + encodeURIComponent(f.from));
+    if (f.to) parts.push('date_to=' + encodeURIComponent(f.to));
+    if (f.q) parts.push('q=' + encodeURIComponent(f.q));
+    return parts.join('&');
+  }
+
+  function loadTxs() {
     var box = $('cart-txs');
     if (!box) return;
-    var rows = (d.txs || []).map(function(t) {
+    box.innerHTML = '<span class="loading">⏳ Carregando transações…</span>';
+    api('GET', '/txs?' + txFilter_qs()).then(function(res) {
+      if (!res.ok) {
+        box.innerHTML = '<div class="error">' +
+          esc((res.j && res.j._error) || 'Erro') + '</div>';
+        return;
+      }
+      st.txRows = res.j.rows || [];
+      st.txTotal = res.j.total || 0;
+      st.txPages = res.j.pages || 1;
+      st.txPage = res.j.page || 1;
+      renderTxsTable();
+    }).catch(function(err) {
+      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+  }
+
+  function renderTxsTable() {
+    var box = $('cart-txs');
+    if (!box) return;
+    var f = st.txFilters;
+    // ── filter bar ──
+    var bar = '<div class="cart-filterbar">' +
+      '<input type="text" id="txf-ticker" maxlength="8" placeholder="Ticker" ' +
+        'value="' + esc(f.ticker) + '" style="text-transform: uppercase;" aria-label="Filtrar por ticker">' +
+      '<select id="txf-type" aria-label="Filtrar por tipo">' +
+        '<option value="">Tipo: todos</option>' +
+        '<option value="buy"' + (f.type === 'buy' ? ' selected' : '') + '>✅ Compras</option>' +
+        '<option value="sell"' + (f.type === 'sell' ? ' selected' : '') + '>❌ Vendas</option>' +
+        '<option value="corp"' + (f.type === 'corp' ? ' selected' : '') + '>🔀 Eventos</option>' +
+      '</select>' +
+      '<input type="text" id="txf-from" maxlength="10" placeholder="dd/mm/aaaa" ' +
+        'inputmode="numeric" value="' + esc(f.from ? fmtDate(f.from) : '') + '" aria-label="Data inicial">' +
+      '<span class="cart-filter-sep">→</span>' +
+      '<input type="text" id="txf-to" maxlength="10" placeholder="dd/mm/aaaa" ' +
+        'inputmode="numeric" value="' + esc(f.to ? fmtDate(f.to) : '') + '" aria-label="Data final">' +
+      '<input type="text" id="txf-q" maxlength="80" placeholder="🔎 Buscar (ticker ou nota)" ' +
+        'value="' + esc(f.q) + '" aria-label="Buscar">' +
+      '<button class="cart-btn" id="txf-clear" title="Limpar filtros">✖</button>' +
+      '</div>';
+
+    var rows = (st.txRows || []).map(function(t) {
       var buy = t.type === 'buy';
+      var corp = t.type === 'corp';
       var flags = '';
       if (t.zero) {
         flags += ' ' + flagHtml('⚠️', 'Preço R$ 0,00 — bonificação: os ativos ' +
@@ -4236,32 +4341,635 @@ function initCarteiraPage() {
         ? '<span title="📝 ' + esc(t.note) + '">' + esc(t.date) + ' ' +
           flagHtml('📝', esc(t.note)) + '</span>'
         : esc(t.date);
+      var typeCell = corp
+        ? '<span class="cart-type is-corp" title="' +
+          esc(CORP_NAMES[t.action] || 'Evento corporativo') +
+          ' — quantidade e PM re-basados; o custo total não muda.">🔀 ' +
+          esc(CORP_NAMES[t.action] || 'Evento') + '</span>'
+        : '<span class="cart-type ' + (buy ? 'is-buy' : 'is-sell') + '">' +
+          (buy ? '✅ Compra' : '❌ Venda') + '</span>';
       return '<tr>' +
         '<td>' + dateCell + flags + '</td>' +
         '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(t.ticker) + '">' +
           esc(t.ticker) + '</a></td>' +
-        '<td><span class="cart-type ' + (buy ? 'is-buy' : 'is-sell') + '">' +
-          (buy ? '✅ Compra' : '❌ Venda') + '</span></td>' +
-        '<td class="val-val">' + esc(t.qty) + '</td>' +
-        '<td class="val-val">' + valNumHtml(t.price) + '</td>' +
-        '<td class="val-val">' + valNumHtml(t.fees) + '</td>' +
-        '<td class="val-val">' + valNumHtml(t.total) + '</td>' +
+        '<td>' + typeCell + '</td>' +
+        '<td class="val-val">' + esc(corp ? (t.factor_br || '—') : t.qty) + '</td>' +
+        '<td class="val-val">' + (corp ? '<span class="muted">—</span>'
+                                        : valNumHtml(t.price)) + '</td>' +
+        '<td class="val-val">' + (corp ? '<span class="muted">—</span>'
+                                        : valNumHtml(t.fees)) + '</td>' +
+        '<td class="val-val">' + (corp ? '<span class="muted">—</span>'
+                                        : valNumHtml(t.total)) + '</td>' +
         '<td class="cart-actions">' +
-          '<button class="cart-icon-btn" data-et="' + esc(t.id) + '" title="✏️ Editar transação">✏️</button>' +
-          '<button class="cart-icon-btn" data-dt="' + esc(t.id) + '" title="🗑️ Excluir transação">🗑️</button>' +
+          '<button class="cart-icon-btn" data-et="' + esc(t.id) + '" title="✏️ Editar">✏️</button>' +
+          '<button class="cart-icon-btn" data-dt="' + esc(t.id) + '" title="🗑️ Excluir">🗑️</button>' +
         '</td></tr>';
     }).join('');
 
+    var pager = '<div class="cart-pager">' +
+      '<span class="cart-pager-info">' + esc(String(st.txTotal)) +
+        ' transação(ões)</span>' +
+      '<button class="cart-btn cart-pager-btn" data-tp="prev"' +
+        (st.txPage <= 1 ? ' disabled' : '') + '>◀</button>' +
+      '<span class="cart-pager-page">' + esc(String(st.txPage)) + ' / ' +
+        esc(String(st.txPages)) + '</span>' +
+      '<button class="cart-btn cart-pager-btn" data-tp="next"' +
+        (st.txPage >= st.txPages ? ' disabled' : '') + '>▶</button>' +
+      '</div>';
+
     box.innerHTML = rows
-      ? '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
+      ? bar + '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
         '<th class="val-sortable">🗓️ Data</th><th>Ticker</th><th>Tipo</th>' +
         '<th class="th-num val-sortable">Qtd</th><th class="th-num val-sortable">Preço</th>' +
         '<th class="th-num val-sortable">Taxas</th><th class="th-num val-sortable">Total</th>' +
-        '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+        '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' + pager +
         '<p class="cart-note-line">ℹ️ Ordem cronológica (mais antigas primeiro) — ' +
-        'clique no cabeçalho 🗓️ Data para inverter.</p>'
-      : '<div class="cart-empty"><h3>Nenhuma transação</h3>' +
-        '<p>Use “➕ Transação” para registrar a primeira compra ou venda.</p></div>';
+        'a página 1 traz as mais recentes; 🔀 eventos corporativos não movem dinheiro.</p>'
+      : bar + '<div class="cart-empty"><h3>Nenhuma transação</h3>' +
+        '<p>Nada com esses filtros — limpe-os ou registre a primeira compra.</p></div>';
+
+    // Filter wiring (re-created each render — the bar is fresh HTML).
+    var tkEl = $('txf-ticker'), tyEl = $('txf-type'),
+        frEl = $('txf-from'), toEl = $('txf-to'), qEl = $('txf-q');
+    brDateMask(frEl); brDateMask(toEl);
+    function applyFilters() {
+      st.txFilters = {
+        ticker: (tkEl.value || '').trim().toUpperCase(),
+        type: tyEl.value || '',
+        from: brToIso(frEl.value) || '',
+        to: brToIso(toEl.value) || '',
+        q: (qEl.value || '').trim(),
+      };
+      st.txPage = 1;
+      loadTxs();
+    }
+    var deb = null;
+    function debounced() {
+      clearTimeout(deb);
+      deb = setTimeout(applyFilters, 350);
+    }
+    tkEl.addEventListener('input', debounced);
+    qEl.addEventListener('input', debounced);
+    tyEl.addEventListener('change', applyFilters);
+    [frEl, toEl].forEach(function(el) {
+      el.addEventListener('change', applyFilters);
+    });
+    $('txf-clear').addEventListener('click', function() {
+      st.txFilters = { ticker: '', type: '', from: '', to: '', q: '' };
+      st.txPage = 1;
+      loadTxs();
+    });
+    box.querySelectorAll('[data-tp]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        var dir = b.getAttribute('data-tp');
+        var np = dir === 'prev' ? st.txPage - 1 : st.txPage + 1;
+        if (np < 1 || np > st.txPages) return;
+        st.txPage = np;
+        loadTxs();
+      });
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // [v1.22.3] The three lazy views + the drawer + what-if + undo toast.
+  // ══════════════════════════════════════════════════════════════════════
+
+  function kpiCardsHtml(kpis) {
+    return '<div class="cart-kpis">' + valKpisHtml(kpis || []) + '</div>';
+  }
+
+  // ── 🪙 Proventos per position / yield-on-cost (roadmap 2) ─────────────
+  function loadProventos() {
+    var box = $('cart-proventos');
+    if (!box) return;
+    box.innerHTML = '<span class="loading">⏳ Calculando proventos…</span>';
+    api('GET', '/proventos?scope=' + encodeURIComponent(scopeStr()))
+      .then(function(res) {
+        renderProventos(res.ok ? res.j : { _error: (res.j && res.j._error) || 'Erro' });
+      })
+      .catch(function(err) {
+        renderProventos({ _error: 'Erro: ' + err.message });
+      });
+  }
+
+  function renderProventos(j) {
+    var box = $('cart-proventos');
+    if (!box) return;
+    if (j._error) {
+      box.innerHTML = '<div class="error">' + esc(j._error) + '</div>';
+      return;
+    }
+    if (j.empty) {
+      box.innerHTML = '<div class="cart-empty"><h3>💡 Sem dados ainda</h3>' +
+        '<p>Registre transações para ver os proventos recebidos por posição.</p></div>';
+      return;
+    }
+    var html = kpiCardsHtml(j.kpis);
+    if ((j.by_ticker || []).length) {
+      html += '<div class="cart-sec-head"><h3>🪙 Por ativo</h3></div>' +
+        '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
+        '<th>Ticker</th><th>Nome</th><th class="th-num">Eventos</th>' +
+        '<th class="th-num">Qtd atual</th><th class="th-num">PM</th>' +
+        '<th class="th-num">Recebido</th><th class="th-num">A receber</th>' +
+        '<th class="th-num" title="Yield sobre o custo — total recebido ÷ custo atual">YOC</th>' +
+        '<th>Período</th></tr></thead><tbody>' +
+        j.by_ticker.map(function(r) {
+          return '<tr>' +
+            '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(r.ticker) + '">' +
+              esc(r.ticker) + '</a></td>' +
+            '<td class="cart-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
+            '<td class="val-val">' + esc(String(r.events)) + '</td>' +
+            '<td class="val-val">' + esc(r.qty_br) + '</td>' +
+            '<td class="val-val">' + (r.pm_br ? valNumHtml(r.pm_br) : '<span class="muted">—</span>') + '</td>' +
+            '<td class="val-val">' + valNumHtml(r.received_br) + '</td>' +
+            '<td class="val-val">' + (r.pending_br ? valNumHtml(r.pending_br) : '<span class="muted">—</span>') + '</td>' +
+            '<td class="val-val">' + (r.yoc_br ? signedHtml(r.yoc_br) : '<span class="muted">—</span>') + '</td>' +
+            '<td>' + esc(r.first_ex_br) + ' → ' + esc(r.last_ex_br) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    } else {
+      html += '<div class="cart-empty"><h3>Sem proventos registrados</h3>' +
+        '<p>Nenhum evento da B3 (dividends.db) encontrou posição nas ' +
+        'datas com dos seus tickers — sincronize a fonte ' +
+        '<b>dividendos</b> na página Sincronização se faltar histórico.</p></div>';
+    }
+    if ((j.events || []).length) {
+      html += '<div class="cart-sec-head"><h3>📋 Eventos recebidos' +
+        (j.events_total > j.events.length
+          ? ' <span class="muted">(mostrando ' + j.events.length + ' de ' +
+            j.events_total + ')</span>' : '') + '</h3></div>' +
+        '<div class="cart-table-wrap cart-scroll-y"><table class="val-table cart-table"><thead><tr>' +
+        '<th>Data com</th><th>Pagamento</th><th>Ticker</th><th>Tipo</th>' +
+        '<th class="th-num">R$/ação</th><th class="th-num">Qtd na data</th>' +
+        '<th class="th-num">Valor</th></tr></thead><tbody>' +
+        j.events.map(function(e) {
+          return '<tr>' +
+            '<td>' + esc(e.ex_br) + (e.future ? ' ' + flagHtml('⏳',
+              'Pagamento futuro — direito já garantido na data com.') : '') + '</td>' +
+            '<td>' + (e.pay_br ? esc(e.pay_br) : '—') + '</td>' +
+            '<td class="cart-tk">' + esc(e.ticker) + '</td>' +
+            '<td>' + esc(e.type) + '</td>' +
+            '<td class="val-val">' + esc(e.rate_br) + '</td>' +
+            '<td class="val-val">' + esc(e.qty_br) +
+              (e.debit_br ? ' ' + flagHtml('🚨', 'Short na data com: ' + e.debit_br +
+                ' debitados (quem vende a descoberto paga o provento).') : '') + '</td>' +
+            '<td class="val-val">' + valNumHtml(e.valor_br) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    if ((j.notes || []).length) {
+      html += '<ul class="cart-notes-list">' +
+        j.notes.map(function(n) { return '<li>ℹ️ ' + esc(n) + '</li>'; }).join('') +
+        '</ul>';
+    }
+    box.innerHTML = html;
+  }
+
+  // ── 📈 Evolução: curve + TWR/XIRR vs CDI/IBOV (roadmap 4) ─────────────
+  function loadPerf() {
+    var box = $('cart-perf');
+    if (!box) return;
+    box.innerHTML = '<span class="loading">⏳ Calculando evolução…</span>';
+    api('GET', '/performance?scope=' + encodeURIComponent(scopeStr()))
+      .then(function(res) {
+        renderPerf(res.ok ? res.j : { _error: (res.j && res.j._error) || 'Erro' });
+      })
+      .catch(function(err) {
+        renderPerf({ _error: 'Erro: ' + err.message });
+      });
+  }
+
+  function renderPerf(j) {
+    var box = $('cart-perf');
+    if (!box) return;
+    if (j._error) {
+      box.innerHTML = '<div class="error">' + esc(j._error) + '</div>';
+      return;
+    }
+    if (j.empty) {
+      box.innerHTML = '<div class="cart-empty"><h3>💡 Sem dados ainda</h3>' +
+        '<p>Registre transações para ver a evolução do patrimônio.</p></div>';
+      return;
+    }
+    var html = kpiCardsHtml(j.kpis);
+    if ((j.curve || {}).labels && j.curve.labels.length > 1) {
+      html += '<div class="cart-sec-head"><h3>📈 Patrimônio × CDI × IBOV</h3></div>' +
+        '<div class="cart-chart-box"><canvas id="cart-perf-chart" height="120"></canvas></div>';
+    }
+    html += '<ul class="cart-notes-list">' +
+      (j.notes || []).map(function(n) { return '<li>ℹ️ ' + esc(n) + '</li>'; }).join('') +
+      '</ul>';
+    box.innerHTML = html;
+
+    // The curve chart — the vendored Chart.js, the page's theme colors
+    // (the company pages' renderValChart conventions, simplified for a
+    // single line trio; ISO labels formatted on the ticks).
+    var cv = $('cart-perf-chart');
+    if (!cv || typeof Chart === 'undefined') return;
+    var th = chartTheme();
+    var labels = j.curve.labels.map(function(iso) { return iso.slice(0, 7); });
+    var mk = function(label, data, color, dash) {
+      return { label: label, data: data, borderColor: color,
+               backgroundColor: color, borderWidth: 2, pointRadius: 0,
+               pointHoverRadius: 4, tension: 0.25, fill: false,
+               borderDash: dash || [] };
+    };
+    var ds = [mk('Patrimônio', j.curve.patrimonio, cssVar('--color-primary') || '#0d9488')];
+    if (j.curve.cdi.some(function(v) { return v !== null; })) {
+      ds.push(mk('CDI', j.curve.cdi, '#f59e0b', [5, 3]));
+    }
+    if (j.curve.ibov.some(function(v) { return v !== null; })) {
+      ds.push(mk('IBOV (BOVA11)', j.curve.ibov, '#94a3b8', [2, 3]));
+    }
+    new Chart(cv, {
+      type: 'line',
+      data: { labels: labels, datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: th.text } },
+          tooltip: {
+            callbacks: {
+              title: function(items) {
+                return fmtMonth(items[0].label);
+              },
+              label: function(item) {
+                return item.dataset.label + ': ' + fmtBRL(item.parsed.y);
+              },
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { color: th.text, maxTicksLimit: 12 },
+               grid: { color: th.grid } },
+          y: { ticks: { color: th.text,
+                        callback: function(v) { return fmtCompact(v); } },
+               grid: { color: th.grid } },
+        },
+      },
+    });
+  }
+
+  // ── 🥧 Alocação: weights + HHI (roadmap 6) ────────────────────────────
+  function loadAlloc() {
+    var box = $('cart-alloc');
+    if (!box) return;
+    box.innerHTML = '<span class="loading">⏳ Calculando alocação…</span>';
+    api('GET', '/allocation?scope=' + encodeURIComponent(scopeStr()))
+      .then(function(res) {
+        renderAlloc(res.ok ? res.j : { _error: (res.j && res.j._error) || 'Erro' });
+      })
+      .catch(function(err) {
+        renderAlloc({ _error: 'Erro: ' + err.message });
+      });
+  }
+
+  function renderAlloc(j) {
+    var box = $('cart-alloc');
+    if (!box) return;
+    if (j._error) {
+      box.innerHTML = '<div class="error">' + esc(j._error) + '</div>';
+      return;
+    }
+    if (j.empty) {
+      box.innerHTML = '<div class="cart-empty"><h3>💡 Sem dados ainda</h3>' +
+        '<p>Registre transações para ver a alocação por setor.</p></div>';
+      return;
+    }
+    var html = kpiCardsHtml(j.kpis);
+    if (j.quotes_note) html += '<div class="home-note">' + esc(j.quotes_note) + '</div>';
+    html += '<div class="cart-alloc-grid">' +
+      '<div class="cart-alloc-chart"><canvas id="cart-alloc-chart" height="180"></canvas></div>' +
+      '<div class="cart-alloc-tables">';
+    if ((j.by_sector || []).length) {
+      html += '<div class="cart-sec-head"><h3>🏭 Por setor</h3></div>' +
+        '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
+        '<th>Setor</th><th class="th-num">Valor</th><th class="th-num">Peso</th>' +
+        '<th class="th-num">Ativos</th></tr></thead><tbody>' +
+        j.by_sector.map(function(s) {
+          return '<tr><td class="cart-sector" title="' + esc(s.tickers.join(', ')) + '">' +
+            esc(s.sector) + '</td>' +
+            '<td class="val-val">' + valNumHtml(s.value_br) + '</td>' +
+            '<td class="val-val">' + esc(s.weight_br || '—') + '</td>' +
+            '<td class="val-val">' + esc(String(s.count)) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    if ((j.by_ticker || []).length) {
+      html += '<div class="cart-sec-head"><h3>🎯 Por ativo</h3></div>' +
+        '<div class="cart-table-wrap cart-scroll-y"><table class="val-table cart-table"><thead><tr>' +
+        '<th>Ticker</th><th>Setor</th><th class="th-num">Valor</th>' +
+        '<th class="th-num">Peso</th><th class="th-num">Lucro</th></tr></thead><tbody>' +
+        j.by_ticker.map(function(r) {
+          return '<tr>' +
+            '<td class="cart-tk"><a href="/webui/company/' + encodeURIComponent(r.ticker) + '">' +
+              esc(r.ticker) + '</a></td>' +
+            '<td class="cart-sector">' + esc(r.sector) + '</td>' +
+            '<td class="val-val">' + valNumHtml(r.value_br) + '</td>' +
+            '<td class="val-val">' + esc(r.weight_br || '—') + '</td>' +
+            '<td class="val-val">' + (r.profit_br ? signedHtml(r.profit_br) : '<span class="muted">—</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    html += '</div></div>';
+    box.innerHTML = html;
+
+    var cv = $('cart-alloc-chart');
+    if (cv && (j.chart || {}).labels && typeof Chart !== 'undefined') {
+      var th = chartTheme();
+      new Chart(cv, {
+        type: 'doughnut',
+        data: {
+          labels: j.chart.labels,
+          datasets: [{ data: j.chart.data,
+                       backgroundColor: _pieColors(j.chart.labels.length),
+                       borderWidth: 1 }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false, cutout: '45%',
+          plugins: {
+            legend: { position: 'bottom', labels: { color: th.text,
+                                                    boxWidth: 12 } },
+            tooltip: { callbacks: { label: function(item) {
+              return item.label + ': ' + fmtBRL(item.parsed);
+            } } },
+          },
+        },
+      });
+    }
+  }
+
+  // The pages' pie palette (indexes.py's _pie_colors recipe, client side).
+  function _pieColors(n) {
+    var base = ['#0d9488', '#f59e0b', '#a855f7', '#16a34a', '#dc2626',
+                '#0284c7', '#db2777', '#65a30d', '#7c3aed', '#ea580c',
+                '#0891b2', '#ca8a04', '#9333ea', '#059669', '#be123c'];
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(base[i % base.length]);
+    return out;
+  }
+
+  // ── 🔍 position-detail drawer (roadmap 7) ─────────────────────────────
+  function openPositionDetail(ticker) {
+    var drawer = $('cart-drawer');
+    if (!drawer) return;
+    drawer.hidden = false;
+    drawer.classList.add('open');
+    drawer.innerHTML = '<div class="cart-drawer-head"><span class="loading">' +
+      '⏳ Carregando ' + esc(ticker) + '…</span></div>';
+    api('GET', '/position-detail?scope=' + encodeURIComponent(scopeStr()) +
+        '&ticker=' + encodeURIComponent(ticker))
+      .then(function(res) {
+        if (!res.ok) {
+          drawer.innerHTML = '<div class="cart-drawer-head"><button class="cart-icon-btn" ' +
+            'data-dclose title="Fechar">✖</button> <span class="error">' +
+            esc((res.j && res.j._error) || 'Erro') + '</span></div>';
+          return;
+        }
+        renderPositionDetail(res.j);
+      });
+  }
+
+  function renderPositionDetail(j) {
+    var drawer = $('cart-drawer');
+    if (!drawer) return;
+    var head = '<div class="cart-drawer-head">' +
+      '<span class="cart-drawer-title">🔍 ' + esc(j.ticker) +
+        ' <span class="muted">· ' + esc(j.name) + '</span></span>' +
+      '<button class="cart-icon-btn" data-dclose title="Fechar">✖</button></div>';
+    var facts = '<div class="cart-drawer-facts">' +
+      '<span>Qtd: <b>' + esc(j.qty_br) + '</b></span>' +
+      '<span>PM: <b>' + (j.pm_br ? esc(j.pm_br) : '—') + '</b></span>' +
+      '<span>Custo: <b>' + (j.cost_br ? esc(j.cost_br) : '—') + '</b></span>' +
+      '<span>Hoje: <b>' + (j.price_br ? esc(j.price_br) : '—') + '</b></span>' +
+      '<span>Valor: <b>' + (j.value_br ? esc(j.value_br) : '—') + '</b></span>' +
+      '<span>Lucro realizado: <b>' + signedHtml(j.realized_br) + '</b></span>' +
+      (j.short ? '<span class="cart-flag-short">🚨 short aberto</span>' : '') +
+      '</div>';
+    var html = head + facts;
+    (j.ladders || []).forEach(function(l) {
+      html += '<div class="cart-sec-head"><h4>🏦 ' + esc(l.account) + '</h4></div>' +
+        '<div class="cart-table-wrap cart-scroll-y"><table class="val-table cart-table">' +
+        '<thead><tr><th>🗓️</th><th>Tipo</th><th class="th-num">Qtd</th>' +
+        '<th class="th-num">Preço</th><th class="th-num">Taxas</th>' +
+        '<th class="th-num">Qtd após</th><th class="th-num">PM após</th>' +
+        '<th class="th-num">Δ realizado</th></tr></thead><tbody>' +
+        l.rows.map(function(r) {
+          var corp = r.type === 'corp';
+          return '<tr>' +
+            '<td>' + esc(fmtDate(r.date)) + (r.note ? ' ' + flagHtml('📝', r.note) : '') + '</td>' +
+            '<td>' + (corp
+              ? '<span class="cart-type is-corp" title="' +
+                esc(CORP_NAMES[r.action] || 'Evento') + '">🔀 ' +
+                esc(CORP_NAMES[r.action] || 'Evento') + '</span>'
+              : '<span class="cart-type ' + (r.type === 'buy' ? 'is-buy' : 'is-sell') + '">' +
+                (r.type === 'buy' ? '✅' : '❌') + '</span>') + '</td>' +
+            '<td class="val-val">' + esc(corp ? (r.factor_br || '—')
+              : String(r.qty).replace('.', ',')) + '</td>' +
+            '<td class="val-val">' + (corp || r.price === null ? '—' : esc(String(r.price).replace('.', ','))) + '</td>' +
+            '<td class="val-val">' + (corp || !r.fees ? '—' : esc(String(r.fees).replace('.', ','))) + '</td>' +
+            '<td class="val-val">' + esc(String(Math.round(r.run_qty * 10000) / 10000).replace('.', ',')) + '</td>' +
+            '<td class="val-val">' + esc(String(Math.round(r.run_pm * 10000) / 10000).replace('.', ',')) + '</td>' +
+            '<td class="val-val">' + (r.delta_realized ? signedHtml(
+                (r.delta_realized > 0 ? '+' : '') + 'R$ ' +
+                String(Math.abs(r.delta_realized)).replace('.', ','))
+              : '<span class="muted">—</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    });
+    if ((j.proventos || []).length) {
+      html += '<div class="cart-sec-head"><h4>🪙 Proventos desta posição · total ' +
+        esc(j.proventos_total_br || '—') + '</h4></div>' +
+        '<div class="cart-table-wrap cart-scroll-y"><table class="val-table cart-table">' +
+        '<thead><tr><th>Data com</th><th>Pagamento</th><th>Tipo</th>' +
+        '<th class="th-num">R$/ação</th><th class="th-num">Qtd</th>' +
+        '<th class="th-num">Valor</th></tr></thead><tbody>' +
+        j.proventos.map(function(p) {
+          return '<tr><td>' + esc(p.ex_br) + (p.future ? ' ⏳' : '') + '</td>' +
+            '<td>' + (p.pay_br ? esc(p.pay_br) : '—') + '</td>' +
+            '<td>' + esc(p.type) + '</td>' +
+            '<td class="val-val">' + esc(p.rate_br) + '</td>' +
+            '<td class="val-val">' + esc(p.qty_br) + '</td>' +
+            '<td class="val-val">' + valNumHtml(p.valor_br) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    drawer.innerHTML = html;
+  }
+
+  function closeDrawer() {
+    var drawer = $('cart-drawer');
+    if (!drawer) return;
+    drawer.classList.remove('open');
+    drawer.hidden = true;
+  }
+
+  // ── 🧪 what-if simulator (roadmap 6) ──────────────────────────────────
+  function openSimModal() {
+    var m = $('cart-sim-modal');
+    if (!m) return;
+    st.simRows = [{ ticker: '', type: 'sell', qty: '', price: '' }];
+    renderSimForm();
+    $('cart-sim-results').innerHTML = '';
+    $('cart-sim-msg').textContent = '';
+    m.showModal();
+  }
+
+  function renderSimForm() {
+    var box = $('cart-sim-form');
+    if (!box) return;
+    var held = ((st.pos && st.pos.positions) || []).map(function(p) {
+      return p.ticker;
+    });
+    var opts = held.map(function(tk) {
+      return '<option value="' + esc(tk) + '">' + esc(tk) + '</option>';
+    }).join('');
+    box.innerHTML = st.simRows.map(function(r, i) {
+      return '<div class="cart-sim-row">' +
+        '<select class="cart-select" data-si="' + i + '" data-sf="ticker" aria-label="Ativo">' +
+          '<option value="">— ativo —</option>' + opts + '</select>' +
+        '<select class="cart-select" data-si="' + i + '" data-sf="type" aria-label="Operação">' +
+          '<option value="sell"' + (r.type === 'sell' ? ' selected' : '') + '>❌ Vender</option>' +
+          '<option value="buy"' + (r.type === 'buy' ? ' selected' : '') + '>✅ Comprar</option>' +
+        '</select>' +
+        '<input type="text" inputmode="decimal" placeholder="Qtd" data-si="' + i +
+          '" data-sf="qty" value="' + esc(r.qty) + '" aria-label="Quantidade">' +
+        '<span class="muted">@</span>' +
+        '<input type="text" inputmode="decimal" placeholder="0,00" data-si="' + i +
+          '" data-sf="price" value="' + esc(r.price) + '" aria-label="Preço">' +
+        (st.simRows.length > 1
+          ? '<button class="cart-icon-btn" data-sdel="' + i + '" title="Remover linha">✖</button>'
+          : '') +
+        '</div>';
+    }).join('') +
+    '<div class="cart-sim-actions">' +
+      '<button class="cart-btn" id="cart-sim-add">➕ Operação</button>' +
+      '<button class="cart-btn primary" id="cart-sim-run">🧪 Simular</button></div>';
+
+    box.querySelectorAll('[data-sf]').forEach(function(el) {
+      el.addEventListener('input', function() {
+        var i = parseInt(el.getAttribute('data-si'), 10);
+        var f = el.getAttribute('data-sf');
+        st.simRows[i][f] = el.value;
+      });
+      el.addEventListener('change', function() {
+        var i = parseInt(el.getAttribute('data-si'), 10);
+        var f = el.getAttribute('data-sf');
+        st.simRows[i][f] = el.value;
+      });
+    });
+    box.querySelectorAll('[data-sdel]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        st.simRows.splice(parseInt(b.getAttribute('data-sdel'), 10), 1);
+        renderSimForm();
+      });
+    });
+    $('cart-sim-add').addEventListener('click', function() {
+      st.simRows.push({ ticker: '', type: 'sell', qty: '', price: '' });
+      renderSimForm();
+    });
+    $('cart-sim-run').addEventListener('click', runSim);
+  }
+
+  function runSim() {
+    var trades = [];
+    for (var i = 0; i < st.simRows.length; i++) {
+      var r = st.simRows[i];
+      var q = parseBr(r.qty), p = parseBr(r.price);
+      if (!r.ticker || q === null || p === null) continue;
+      trades.push({ ticker: r.ticker, type: r.type, quantity: q, price: p });
+    }
+    if (!trades.length) {
+      $('cart-sim-msg').textContent = 'Preencha ao menos uma operação (ativo, qtd e preço).';
+      return;
+    }
+    $('cart-sim-results').innerHTML = '<span class="loading">⏳ Simulando…</span>';
+    api('POST', '/simulate', { scope: scopeStr(), trades: trades })
+      .then(function(res) {
+        if (!res.ok) {
+          $('cart-sim-results').innerHTML = '';
+          $('cart-sim-msg').textContent = (res.j && res.j._error) || 'Erro.';
+          return;
+        }
+        $('cart-sim-msg').textContent = '';
+        renderSimResults(res.j);
+      });
+  }
+
+  function renderSimResults(j) {
+    var box = $('cart-sim-results');
+    var html = '<div class="cart-sim-kpis">' +
+      (j.kpis || []).map(function(k) {
+        return '<div class="cart-sim-kpi"' + (k.tooltip ? ' title="' + esc(k.tooltip) + '"' : '') + '>' +
+          '<span class="cart-stat-l">' + esc(k.label) + '</span>' +
+          '<span class="cart-sim-vals">' +
+            '<span class="cart-sim-before">' + (k.before ? esc(k.before) : '—') + '</span>' +
+            '<span class="cart-sim-arrow">→</span>' +
+            '<span class="cart-sim-after">' + (k.after ? signedHtml(k.after) : '—') + '</span>' +
+          '</span></div>';
+      }).join('') + '</div>';
+    html += '<div class="cart-table-wrap"><table class="val-table cart-table"><thead><tr>' +
+      '<th>Ativo</th><th>Operação</th><th class="th-num">Qtd</th>' +
+      '<th class="th-num">Preço</th><th class="th-num">Δ Lucro realizado</th>' +
+      '<th class="th-num">Qtd após</th></tr></thead><tbody>' +
+      (j.trades || []).map(function(t) {
+        return '<tr><td class="cart-tk">' + esc(t.ticker) + '</td>' +
+          '<td>' + (t.type === 'sell' ? '❌ Venda' : '✅ Compra') + '</td>' +
+          '<td class="val-val">' + esc(t.qty_br) + '</td>' +
+          '<td class="val-val">' + esc(t.price_br) + '</td>' +
+          '<td class="val-val">' + signedHtml(t.delta_realized_br) + '</td>' +
+          '<td class="val-val">' + esc(t.qty_after_br) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    html += '<ul class="cart-notes-list">' +
+      (j.notes || []).map(function(n) { return '<li>ℹ️ ' + esc(n) + '</li>'; }).join('') +
+      '</ul>';
+    box.innerHTML = html;
+  }
+
+  // ── ↩️ undo toast (roadmap 7) ─────────────────────────────────────────
+  function showUndoToast(label, token) {
+    var t = $('cart-toast');
+    if (!t || !token) return;
+    t.innerHTML = '<span class="cart-toast-label">✅ ' + esc(label) + '</span>' +
+      '<button class="cart-btn cart-toast-btn" id="cart-toast-undo">↩️ Desfazer</button>';
+    t.hidden = false;
+    clearTimeout(st.undoTimer);
+    st.undoTimer = setTimeout(function() { t.hidden = true; }, 12000);
+    $('cart-toast-undo').addEventListener('click', function() {
+      t.hidden = true;
+      clearTimeout(st.undoTimer);
+      api('POST', '/undo', { token: token }).then(function(res) {
+        if (res.ok && res.j && res.j.warnings && res.j.warnings.length) {
+          st.pendingNote = { text: res.j.warnings.join(' '),
+                             until: Date.now() + 15000 };
+        }
+        if (!res.ok) {
+          st.pendingNote = { text: (res.j && res.j._error) ||
+            'Não foi possível desfazer — a ação expirou.',
+            until: Date.now() + 15000 };
+        }
+        reload();
+      });
+    });
+  }
+
+  // ── 🔔 alertas banner (roadmap 6) ─────────────────────────────────────
+  function loadAlertBanner() {
+    var box = $('cart-alert-banner');
+    if (!box) return;
+    api('GET', '/alerts').then(function(res) {
+      if (!res.ok) { box.innerHTML = ''; return; }
+      var triggered = (res.j.alerts || []).filter(function(a) {
+        return a.triggered === true;
+      });
+      if (!triggered.length) { box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="cart-alerts-banner">🔔 ' +
+        triggered.map(function(a) {
+          return '<span class="cart-alert-chip" title="Alerta: ' +
+            esc(a.ticker) + (a.op === 'above' ? ' acima de ' : ' abaixo de ') +
+            esc(a.price_br) + ' — cotação ' + esc(a.current || '—') +
+            (a.quote_date ? ' (pregão ' + esc(fmtDate(a.quote_date)) + ')' : '') +
+            '. Gerencie em ⚙️ Gerenciar → Alertas.">' +
+            '<b>' + esc(a.ticker) + '</b> ' +
+            (a.op === 'above' ? '≥' : '≤') + ' ' + esc(a.price_br) +
+            ' <span class="muted">(agora ' + esc(a.current || '—') + ')</span></span>';
+        }).join('') + '</div>';
+    });
   }
 
   // ── BR-standard input masks ────────────────────────────────────────────
@@ -4420,7 +5128,7 @@ function initCarteiraPage() {
     box.hidden = false;
     box.innerHTML = '📋 <b>Posição atual nesta conta:</b> ' + esc(pos.qty) + ' ' +
       esc(tk) + ' @ PM ' + (pos.pm ? esc(pos.pm) : '—') +
-      ' · Lucro hoje: ' + signedHtml(pos.profit) + ' (' + signedHtml(pos.profit_pct) + ')';
+      ' · Lucro não realizado: ' + signedHtml(pos.profit) + ' (' + signedHtml(pos.profit_pct) + ')';
   }
 
   function updateHints() {
@@ -4432,6 +5140,30 @@ function initCarteiraPage() {
     var qty = parseBr($('cart-tx-qty').value);
     var priceRaw = $('cart-tx-price').value;
     var price = priceRaw === '' ? null : parseBr(priceRaw);
+    if (type === 'corp') {
+      // [v1.22.3] corp hints: the factor's plain-language meaning +
+      // the fraction warning (B3 pays fractions in cash).
+      var f = parseBr($('cart-tx-factor').value);
+      if (tk && f !== null && Math.abs(f - 1) > 1e-9) {
+        hints.push('🔀 <b>' + esc(CORP_NAMES[$('cart-tx-action').value] || 'Evento') +
+          ':</b> a quantidade multiplica por <b>' + esc(String(f).replace('.', ',')) +
+          '</b> e o PM divide pelo mesmo fator — o custo total não muda.');
+        var pos0 = findPos(tk);
+        if (pos0 && pos0.raw_qty) {
+          var after = pos0.raw_qty * f;
+          hints.push('ℹ️ Posição de ' + esc(pos0.qty) + ' → <b>' +
+            esc(String(Math.round(after * 10000) / 10000).replace('.', ',')) +
+            '</b> ' + esc(tk) + '.');
+          if (!Number.isInteger(Math.round(after * 1e6) / 1e6)) {
+            hints.push('⚠️ <b>Frações:</b> a B3 liquida frações em dinheiro — ' +
+              'se você recebeu o dinheiro, registre uma venda da fração.');
+          }
+        }
+      }
+      box.innerHTML = hints.join('<br>');
+      box.hidden = !hints.length;
+      return;
+    }
     if (type === 'sell' && qty !== null && tk) {
       var pos = findPos(tk);
       var cur = pos ? (pos.raw_qty || 0) : 0;
@@ -4455,16 +5187,24 @@ function initCarteiraPage() {
     box.hidden = !hints.length;
   }
 
+  function findTxRow(id) {
+    // [v1.22.3] The tx may live on ANY ledger page now — check the
+    // seeded rows and the paged rows before giving up.
+    var pools = [((st.pos && st.pos.txs) || []), (st.txRows || [])];
+    for (var i = 0; i < pools.length; i++) {
+      for (var k = 0; k < pools[i].length; k++) {
+        if (pools[i][k].id === id) return pools[i][k];
+      }
+    }
+    return null;
+  }
+
   function openTxModal(txId, prefill) {
     st.editTx = txId || null;
     prefill = prefill || {};
     var m = $('cart-tx-modal');
     var tx = null;
-    if (txId) {
-      tx = ((st.pos && st.pos.txs) || []).filter(function(t) {
-        return t.id === txId;
-      })[0];
-    }
+    if (txId) tx = findTxRow(txId);
     m.querySelector('#cart-tx-title').textContent =
       tx ? '✏️ Editar transação' : '➕ Nova transação';
     // Account options — RELATIVE to where you are: inside an account,
@@ -4500,20 +5240,51 @@ function initCarteiraPage() {
     $('cart-tx-type').value = tx ? tx.type : (prefill.type || 'buy');
     $('cart-tx-date').value = tx ? isoToBr(tx.date_iso) : todayBr();
     var prefQty = prefill.qty;
-    $('cart-tx-qty').value = tx ? String(tx.quantity).replace('.', ',')
+    $('cart-tx-qty').value = tx && tx.type !== 'corp'
+      ? String(tx.quantity).replace('.', ',')
       : (prefQty !== undefined && prefQty !== '' && prefQty !== null
           ? String(prefQty).replace('.', ',') : '');
+    // [v1.22.3] Corporate action fields — prefills from the tx (edit) or
+    // the preset picker; the money fields hide when type === 'corp'.
+    var isCorp = (tx ? tx.type : $('cart-tx-type').value) === 'corp';
+    $('cart-tx-action').value = tx && tx.type === 'corp' ? (tx.action || 'split') : 'split';
+    $('cart-tx-factor').value = tx && tx.type === 'corp'
+      ? String(tx.factor || '').replace('.', ',') : '2';
     // [fix 2] setMoney also primes the mask mode (a 4-decimal PM edit
     // opens in explicit mode; a fresh form starts in cents-fill).
-    setMoney($('cart-tx-price'), tx ? tx.raw_price : null);
-    setMoney($('cart-tx-fees'), tx ? (tx.raw_fees || 0) : null);
+    setMoney($('cart-tx-price'), tx && tx.type !== 'corp' ? tx.raw_price : null);
+    setMoney($('cart-tx-fees'), tx && tx.type !== 'corp' ? (tx.raw_fees || 0) : null);
     $('cart-tx-note').value = tx ? (tx.note || '') : '';
+    toggleCorpFields(isCorp);
     fieldErrs(m, {});
     $('cart-tx-msg').textContent = '';
     updatePosCtx();
     updateHints();
     m.showModal();
     if (!tx && !prefill.ticker) $('cart-tx-ticker').focus();
+  }
+
+  // [v1.22.3] corp mode: the money/qty fields hide; the action select +
+  // factor (with quick presets) show. Nothing is traded — only the
+  // quantity/PM re-base.
+  function toggleCorpFields(isCorp) {
+    ['cart-tx-qty', 'cart-tx-price', 'cart-tx-fees'].forEach(function(id) {
+      var el = $(id);
+      if (el) {
+        var field = el.closest('.cart-field');
+        if (field) field.hidden = isCorp;
+      }
+    });
+    var corp = $('cart-tx-corp');
+    if (corp) corp.hidden = !isCorp;
+  }
+
+  function corpFactorFor(action, raw) {
+    // Presets translate the plain-language proportion into the factor
+    // the engine multiplies the quantity by (and divides the PM).
+    var v = parseBr(raw);
+    if (v !== null) return v;
+    return action === 'group' ? 0.5 : 2;
   }
 
   // ── user / account modals ──────────────────────────────────────────────
@@ -4610,19 +5381,26 @@ function initCarteiraPage() {
       fieldErrs(m, { date: 'Data inválida — use dd/mm/aaaa.' });
       return;
     }
-    var qv = parseBr($('cart-tx-qty').value);
-    var pv = parseBr($('cart-tx-price').value);
-    var fv = parseBr($('cart-tx-fees').value);
+    var type = $('cart-tx-type').value;
     var body = {
       account_id: $('cart-tx-account').value,
       ticker: $('cart-tx-ticker').value,
-      type: $('cart-tx-type').value,
+      type: type,
       date: iso,
-      quantity: qv === null ? $('cart-tx-qty').value : qv,
-      price: pv === null ? $('cart-tx-price').value : pv,
-      fees: fv === null ? '' : fv,
       note: $('cart-tx-note').value,
     };
+    if (type === 'corp') {
+      // [v1.22.3] Corporate action: no money fields — action + factor.
+      body.action = $('cart-tx-action').value;
+      body.factor = parseBr($('cart-tx-factor').value);
+    } else {
+      var qv = parseBr($('cart-tx-qty').value);
+      var pv = parseBr($('cart-tx-price').value);
+      var fv = parseBr($('cart-tx-fees').value);
+      body.quantity = qv === null ? $('cart-tx-qty').value : qv;
+      body.price = pv === null ? $('cart-tx-price').value : pv;
+      body.fees = fv === null ? '' : fv;
+    }
     var call = st.editTx
       ? api('PUT', '/txs/' + st.editTx, body)
       : api('POST', '/txs', body);
@@ -4638,6 +5416,9 @@ function initCarteiraPage() {
                            until: Date.now() + 15000 };
       }
       m.close();
+      // [v1.22.3] ↩️ undo toast — the mutation response carries the
+      // token; 12s to regret.
+      showUndoToast(res.j && res.j.undo_label, res.j && res.j.undo_token);
       reload();
     }).catch(function() {
       $('cart-tx-msg').textContent = 'Erro de rede.';
@@ -4695,13 +5476,14 @@ function initCarteiraPage() {
   }
 
   function confirmDeleteTx(id) {
-    var tx = ((st.pos && st.pos.txs) || []).filter(function(t) {
-      return t.id === id;
-    })[0];
+    var tx = findTxRow(id);
     askConfirm('🗑️ Excluir transação',
       'Excluir ' + (tx
-        ? 'a <b>' + (tx.type === 'buy' ? 'compra' : 'venda') + '</b> de <b>' +
-          esc(tx.qty) + ' ' + esc(tx.ticker) + '</b> em ' + esc(tx.date)
+        ? (tx.type === 'corp'
+            ? 'o <b>evento corporativo</b> de <b>' + esc(tx.ticker) + '</b> (' +
+              esc(tx.factor_br || '') + ') em ' + esc(tx.date)
+            : 'a <b>' + (tx.type === 'buy' ? 'compra' : 'venda') + '</b> de <b>' +
+              esc(tx.qty) + ' ' + esc(tx.ticker) + '</b> em ' + esc(tx.date))
         : 'esta transação') +
       '?<br><span class="cart-warn-line">ℹ️ O preço médio e o lucro são recalculados.</span>',
       '🗑️ Excluir transação', function() {
@@ -4713,6 +5495,8 @@ function initCarteiraPage() {
               st.pendingNote = { text: res.j.warnings.join(' '),
                                  until: Date.now() + 15000 };
             }
+            // [v1.22.3] ↩️ undo toast.
+            showUndoToast(res.j && res.j.undo_label, res.j && res.j.undo_token);
             reload();
           }
         });
@@ -5090,7 +5874,37 @@ function initCarteiraPage() {
       : '<p class="cart-muted">Os tickers aparecem aqui após a primeira transação.</p>';
     html += '</section>';
 
+    // [v1.22.3] 🔔 Alertas de preço (roadmap 6) — the form + the live
+    // list (fetched async into the placeholder div below).
+    html += '<section class="cart-manage-sec"><h4>🔔 Alertas de preço</h4>' +
+      '<p class="cart-muted">💡 Aviso quando a cotação cruza o limite — ' +
+      'aparece no topo da página da conta (e aqui, com a cotação atual).</p>' +
+      '<div class="cart-watch-add">' +
+      '<input type="text" id="cart-alert-ticker" maxlength="8" placeholder="PETR4" ' +
+      'style="text-transform: uppercase;" aria-label="Ticker do alerta">' +
+      '<select id="cart-alert-op" class="cart-select" aria-label="Condição">' +
+        '<option value="above">acima de</option>' +
+        '<option value="below">abaixo de</option></select>' +
+      '<input type="text" id="cart-alert-price" inputmode="decimal" placeholder="0,00" ' +
+        'aria-label="Preço" style="max-width: 110px;">' +
+      '<button class="cart-btn" id="cart-alert-add">➕ Criar</button></div>' +
+      '<div id="cart-alert-list"></div></section>';
+
+    // [v1.22.3] 💾 Backup — export the store JSON / restore from a file
+    // (validate-then-swap on the server; the .bak of the current file
+    // is automatic).
+    html += '<section class="cart-manage-sec"><h4>💾 Backup da carteira</h4>' +
+      '<p class="cart-muted">💡 O arquivo é o webui_portfolio.json completo — ' +
+      'usuários, contas, transações, alertas e notas importadas.</p>' +
+      '<div class="cart-backup-row">' +
+      '<button class="cart-btn" id="cart-export-btn">⬇️ Exportar (JSON)</button>' +
+      '<button class="cart-btn" id="cart-restore-btn">⬆️ Restaurar arquivo…</button>' +
+      '<input type="file" id="cart-restore-file" accept="application/json,.json" hidden>' +
+      '</div></section>';
+
     box.innerHTML = html;
+
+    loadAlertsManage();
 
     box.querySelectorAll('[data-dw]').forEach(function(b) {
       b.addEventListener('click', function() {
@@ -5135,6 +5949,148 @@ function initCarteiraPage() {
     if (addInput) addInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); doAddWatch(); }
     });
+
+    // [v1.22.3] Alertas + backup wiring (the sections above).
+    wireAlertsManage();
+    wireBackupManage();
+  }
+
+  // ── [v1.22.3] Gerenciar: the alerts section ────────────────────────────
+  function loadAlertsManage() {
+    var box = $('cart-alert-list');
+    if (!box) return;
+    api('GET', '/alerts').then(function(res) {
+      if (!res.ok || !res.j || !res.j.ok) {
+        box.innerHTML = '<p class="cart-muted">' +
+          esc((res.j && (res.j._error || res.j.quotes_note)) || 'Erro') + '</p>';
+        return;
+      }
+      var alerts = res.j.alerts || [];
+      if (!alerts.length) {
+        box.innerHTML = '<p class="cart-muted">Nenhum alerta — crie o primeiro ' +
+          'acima (ex: PETR4 acima de 40).</p>';
+        return;
+      }
+      box.innerHTML = '<div class="cart-table-wrap"><table class="val-table">' +
+        '<thead><tr><th>Ticker</th><th>Condição</th><th class="th-num">Limite</th>' +
+        '<th class="th-num">Cotação</th><th>Estado</th><th></th></tr></thead><tbody>' +
+        alerts.map(function(a) {
+          var state = a.triggered === true
+            ? '<span class="val-pos">🔔 disparado</span>'
+            : (a.triggered === false
+                ? '<span class="val-zero">aguardando</span>'
+                : '<span class="muted">sem cotação</span>');
+          return '<tr><td class="cart-tk">' + esc(a.ticker) + '</td>' +
+            '<td>' + (a.op === 'above' ? 'acima de' : 'abaixo de') + '</td>' +
+            '<td class="val-val">' + esc(a.price_br || '—') + '</td>' +
+            '<td class="val-val">' + esc(a.current || '—') +
+              (a.quote_date ? ' <span class="muted">(' + esc(fmtDate(a.quote_date)) + ')</span>' : '') + '</td>' +
+            '<td>' + state + '</td>' +
+            '<td class="cart-actions"><button class="cart-icon-btn" data-dal="' + esc(a.id) +
+              '" title="🗑️ Remover alerta">🗑️</button></td></tr>';
+        }).join('') + '</tbody></table></div>';
+      box.querySelectorAll('[data-dal]').forEach(function(b) {
+        b.addEventListener('click', function() {
+          api('DELETE', '/alerts/' + b.getAttribute('data-dal'))
+            .then(function() { loadState(); loadAlertsManage(); });
+        });
+      });
+    });
+  }
+
+  function wireAlertsManage() {
+    var addBtn = $('cart-alert-add');
+    if (!addBtn) return;
+    var priceEl = $('cart-alert-price');
+    brCents(priceEl);
+    function doAddAlert() {
+      var tk = ($('cart-alert-ticker').value || '').trim().toUpperCase();
+      var price = parseBr(priceEl.value);
+      api('POST', '/alerts', {
+        ticker: tk, op: $('cart-alert-op').value, price: price,
+      }).then(function(res) {
+        if (!res.ok) {
+          $('cart-manage-msg').textContent =
+            (res.j && res.j.errors && (res.j.errors.ticker ||
+                                       res.j.errors.price)) || 'Alerta inválido.';
+          return;
+        }
+        $('cart-manage-msg').textContent = '';
+        $('cart-alert-ticker').value = '';
+        priceEl.value = '';
+        loadState();
+        loadAlertsManage();
+      });
+    }
+    addBtn.addEventListener('click', doAddAlert);
+    $('cart-alert-ticker').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); doAddAlert(); }
+    });
+  }
+
+  // ── [v1.22.3] Gerenciar: export / restore the store ───────────────────
+  function wireBackupManage() {
+    var exp = $('cart-export-btn');
+    if (!exp) return;
+    exp.addEventListener('click', function() {
+      fetch('/api/webui/portfolio/export')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var blob = new Blob(
+            [JSON.stringify(data, null, 2)],
+            { type: 'application/json' });
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'webui_portfolio_' + new Date().toISOString().slice(0, 10) +
+                       '.json';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
+        });
+    });
+    var fileBtn = $('cart-restore-btn');
+    var fileEl = $('cart-restore-file');
+    if (!fileBtn || !fileEl) return;
+    fileBtn.addEventListener('click', function() { fileEl.click(); });
+    fileEl.addEventListener('change', function() {
+      var f = this.files && this.files[0];
+      this.value = '';
+      if (!f) return;
+      if (f.size > 20 * 1024 * 1024) {
+        $('cart-manage-msg').textContent = 'Arquivo muito grande (limite 20 MB).';
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function() {
+        var payload;
+        try { payload = JSON.parse(String(reader.result)); }
+        catch (err) {
+          $('cart-manage-msg').textContent = 'JSON ilegível: ' + err.message;
+          return;
+        }
+        askConfirm('⬆️ Restaurar carteira',
+          'Substituir <b>TODA a carteira atual</b> pelo conteúdo de <b>' +
+          esc(f.name) + '</b>?<br>' +
+          '<span class="cart-warn-line">⚠️ Usuários, contas, transações, alertas ' +
+          'e notas importadas serão trocados pelos do arquivo (o servidor ' +
+          'guarda um .bak do atual).</span>',
+          '⬆️ Restaurar', function() {
+            api('POST', '/restore', payload).then(function(res) {
+              if (!res.ok) {
+                $('cart-manage-msg').textContent =
+                  (res.j && res.j._error) || 'Erro ao restaurar.';
+                return;
+              }
+              $('cart-manage-msg').textContent = '';
+              $('cart-manage-modal').close();
+              st.level = { kind: 'users' };
+              reload();
+            });
+          });
+      };
+      reader.readAsText(f);
+    });
   }
 
   // ── ONE delegated click handler for the whole page ─────────────────────
@@ -5142,7 +6098,7 @@ function initCarteiraPage() {
     var el = e.target && e.target.closest ? e.target.closest(
       '[data-act],[data-nav],[data-view],[data-eu],[data-du],[data-aw],' +
       '[data-ea],[data-da],[data-qb],[data-qs],[data-et],[data-dt],[data-un],' +
-      '.cart-ucard') : null;
+      '[data-pd],[data-dclose],.cart-ucard') : null;
     if (!el) return;
 
     if (el.hasAttribute('data-act')) {
@@ -5151,6 +6107,7 @@ function initCarteiraPage() {
       else if (act === 'account') openAccountModal();
       else if (act === 'tx') openTxModal();
       else if (act === 'import') openImportModal();
+      else if (act === 'sim') openSimModal();   // [v1.22.3] what-if
       else if (act === 'manage') {
         $('cart-manage-msg').textContent = '';
         renderManage();
@@ -5167,11 +6124,22 @@ function initCarteiraPage() {
       root.querySelectorAll('.cart-pill').forEach(function(p) {
         p.classList.toggle('is-active', p === el);
       });
-      var pv = $('cart-positions'), tv = $('cart-txs');
-      if (pv) pv.hidden = st.view !== 'positions';
-      if (tv) tv.hidden = st.view !== 'txs';
+      // [v1.22.3] five views — the lazy ones fetch on first open.
+      var views = { positions: 'cart-positions', txs: 'cart-txs',
+                    proventos: 'cart-proventos', perf: 'cart-perf',
+                    alloc: 'cart-alloc' };
+      Object.keys(views).forEach(function(v) {
+        var node = $(views[v]);
+        if (node) node.hidden = v !== st.view;
+      });
+      if (st.view === 'txs' && st.txRows === null) loadTxs();
+      if (st.view === 'proventos') loadProventos();
+      if (st.view === 'perf') loadPerf();
+      if (st.view === 'alloc') loadAlloc();
       return;
     }
+    if (el.hasAttribute('data-pd')) { openPositionDetail(el.getAttribute('data-pd')); return; }
+    if (el.hasAttribute('data-dclose')) { closeDrawer(); return; }
     if (el.hasAttribute('data-eu')) { openUserModal(el.getAttribute('data-eu')); return; }
     if (el.hasAttribute('data-du')) { confirmDeleteUser(el.getAttribute('data-du')); return; }
     if (el.hasAttribute('data-aw')) { toggleWatchAccount(el.getAttribute('data-aw')); return; }
@@ -5249,8 +6217,23 @@ function initCarteiraPage() {
   ['cart-tx-ticker', 'cart-tx-account'].forEach(function(id) {
     $(id).addEventListener('input', function() { updatePosCtx(); });
   });
-  $('cart-tx-type').addEventListener('change', function() { updateHints(); });
-  $('cart-tx-ticker').addEventListener('input', function() { updateHints(); });
+  // [v1.22.3] type switch flips the corp fields; the action preset
+  // primes the factor input (split 2 / group 0,5 / bonus 1,1).
+  $('cart-tx-type').addEventListener('change', function() {
+    toggleCorpFields($('cart-tx-type').value === 'corp');
+    updateHints();
+  });
+  $('cart-tx-action').addEventListener('change', function() {
+    var a = $('cart-tx-action').value;
+    $('cart-tx-factor').value = a === 'group' ? '0,5'
+      : (a === 'bonus' ? '1,1' : '2');
+    updateHints();
+  });
+  $('cart-tx-factor').addEventListener('input', updateHints);
+  $('cart-tx-ticker').addEventListener('input', function() {
+    updatePosCtx();
+    updateHints();
+  });
 
   // [v1.22.2] nota import — the file input and commit button are static
   // in the template; the preview inside is re-rendered per file.

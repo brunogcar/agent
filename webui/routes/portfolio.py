@@ -52,6 +52,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from webui.services.portfolio import portfolio_service
 # [v1.22] ONE ticker definition (webui/validators.py) — the local copy
@@ -103,6 +104,13 @@ async def _json_body(request: Request) -> dict | None:
     return body if isinstance(body, dict) else None
 
 
+# [v1.22.3] THE THREADPOOL RULE (roadmap 8): a mutation handler stays
+# async ONLY to await the body — the service call (file I/O under the
+# store lock + the replay) runs via run_in_threadpool, so the event
+# loop never blocks on a write. The GETs are plain `def` (FastAPI's
+# own threadpool) — the posture api.py/system.py already had.
+
+
 # ── reads ────────────────────────────────────────────────────────────────────
 
 @router.get("/state")
@@ -131,6 +139,38 @@ def get_positions(scope: str = "all"):
     return JSONResponse(_svc.positions(scope))
 
 
+@router.get("/txs")
+def get_txs(scope: str = "all", page: int = 1, per_page: int = 50,
+            ticker: str = "", type: str = "",
+            date_from: str = "", date_to: str = "", q: str = ""):
+    """[v1.22.3] The paginated/filtered ledger (roadmap 7).
+
+    Filters: ticker, type (buy|sell|corp), date window (ISO), q (free
+    text over ticker + note). Pages are NEWEST-last (page 1 = the most
+    recent per_page rows, oldest-first inside the page — the ledger
+    reading order).
+    """
+    if not _SCOPE_RE.match(scope or ""):
+        return JSONResponse(
+            {"_error": "Escopo inválido — use all, user:<id> ou "
+                       "account:<id>."}, status_code=400)
+    per_page = max(1, min(per_page, 200))
+    page = max(1, page)
+    if ticker and not re.match(r"^[A-Z0-9]{4,8}$", ticker.upper()):
+        return JSONResponse({"_error": "Ticker inválido."}, status_code=400)
+    if date_from and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from):
+        return JSONResponse({"_error": "Data inicial inválida."},
+                            status_code=400)
+    if date_to and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_to):
+        return JSONResponse({"_error": "Data final inválida."},
+                            status_code=400)
+    res = _svc.txs_page(scope, page, per_page,
+                        ticker=ticker.strip().upper(), ttype=(type or "").strip(),
+                        date_from=date_from, date_to=date_to,
+                        query=(q or "")[:80])
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
+
+
 @router.get("/overview")
 def get_overview():
     """The Painel widget: watched accounts + watchlist tickers, live."""
@@ -144,7 +184,7 @@ async def create_user(request: Request):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.create_user(body)
+    res = await run_in_threadpool(_svc.create_user, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -153,7 +193,7 @@ async def update_user(request: Request, user_id: Id):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.update_user(user_id, body)
+    res = await run_in_threadpool(_svc.update_user, user_id, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -170,7 +210,7 @@ async def create_account(request: Request):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.create_account(body)
+    res = await run_in_threadpool(_svc.create_account, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -179,7 +219,7 @@ async def update_account(request: Request, account_id: Id):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.update_account(account_id, body)
+    res = await run_in_threadpool(_svc.update_account, account_id, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -196,7 +236,7 @@ async def create_tx(request: Request):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.create_tx(body)
+    res = await run_in_threadpool(_svc.create_tx, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -205,7 +245,7 @@ async def update_tx(request: Request, tx_id: Id):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.update_tx(tx_id, body)
+    res = await run_in_threadpool(_svc.update_tx, tx_id, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -228,7 +268,10 @@ async def import_nota_preview(request: Request):
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
     from webui.services.nota_import import preview_from_b64
-    out = preview_from_b64(str(body.get("pdf_b64") or ""))
+    # [v1.22.3] The PDF parse is the heaviest call in the router —
+    # threadpool, never the event loop.
+    out = await run_in_threadpool(
+        preview_from_b64, str(body.get("pdf_b64") or ""))
     if not out.get("ok"):
         return _bad(out, status_code=400)
     dedup = _svc.nota_dedup_status(out.get("broker_cnpj") or "",
@@ -244,7 +287,7 @@ async def import_nota_commit(request: Request):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.import_nota(body)
+    res = await run_in_threadpool(_svc.import_nota, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 
@@ -276,6 +319,139 @@ def get_ir(scope: str = "all"):
                         status_code=200 if out.get("ok") else 400)
 
 
+# ── undo / export / restore / alerts [v1.22.3] ───────────────────────────────
+
+@router.post("/undo")
+async def undo_mutation(request: Request):
+    """Undo-toast restore: {token} from a mutation response."""
+    body = await _json_body(request)
+    if body is None:
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
+    token = str(body.get("token") or "").strip()
+    if not re.match(r"^[a-f0-9]{6,16}$", token):
+        return _bad({"_error": "Token inválido."})
+    res = await run_in_threadpool(_svc.undo_mutation, token)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 404))
+
+
+@router.get("/export")
+def export_store():
+    """The whole store JSON (the Gerenciar download button)."""
+    return JSONResponse(_svc.export_store())
+
+
+@router.post("/restore")
+async def restore_store(request: Request):
+    """Replace the whole store from a JSON file (validate-then-swap)."""
+    if "application/json" not in (request.headers.get("content-type")
+                                  or "").lower():
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON "
+                               "(o arquivo exportado)."})
+    try:
+        payload = await request.json()
+    except Exception:
+        return _bad({"_error": "JSON ilegível — o arquivo pode estar "
+                               "corrompido."})
+    res = await run_in_threadpool(_svc.restore_store, payload)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
+
+
+@router.get("/alerts")
+def get_alerts():
+    """Every alert + its live evaluation against the quote map."""
+    return JSONResponse(_svc.alerts_status())
+
+
+@router.post("/alerts")
+async def add_alert(request: Request):
+    """Create a price alert {ticker, op: above|below, price, note?}."""
+    body = await _json_body(request)
+    if body is None:
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
+    res = await run_in_threadpool(_svc.add_alert, body)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
+
+
+@router.delete("/alerts/{alert_id}")
+def delete_alert(alert_id: Id):
+    res = _svc.delete_alert(alert_id)
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 404))
+
+
+# ── proventos / position detail / performance / allocation [v1.22.3] ─────────
+
+def _scope_or_400(scope: str | None):
+    if not _SCOPE_RE.match(scope or ""):
+        return JSONResponse(
+            {"_error": "Escopo inválido — use all, user:<id> ou "
+                       "account:<id>."}, status_code=400)
+    return None
+
+
+@router.get("/proventos")
+def get_proventos(scope: str = "all"):
+    """Proventos per position / yield-on-cost (roadmap 2)."""
+    bad = _scope_or_400(scope)
+    if bad:
+        return bad
+    from webui.services.portfolio_provents import proventos_report
+    return JSONResponse(proventos_report(scope))
+
+
+@router.get("/position-detail")
+def get_position_detail(scope: str = "all", ticker: str = ""):
+    """The PM ladder drawer for one ticker (roadmap 7)."""
+    bad = _scope_or_400(scope)
+    if bad:
+        return bad
+    if not re.match(r"^[A-Za-z0-9]{4,8}$", ticker or ""):
+        return JSONResponse({"_error": "Ticker inválido."}, status_code=400)
+    from webui.services.portfolio_provents import position_detail
+    out = position_detail(scope, ticker)
+    return out if out.get("ok") else _bad(out, status_code=out.get("status", 404))
+
+
+@router.get("/performance")
+def get_performance(scope: str = "all"):
+    """TWR/XIRR vs CDI/IBOV + the patrimônio curve (roadmap 4)."""
+    bad = _scope_or_400(scope)
+    if bad:
+        return bad
+    from webui.services.portfolio_perf import performance_report
+    return JSONResponse(performance_report(scope))
+
+
+@router.get("/allocation")
+def get_allocation(scope: str = "all"):
+    """Per-setor/per-ticker concentration + HHI (roadmap 6)."""
+    bad = _scope_or_400(scope)
+    if bad:
+        return bad
+    from webui.services.portfolio_views import allocation_report
+    return JSONResponse(allocation_report(scope))
+
+
+@router.post("/simulate")
+async def simulate(request: Request):
+    """What-if simulator — hypothetical trades, NOTHING written."""
+    body = await _json_body(request)
+    if body is None:
+        return _bad({"_error": "Corpo inválido — esperado um objeto JSON "
+                               "{scope, trades: [{ticker, type, quantity, "
+                               "price}]}."})
+    from webui.services.portfolio_views import simulate as _simulate
+    trades = body.get("trades")
+    if not isinstance(trades, list):
+        return _bad({"_error": "Informe a lista 'trades' "
+                               "(ticker, tipo, quantidade, preço)."})
+    scope = str(body.get("scope") or "all")
+    if not _SCOPE_RE.match(scope):
+        return _bad({"_error": "Escopo inválido — use all, user:<id> ou "
+                               "account:<id>."})
+    res = await run_in_threadpool(_simulate, scope, trades[:10])
+    return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
+
+
 # ── watchlist ────────────────────────────────────────────────────────────────
 
 @router.post("/watchlist")
@@ -283,7 +459,7 @@ async def add_watch(request: Request):
     body = await _json_body(request)
     if body is None:
         return _bad({"_error": "Corpo inválido — esperado um objeto JSON."})
-    res = _svc.add_watch(body)
+    res = await run_in_threadpool(_svc.add_watch, body)
     return res if res.get("ok") else _bad(res, status_code=res.get("status", 400))
 
 

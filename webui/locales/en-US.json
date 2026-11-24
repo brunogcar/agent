@@ -97,6 +97,14 @@
     "fees": "Fees (R$, optional)",
     "note": "Note (optional)",
     "manage": "Manage",
-    "import_nota": "Import brokerage note"
+    "import_nota": "Import brokerage note",
+    "corp": "Corporate action",
+    "corp_action": "Event type",
+    "corp_split": "Stock split (1 share becomes N)",
+    "corp_group": "Reverse split (N shares become 1)",
+    "corp_bonus": "Bonus shares (free shares)",
+    "corp_factor": "Factor (×2 = each share becomes 2)",
+    "sim_title": "Simulate trades",
+    "drawer": "Position details"
   }
 }
