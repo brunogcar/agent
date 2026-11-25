@@ -2201,3 +2201,220 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
   color: var(--color-text-sec);
 }
 .fin-cache-note .fin-cache-bolt { color: #0d9488; font-weight: 700; }
+
+/* ═══ [WebUI v1.27] Ferramentas — Comparação ═════════════════════════════
+   The first tool of the new Ferramentas main tab: the online-shop
+   comparison. Picker (search + chips) → KPI leader cards → the GRID
+   (one column per company, sticky label column, best-in-row highlight)
+   → charts (perf base-100 with range pills + radar + grouped bars). */
+
+.page-tools { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* ── The picker ── */
+.cmp-picker { display: flex; flex-direction: column; gap: var(--space-3); }
+.cmp-picker-inputwrap { position: relative; max-width: 480px; }
+.cmp-search {
+  width: 100%; padding: 10px 14px;
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); color: var(--color-text); font-size: 14px;
+}
+.cmp-search:focus { outline: none; border-color: var(--color-brand); }
+.cmp-search:disabled { opacity: 0.6; cursor: not-allowed; }
+.cmp-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60;
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); max-height: 320px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.cmp-drop-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 12px; background: none; border: none; text-align: left;
+  cursor: pointer; color: var(--color-text);
+}
+.cmp-drop-item:hover, .cmp-drop-item.active { background: var(--color-brand-dim); }
+.cmp-drop-item.added { opacity: 0.55; }
+.cmp-drop-tk {
+  font-weight: 700; font-family: var(--font-mono); font-size: 12.5px;
+  color: var(--color-brand); white-space: nowrap;
+}
+.cmp-drop-name {
+  flex: 1; color: var(--color-text-sec); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmp-drop-added { font-size: 10px; color: var(--color-text-sec); white-space: nowrap; }
+
+/* ── Chips (one per selected company) ── */
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cmp-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px 4px 10px; background: var(--color-bg-card);
+  border: 1px solid var(--color-border); border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; font-family: var(--font-mono);
+}
+.cmp-chip-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--chip-color, var(--color-brand)); }
+.cmp-chip-x {
+  border: none; background: none; color: var(--color-text-sec);
+  cursor: pointer; font-size: 11px; padding: 0 2px; line-height: 1;
+}
+.cmp-chip-x:hover { color: var(--color-danger); }
+.cmp-chip-hint { font-size: 12px; color: var(--color-text-sec); }
+
+/* ── The result column (picker → hist cards → grid → charts, evenly
+   spaced — the flex gap owns the rhythm, children carry no margins) ── */
+.cmp-result {
+  margin-top: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-4);
+}
+
+/* ── Cotação Histórica — one mini chart per company, above the grid ── */
+.cmp-hist-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.cmp-hist-cell {
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 10px 12px 12px;
+}
+.cmp-hist-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.cmp-hist-tk { font-weight: 700; font-family: var(--font-mono); font-size: 12.5px; }
+.cmp-hist-var {
+  margin-left: auto; font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.cmp-hist-chart { position: relative; height: 130px; }
+.cmp-hist-none {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--color-text-sec); text-align: center;
+  padding: 0 6px;
+}
+/* The flex above overrides the UA's [hidden]{display:none} — the same
+   trap as the v1.21 fix 3 modal: without this guard the "sem cotações
+   no período" note stayed on screen OVER the drawn chart (and, in the
+   in-flow layout, bled into the table below). */
+.cmp-hist-none[hidden] { display: none; }
+
+/* ── The grid (online-shop comparison table) ── */
+.cmp-gridwrap {
+  overflow-x: auto; border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: var(--color-bg-card);
+}
+.cmp-grid { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px; }
+.cmp-grid th, .cmp-grid td { padding: 7px 12px; border-bottom: 1px solid var(--color-border); }
+.cmp-grid tbody tr:last-child td, .cmp-grid tbody tr:last-child th { border-bottom: none; }
+.cmp-corner, .cmp-rowlabel {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--color-bg-card); text-align: left; min-width: 168px;
+}
+.cmp-corner { z-index: 3; color: var(--color-text-sec); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+.cmp-rowlabel {
+  font-weight: 600; color: var(--color-text-sec); font-size: 12.5px;
+  white-space: nowrap; vertical-align: top;
+}
+.cmp-rowlabel .cmp-info { opacity: 0.5; font-size: 10px; }
+.cmp-rowlabel:hover .cmp-info { opacity: 1; color: var(--color-brand); }
+.cmp-cell {
+  text-align: right; font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap;
+  min-width: 118px; vertical-align: top;
+}
+/* Best-in-row: green tint + badge (color-mix keeps it theme-aware —
+   falls back to the brand dim on very old browsers). */
+.cmp-best { font-weight: 700; background: rgba(34, 197, 94, 0.10); }
+@supports (background: color-mix(in srgb, red 10%, transparent)) {
+  .cmp-best { background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+}
+.cmp-bestbadge { color: var(--color-success); font-weight: 800; margin-left: 2px; }
+.cmp-group td {
+  background: var(--color-bg-sec); color: var(--color-text-sec);
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; padding: 6px 12px;
+}
+
+/* ── Company column header cards ── */
+.cmp-co { min-width: 150px; vertical-align: top; }
+.cmp-co-card { display: flex; flex-direction: column; gap: 3px; padding: 4px 0 6px; }
+.cmp-co-top { display: flex; align-items: center; gap: 7px; }
+.cmp-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.cmp-co-tk {
+  font-family: var(--font-mono); font-weight: 800; font-size: 14px;
+  color: var(--color-text); text-decoration: none;
+}
+.cmp-co-tk:hover { color: var(--color-brand); text-decoration: underline; }
+.cmp-co-x {
+  margin-left: auto; border: 1px solid var(--color-border); background: none;
+  color: var(--color-text-sec); border-radius: var(--radius-sm);
+  width: 20px; height: 20px; cursor: pointer; font-size: 10px; line-height: 1;
+}
+.cmp-co-x:hover { color: var(--color-danger); border-color: var(--color-danger); }
+.cmp-co-name {
+  font-size: 11.5px; color: var(--color-text); max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmp-co-sector {
+  font-size: 10.5px; color: var(--color-text-sec); max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmp-co-price { font-size: 13px; font-weight: 700; font-family: var(--font-mono); }
+.cmp-co-var { font-size: 11px; font-weight: 600; }
+.cmp-co-err { font-size: 9.5px; color: var(--color-warning); }
+
+.cmp-legend { font-size: 11px; color: var(--color-text-sec); margin: 0; }
+.cmp-errors { font-size: 11.5px; color: var(--color-warning); }
+
+/* ── Charts ── */
+.cmp-chartgrid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-4);
+}
+.cmp-chartcard {
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: var(--space-4);
+  display: flex; flex-direction: column;
+  transition: border-color 0.2s;
+}
+.cmp-chartcard:hover { border-color: var(--color-brand); }
+.cmp-chart-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); margin-bottom: 6px; flex-wrap: wrap;
+}
+.cmp-chartcard .reg-title { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+.cmp-chart-desc { font-size: 11.5px; color: var(--color-text-sec); margin: 6px 0 10px; }
+/* The chart fills whatever height the grid row gives its card — a
+   fixed 290px left every card in a stretched row with dead space
+   under the canvas (and the square-aspect radar dwarfed its row). */
+.cmp-chartcard .chart-container { flex: 1 1 auto; height: auto; min-height: 280px; }
+.cmp-perf-card .chart-container { min-height: 320px; }
+
+.cmp-range-bar { display: flex; gap: 4px; }
+.cmp-range-btn {
+  padding: 3px 10px; font-size: 11px; border: 1px solid var(--color-border);
+  background: var(--color-bg-card); color: var(--color-text-sec);
+  border-radius: 999px; cursor: pointer;
+}
+.cmp-range-btn:hover { color: var(--color-text); }
+.cmp-range-btn.active {
+  background: var(--color-brand-dim); color: var(--color-brand);
+  border-color: var(--color-brand);
+}
+
+/* ── Empty state ── */
+.cmp-empty {
+  text-align: center; padding: var(--space-8) var(--space-4);
+  border: 1px dashed var(--color-border); border-radius: var(--radius-md);
+  color: var(--color-text-sec);
+}
+.cmp-empty-icon { font-size: 34px; margin-bottom: var(--space-3); }
+.cmp-empty-title { font-size: 15px; font-weight: 700; color: var(--color-text); }
+.cmp-empty-hint {
+  font-size: 12.5px; margin: 6px auto 0; max-width: 560px;
+  line-height: 1.55;
+}
+
+@media (max-width: 640px) {
+  .cmp-chartcard .chart-container { flex: none; height: 240px; min-height: 0; }
+  .cmp-perf-card .chart-container { height: 260px; }
+  .cmp-hist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cmp-picker-inputwrap { max-width: none; }
+}

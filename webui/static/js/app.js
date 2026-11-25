@@ -4520,6 +4520,549 @@ window.loadPoupancaSubtab = mercadoLoader('poupanca'); // [v1.23] caderneta (× 
 window.loadAcoesSubtab = mercadoLoader('acoes'); // [v1.17] ações B3 + evolução
 window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos (BDR split)
 
+// ── Ferramentas — Comparação [WebUI v1.27] ─────────────────────────────
+// The first tool of the new Ferramentas main tab: 2-4 companies side by
+// side, the online-shop way. Three layers, all owned by this block:
+//
+//   1. THE PICKER — debounced bridge-DB search (arrow-key navigable
+//      dropdown, Enter adds the highlighted row or the typed ticker),
+//      one chip per selected company (color dot + ✕), the selection in
+//      the URL (?t=PETR4.VALE3 — shareable, survives reload). The
+//      input disables itself at 4 companies (the max — no error toast
+//      needed, the placeholder explains).
+//   2. THE GRID — one COLUMN per company, metric rows grouped by theme,
+//      the label column sticky on mobile horizontal scroll. The BEST
+//      value of each row is ranked SERVER-side (green cell + ✓; cheaper
+//      multiples, higher profitability, lower debt — size metrics don't
+//      rank); the column header is a company card (dot, ticker link,
+//      name, sector, last price + day change).
+//   3. THE CHARTS — leader KPI cards (Menor P/L, Menor EV/EBITDA, Maior
+//      ROE, Maior Div Yield) + the normalized Perfil Comparado radar +
+//      grouped bars (múltiplos/margens/crescimento/dividendos, server
+//      configs drawn through the shared renderValChart) + the base-100
+//      performance line with range pills (1A/3A/5A/Tudo — re-sliced and
+//      re-normalized client-side from the raw month-end closes payload).
+//
+// Payload: GET /api/webui/tools/comparison?tickers=… (webui/services/
+// comparison.py — payload-cached on the composite fingerprint of every
+// compared ticker, the v1.26.1 webui_payloads foundation; first builds
+// compute every company's ratios/annual/growth/dividends and can take a
+// few seconds — the loading line says so).
+
+var CMP_MAX = 4;
+var CMP_COLORS = ['#0d9488', '#f59e0b', '#8b5cf6', '#e11d48'];
+var cmpState = { booted: false, tickers: [], perfRange: '1A', histRange: '1A', data: null, activeIdx: -1 };
+
+window.cmpFocusPicker = function() {
+  var el = document.getElementById('cmp-search');
+  if (el) el.focus();
+};
+
+function initToolsPage() {
+  var root = document.getElementById('tools-root');
+  if (!root || cmpState.booted) return;
+  cmpState.booted = true;
+
+  // Deep link: ?t=PETR4.VALE3 (dots — tickers never carry them).
+  try {
+    var q = new URLSearchParams(window.location.search).get('t') || '';
+    q.toUpperCase().split('.').forEach(function(tk) {
+      if (/^[A-Z0-9]{4,6}$/.test(tk) && cmpState.tickers.length < CMP_MAX &&
+          cmpState.tickers.indexOf(tk) < 0) cmpState.tickers.push(tk);
+    });
+  } catch (e) { /* noop */ }
+
+  var input = document.getElementById('cmp-search');
+  var drop = document.getElementById('cmp-dropdown');
+  if (!input || !drop) return;
+
+  var debounce = null;
+  input.addEventListener('input', function() {
+    clearTimeout(debounce);
+    var q = input.value.trim();
+    if (!q) { cmpDropHide(drop); return; }
+    debounce = setTimeout(function() { cmpDropSearch(drop, q); }, 250);
+  });
+  input.addEventListener('keydown', function(ev) {
+    var items = drop._items || [];
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      if (!items.length) return;
+      ev.preventDefault();
+      cmpState.activeIdx = ev.key === 'ArrowDown'
+        ? Math.min(cmpState.activeIdx + 1, items.length - 1)
+        : Math.max(cmpState.activeIdx - 1, 0);
+      cmpDropRender(drop);
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      var tk = (cmpState.activeIdx >= 0 && items[cmpState.activeIdx])
+        ? items[cmpState.activeIdx].ticker
+        : input.value.trim().toUpperCase();
+      if (tk) { cmpAddTicker(tk); input.value = ''; cmpDropHide(drop); }
+    } else if (ev.key === 'Escape') {
+      cmpDropHide(drop);
+    }
+  });
+  // Click outside closes the dropdown (one listener per page boot).
+  document.addEventListener('click', function(ev) {
+    if (!drop.hidden && drop.parentNode && !drop.parentNode.contains(ev.target)) {
+      cmpDropHide(drop);
+    }
+  });
+
+  cmpRenderChips();
+  if (cmpState.tickers.length >= 2) cmpLoad(); else cmpShowEmpty();
+}
+
+function cmpDropSearch(drop, q) {
+  fetch('/api/webui/tools/comparison/search?q=' + encodeURIComponent(q))
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var items = (d && d.results) || [];
+      if (!items.length) {
+        drop._items = null; cmpState.activeIdx = -1;
+        drop.hidden = true;
+        return;
+      }
+      drop._items = items;
+      cmpState.activeIdx = -1;
+      cmpDropRender(drop);
+    })
+    .catch(function() { cmpDropHide(drop); });
+}
+
+function cmpDropRender(drop) {
+  var items = drop._items || [];
+  var html = '';
+  items.forEach(function(it, i) {
+    var already = cmpState.tickers.indexOf(it.ticker) >= 0;
+    html += '<button type="button" class="cmp-drop-item' +
+      (i === cmpState.activeIdx ? ' active' : '') + (already ? ' added' : '') +
+      '" data-tk="' + esc(it.ticker) + '">' +
+      '<span class="cmp-drop-tk">' + esc(it.ticker) + '</span>' +
+      '<span class="cmp-drop-name">' + esc(it.name || '') + '</span>' +
+      (already ? '<span class="cmp-drop-added">na comparação</span>' : '') +
+      '</button>';
+  });
+  drop.innerHTML = html;
+  drop.hidden = false;
+  Array.prototype.forEach.call(drop.querySelectorAll('.cmp-drop-item'), function(btn) {
+    btn.addEventListener('click', function() {
+      var input = document.getElementById('cmp-search');
+      cmpAddTicker(btn.getAttribute('data-tk') || '');
+      if (input) input.value = '';
+      cmpDropHide(drop);
+    });
+  });
+}
+
+function cmpDropHide(drop) {
+  drop.hidden = true;
+  drop._items = null;
+  cmpState.activeIdx = -1;
+}
+
+function cmpAddTicker(tk) {
+  tk = String(tk || '').trim().toUpperCase();
+  // Same B3 shape the server validates — a ticker from ANY source (search
+  // results included) must match before it reaches an onclick attribute.
+  if (!/^[A-Z0-9]{4,6}$/.test(tk) || cmpState.tickers.indexOf(tk) >= 0 ||
+      cmpState.tickers.length >= CMP_MAX) return;
+  cmpState.tickers.push(tk);
+  cmpRenderChips();
+  cmpMaybeLoad();
+}
+
+window.cmpRemoveTicker = function(tk) {
+  var i = cmpState.tickers.indexOf(tk);
+  if (i >= 0) cmpState.tickers.splice(i, 1);
+  cmpRenderChips();
+  cmpMaybeLoad();
+};
+
+function cmpRenderChips() {
+  var box = document.getElementById('cmp-chips');
+  var input = document.getElementById('cmp-search');
+  if (!box) return;
+  var full = cmpState.tickers.length >= CMP_MAX;
+  if (input) {
+    input.disabled = full;
+    input.placeholder = full
+      ? 'Máximo de ' + CMP_MAX + ' empresas — remova uma para trocar'
+      : 'Buscar empresa ou ticker (ex.: PETR4, Petrobras…)';
+  }
+  if (!cmpState.tickers.length) { box.innerHTML = ''; box.hidden = true; return; }
+  box.hidden = false;
+  var html = '';
+  cmpState.tickers.forEach(function(tk, i) {
+    html += '<span class="cmp-chip" style="--chip-color:' + safeColor(CMP_COLORS[i % CMP_COLORS.length], '#0d9488') + '">' +
+      '<span class="cmp-chip-dot"></span>' + esc(tk) +
+      '<button type="button" class="cmp-chip-x" title="Remover ' + esc(tk) +
+      '" onclick="cmpRemoveTicker(\'' + esc(tk) + '\')">✕</button></span>';
+  });
+  var hint = cmpState.tickers.length >= 2 ? '' :
+    '<span class="cmp-chip-hint">escolha mais ' + (2 - cmpState.tickers.length) +
+    ' empresa' + (2 - cmpState.tickers.length > 1 ? 's' : '') + ' para comparar</span>';
+  box.innerHTML = html + hint;
+}
+
+function cmpMaybeLoad() {
+  cmpSyncUrl();
+  if (cmpState.tickers.length >= 2) cmpLoad();
+  else cmpShowEmpty();
+}
+
+function cmpSyncUrl() {
+  try {
+    var t = cmpState.tickers.join('.');
+    window.history.replaceState('', '',
+      window.location.pathname + (t ? '?t=' + t : ''));
+  } catch (e) { /* noop */ }
+}
+
+function cmpShowEmpty() {
+  var box = document.getElementById('cmp-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  cmpState.data = null;
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<div class="cmp-empty-icon">⚖️</div>' +
+    '<p class="cmp-empty-title">Escolha de 2 a 4 empresas para comparar</p>' +
+    '<p class="cmp-empty-hint">Busque por ticker ou nome acima. A comparação ' +
+    'abre com a cotação histórica de cada empresa lado a lado, depois mostra ' +
+    'os indicadores por tema com o melhor valor de cada linha destacado, ' +
+    'e fecha com o radar de perfil, os múltiplos, as margens, o ' +
+    'crescimento e o desempenho da ação em base 100.</p></div>';
+}
+
+function cmpLoad() {
+  var box = document.getElementById('cmp-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  cmpState.data = null;
+  box.innerHTML = '<div class="loading">Comparando ' + esc(cmpState.tickers.join(' × ')) +
+    ' — os indicadores de cada empresa são calculados na primeira vez ' +
+    '(pode levar alguns segundos)…</div>';
+  fetch('/api/webui/tools/comparison?tickers=' +
+        encodeURIComponent(cmpState.tickers.join(',')) +
+        '&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data || data.status !== 'ok') {
+        box.innerHTML = '<div class="error">' +
+          esc((data && data.error) || 'falha na comparação') + '</div>';
+        return;
+      }
+      cmpState.data = data;
+      cmpRender(box, data);
+    })
+    .catch(function(err) {
+      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+}
+
+function cmpRender(box, data) {
+  // The Cotação Histórica cards open the comparison (the product-photo
+  // slot of the online-shop layout), then the grid, then the charts.
+  var html = cmpHistHtml(data);
+  html += cmpGridHtml(data);
+  html += cmpChartsHtml(data);
+  if (data.cache_note) {
+    html += '<p class="fin-cache-note"><span class="fin-cache-bolt">⚡</span> ' +
+      esc(data.cache_note) + '</p>';
+  }
+  if (data.errors && data.errors.length) {
+    html += '<p class="cmp-errors">⚠️ ' + esc(data.errors.join(' · ')) + '</p>';
+  }
+  box.innerHTML = html;
+  cmpMountCharts(box, data);
+}
+
+// ── the grid (online-shop comparison table) ──
+
+function cmpCoCardHtml(c) {
+  var varHtml = (c.var_day === null || c.var_day === undefined)
+    ? '' : ' <span class="cmp-co-var">' + fmtPctColored(c.var_day) + '</span>';
+  return '<div class="cmp-co-card">' +
+    '<div class="cmp-co-top">' +
+    '<span class="cmp-dot" style="background:' + safeColor(c.color, '#0d9488') + '"></span>' +
+    '<a class="cmp-co-tk" href="/webui/company/' + encodeURIComponent(c.ticker) + '">' +
+    esc(c.ticker) + '</a>' +
+    '<button type="button" class="cmp-co-x" title="Remover ' + esc(c.ticker) +
+    ' da comparação" onclick="cmpRemoveTicker(\'' + esc(c.ticker) + '\')">✕</button>' +
+    '</div>' +
+    (c.name ? '<div class="cmp-co-name" title="' + esc(c.name) + '">' + esc(c.name) + '</div>' : '') +
+    (c.sector ? '<div class="cmp-co-sector" title="' + esc(c.sector) + '">' + esc(c.sector) + '</div>' : '') +
+    '<div class="cmp-co-price">' + fmtBRL(c.price) + varHtml + '</div>' +
+    (c.error ? '<div class="cmp-co-err" title="Algumas fontes de dados desta empresa falharam — os indicadores dela vêm parciais">' + esc(c.error) + '</div>' : '') +
+    '</div>';
+}
+
+function cmpGridHtml(data) {
+  var n = data.companies.length;
+  var html = '<div class="cmp-gridwrap"><table class="cmp-grid"><thead><tr>' +
+    '<th class="cmp-corner" scope="col">Indicador</th>';
+  data.companies.forEach(function(c) {
+    html += '<th class="cmp-co" scope="col">' + cmpCoCardHtml(c) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+  data.groups.forEach(function(g) {
+    html += '<tr class="cmp-group"><td colspan="' + (n + 1) + '">' + esc(g.name) + '</td></tr>';
+    g.rows.forEach(function(row) {
+      html += '<tr><th scope="row" class="cmp-rowlabel" title="' + esc(row.tip || '') + '">' +
+        esc(row.label) + (row.tip ? ' <span class="cmp-info" aria-hidden="true">ⓘ</span>' : '') +
+        '</th>';
+      row.values.forEach(function(v, i) {
+        var isBest = row.best && row.best.indexOf(i) >= 0;
+        html += '<td class="cmp-cell' + (isBest ? ' cmp-best' : '') + '">' + esc(v) +
+          (isBest ? ' <span class="cmp-bestbadge" title="melhor da linha">✓</span>' : '') +
+          '</td>';
+      });
+      html += '</tr>';
+    });
+  });
+  html += '</tbody></table></div>' +
+    '<p class="cmp-legend">✓ = melhor valor da linha entre as empresas comparadas ' +
+    '(múltiplos menores, rentabilidade / rendimento / crescimento / ' +
+    'demonstrativos anuais maiores, endividamento menor). Market cap e ' +
+    'Enterprise Value não ranqueiam — tamanho de mercado não é qualidade.</p>';
+  return html;
+}
+
+// ── the charts ──
+//
+// The standard app range bar (Tudo/10A/5A/1A/6M/3M/1M — the same
+// pills every other chart carries). Long ranges read the month-end
+// series; 1A and shorter read the daily one (month-ends are too
+// coarse for a 1M window: two points).
+var CMP_RANGES = ['Tudo', '10A', '5A', '1A', '6M', '3M', '1M'];
+
+function cmpRangeDaily(range) {
+  return range === '1A' || range === '6M' || range === '3M' || range === '1M';
+}
+
+function cmpRangeCutoff(range, daily) {
+  // ISO cutoff for the window (YYYY-MM-DD on daily, YYYY-MM monthly;
+  // null = Tudo). ISO dates compare lexicographically. Built from
+  // LOCAL calendar parts — toISOString() shifts the day/month back on
+  // any TZ ahead of UTC (the 5A pill leaked one extra month there).
+  var now = new Date();
+  var p2 = function(n) { return (n < 10 ? '0' : '') + n; };
+  if (daily) {
+    var days = { '1A': 365, '6M': 183, '3M': 92, '1M': 31 }[range] || 0;
+    var d = new Date(now.getTime() - days * 86400000);
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  }
+  var months = { '10A': 120, '5A': 60 }[range] || 0;
+  if (!months) return null;
+  var m = new Date(now.getFullYear(), now.getMonth() - months, 1);
+  return m.getFullYear() + '-' + p2(m.getMonth() + 1);
+}
+
+function cmpWindow(points, cutoff) {
+  // points: [{date, close}, …] — the service's price_hist contract
+  // ("date" carries YYYY-MM-DD on the daily series, YYYY-MM on the
+  // month-ends; both slice lexicographically). A stale series shorter
+  // than the window degrades to its last point.
+  if (!cutoff) return points;
+  for (var i = 0; i < points.length; i++) {
+    if (String(points[i].date) >= cutoff) return points.slice(i);
+  }
+  return points.slice(-1);
+}
+
+function cmpRangeBarHtml(active, handler) {
+  var html = '';
+  CMP_RANGES.forEach(function(r) {
+    html += '<button type="button" class="cmp-range-btn' +
+      (active === r ? ' active' : '') + '" data-range="' + r +
+      '" onclick="' + handler + '(this)">' + r + '</button>';
+  });
+  return html;
+}
+
+// ── Cotação Histórica — one mini chart per company, ABOVE the grid ──
+
+function cmpHistHtml(data) {
+  var html = '<div class="cmp-chartcard cmp-hist-card">' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Cotação Histórica</div>' +
+    '<div class="cmp-range-bar" role="group" aria-label="Período da cotação">' +
+    cmpRangeBarHtml(cmpState.histRange, 'cmpHistRange') + '</div></div>' +
+    '<p class="cmp-chart-desc">Fechamentos de cada empresa no período selecionado ' +
+    '— mensais nos períodos longos, diários nos curtos — com a variação do ' +
+    'período em cada cartão.</p>' +
+    '<div class="cmp-hist-grid" style="--n:' + data.companies.length + '">';
+  data.companies.forEach(function(c) {
+    html += '<div class="cmp-hist-cell">' +
+      '<div class="cmp-hist-head">' +
+      '<span class="cmp-dot" style="background:' + safeColor(c.color, '#0d9488') + '"></span>' +
+      '<span class="cmp-hist-tk">' + esc(c.ticker) + '</span>' +
+      '<span class="cmp-hist-var" id="cmp-hist-var-' + esc(c.ticker) + '"></span>' +
+      '</div>' +
+      '<div class="cmp-hist-chart"><canvas id="cmp-hist-' + esc(c.ticker) + '"></canvas>' +
+      '<div class="cmp-hist-none" id="cmp-hist-none-' + esc(c.ticker) + '" hidden>sem cotações no período</div></div>' +
+      '</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+window.cmpHistRange = function(btn) {
+  var bar = btn.parentNode;
+  Array.prototype.forEach.call(bar.querySelectorAll('.cmp-range-btn'), function(b) {
+    b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  cmpState.histRange = btn.getAttribute('data-range') || '1A';
+  cmpMountHist();
+};
+
+function cmpMountHist() {
+  var data = cmpState.data;
+  if (!data || !data.price_hist) return;
+  var daily = cmpRangeDaily(cmpState.histRange);
+  var src = (data.price_hist[daily ? 'daily' : 'monthly']) || {};
+  var cutoff = cmpRangeCutoff(cmpState.histRange, daily);
+  data.companies.forEach(function(c) {
+    var canvas = document.getElementById('cmp-hist-' + c.ticker);
+    if (!canvas) return;
+    var varEl = document.getElementById('cmp-hist-var-' + c.ticker);
+    var noneEl = document.getElementById('cmp-hist-none-' + c.ticker);
+    var pts = cmpWindow(src[c.ticker] || [], cutoff);
+    destroyChartsIn(canvas);
+    if (varEl) {
+      varEl.innerHTML = (pts.length >= 2 && pts[0].close > 0)
+        ? fmtPctColored(pts[pts.length - 1].close / pts[0].close - 1)
+        : '<span class="muted">—</span>';
+    }
+    if (pts.length < 2) {
+      // nothing to draw — say so, don't show a void. The inline display
+      // matters: Chart.js stamps display:block on every canvas it owns,
+      // and an inline style BEATS the hidden attribute (the v1.21 fix 3
+      // lesson — attribute hiding loses to any explicit display).
+      canvas.hidden = true;
+      canvas.style.display = 'none';
+      if (noneEl) noneEl.hidden = false;
+      return;
+    }
+    canvas.hidden = false;
+    canvas.style.display = '';
+    if (noneEl) noneEl.hidden = true;
+    renderValChart(canvas, {
+      type: 'line',
+      data: {
+        labels: pts.map(function(p) { return String(p.date); }),
+        datasets: [{
+          label: c.ticker,
+          data: pts.map(function(p) { return p.close; }),
+          borderColor: safeColor(c.color, '#0d9488'),
+          backgroundColor: safeColor(c.color, '#0d9488') + '22',
+          fill: true, pointRadius: 0, pointHitRadius: 6
+        }]
+      },
+      options: { scales: { y: { title: { text: 'R$' } } } }
+    });
+  });
+}
+
+function cmpChartsHtml(data) {
+  // Performance first (with the range pills), then the server configs.
+  var html = '<div class="cmp-chartcard cmp-perf-card">' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Desempenho — Base 100</div>' +
+    '<div class="cmp-range-bar" role="group" aria-label="Período do desempenho">' +
+    cmpRangeBarHtml(cmpState.perfRange, 'cmpPerfRange') + '</div></div>' +
+    '<p class="cmp-chart-desc">Cada ação normalizada para 100 no início do ' +
+    'período selecionado — fechamentos mensais nos períodos longos, ' +
+    'diários nos curtos.</p>' +
+    '<div class="chart-container"><canvas id="cmp-chart-perf"></canvas></div></div>';
+
+  html += '<div class="cmp-chartgrid">';
+  (data.charts || []).forEach(function(ch) {
+    html += '<div class="cmp-chartcard">' +
+      '<div class="cmp-chart-head"><div class="cmp-chart-title">' + esc(ch.title) + '</div></div>' +
+      (ch.desc ? '<p class="cmp-chart-desc">' + esc(ch.desc) + '</p>' : '') +
+      '<div class="chart-container"><canvas id="cmp-chart-' + esc(ch.id) + '"></canvas></div>' +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+window.cmpPerfRange = function(btn) {
+  var bar = btn.parentNode;
+  Array.prototype.forEach.call(bar.querySelectorAll('.cmp-range-btn'), function(b) {
+    b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  cmpState.perfRange = btn.getAttribute('data-range') || '1A';
+  cmpMountPerf();
+};
+
+function cmpPerfCd() {
+  var data = cmpState.data;
+  if (!data || !data.price_hist) return null;
+  var daily = cmpRangeDaily(cmpState.perfRange);
+  var src = (data.price_hist[daily ? 'daily' : 'monthly']) || {};
+  var cutoff = cmpRangeCutoff(cmpState.perfRange, daily);
+  // union axis: each company keeps its own dates; dates only one
+  // company has render as gaps (null) for the others
+  var seen = {};
+  var labels = [];
+  data.companies.forEach(function(c) {
+    cmpWindow(src[c.ticker] || [], cutoff).forEach(function(p) {
+      var l = String(p.date);
+      if (!seen[l]) { seen[l] = true; labels.push(l); }
+    });
+  });
+  labels.sort();
+  if (!labels.length) return null;
+  var datasets = [];
+  data.companies.forEach(function(c) {
+    var pts = cmpWindow(src[c.ticker] || [], cutoff);
+    if (pts.length < 2) return;               // no line to draw in window
+    var byLbl = {};
+    pts.forEach(function(p) { byLbl[String(p.date)] = p.close; });
+    var base = null;
+    for (var i = 0; i < labels.length; i++) {
+      if (byLbl[labels[i]] !== undefined) { base = byLbl[labels[i]]; break; }
+    }
+    if (base === null || !isFinite(base) || base <= 0) return;  // no data in window
+    datasets.push({
+      label: c.ticker,
+      data: labels.map(function(l) {
+        var v = byLbl[l];
+        return v === undefined ? null : Math.round(v / base * 1000) / 10;
+      }),
+      borderColor: safeColor(c.color, '#0d9488'),
+      backgroundColor: safeColor(c.color, '#0d9488') + '20',
+      pointRadius: 0, pointHitRadius: 6
+    });
+  });
+  if (!datasets.length) return null;
+  return {
+    type: 'line',
+    data: { labels: labels, datasets: datasets },
+    options: { scales: { y: { title: { text: 'base 100' } } } }
+  };
+}
+
+function cmpMountPerf() {
+  var canvas = document.getElementById('cmp-chart-perf');
+  if (!canvas) return;
+  destroyChartsIn(canvas);
+  var cd = cmpPerfCd();
+  if (cd) renderValChart(canvas, cd);
+}
+
+function cmpMountCharts(box, data) {
+  (data.charts || []).forEach(function(ch) {
+    var canvas = document.getElementById('cmp-chart-' + ch.id);
+    if (canvas) renderValChart(canvas, ch.cd);
+  });
+  cmpMountHist();
+  cmpMountPerf();
+}
+
 // ── Painel (landing page) [WebUI v1.19] ─────────────────────────────
 // The dashboard's own loader — NOT the generic subtab recipe: the landing
 // page is a launcher, not a report. GET /api/webui/home returns the KPI row
@@ -7757,6 +8300,9 @@ function initApp() {
     // [v1.19] Painel — the landing page's KPI row + ticker cards (no-op
     // everywhere else: only /webui carries the panes).
     loadHomeData();
+    // [v1.27] Ferramentas — the Comparação picker + deep-linked comparison
+    // (no-op elsewhere: only /webui/tools carries #tools-root).
+    initToolsPage();
     // [v1.21] Painel — the carteira widget (⭐ Tickers Observados own
     // box first, then Minhas Carteiras grouped by user; no-op elsewhere
     // and hides itself when nothing is watched).
@@ -7805,6 +8351,9 @@ function initApp() {
   // [v1.19] Painel — direct full-page load (the /webui landing is
   // server-rendered; the loader no-ops on every other page).
   loadHomeData();
+  // [v1.27] Ferramentas — direct full-page load (the /webui/tools page
+  // is server-rendered; the boot guard no-ops on every other page).
+  initToolsPage();
   // [v1.13/v1.14] Fluxo/Índices boot on family-pill click only (the
   // mercadoLoader pane guard no-ops them everywhere else).
   // [v1.15] Inflação — same.

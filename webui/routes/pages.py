@@ -136,6 +136,23 @@ def mercado_page(request: Request):
     )
 
 
+@router.get("/tools", response_class=HTMLResponse)
+def tools_page(request: Request):
+    """[v1.27] Ferramentas page — the tools home.
+
+    A NEW main tab (the user's call: analysis utilities live here, not
+    scattered across company pages). The family-pill shell follows the
+    mercado page pattern; v1.27 ships ONE tool — Comparação (the
+    online-shop side-by-side of 2-4 companies: picker + vertical grid +
+    radar/bars/performance charts). Future tools join as new pills.
+    Data: GET /api/webui/tools/comparison?tickers=… (payload-cached on
+    the composite fingerprint of every compared ticker).
+    """
+    return templates.TemplateResponse(
+        request, "pages/tools.html", _ctx(request, active_tab="tools"),
+    )
+
+
 @router.get("/carteira", response_class=HTMLResponse)
 def carteira_page(request: Request):
     """[v1.21] Carteira page — the user's own money.

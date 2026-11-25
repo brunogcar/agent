@@ -4,7 +4,7 @@
 
 > All HTTP routes exposed by the WebUI. Routes are prefixed `/webui` (HTML pages) or `/api/webui` (JSON/SSE). The existing gateway routes (`/chat`, `/task`, `/ws`, `/health`) are also mounted on the same app.
 
-Last updated: 2026-11-25 (v1.22.3 — the whole money roadmap: corporate actions, proventos/YOC, TWR/XIRR vs CDI/IBOV, allocation/alerts/what-if, ledger pagination+undo+backup, engine perf; v1.22.2 — nota de corretagem PDF import + IR/DARF helper; v1.21 fix 1 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
+Last updated: 2026-11-26 (v1.27 — the Ferramentas main tab + the Comparação tool routes; v1.22.3 — the whole money roadmap: corporate actions, proventos/YOC, TWR/XIRR vs CDI/IBOV, allocation/alerts/what-if, ledger pagination+undo+backup, engine perf; v1.22.2 — nota de corretagem PDF import + IR/DARF helper; v1.21 — directory route, shorts/bonificações, overview by user; v1.21 carteira/portfolio routes; v1.20 system log + settings; v1.7 adapter dispatch + pre-flight)
 
 ---
 
@@ -20,6 +20,7 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 | GET | `/webui/macro` | Macro indicators page |
 | GET | `/webui/mercado` | Mercado page (DDM families) |
 | GET | `/webui/carteira` | Carteira (portfolio) page — users → accounts → transactions → PM positions [v1.21] |
+| GET | `/webui/tools` | Ferramentas page — analysis tools (Comparação first) [v1.27] |
 | GET | `/webui/sync` | Data sync status page |
 | GET | `/webui/settings` | Settings page (schema-driven form [v1.20]) |
 | GET | `/` | Redirects to `/webui/` |
@@ -38,7 +39,7 @@ Return JSON. Used by Chart.js and programmatic clients.
 
 ### `GET /api/webui/home`
 
-[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + 5 ranked ticker cards (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19 fix 1] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
+[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + 5 ranked ticker cards (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
 
 ```json
 {
@@ -133,7 +134,7 @@ Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w
 
 ### `GET /api/webui/company/{ticker}/ipe/events`
 
-[v1.26 fix 1] The Informações Periódicas tab — its OWN tab since the split (moved from `/governance/events`; CGVN is the self-assessment, IPE is what the company FILED — "different purpose"). ONE faceted page of the ticker's IPE events (Informações Periódicas e Eventuais: AGO/AGE, avisos, fatos relevantes, calendários…). Params: `categoria`/`tipo`/`especie` (EXACT match; the sentinel `__none__` selects the EMPTY value — 14% of real rows carry no tipo), `ano` (ano_origem), `q` (assunto substring), `page` (1-based), `per_page` (1-100, default 25). **Response (ok):** `total`/`page`/`pages`, `events` (data_entrega/data_referencia/categoria/tipo/especie/assunto/versao/protocolo/link_download — versao > 1 = reapresentação, badged not deduped; empty assunto falls back to tipo → categoria client-side), `chips` (the quick presets) and **`facets`** — the four cascading lists (`categorias`/`tipos`/`especies`/`anos`, each `{v, n}`): every facet respects ALL filters EXCEPT its own field (pick Tipo=AGO and the Categoria facet narrows to Assembleia). Facet ordering: `anos` CHRONOLOGICAL (newest first — [v1.26 fix 1] the user-reported count-ordered Ano select), the rest most-used first. No generic key — the whole tab is this one custom-rendered endpoint (the backtest precedent).
+[v1.26] The Informações Periódicas tab — its OWN tab since the split (moved from `/governance/events`; CGVN is the self-assessment, IPE is what the company FILED — "different purpose"). ONE faceted page of the ticker's IPE events (Informações Periódicas e Eventuais: AGO/AGE, avisos, fatos relevantes, calendários…). Params: `categoria`/`tipo`/`especie` (EXACT match; the sentinel `__none__` selects the EMPTY value — 14% of real rows carry no tipo), `ano` (ano_origem), `q` (assunto substring), `page` (1-based), `per_page` (1-100, default 25). **Response (ok):** `total`/`page`/`pages`, `events` (data_entrega/data_referencia/categoria/tipo/especie/assunto/versao/protocolo/link_download — versao > 1 = reapresentação, badged not deduped; empty assunto falls back to tipo → categoria client-side), `chips` (the quick presets) and **`facets`** — the four cascading lists (`categorias`/`tipos`/`especies`/`anos`, each `{v, n}`): every facet respects ALL filters EXCEPT its own field (pick Tipo=AGO and the Categoria facet narrows to Assembleia). Facet ordering: `anos` CHRONOLOGICAL (newest first — [v1.26] the user-reported count-ordered Ano select), the rest most-used first. No generic key — the whole tab is this one custom-rendered endpoint (the backtest precedent).
 
 ### Lazy subtab endpoints (aliases of `/sections/{key}`)
 
@@ -153,7 +154,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `shareholders` | `overview`, `holders`, `free_float`, `equity` | Company · Acionistas tab |
 | `insiders` | `overview`, `transactions`, `monthly`, `by_role`, `by_tipo` | Company · Insiders tab ([v1.26.1] `by_tipo` = the Por Tipo subtab — the by_role twin on the Tipo_Movimentacao axis; cargo/tipo pills + per-tipo colored charts) |
 | `historical` | `overview`, `valuation`, `profitability`, `leverage` | Company · Histórico tab [v1.24] |
-| `governance` | `overview` | Company · Governança tab [v1.26] — Visão Geral only; Práticas is the dedicated `/governance/practices` endpoint above. The Informações Periódicas tab [v1.26 fix 1] has NO registry key — it is the dedicated `/ipe/events` endpoint, one custom renderer |
+| `governance` | `overview` | Company · Governança tab [v1.26] — Visão Geral only; Práticas is the dedicated `/governance/practices` endpoint above. The Informações Periódicas tab [v1.26] has NO registry key — it is the dedicated `/ipe/events` endpoint, one custom renderer |
 | `macro` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `retorno_real`, `focus`, `curva` | Macro page (8 lazy subtabs) |
 | `focus` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `fiscal`, `externo` | Mercado · Focus |
 | `fluxo` | `overview`, `mensal`, `anual`, `por_investidor` | Mercado · Fluxo |
@@ -164,7 +165,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `acoes` | `overview`, `evolucao` | Mercado · Ações |
 | `dividendos` | `overview`, `empresas`, `calendario`, `bdrs` | Mercado · Proventos |
 
-The company page's 12 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `historical`, `proventos`, `options`, `shareholders`, `insiders`, `governance`, `ipe`, `backtest` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click). [v1.26 fix 1] `ipe` (Informações Periódicas) is split from `governance`: different purpose — what the company FILED vs how it self-assesses.
+The company page's 12 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `historical`, `proventos`, `options`, `shareholders`, `insiders`, `governance`, `ipe`, `backtest` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click). [v1.26] `ipe` (Informações Periódicas) is split from `governance`: different purpose — what the company FILED vs how it self-assesses.
 
 ---
 
@@ -204,6 +205,58 @@ Grouped checks card — HTML partial (Sync page, `hx-trigger="load"`).
 ### `GET /api/webui/preflight/banner`
 
 One-line summary with link to `/webui/sync` — HTML partial (Dashboard).
+
+---
+
+## Tools Routes (Ferramentas) [v1.27]
+
+The Comparação tool — 2-4 companies side by side, the online-shop way.
+
+### `GET /api/webui/tools/comparison?tickers={tickers}`
+
+The full comparison payload. **Payload-cached** on the composite
+DFP+ITR × COTAHIST fingerprint of every compared ticker (the v1.26.1
+webui_payloads foundation) — a hit returns in ~1ms with a `cache_note`
+provenance line; any new demonstração or cotação of ANY of the companies
+rebuilds the set.
+
+**Parameters:**
+- `tickers`: comma/space/dot-separated B3 tickers (2-4 after dedupe;
+  order matters — it is the column order AND the cache key)
+
+**Response:** the custom-renderer payload —
+```json
+{
+  "status": "ok",
+  "tickers": ["PETR4", "VALE3"],
+  "companies": [{"ticker", "name", "sector", "color", "price",
+                 "price_date", "var_day", "error"}],
+  "groups": [{"key": "valuation", "name": "Valuation",
+              "rows": [{"label": "P/L", "fmt": "num", "raw": [2.6, 77.17],
+                        "values": ["2,60", "77,17"], "best": [0], "tip"}]}],
+  "charts": [{"id": "radar", "title", "desc", "cd": {Chart.js config}}],
+  "price_hist": {"monthly": {"PETR4": [{"date": "2021-11", "close": 40.1}, …]},
+                 "daily": {"PETR4": [{"date": "2026-11-24", "close": 38.5}, …]}},
+  "errors": ["VALE3: algumas fontes falharam (indicadores parciais…)"],
+  "cache_note": "Pré-calculado em …"
+}
+```
+`price_hist` feeds BOTH client-side charts (the Cotação Histórica
+cards and the base-100 line): `monthly` carries the month-end closes
+over the whole cotahist history (`date` = `YYYY-MM`), `daily` the last
+~13 months (`date` = `YYYY-MM-DD`) — the Tudo/10A/5A pills slice the
+first, 1A/6M/3M/1M the second, client-side.
+Validation errors (fewer than 2 / more than 4 / bad ticker shape) return
+`{"status": "error", "error": "…PT-BR…"}` with HTTP 200 (the client
+renders the message).
+
+### `GET /api/webui/tools/comparison/search?q={query}`
+
+JSON ticker search for the comparison picker (the same bridge-DB search
+as the top bar's HTMX `/search`, but JSON — the picker renders its own
+dropdown).
+
+**Response:** `{"results": [{"ticker": "PETR4", "name": "PETROBRAS"}, …]}`
 
 ---
 
@@ -366,12 +419,12 @@ data: {"event": "sync.failed", "job_id": "a1b2c3d4", "source": "dfp", "error": "
 
 ## Carteira (Portfolio) Routes [v1.21]
 
-The user's own money: users → accounts → transactions → PM (preço médio) positions + watchlist. Lives in `webui/routes/portfolio.py`; the store, the position engine and the quote enrichment in `webui/services/portfolio.py` (storage: `memory_db/webui_portfolio.json` — atomic write + mtime-checked in-memory cache). All mutations validate all-or-nothing and return `{"ok": true, …}` or HTTP 400 `{"_error": summary, "errors": {field: PT-BR message}}`. [v1.21 fix 1] Sells may SHORT (qty goes negative — the sell price becomes the short's PM; buys cover and can flip long) and price `0` is valid (bonificação); only negative prices/quantities and future dates are refused. Numeric strings are PT-BR aware (`"1.234,56"` → 1234.56). CRUD events feed the 📜 system log (source `carteira`).
+The user's own money: users → accounts → transactions → PM (preço médio) positions + watchlist. Lives in `webui/routes/portfolio.py`; the store, the position engine and the quote enrichment in `webui/services/portfolio.py` (storage: `memory_db/webui_portfolio.json` — atomic write + mtime-checked in-memory cache). All mutations validate all-or-nothing and return `{"ok": true, …}` or HTTP 400 `{"_error": summary, "errors": {field: PT-BR message}}`. [v1.21] Sells may SHORT (qty goes negative — the sell price becomes the short's PM; buys cover and can flip long) and price `0` is valid (bonificação); only negative prices/quantities and future dates are refused. Numeric strings are PT-BR aware (`"1.234,56"` → 1234.56). CRUD events feed the 📜 system log (source `carteira`).
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/webui/portfolio/state` | Users + accounts (+ `tx_count`, `user_name`) + watchlist + ticker metadata — the manage UI |
-| GET | `/api/webui/portfolio/directory` | [fix 1] Users → accounts tree with live KPIs (patrimônio/custo/lucro per account AND per user — sums NEVER across users) — the Carteira landing/user pages |
+| GET | `/api/webui/portfolio/directory` | — Users → accounts tree with live KPIs (patrimônio/custo/lucro per account AND per user — sums NEVER across users) — the Carteira landing/user pages |
 | GET | `/api/webui/portfolio/positions?scope=all\|user:{id}\|account:{id}` | PM positions + KPI cards + totals + the 200 most recent transactions (chronological ASC; `short`/`zero` row flags) for the scope |
 | GET | `/api/webui/portfolio/overview` | The Painel widget payload — watched accounts GROUPED BY USER (per-user subtotals) + watchlist tickers (price, var. dia) |
 | POST | `/api/webui/portfolio/users` | Create user `{name}` |

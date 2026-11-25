@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ t("nav.tools") }} — Agent{% endblock %}
+{% block content %}
+{# webui/templates/pages/tools.html — Ferramentas page [WebUI v1.27].
+
+The NEW main tab (the user's call: "instead of adding to company, we
+will add tab called tools"). The family-pill shell follows the mercado
+page pattern; v1.27 ships ONE tool. The header carries JUST the title —
+no per-tool description paragraph (more tools are coming; each pill
+names its tool, the empty state explains it).
+
+- Comparação: the online-shop side-by-side of 2-4 companies ("compare
+  vertically would be the best option like online shops compare
+  products"). Three layers, all owned by initToolsPage() in app.js:
+
+  1. THE PICKER — the top bar: a search input (the bridge-DB ticker
+     search, debounced, arrow-key navigable) + one chip per selected
+     company (its color dot, ticker, ✕ remove; max 4). The selection
+     lives in the URL (?t=PETR4.VALE3) so a comparison can be shared
+     and survives reload.
+  2. THE GRID — one COLUMN per company, metric ROWS grouped by theme
+     (Mercado / Valuation / Rentabilidade / Crescimento / Dividendos /
+     Endividamento e Liquidez / Demonstrativos), the label column
+     sticky on mobile horizontal scroll. The best value of each row is
+     highlighted server-side (green cell + ✓) — cheaper multiples,
+     higher profitability/yield/growth, lower debt, bigger annual
+     statements (the Demonstrativos section ranks max); only the
+     Mercado size rows (market cap, EV, total de ações) don't rank
+     (bigger isn't better). Column headers: colored dot + ticker (link
+     to the company page) + name + sector + last price and day change.
+  3. THE CHARTS — the COTAÇÃO HISTÓRICA side-by-side cards open the
+     comparison (one mini price chart per company, the product-photo
+     slot of the online-shop layout; the standard Tudo/10A/5A/1A/6M/
+     3M/1M range bar — month-end series on the long pills, daily on
+     the short ones; the period variation in each card header) + the
+     normalized Perfil Comparado radar + grouped bars (múltiplos,
+     margens, crescimento YoY, dividendos) + the base-100 performance
+     line with the SAME seven pills (client-side re-sliced and
+     re-normalized to each company's first visible close).
+
+Data: GET /api/webui/tools/comparison?tickers=… (webui/services/
+comparison.py — payload-cached on the composite fingerprint of every
+compared ticker, the v1.26.1 webui_payloads foundation) + GET
+/api/webui/tools/comparison/search?q=… for the picker. #}
+<div class="page-tools" id="tools-root" x-data="{ family: 'comparacao' }">
+  <div class="macro-header">
+    <h1>🧰 {{ t("nav.tools") }}</h1>
+  </div>
+
+  {# ── Family pills (level 1 — one per tool; Comparação ships in v1.27) ── #}
+  <nav class="subtab-nav mercado-family-nav" aria-label="Ferramentas">
+    <button class="subtab-btn mercado-family-btn active"
+            :class="{ 'active': family === 'comparacao' }"
+            @click="family='comparacao'"
+            onclick="cmpFocusPicker()">Comparação</button>
+  </nav>
+
+  {# ── Comparação tool panel ── #}
+  <div x-show="family === 'comparacao'" id="family-comparacao">
+    {# The picker: search input + selected-company chips (max 4). #}
+    <div class="cmp-picker" id="cmp-picker">
+      <div class="cmp-picker-inputwrap">
+        <input type="text" id="cmp-search" class="cmp-search"
+               placeholder="Buscar empresa ou ticker (ex.: PETR4, Petrobras…)"
+               aria-label="Buscar empresa para comparar"
+               autocomplete="off" spellcheck="false">
+        <div id="cmp-dropdown" class="cmp-dropdown" hidden></div>
+      </div>
+      <div id="cmp-chips" class="cmp-chips" aria-live="polite"></div>
+    </div>
+
+    {# The comparison itself (JS renders the Cotação Histórica cards +
+       grid + charts here). #}
+    <div id="cmp-result" class="cmp-result">
+      <div class="cmp-empty" id="cmp-empty">
+        <div class="cmp-empty-icon">⚖️</div>
+        <p class="cmp-empty-title">Escolha de 2 a 4 empresas para comparar</p>
+        <p class="cmp-empty-hint">
+          Busque por ticker ou nome acima. A comparação abre com a
+          cotação histórica de cada empresa lado a lado, depois mostra
+          os indicadores por tema com o melhor valor de cada linha
+          destacado, e fecha com o radar de perfil, os múltiplos, as
+          margens, o crescimento e o desempenho da ação em base 100.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -115,6 +115,7 @@ from webui.services.proventos import ProventosService
 from webui.services.backtest import BacktestService
 from webui.services.governance import GovernanceService
 from webui.services.ipe import IpeService
+from webui.services.comparison import ComparisonService
 from webui.templating import templates
 # [v1.22] ONE ticker definition (webui/validators.py).
 from webui.validators import TICKER_PATTERN
@@ -138,6 +139,7 @@ _proventos_service = _svc(ProventosService)
 _backtest_service = _svc(BacktestService)
 _governance_service = _svc(GovernanceService)
 _ipe_service = _svc(IpeService)
+_comparison_service = _svc(ComparisonService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: letter + 3-5 alphanumerics + 1-2 digits + optional
@@ -288,6 +290,34 @@ def mercado_sections(key: str):
         )
     data = dispatch(key)
     return JSONResponse(data)
+
+
+@router.get("/tools/comparison")
+def tools_comparison(tickers: str = Query("")):
+    """[v1.27] Comparação — the first Ferramentas tool.
+
+    The online-shop side-by-side: one column per company (2-4), metric
+    rows grouped by theme (Mercado/Valuation/Rentabilidade/Crescimento/
+    Dividendos/Endividamento/Demonstrativos), the BEST value per row
+    ranked server-side, leader KPI cards, a normalized radar + grouped
+    bars and the raw 5Y month-end closes for the client-side base-100
+    performance chart. Payload-cached on the composite fingerprint of
+    every compared ticker (the v1.26.1 webui_payloads foundation).
+    Validation errors (fewer than 2, more than 4, bad ticker shape)
+    return the canonical {"status": "error", "error": …} payload.
+    """
+    return JSONResponse(_comparison_service.compare(tickers))
+
+
+@router.get("/tools/comparison/search")
+def tools_comparison_search(q: str = Query("")):
+    """[v1.27] JSON ticker search for the comparison picker.
+
+    Same bridge-DB search as the top bar's HTMX /search, but JSON (the
+    picker renders its own dropdown; the top bar keeps its HTML
+    fragment).
+    """
+    return JSONResponse({"results": _company_service.search(q, limit=8)})
 
 
 def _range_years(range_: str) -> float:

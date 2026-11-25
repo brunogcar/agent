@@ -38,7 +38,7 @@ agent/
 │   │   ├── historical.py             # [v1.24] Histórico tab (17 metrics × 5A — heatmap/bands/trend)
 │   │   ├── backtest.py               # [v1.25] Backtest tab (parametrized engine + meta catalog)
 │   │   ├── governance.py             # [v1.26] Governança tab (CGVN score/práticas — the self-assessment)
-│   │   ├── ipe.py                     # [v1.26 fix 1] Informações Periódicas tab (the IPE events explorer — its own tab)
+│   │   ├── ipe.py                     # [v1.26] Informações Periódicas tab (the IPE events explorer — its own tab)
 │   │   ├── proventos.py              # Proventos tab (B3 ∪ DDM events + yield at ex-date; [v1.26.1] IPE announcements)
 │   │   ├── options.py                # [v1.8] Opções tab (chain, activity, IV, positions)
 │   │   ├── shareholders.py           # [v1.9] Acionistas tab (fre.db + dfp.db)
@@ -64,6 +64,7 @@ agent/
 │   │   │   ├── company.html          # Company view (header + tabs)
 │   │   │   ├── macro.html            # Macro indicators
 │   │   │   ├── mercado.html          # Mercado page (family pills + subtabs)
+│   │   │   ├── tools.html           # [v1.27] Ferramentas page (Comparação: picker + grid + charts)
 │   │   │   ├── sync.html             # Sync status + pre-flight panel + SSE log
 │   │   │   └── settings.html         # [v1.20] Schema-driven settings (JS-rendered form)
 │   │   └── partials/                 # HTMX fragments (no <html> wrapper)
@@ -117,8 +118,8 @@ agent/
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/historical.py` | [v1.24] Histórico tab — 17 metrics vs their own 5A history (direction-aware heatmap + band charts + trend), ONE engine-cache-scoped build per ticker w/ TTL | 
 | `webui/services/backtest.py` | [v1.25] Backtest tab — the interactive simulator: parametrized engine (8 strategies w/ editable thresholds, position sizing, stop/take on close, fee guard), the bdi=2 + per-date-dedupe clean price fetch, meta() form catalog + run() payload (KPIs, curves ≤1200 pts, trade log); the skill's static modes stay untouched (shared data layer) |
-| `webui/services/governance.py` | [v1.26] Governança tab — CGVN only (split in fix 1): overview (score KPIs, four-bucket donut, per-chapter bars, score evolution across filings — generic payload) + practices (the per-filing table + filters); degrades with a PT-BR hint naming the sync source |
-| `webui/services/ipe.py` | [v1.26 fix 1] Informações Periódicas tab — the IPE faceted events explorer over `ipe.browse()` (AGO/AGE, avisos, fatos relevantes…), split from Governança into its own tab: CGVN = self-assessment, IPE = what the company filed; anos facet chronological (newest first) |
+| `webui/services/governance.py` | [v1.26] Governança tab — CGVN only: overview (score KPIs, four-bucket donut, per-chapter bars, score evolution across filings — generic payload) + practices (the per-filing table + filters); degrades with a PT-BR hint naming the sync source |
+| `webui/services/ipe.py` | [v1.26] Informações Periódicas tab — the IPE faceted events explorer over `ipe.browse()` (AGO/AGE, avisos, fatos relevantes…), split from Governança into its own tab: CGVN = self-assessment, IPE = what the company filed; anos facet chronological (newest first) |
 | `webui/services/proventos.py` | Proventos tab — B3 ∪ DDM merged events (no duplicates) + yield at ex-date; [v1.26.1] the Anúncios de Proventos — CVM (IPE) cross-reference section (data → CVM PDF link) |
 | `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
@@ -141,7 +142,8 @@ agent/
 | `webui/services/poupanca.py` | [v1.23] Mercado page / Poupança family — the caderneta vs IPCA/CDI (12m compounded) + the per-index view with matrix-before-collapsed-histórico (DDM) |
 | `webui/services/macro.py` | [v1.11] Macro page — BCB SGS + Focus in 8 lazy subtabs; home.py imports its numerics (the no-forked-numerics rule) |
 | `webui/services/options.py` | [v1.8] Company Opções tab — B3 options: chain, IV, activity, positions |
-| `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição; [v1.26.1 f1] Visão Geral = the CURRENT snapshot (controle × FF doughnut + top-N concentração — no more subtab duplicates) |
+| `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição; [v1.26.1] Visão Geral = the CURRENT snapshot (controle × FF doughnut + top-N concentração — no more subtab duplicates) |
+| `webui/services/comparison.py` | [v1.27] Ferramentas / Comparação — 2-4 companies side by side (the online-shop grid): per-ticker fetch of ratios + annual + dividends + growth + sector + cotahist in a ThreadPool (one engine_cache_scope per worker), server-side best-in-row ranking (positive-only for multiples/debt), radar + bars + the two-resolution price_hist (whole-history month-ends + ~13 months of dailies) for the client-side Cotação Histórica cards and base-100 chart; payload-cached in webui_payloads ("tools_comparison", ordered-tickers key, every ticker's composite fingerprint); the bdi=2/dedupe clean price fetch (the v1.25 backtest rule — DIR rights rows made Var. Dia read +22.506% before it) |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
