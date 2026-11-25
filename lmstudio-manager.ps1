@@ -136,6 +136,19 @@ function Run-Gateway {
     Start-Process powershell.exe -ArgumentList '-NoExit', '-Command', $cmd
 }
 
+function Run-WebUI {
+    $webUiPath = Join-Path $AgentPath 'webui.py'
+    if (-not (Test-Path -LiteralPath $webUiPath -PathType Leaf)) {
+        Write-Host ''
+        Write-Host ('[WEBUI] Not found at: ' + $webUiPath) -ForegroundColor Red
+        return
+    }
+    Write-Host ''
+    Write-Host '[WEBUI] Starting WebUI in new window...' -ForegroundColor Yellow
+    $cmd = ('& "' + $VenvActivate + '"; Set-Location "' + $AgentPath + '"; python webui.py')
+    Start-Process powershell.exe -ArgumentList '-NoExit', '-Command', $cmd
+}
+
 function Full-Startup {
     $models = Read-EnvModels
     Load-Models -Models $models
@@ -175,6 +188,7 @@ function Show-Menu {
     Write-Host '  7. Open Agent Terminal (venv activated)' -ForegroundColor White
     Write-Host '  8. Run Gateway (new window)' -ForegroundColor White
     Write-Host '  9. Full Shutdown (unload + stop server)' -ForegroundColor White
+    Write-Host ' 10. Run WebUI (new window)' -ForegroundColor White
     Write-Host ''
     Write-Host '  0. Exit' -ForegroundColor Red
     Write-Host ''
@@ -199,6 +213,7 @@ do {
         '7' { Open-AgentTerminal }
         '8' { Run-Gateway }
         '9' { Full-Shutdown }
+        '10' { Run-WebUI }
         '0' { Write-Host ''; Write-Host 'Goodbye!' -ForegroundColor Green; exit 0 }
         default { Write-Host ''; Write-Host 'Invalid option' -ForegroundColor Red }
     }

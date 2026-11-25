@@ -64,6 +64,16 @@
   cards with the Tudo/10A/…/1M range pills, the ranked grid
   (Demonstrativos incl.), radar + bars + base-100 with the same pills;
   see docs/webui/CHANGELOG.md)
+[WebUI v1.28] ?v=81 (Ferramentas' second tool — the Screener: one
+  ticker × its whole sector's medians. webui/services/screener.py, the
+  /api/webui/tools/screener endpoint, the initScreener half of
+  initToolsPage in app.js + the .scr-* styles and the second family
+  pill in pages/tools.html: single-ticker picker (?s= deep link — both
+  tools' URL params coexist), the Mediana KPI row, the sector table
+  (one class per company, P/L cheapest-first, subject highlighted),
+  the P/L and ROE position charts with the median dashed line, and the
+  Meu Valor × Mediana verdict table with its badges; see
+  docs/webui/CHANGELOG.md)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -92,7 +102,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=80">
+  <link rel="stylesheet" href="/static/css/app.css?v=81">
 </head>
 <body>
   <div class="app-shell">
@@ -123,7 +133,7 @@
           <span class="icon">🌎</span>
           <span class="label" x-show="!collapsed">{{ t("nav.macro") }}</span>
         </a>
-        {# [v1.27] Ferramentas — analysis utilities (Comparação first). #}
+        {# [v1.27, v1.28] Ferramentas — analysis utilities (Comparação + Screener). #}
         <a href="/webui/tools" class="nav-item {{ 'active' if active_tab == 'tools' else '' }}">
           <span class="icon">🧰</span>
           <span class="label" x-show="!collapsed">{{ t("nav.tools") }}</span>
@@ -241,6 +251,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=80"></script>
+  <script src="/static/js/app.js?v=81"></script>
 </body>
 </html>

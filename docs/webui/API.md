@@ -20,7 +20,7 @@ Server-rendered Jinja2 pages. These return full HTML documents (extending `base.
 | GET | `/webui/macro` | Macro indicators page |
 | GET | `/webui/mercado` | Mercado page (DDM families) |
 | GET | `/webui/carteira` | Carteira (portfolio) page — users → accounts → transactions → PM positions [v1.21] |
-| GET | `/webui/tools` | Ferramentas page — analysis tools (Comparação first) [v1.27] |
+| GET | `/webui/tools` | Ferramentas page — analysis tools (Comparação + Screener) [v1.27, v1.28] |
 | GET | `/webui/sync` | Data sync status page |
 | GET | `/webui/settings` | Settings page (schema-driven form [v1.20]) |
 | GET | `/` | Redirects to `/webui/` |
@@ -208,9 +208,11 @@ One-line summary with link to `/webui/sync` — HTML partial (Dashboard).
 
 ---
 
-## Tools Routes (Ferramentas) [v1.27]
+## Tools Routes (Ferramentas) [v1.27, v1.28]
 
-The Comparação tool — 2-4 companies side by side, the online-shop way.
+The Ferramentas tools — Comparação (2-4 companies side by side, the
+online-shop way) and Screener (one ticker × its whole sector's
+medians).
 
 ### `GET /api/webui/tools/comparison?tickers={tickers}`
 
@@ -254,9 +256,59 @@ renders the message).
 
 JSON ticker search for the comparison picker (the same bridge-DB search
 as the top bar's HTMX `/search`, but JSON — the picker renders its own
-dropdown).
+dropdown). **[v1.28] Both Ferramentas pickers use it** — the screener's
+dropdown hits the same endpoint.
 
 **Response:** `{"results": [{"ticker": "PETR4", "name": "PETROBRAS"}, …]}`
+
+### `GET /api/webui/tools/screener?ticker={ticker}` [v1.28]
+
+The Screener tool — ONE ticker screened against its whole SECTOR: the
+peer table, the sector medians and the per-metric verdicts. **Payload-
+cached** on the composite DFP+ITR × COTAHIST fingerprint of EVERY
+sector company PLUS the peer list itself (a bridge resync that changes
+the sector membership rebuilds too).
+
+Peer discovery: the bridge DB's `ticker_map.setor_ativ` (one class per
+company — the CNPJ-root dedupe keeps the most liquid share, so
+PETR3/PETR4 never count twice in the medians; capped at 40 companies
+by liquidity). Medians run over the sector INCLUDING the subject, over
+available values only, and multiples take positive values only (a
+negative P/L is a loss, not a bargain; net debt is the exception —
+negative = caixa líquido).
+
+**Parameters:**
+- `ticker`: one B3 ticker (the sector is resolved from it)
+
+**Response:** the custom-renderer payload —
+```json
+{
+  "status": "ok",
+  "ticker": "PETR4", "name": "PETROBRAS",
+  "sector": "Petróleo e Gás", "company_count": 3,
+  "price": 40.87, "price_date": "2026-11-24", "var_day": 0.012,
+  "kpis": [{"label": "Mediana P/L", "value": "11,87"}, …],
+  "table": [{"ticker", "name", "is_subject", "price", "market_cap",
+             "p_l", "p_vpa", "ev_ebitda", "roe", "dy", "receita",
+             "ebitda", "marg_ebitda", "cresc", "segmento", "partial"}],
+  "vs_rows": [{"label": "P/L", "tip", "my_fmt": "2,60",
+               "med_fmt": "11,87", "delta_fmt": "-78,10%",
+               "verdict": "cheap", "direction": "cheap"}],
+  "charts": [{"id": "pl_setor|roe_setor|vs_mediana",
+              "title", "desc", "cd": {Chart.js config}}],
+  "price_hist": {"monthly": {"PETR4": [{"date": "2021-11", "close": 40.1}]},
+                 "daily": {"PETR4": [{"date": "2026-11-24", "close": 38.5}]}},
+  "errors": ["VALE3: algumas fontes falharam (indicadores parciais…)"],
+  "cache_note": "Pré-calculado em …"
+}
+```
+`verdict` per row: `cheap`/`expensive` (multiples and leverage — lower
+is better; the client renders barata/cara) or `above`/`below` (quality
+metrics — higher is better) or `na` (not comparable). `price_hist`
+feeds the subject's Cotação Histórica card (same two-resolution
+contract as the comparison tool). Validation errors (missing/bad
+ticker), an unresolvable sector and a single-company sector return
+`{"status": "error", "error": "…PT-BR…"}` with HTTP 200.
 
 ---
 

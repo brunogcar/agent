@@ -3,15 +3,16 @@
 {% block content %}
 {# webui/templates/pages/tools.html — Ferramentas page [WebUI v1.27].
 
-The NEW main tab (the user's call: "instead of adding to company, we
-will add tab called tools"). The family-pill shell follows the mercado
-page pattern; v1.27 ships ONE tool. The header carries JUST the title —
-no per-tool description paragraph (more tools are coming; each pill
-names its tool, the empty state explains it).
+The main tab for analysis utilities (the user's call: "instead of
+adding to company, we will add tab called tools"). The family-pill
+shell follows the mercado page pattern; the header carries JUST the
+title — no per-tool description paragraph (each pill names its tool,
+the empty state explains it).
 
-- Comparação: the online-shop side-by-side of 2-4 companies ("compare
-  vertically would be the best option like online shops compare
-  products"). Three layers, all owned by initToolsPage() in app.js:
+- Comparação [v1.27]: the online-shop side-by-side of 2-4 companies
+  ("compare vertically would be the best option like online shops
+  compare products"). Three layers, all owned by initToolsPage() in
+  app.js:
 
   1. THE PICKER — the top bar: a search input (the bridge-DB ticker
      search, debounced, arrow-key navigable) + one chip per selected
@@ -27,7 +28,7 @@ names its tool, the empty state explains it).
      statements (the Demonstrativos section ranks max); only the
      Mercado size rows (market cap, EV, total de ações) don't rank
      (bigger isn't better). Column headers: colored dot + ticker (link
-     to the company page) + name + sector + last price and day change.
+     to the company page) + name + setor + last price and day change.
   3. THE CHARTS — the COTAÇÃO HISTÓRICA side-by-side cards open the
      comparison (one mini price chart per company, the product-photo
      slot of the online-shop layout; the standard Tudo/10A/5A/1A/6M/
@@ -38,21 +39,46 @@ names its tool, the empty state explains it).
      line with the SAME seven pills (client-side re-sliced and
      re-normalized to each company's first visible close).
 
-Data: GET /api/webui/tools/comparison?tickers=… (webui/services/
-comparison.py — payload-cached on the composite fingerprint of every
-compared ticker, the v1.26.1 webui_payloads foundation) + GET
-/api/webui/tools/comparison/search?q=… for the picker. #}
+- Screener [v1.28]: ONE ticker screened against its whole SECTOR — not
+  just the peers side by side but the sector MEDIANS (the user's ask:
+  "its not just to compare with sector piers but sector median").
+  Same page shell, its own single-ticker picker (?s=PETR4 deep link —
+  the comparison's ?t= param survives alongside), rendered by the
+  initScreener half of initToolsPage():
+
+  1. THE SUBJECT — header (name, sector, last close + day change) +
+     the Mediana P/L / P/VPA / EV/EBITDA / ROE / Div Yield KPI row +
+     the Cotação Histórica card with the standard seven range pills.
+  2. THE SECTOR — every company of the sector in one table (one class
+     per company — the most liquid share, PETR3/PETR4 never count
+     twice), sorted by P/L cheapest-first with the subject row
+     highlighted; then the P/L and ROE position charts (the subject in
+     amber, the sector median as a dashed line).
+  3. THE VERDICT — the Meu Valor × Mediana do Setor table (my value,
+     the median, the delta %, a cheap/expensive/above/below badge per
+     metric — multiples and leverage rank lower-better, quality ranks
+     higher-better) + the grouped-bars chart of my value vs the median.
+
+Data: GET /api/webui/tools/comparison?tickers=… + GET
+/api/webui/tools/screener?ticker=… (webui/services/comparison.py +
+webui/services/screener.py — payload-cached on composite fingerprints,
+the v1.26.1 webui_payloads foundation) + GET
+/api/webui/tools/comparison/search?q=… for BOTH pickers. #}
 <div class="page-tools" id="tools-root" x-data="{ family: 'comparacao' }">
   <div class="macro-header">
     <h1>🧰 {{ t("nav.tools") }}</h1>
   </div>
 
-  {# ── Family pills (level 1 — one per tool; Comparação ships in v1.27) ── #}
+  {# ── Family pills (level 1 — one per tool) ── #}
   <nav class="subtab-nav mercado-family-nav" aria-label="Ferramentas">
-    <button class="subtab-btn mercado-family-btn active"
+    <button id="family-pill-comparacao" class="subtab-btn mercado-family-btn active"
             :class="{ 'active': family === 'comparacao' }"
             @click="family='comparacao'"
             onclick="cmpFocusPicker()">Comparação</button>
+    <button id="family-pill-screener" class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'screener' }"
+            @click="family='screener'"
+            onclick="scrFocusPicker()">Screener</button>
   </nav>
 
   {# ── Comparação tool panel ── #}
@@ -81,6 +107,37 @@ compared ticker, the v1.26.1 webui_payloads foundation) + GET
           os indicadores por tema com o melhor valor de cada linha
           destacado, e fecha com o radar de perfil, os múltiplos, as
           margens, o crescimento e o desempenho da ação em base 100.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  {# ── Screener tool panel [v1.28] ── #}
+  <div x-show="family === 'screener'" id="family-screener" style="display: none;">
+    {# The picker: one ticker — the sector comes from it. #}
+    <div class="cmp-picker" id="scr-picker">
+      <div class="cmp-picker-inputwrap">
+        <input type="text" id="scr-search" class="cmp-search"
+               placeholder="Ticker a analisar (ex.: PETR4, VALE3…)"
+               aria-label="Ticker para o screener"
+               autocomplete="off" spellcheck="false">
+        <div id="scr-dropdown" class="cmp-dropdown" hidden></div>
+      </div>
+    </div>
+
+    {# The screener itself (JS renders the header + median KPIs +
+       cotação histórica + sector table + position charts + the
+       vs-median verdict table and chart here). #}
+    <div id="scr-result" class="cmp-result">
+      <div class="cmp-empty" id="scr-empty">
+        <div class="cmp-empty-icon">🎯</div>
+        <p class="cmp-empty-title">Escolha um ticker para peneirar o setor</p>
+        <p class="cmp-empty-hint">
+          Informe o ticker acima. O screener encontra todas as empresas
+          do setor, calcula as medianas (P/L, P/VPA, EV/EBITDA, ROE,
+          Div Yield…) e mostra onde a empresa está: mais barata ou mais
+          cara que o setor, melhor ou pior em rentabilidade, margens e
+          dividendos — uma linha por métrica com o veredito.
         </p>
       </div>
     </div>

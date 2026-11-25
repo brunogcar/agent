@@ -4574,6 +4574,11 @@ function initToolsPage() {
 
   var input = document.getElementById('cmp-search');
   var drop = document.getElementById('cmp-dropdown');
+
+  // [v1.28] Screener — the second tool boots alongside (its own pane;
+  // its own guards, independent of the comparison picker's elements).
+  initScreener();
+
   if (!input || !drop) return;
 
   var debounce = null;
@@ -4712,10 +4717,16 @@ function cmpMaybeLoad() {
 }
 
 function cmpSyncUrl() {
+  // [v1.28] URLSearchParams — only THIS tool's ?t= key is rewritten;
+  // the screener's ?s= deep link (and anything else) survives.
   try {
-    var t = cmpState.tickers.join('.');
-    window.history.replaceState('', '',
-      window.location.pathname + (t ? '?t=' + t : ''));
+    var url = new URL(window.location.href);
+    if (cmpState.tickers.length) {
+      url.searchParams.set('t', cmpState.tickers.join('.'));
+    } else {
+      url.searchParams.delete('t');
+    }
+    window.history.replaceState('', '', url.pathname + url.search);
   } catch (e) { /* noop */ }
 }
 
@@ -5061,6 +5072,459 @@ function cmpMountCharts(box, data) {
   });
   cmpMountHist();
   cmpMountPerf();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SCREENER — the Ferramentas tab's second tool [WebUI v1.28].
+//
+// ONE ticker screened against its whole SECTOR: the sector-median KPI
+// row + the Cotação Histórica card (the comparison tool's range-bar
+// machinery, subject only) + the sector table (one class per company,
+// P/L cheapest-first, the subject row highlighted) + the P/L and ROE
+// position charts (server configs — the subject in amber, the median
+// as a dashed line) + the Meu Valor × Mediana verdict table (cheap /
+// expensive for multiples and leverage, above / below for quality)
+// and its grouped-bars chart.
+//
+// The picker reuses the comparison search endpoint (same bridge-DB
+// search, JSON) with its own single-selection state. The deep link is
+// ?s=PETR4 (the comparison's ?t= survives alongside — both sync
+// through URLSearchParams, each touching only its own key).
+//
+// Payload: GET /api/webui/tools/screener?ticker=… (webui/services/
+// screener.py — payload-cached on the composite fingerprint of every
+// sector company + the peer list; the first build computes the whole
+// sector and can take a few seconds — the loading line says so).
+// ═══════════════════════════════════════════════════════════════════
+
+var scrState = { booted: false, ticker: '', histRange: '1A', data: null, activeIdx: -1 };
+
+window.scrFocusPicker = function() {
+  var el = document.getElementById('scr-search');
+  if (el) el.focus();
+};
+
+function initScreener() {
+  var input = document.getElementById('scr-search');
+  var drop = document.getElementById('scr-dropdown');
+  if (!input || !drop || scrState.booted) return;
+  scrState.booted = true;
+
+  // Deep link: ?s=PETR4 — boots the screen and switches the family
+  // pill (the click drives Alpine's family state, same as a user tap).
+  var bootTk = '';
+  try {
+    bootTk = (new URLSearchParams(window.location.search).get('s') || '')
+      .trim().toUpperCase();
+  } catch (e) { /* noop */ }
+  if (/^[A-Z0-9]{4,6}$/.test(bootTk)) {
+    scrState.ticker = bootTk;
+    try {
+      var pill = document.getElementById('family-pill-screener');
+      if (pill) pill.click();
+    } catch (e) { /* noop */ }
+  }
+
+  var debounce = null;
+  input.addEventListener('input', function() {
+    clearTimeout(debounce);
+    var q = input.value.trim();
+    if (!q) { scrDropHide(drop); return; }
+    debounce = setTimeout(function() { scrDropSearch(drop, q); }, 250);
+  });
+  input.addEventListener('keydown', function(ev) {
+    var items = drop._items || [];
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      if (!items.length) return;
+      ev.preventDefault();
+      scrState.activeIdx = ev.key === 'ArrowDown'
+        ? Math.min(scrState.activeIdx + 1, items.length - 1)
+        : Math.max(scrState.activeIdx - 1, 0);
+      scrDropRender(drop);
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      var tk = (scrState.activeIdx >= 0 && items[scrState.activeIdx])
+        ? items[scrState.activeIdx].ticker
+        : input.value.trim().toUpperCase();
+      if (tk) { scrSetTicker(tk); input.value = ''; scrDropHide(drop); }
+    } else if (ev.key === 'Escape') {
+      scrDropHide(drop);
+    }
+  });
+  document.addEventListener('click', function(ev) {
+    if (!drop.hidden && drop.parentNode && !drop.parentNode.contains(ev.target)) {
+      scrDropHide(drop);
+    }
+  });
+
+  if (scrState.ticker) scrLoad(); else scrShowEmpty();
+}
+
+// ── the picker dropdown (same search endpoint as the comparison) ──
+
+function scrDropSearch(drop, q) {
+  fetch('/api/webui/tools/comparison/search?q=' + encodeURIComponent(q))
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var items = (d && d.results) || [];
+      if (!items.length) {
+        drop._items = null; scrState.activeIdx = -1;
+        drop.hidden = true;
+        return;
+      }
+      drop._items = items;
+      scrState.activeIdx = -1;
+      scrDropRender(drop);
+    })
+    .catch(function() { scrDropHide(drop); });
+}
+
+function scrDropRender(drop) {
+  var items = drop._items || [];
+  var current = scrState.ticker;
+  var html = '';
+  items.forEach(function(it, i) {
+    var isCur = it.ticker === current;
+    html += '<button type="button" class="cmp-drop-item' +
+      (i === scrState.activeIdx ? ' active' : '') + (isCur ? ' added' : '') +
+      '" data-tk="' + esc(it.ticker) + '">' +
+      '<span class="cmp-drop-tk">' + esc(it.ticker) + '</span>' +
+      '<span class="cmp-drop-name">' + esc(it.name || '') + '</span>' +
+      (isCur ? '<span class="cmp-drop-added">no screener</span>' : '') +
+      '</button>';
+  });
+  drop.innerHTML = html;
+  drop.hidden = false;
+  Array.prototype.forEach.call(drop.querySelectorAll('.cmp-drop-item'), function(btn) {
+    btn.addEventListener('click', function() {
+      var input = document.getElementById('scr-search');
+      scrSetTicker(btn.getAttribute('data-tk') || '');
+      if (input) input.value = '';
+      scrDropHide(drop);
+    });
+  });
+}
+
+function scrDropHide(drop) {
+  drop.hidden = true;
+  drop._items = null;
+  scrState.activeIdx = -1;
+}
+
+function scrSetTicker(tk) {
+  tk = String(tk || '').trim().toUpperCase();
+  // Same B3 shape the server validates — anything from the dropdown or
+  // free typing must match before it reaches the API.
+  if (!/^[A-Z0-9]{4,6}$/.test(tk) || tk === scrState.ticker) return;
+  scrState.ticker = tk;
+  scrSyncUrl();
+  scrLoad();
+}
+
+window.scrClear = function() {
+  scrState.ticker = '';
+  scrSyncUrl();
+  scrShowEmpty();
+  scrFocusPicker();
+};
+
+function scrSyncUrl() {
+  // Only THIS tool's ?s= key is rewritten — the comparison's ?t= deep
+  // link (and anything else) survives.
+  try {
+    var url = new URL(window.location.href);
+    if (scrState.ticker) {
+      url.searchParams.set('s', scrState.ticker);
+    } else {
+      url.searchParams.delete('s');
+    }
+    window.history.replaceState('', '', url.pathname + url.search);
+  } catch (e) { /* noop */ }
+}
+
+function scrShowEmpty() {
+  var box = document.getElementById('scr-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  scrState.data = null;
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<div class="cmp-empty-icon">🎯</div>' +
+    '<p class="cmp-empty-title">Escolha um ticker para peneirar o setor</p>' +
+    '<p class="cmp-empty-hint">Informe o ticker acima. O screener encontra ' +
+    'todas as empresas do setor, calcula as medianas (P/L, P/VPA, EV/EBITDA, ' +
+    'ROE, Div Yield…) e mostra onde a empresa está: mais barata ou mais cara ' +
+    'que o setor, melhor ou pior em rentabilidade, margens e dividendos — ' +
+    'uma linha por métrica com o veredito.</p></div>';
+}
+
+function scrLoad() {
+  var box = document.getElementById('scr-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  scrState.data = null;
+  box.innerHTML = '<div class="loading">Peneirando ' + esc(scrState.ticker) +
+    ' contra o setor — os indicadores de cada empresa do setor são ' +
+    'calculados na primeira vez (pode levar alguns segundos)…</div>';
+  fetch('/api/webui/tools/screener?ticker=' +
+        encodeURIComponent(scrState.ticker) +
+        '&_t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data || data.status !== 'ok') {
+        box.innerHTML = '<div class="error">' +
+          esc((data && data.error) || 'falha no screener') + '</div>' +
+          '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+          'onclick="scrClear()">← escolher outro ticker</button></p>';
+        return;
+      }
+      scrState.data = data;
+      scrRender(box, data);
+    })
+    .catch(function(err) {
+      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
+        '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+        'onclick="scrClear()">← escolher outro ticker</button></p>';
+    });
+}
+
+function scrRender(box, data) {
+  var html = scrHeadHtml(data);
+  html += scrKpisHtml(data);
+  html += scrHistHtml(data);
+  html += scrTableHtml(data);
+  html += scrChartsHtml(data);
+  html += scrVsHtml(data);
+  if (data.cache_note) {
+    html += '<p class="fin-cache-note"><span class="fin-cache-bolt">⚡</span> ' +
+      esc(data.cache_note) + '</p>';
+  }
+  if (data.errors && data.errors.length) {
+    html += '<p class="cmp-errors">⚠️ ' + esc(data.errors.join(' · ')) + '</p>';
+  }
+  box.innerHTML = html;
+  scrMountCharts(box, data);
+}
+
+// ── the subject header ──
+
+function scrHeadHtml(data) {
+  var varHtml = (data.var_day === null || data.var_day === undefined)
+    ? '' : ' <span class="cmp-co-var">' + fmtPctColored(data.var_day) + '</span>';
+  return '<div class="scr-head">' +
+    '<div class="scr-head-main">' +
+    '<div class="scr-head-tk">' + esc(data.ticker) + '</div>' +
+    '<div class="scr-head-name" title="' + esc(data.name || data.ticker) + '">' +
+    esc(data.name || data.ticker) + '</div>' +
+    (data.sector ? '<div class="scr-head-sector">' + esc(data.sector) +
+     ' · ' + data.company_count + ' empresa' + (data.company_count > 1 ? 's' : '') +
+     '</div>' : '') +
+    '</div>' +
+    '<div class="scr-head-side">' +
+    '<div class="scr-head-price">' + fmtBRL(data.price) + varHtml + '</div>' +
+    (data.price_date ? '<div class="scr-head-date">' + esc(data.price_date) + '</div>' : '') +
+    '<button type="button" class="cmp-range-btn scr-head-x" title="Escolher outro ticker"' +
+    ' onclick="scrClear()">trocar ticker</button>' +
+    '</div></div>';
+}
+
+// ── the sector-median KPI row (plain values — no pos/neg coloring:
+// a median is a reference, not a good/bad number) ──
+
+function scrKpisHtml(data) {
+  var html = '<div class="kpi-grid scr-kpis">';
+  (data.kpis || []).forEach(function(k) {
+    html += '<div class="kpi-card">' +
+      '<div class="kpi-label">' + esc(k.label) + '</div>' +
+      '<div class="kpi-value">' + esc(k.value) + '</div></div>';
+  });
+  return html + '</div>';
+}
+
+// ── the Cotação Histórica card (the comparison range machinery,
+//    subject only) ──
+
+function scrHistHtml(data) {
+  return '<div class="cmp-chartcard scr-hist-card">' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Cotação Histórica — ' +
+    esc(data.ticker) + '</div>' +
+    '<div class="cmp-range-bar" role="group" aria-label="Período da cotação">' +
+    cmpRangeBarHtml(scrState.histRange, 'scrHistRange') + '</div></div>' +
+    '<p class="cmp-chart-desc">Fechamentos no período selecionado — mensais ' +
+    'nos períodos longos, diários nos curtos — com a variação do período.</p>' +
+    '<div class="scr-hist-chart"><canvas id="scr-hist"></canvas>' +
+    '<div class="cmp-hist-none" id="scr-hist-none" hidden>sem cotações no período</div></div>' +
+    '<span class="scr-hist-var" id="scr-hist-var"></span>' +
+    '</div>';
+}
+
+window.scrHistRange = function(btn) {
+  var bar = btn.parentNode;
+  Array.prototype.forEach.call(bar.querySelectorAll('.cmp-range-btn'), function(b) {
+    b.classList.remove('active');
+  });
+  btn.classList.add('active');
+  scrState.histRange = btn.getAttribute('data-range') || '1A';
+  scrMountHist();
+};
+
+function scrMountHist() {
+  var data = scrState.data;
+  if (!data || !data.price_hist) return;
+  var canvas = document.getElementById('scr-hist');
+  if (!canvas) return;
+  var varEl = document.getElementById('scr-hist-var');
+  var noneEl = document.getElementById('scr-hist-none');
+  var daily = cmpRangeDaily(scrState.histRange);
+  var src = (data.price_hist[daily ? 'daily' : 'monthly'] || {})[data.ticker] || [];
+  var cutoff = cmpRangeCutoff(scrState.histRange, daily);
+  var pts = cmpWindow(src, cutoff);
+  destroyChartsIn(canvas);
+  if (varEl) {
+    varEl.innerHTML = (pts.length >= 2 && pts[0].close > 0)
+      ? fmtPctColored(pts[pts.length - 1].close / pts[0].close - 1)
+      : '<span class="muted">—</span>';
+  }
+  if (pts.length < 2) {
+    // nothing to draw — say so, don't show a void (the v1.21 fix 3
+    // lesson: an inline display beats the hidden attribute).
+    canvas.hidden = true;
+    canvas.style.display = 'none';
+    if (noneEl) noneEl.hidden = false;
+    return;
+  }
+  canvas.hidden = false;
+  canvas.style.display = '';
+  if (noneEl) noneEl.hidden = true;
+  renderValChart(canvas, {
+    type: 'line',
+    data: {
+      labels: pts.map(function(p) { return String(p.date); }),
+      datasets: [{
+        label: data.ticker,
+        data: pts.map(function(p) { return p.close; }),
+        borderColor: '#0d9488',
+        backgroundColor: '#0d948822',
+        fill: true, pointRadius: 0, pointHitRadius: 6
+      }]
+    },
+    options: { scales: { y: { title: { text: 'R$' } } } }
+  });
+}
+
+// ── the sector table (one class per company, P/L cheapest-first) ──
+
+function scrTableHtml(data) {
+  var html = '<div class="cmp-chartcard">' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Empresas do Setor' +
+    (data.sector ? ' — ' + esc(data.sector) : '') + '</div></div>' +
+    '<p class="cmp-chart-desc">Todas as companhias do setor na Bridge (uma ' +
+    'classe de ação por empresa — a mais líquida), ordenadas pelo P/L ' +
+    '(menor = mais barata). A linha destacada é a empresa analisada.</p>' +
+    '<div class="scr-tablewrap"><table class="scr-table"><thead><tr>' +
+    '<th>Empresa</th><th>Preço</th><th>Market Cap</th><th>P/L</th><th>P/VPA</th>' +
+    '<th>EV/EBITDA</th><th>ROE</th><th>Div Yield</th>' +
+    '<th class="scr-col-fin">Receita Líq.</th><th class="scr-col-fin">EBITDA</th>' +
+    '<th>Marg. EBITDA</th><th>Cresc. Rec.</th>' +
+    '<th class="scr-col-seg">Segmento</th>' +
+    '</tr></thead><tbody>';
+  (data.table || []).forEach(function(r) {
+    var cls = r.is_subject ? ' class="scr-subject"' : '';
+    var star = r.is_subject ? ' <span class="scr-star" title="empresa analisada">★</span>' : '';
+    var warn = r.partial
+      ? ' <span class="scr-partial" title="algumas fontes desta empresa falharam — indicadores parciais">⚠</span>'
+      : '';
+    html += '<tr' + cls + '>' +
+      '<th scope="row"><a class="scr-tk" href="/webui/company/' +
+      encodeURIComponent(r.ticker) + '">' + esc(r.ticker) + '</a>' + star + warn +
+      '<span class="scr-name" title="' + esc(r.name || '') + '">' + esc(r.name || '') + '</span></th>' +
+      '<td>' + esc(r.price) + '</td>' +
+      '<td>' + esc(r.market_cap) + '</td>' +
+      '<td>' + esc(r.p_l) + '</td>' +
+      '<td>' + esc(r.p_vpa) + '</td>' +
+      '<td>' + esc(r.ev_ebitda) + '</td>' +
+      '<td>' + esc(r.roe) + '</td>' +
+      '<td>' + esc(r.dy) + '</td>' +
+      '<td class="scr-col-fin">' + esc(r.receita) + '</td>' +
+      '<td class="scr-col-fin">' + esc(r.ebitda) + '</td>' +
+      '<td>' + esc(r.marg_ebitda) + '</td>' +
+      '<td>' + esc(r.cresc) + '</td>' +
+      '<td class="scr-col-seg">' + esc(r.segmento || '—') + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+}
+
+// ── the position charts (server configs) ──
+
+function scrChartsHtml(data) {
+  var html = '<div class="cmp-chartgrid">';
+  (data.charts || []).forEach(function(ch) {
+    if (ch.id === 'vs_mediana') return;  // rendered after the verdict table
+    html += '<div class="cmp-chartcard">' +
+      '<div class="cmp-chart-head"><div class="cmp-chart-title">' + esc(ch.title) + '</div></div>' +
+      (ch.desc ? '<p class="cmp-chart-desc">' + esc(ch.desc) + '</p>' : '') +
+      '<div class="chart-container"><canvas id="scr-chart-' + esc(ch.id) + '"></canvas></div>' +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+// ── the Meu Valor × Mediana verdict table ──
+
+var SCR_VERDICTS = {
+  cheap:     { txt: 'barata',   cls: 'good', title: 'abaixo da mediana do setor (menor é melhor)' },
+  expensive: { txt: 'cara',     cls: 'bad',  title: 'acima da mediana do setor' },
+  above:     { txt: 'acima',    cls: 'good', title: 'acima da mediana do setor (maior é melhor)' },
+  below:     { txt: 'abaixo',   cls: 'bad',  title: 'abaixo da mediana do setor' },
+  na:        { txt: '—',        cls: 'na',   title: 'sem comparação possível (valor indisponível ou mediana sem dados)' }
+};
+
+function scrVsHtml(data) {
+  var html = '<div class="cmp-chartcard">' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Meu Valor × Mediana do Setor</div></div>' +
+    '<p class="cmp-chart-desc">Cada métrica da empresa contra a mediana do ' +
+    'setor. Múltiplos de valuation e alavancagem: menor que a mediana = ' +
+    'barata. Qualidade (ROE, ROA, margens, Div Yield, crescimento): maior ' +
+    'que a mediana = acima. Múltiplos negativos são prejuízo — ficam sem ' +
+    'veredito.</p>' +
+    '<div class="scr-tablewrap"><table class="scr-table scr-vs-table"><thead><tr>' +
+    '<th>Métrica</th><th>Meu Valor</th><th>Mediana do Setor</th><th>Delta</th><th>vs Setor</th>' +
+    '</tr></thead><tbody>';
+  (data.vs_rows || []).forEach(function(r) {
+    var v = SCR_VERDICTS[r.verdict] || SCR_VERDICTS.na;
+    var deltaCls = (r.verdict === 'cheap' || r.verdict === 'above') ? 'good'
+      : (r.verdict === 'expensive' || r.verdict === 'below') ? 'bad' : 'na';
+    html += '<tr><th scope="row" class="cmp-rowlabel" title="' + esc(r.tip || '') + '">' +
+      esc(r.label) + (r.tip ? ' <span class="cmp-info" aria-hidden="true">ⓘ</span>' : '') + '</th>' +
+      '<td>' + esc(r.my_fmt) + '</td>' +
+      '<td>' + esc(r.med_fmt) + '</td>' +
+      '<td class="scr-delta-' + deltaCls + '">' + esc(r.delta_fmt) + '</td>' +
+      '<td><span class="scr-badge scr-badge-' + v.cls + '" title="' + esc(v.title) + '">' +
+      esc(v.txt) + '</span></td></tr>';
+  });
+  html += '</tbody></table></div></div>';
+
+  // the vs-median grouped bars close the page (its own card, full width).
+  (data.charts || []).forEach(function(ch) {
+    if (ch.id !== 'vs_mediana') return;
+    html += '<div class="cmp-chartcard">' +
+      '<div class="cmp-chart-head"><div class="cmp-chart-title">' + esc(ch.title) + '</div></div>' +
+      (ch.desc ? '<p class="cmp-chart-desc">' + esc(ch.desc) + '</p>' : '') +
+      '<div class="chart-container"><canvas id="scr-chart-' + esc(ch.id) + '"></canvas></div>' +
+      '</div>';
+  });
+  return html;
+}
+
+function scrMountCharts(box, data) {
+  (data.charts || []).forEach(function(ch) {
+    var canvas = document.getElementById('scr-chart-' + ch.id);
+    if (canvas) renderValChart(canvas, ch.cd);
+  });
+  scrMountHist();
 }
 
 // ── Painel (landing page) [WebUI v1.19] ─────────────────────────────

@@ -116,6 +116,7 @@ from webui.services.backtest import BacktestService
 from webui.services.governance import GovernanceService
 from webui.services.ipe import IpeService
 from webui.services.comparison import ComparisonService
+from webui.services.screener import ScreenerService
 from webui.templating import templates
 # [v1.22] ONE ticker definition (webui/validators.py).
 from webui.validators import TICKER_PATTERN
@@ -140,6 +141,7 @@ _backtest_service = _svc(BacktestService)
 _governance_service = _svc(GovernanceService)
 _ipe_service = _svc(IpeService)
 _comparison_service = _svc(ComparisonService)
+_screener_service = _svc(ScreenerService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: letter + 3-5 alphanumerics + 1-2 digits + optional
@@ -318,6 +320,24 @@ def tools_comparison_search(q: str = Query("")):
     fragment).
     """
     return JSONResponse({"results": _company_service.search(q, limit=8)})
+
+
+@router.get("/tools/screener")
+def tools_screener(ticker: str = Query("")):
+    """[v1.28] Screener — the Ferramentas tab's second tool.
+
+    ONE ticker screened against its whole SECTOR: the peer table (one
+    class per company, P/L cheapest-first, the subject highlighted) +
+    the sector MEDIANS (KPI row and the Meu Valor × Mediana verdict
+    table — cheap/expensive for multiples and leverage, above/below for
+    quality) + the P/L and ROE position charts with the median line +
+    the subject's two-resolution price history for the Cotação Histórica
+    card. Payload-cached on the composite fingerprint of EVERY sector
+    company plus the peer list (the v1.26.1 webui_payloads foundation).
+    Validation errors (missing/bad ticker) return the canonical
+    {"status": "error", "error": …} payload.
+    """
+    return JSONResponse(_screener_service.screen(ticker))
 
 
 def _range_years(range_: str) -> float:
