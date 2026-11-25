@@ -58,6 +58,18 @@
   the Histórico mensal convention across Inflação/Juros/Poupança); see
   CHANGELOG)
 [WebUI v1.26 fix 1] ?v=75 (app.js/app.css/company.html/company tabs: the Governança/IPE SPLIT — Informações Periódicas is its own tab; the Ano facet chronological ordering fix; see docs/webui/CHANGELOG.md)
+[WebUI v1.26.1] ?v=76 (app.js/app.css/company tabs: single-series legend
+  suppression, histogram current-price outline, collapsible Indicadores
+  charts, ins-pill cargo/tipo colors + Por Tipo, fin payload cache,
+  Menos Comuns heatmap, DPA multi-source merge; see
+  docs/webui/CHANGELOG.md)
+[WebUI v1.26.1 fix 1] ?v=77 (app.js: the histogram current-price outline
+  is THEME-AWARE — the fixed white one vanished on the light theme;
+  shareholders.py: the Acionistas Visão Geral dedup — the evolution charts
+  + the top-5 preview live in their own subtabs, replaced by the
+  current-snapshot ownership charts; base.html: the stray version-banner
+  text that rendered at the top of every page is GONE; see
+  docs/webui/CHANGELOG.md)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -86,8 +98,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  [WebUI v1.22.3] ?v=67 css / ?v=69 js (Carteira money-roadmap wave — 5 views (Proventos/Evolução/Alocação), ledger filters+pager, corp events, drawer, what-if, undo toast, alerts, backup)
-  <link rel="stylesheet" href="/static/css/app.css?v=75">
+  <link rel="stylesheet" href="/static/css/app.css?v=76">
 </head>
 <body>
   <div class="app-shell">
@@ -231,6 +242,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=75"></script>
+  <script src="/static/js/app.js?v=77"></script>
 </body>
 </html>

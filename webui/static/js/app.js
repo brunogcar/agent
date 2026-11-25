@@ -230,7 +230,7 @@ function renderPrecoTab(tab, ticker, data) {
   if (hist && hist.bins) { html += '<div class="chart-section" style="margin-bottom: var(--space-5);"><div class="chart-header"><div class="reg-title">Histograma de Preço</div></div><div class="chart-container"><canvas id="histogram-chart"></canvas></div></div>'; }
   if (ar && ar.length > 0) { html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">Início vs Fim</div></div><div class="chart-container"><canvas id="inicio-fim-chart"></canvas></div></div>'; }
   tab.innerHTML = html;
-  if (hist && hist.bins) renderHistogram(hist);
+  if (hist && hist.bins) renderHistogram(hist, snap.current);
   if (ar && ar.length > 0) renderInicioFim(ar);
   // Close preco-charts div if it was opened
   // (already closed in the HTML above)
@@ -247,13 +247,33 @@ function fmtPctColored(v) { if (v === null || v === undefined || isNaN(v)) retur
 // [v1.5] Zero renders YELLOW now (v1.4 spec: % positive green / negative
 // red / zero yellow) — it was green, contradicting the Valuation tab.
 
-function renderHistogram(hist) {
+function renderHistogram(hist, currentPrice) {
   var canvas = document.getElementById('histogram-chart'); if (!canvas) return; var th = chartTheme();
   if (canvas._chart) canvas._chart.destroy();
+  // [v1.26.1] The bar holding the CURRENT price gets an outline —
+  // the user asked to see where today's price sits inside the 10-year
+  // distribution without a second series or an annotation. Bins carry
+  // their [low, high] range, so the match is a simple containment scan
+  // (the last matching bin wins: the top bin's high is the series max).
+  // [v1.26.1 fix1] The outline is THEME-AWARE now: the v1.26.1 fixed
+  // #ffffff vanished against the light theme's white background. The
+  // theme's --text token (near-white on dark / near-black on light —
+  // same cssVar mechanism the rest of the chart theming uses) keeps the
+  // approved dark look AND stays high-contrast on the light theme,
+  // against every bin color (blue→yellow→red).
+  var hiIdx = -1;
+  if (currentPrice !== null && currentPrice !== undefined && isFinite(Number(currentPrice))) {
+    var cp = Number(currentPrice);
+    for (var i = 0; i < hist.bins.length; i++) {
+      var b = hist.bins[i];
+      if (cp >= (b.low || 0) && cp <= (b.high || 0)) hiIdx = i;
+    }
+  }
+  var hlColor = cssVar('--text') || th.text || '#ffffff';
   canvas._chart = new Chart(canvas.getContext('2d'), {
     type: 'bar',
-    data: { labels: hist.bins.map(function(b) { return b.label; }), datasets: [{ label: 'Frequência', data: hist.bins.map(function(b) { return b.count; }), backgroundColor: hist.bins.map(function(b) { return b.color; }), borderWidth: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 15 } }, y: { grid: { color: th.grid }, ticks: { color: th.text }, title: { display: true, text: 'Pregões' } } }, plugins: { legend: { display: false } } }
+    data: { labels: hist.bins.map(function(b) { return b.label; }), datasets: [{ label: 'Frequência', data: hist.bins.map(function(b) { return b.count; }), backgroundColor: hist.bins.map(function(b) { return b.color; }), borderColor: hist.bins.map(function(b, i) { return i === hiIdx ? hlColor : 'transparent'; }), borderWidth: hist.bins.map(function(b, i) { return i === hiIdx ? 2.5 : 0; }) }] },
+    options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 15 } }, y: { grid: { color: th.grid }, ticks: { color: th.text }, title: { display: true, text: 'Pregões' } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function(it) { return it.dataIndex === hiIdx ? '← preço atual' : ''; } } } } }
   });
 }
 
@@ -290,23 +310,33 @@ function renderIndicadoresTab(tab, ticker, data) {
   });
   html += '</div>';
 
-  // RSI
-  html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">RSI (14)</div></div><div class="chart-container"><canvas id="rsi-chart"></canvas></div></div>';
-  // MACD
-  html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">MACD (12/26/9)</div></div><div class="chart-container"><canvas id="macd-chart"></canvas></div></div>';
-  // Stochastic
-  html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">Stochastic (14/3)</div></div><div class="chart-container"><canvas id="stoch-chart"></canvas></div></div>';
-  // OBV
-  html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">OBV</div></div><div class="chart-container"><canvas id="obv-chart"></canvas></div></div>';
-  // ADX
-  if (data.adx) html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">ADX (14)</div></div><div class="chart-container"><canvas id="adx-chart"></canvas></div></div>';
-  // CCI
-  if (data.cci) html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">CCI (20)</div></div><div class="chart-container"><canvas id="cci-chart"></canvas></div></div>';
-  // Williams %R
-  if (data.williams_r) html += '<div class="chart-section"><div class="chart-header"><div class="reg-title">Williams %R (14)</div></div><div class="chart-container"><canvas id="williams-chart"></canvas></div></div>';
+  // [v1.26.1] Every indicator card is COLLAPSIBLE (open by default) —
+  // indChartCard builds the header + toggle button; the delegated
+  // handler below flips .collapsed (CSS hides .chart-container).
+  html += indChartCard('RSI (14)', 'rsi-chart');
+  html += indChartCard('MACD (12/26/9)', 'macd-chart');
+  html += indChartCard('Stochastic (14/3)', 'stoch-chart');
+  html += indChartCard('OBV', 'obv-chart');
+  if (data.adx) html += indChartCard('ADX (14)', 'adx-chart');
+  if (data.cci) html += indChartCard('CCI (20)', 'cci-chart');
+  if (data.williams_r) html += indChartCard('Williams %R (14)', 'williams-chart');
 
   html += '</div>';
   tab.innerHTML = html;
+
+  // [v1.26.1] Delegated collapse toggle (whole header clickable — the
+  // ▾/▸ button is the visible affordance; aria-expanded tracks state).
+  if (!tab._collapseInit) {
+    tab._collapseInit = true;
+    tab.addEventListener('click', function(e) {
+      var head = e.target.closest ? e.target.closest('.collapsible-chart > .chart-header') : null;
+      if (!head) return;
+      var card = head.parentNode;
+      var closed = card.classList.toggle('collapsed');
+      var btn = head.querySelector('.chart-collapse-btn');
+      if (btn) btn.setAttribute('aria-expanded', String(!closed));
+    });
+  }
 
   // Store full data for range filtering
   tab._indData = data;
@@ -322,6 +352,14 @@ function renderIndicadoresTab(tab, ticker, data) {
       renderIndicatorCharts(tab._indData, range);
     }
   });
+}
+
+// [v1.26.1] Collapsible indicator card markup — open by default; the
+// header (title + chevron button) toggles .collapsed on the card.
+function indChartCard(title, canvasId) {
+  return '<div class="chart-section collapsible-chart"><div class="chart-header"><div class="reg-title">' + title + '</div>' +
+         '<button type="button" class="chart-collapse-btn" aria-expanded="true" aria-label="Recolher gráfico" title="Recolher/expandir">▾</button></div>' +
+         '<div class="chart-container"><canvas id="' + canvasId + '"></canvas></div></div>';
 }
 
 function renderIndicatorCharts(data, range) {
@@ -805,6 +843,15 @@ function renderFinVisaoGeral(tab, ticker, data) {
   var annualPeriods = annual.periods || [];
   var quarterlyPeriods = quarterly.periods || [];
   var html = '';
+
+  // [v1.26.1] Provenance line — the overview payload is cached in the
+  // webui_payloads table keyed by the company's DFP+ITR×COTAHIST
+  // fingerprint; when this load came from the cache the note says when
+  // it was computed (it refreshes automatically when new demonstrações
+  // or cotações sync — the fingerprint changes, the cache misses).
+  if (data.cache_note) {
+    html += '<div class="fin-cache-note"><span class="fin-cache-bolt">⚡</span> ' + esc(data.cache_note) + '</div>';
+  }
 
   // ── Section 1: Resultado TTM (real trailing twelve months) + Margens ──
   // [v1.3 fix 1] Uses the ttm mode (compute_ttm_with_engines) — the TTM window
@@ -3148,10 +3195,29 @@ function valSectionHtml(sec) {
     (sec.rows || []).forEach(function(row) {
       h += '<tr>';
       (row || []).forEach(function(cell, ci) {
-        if (cell && typeof cell === 'object') {
+        if (cell && typeof cell === 'object' && cell.pill) {
+          // [v1.26.1] Colored pill cells — the Insiders cargo/tipo
+          // vocabulary (each value its own color, stable across the
+          // Movimentações / Por Cargo / Por Tipo subtabs). The color
+          // rides inline (server palette, single source of truth); the
+          // soft background is the same hue at ~8% alpha (hex "14").
+          var ptip = cell.tooltip || '';
+          h += '<td><span class="ins-pill" style="border-color:' + safeColor(cell.pill) +
+               ';color:' + safeColor(cell.pill) + ';background:' + safeColor(cell.pill) + '14"' +
+               (ptip ? ' title="' + valEsc(ptip) + '"' : '') + '>' +
+               valEsc(cell.text || '—') + '</span></td>';
+        } else if (cell && typeof cell === 'object') {
           var tip = cell.tooltip || '';
+          // [v1.26.1] Optional link cell (the Proventos IPE announcements
+          // date opens the CVM PDF) — renders as a same-tab-safe external
+          // anchor; the tooltip stays on the td like every other col-0.
+          var inner = valEsc(cell.text || '—');
+          if (cell.link && typeof cell.link === 'string' &&
+              /^https?:\/\//i.test(cell.link)) {
+            inner = '<a href="' + valEsc(cell.link) + '" target="_blank" rel="noopener">' + inner + ' ↗</a>';
+          }
           h += '<td' + (ci === 0 && tip ? ' title="' + valEsc(tip) + '"' : '') + '>' +
-               valEsc(cell.text || '—') +
+               inner +
                (ci === 0 && tip ? ' <span class="val-info">ⓘ</span>' : '') + '</td>';
         } else {
           h += '<td' + (ci > 0 ? ' class="val-val"' : '') + '>' + valNumHtml(String(cell)) + '</td>';
@@ -3269,9 +3335,13 @@ function renderValChart(canvas, cd) {
   });
   var options;
   if (type === 'radar') {
+    // [v1.26.1] Single-dataset radars drop the legend too (same rule as
+    // the cartesian branch — the valuation radar's lone "Percentil"
+    // entry only repeated the card title).
+    var _radarLegend = (datasets.length <= 1);
     options = {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: true, position: 'top', labels: { color: th.text } } },
+      plugins: { legend: { display: !_radarLegend, position: 'top', labels: { color: th.text } } },
       scales: { r: {
         beginAtZero: true, max: 100,
         ticks: { stepSize: 20, color: th.text, backdropColor: 'transparent' },
@@ -3312,16 +3382,6 @@ function renderValChart(canvas, cd) {
     if (dateAxis) {
       plugins.tooltip = { callbacks: { title: function(i) { return _axisFmt(i[0].label); } } };
     }
-    // [v1.14] Honor the server's plugins.legend (display/position) — the
-    // Índices composition doughnuts ship legend off (78-136 slices would
-    // be a wall of legend labels; the full table below is the legend).
-    // Same cutout/stacked precedent: default stays exactly as before for
-    // every chart that does not ask.
-    var srvLegend = (((cd.options || {}).plugins) || {}).legend;
-    if (srvLegend && typeof srvLegend === 'object') {
-      if (typeof srvLegend.display === 'boolean') plugins.legend.display = srvLegend.display;
-      if (typeof srvLegend.position === 'string') plugins.legend.position = srvLegend.position;
-    }
     // [v1.24] Per-dataset `hideLegend` — datasets flagged true stay in
     // the chart (tooltips included) but drop out of the legend. The
     // Histórico 5A band charts draw the mín–máx band as TWO datasets
@@ -3334,6 +3394,31 @@ function renderValChart(canvas, cd) {
       plugins.legend.labels.filter = function(item) {
         return !(_hideDs && _hideDs[item.datasetIndex]);
       };
+    }
+    // [v1.26.1] Single-series charts hide the legend — a one-item legend
+    // only repeats the card title (Múltiplos de Preço — Comparativo's
+    // "Preço", Retornos' "Retornos (%)", Margens, Liquidez, Alavancagem,
+    // Sazonalidade, Volume Líquido Mensal/Acumulado, Evolução do Score…).
+    // Pies/doughnuts KEEP theirs (the legend IS the category axis there);
+    // an explicit server plugins.legend.display always wins over this
+    // heuristic (applied right below).
+    if (type !== 'pie' && type !== 'doughnut') {
+      var _visible = 0;
+      (cd.data.datasets || []).forEach(function(d, i) {
+        if (!(_hideDs && _hideDs[i])) _visible++;
+      });
+      if (_visible <= 1) plugins.legend.display = false;
+    }
+    // [v1.14] Honor the server's plugins.legend (display/position) — the
+    // Índices composition doughnuts ship legend off (78-136 slices would
+    // be a wall of legend labels; the full table below is the legend).
+    // Same cutout/stacked precedent: default stays exactly as before for
+    // every chart that does not ask. ([v1.26.1] this now also overrides
+    // the single-series suppression above — an explicit server ask wins.)
+    var srvLegend = (((cd.options || {}).plugins) || {}).legend;
+    if (srvLegend && typeof srvLegend === 'object') {
+      if (typeof srvLegend.display === 'boolean') plugins.legend.display = srvLegend.display;
+      if (typeof srvLegend.position === 'string') plugins.legend.position = srvLegend.position;
     }
     // [v1.14] Honor the server's tooltipUnit — a JSON-safe way to give
     // pie/doughnut tooltips a suffix with pt-BR value formatting (the

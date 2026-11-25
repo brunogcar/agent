@@ -160,22 +160,106 @@ def build_multiples_sections(ratios_dict: dict | None) -> list[dict]:
             },
         })
 
-    # ── Group 3: Menos Comuns (table, was collapsible) ──
-    less_rows = []
+    # ── Group 3: Menos Comuns (heatmap) ──
+    # [v1.26.1] Was a plain table — now the same colored-indicator
+    # presentation as the Histórico tab's "Heatmap de Valoração —
+    # Indicadores Coloridos": each row's Valor + Leitura cells carry the
+    # verdict color (green = lado favorável, âmbar = faixa média,
+    # vermelho = lado desfavorável). Bands are indicative (the same
+    # "cheap if / expensive if" reading the old Interpretação column
+    # spelled out, now encoded in color + a one-word Leitura).
+    sections.append(_build_less_common_heatmap(ratios_dict, derived))
+
+    return sections
+
+
+# Heatmap cell colors — the valuation heatmap palette
+# (skills/cvm/valuation/report/overview.py).
+_HC_GOOD = ("rgba(34,197,94,0.2)", "#16a34a")
+_HC_MID = ("rgba(245,158,11,0.2)", "#d97706")
+_HC_BAD = ("rgba(220,38,38,0.2)", "#dc2626")
+
+# key → (direction, good_bound, bad_bound, good_label, mid_label, bad_label)
+#   direction "low":  value ≤ good_bound → good; ≤ bad_bound → mid; else bad
+#   direction "high": value ≥ good_bound → good; ≥ bad_bound → mid; else bad
+# Bands mirror the interpretation text each row used to carry.
+_LESS_COMMON_BANDS = {
+    "apa": ("low", 1.0, 2.0, "Barata", "Na faixa", "Cara"),
+    "ppa": ("low", 1.0, 3.0, "Pouco alavancado", "Alavancagem média",
+            "Muito alavancado"),
+    "rbpa": ("low", 1.0, 3.0, "Barata", "Na faixa", "Cara"),
+    "p_cg": ("low", 2.0, 6.0, "Barata", "Na faixa", "Cara"),
+    "p_db": ("low", 5.0, 15.0, "Barata", "Na faixa", "Cara"),
+    "price_to_tangible_book": ("low", 1.0, 3.0, "Barata", "Na faixa", "Cara"),
+    "a_p_inverse": ("high", 1.0, 0.5, "Favorável", "Faixa média",
+                    "Desfavorável"),
+    "financial_leverage": ("low", 1.5, 3.0, "Alavancagem baixa",
+                           "Alavancagem média", "Alavancagem alta"),
+    "p_vpa": ("low", 1.0, 3.0, "Barata", "Na faixa", "Cara"),
+}
+
+
+def _build_less_common_heatmap(ratios_dict: dict | None,
+                               derived: dict) -> dict:
+    """'Múltiplos Menos Comuns' as a colored heatmap section.
+
+    Columns: Métrica (formula tooltip) | Valor (colored) | Leitura
+    (colored one-word verdict). Rows with no value keep the "—" cell
+    (uncolored) — absence is not a verdict.
+    """
+
+    def _lookup(key: str) -> Any:
+        v = _safe_get(ratios_dict, key)
+        if v is None:
+            v = derived.get(key)
+        return v
+
+    rows: list[list[Any]] = []
     for label, key, spec, interp in _MULTIPLES_LESS_COMMON:
         value = _lookup(key)
         formula = _get_tooltip(key) or _get_tooltip(key.replace("_", ""))
-        less_rows.append([{"text": label, "tooltip": formula}, _fmt(value, spec), interp if value is not None else "—"])
-    sections.append({
-        "title": "Múltiplos Menos Comuns",
-        "type": "table",
-        "columns": ["Métrica", "Valor", "Interpretação"],
-        "rows": less_rows,
-        "negative_red": True,
-        "positive_green": True,
-    })
+        metric_cell: Any = {"text": label, "tooltip": formula}
+        if value is None:
+            rows.append([metric_cell,
+                         {"text": "—", "bg": "", "color": ""},
+                         {"text": "—", "bg": "", "color": ""}])
+            continue
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            num = None
+        band = _LESS_COMMON_BANDS.get(key)
+        if num is not None and band:
+            direction, good_b, bad_b, good_l, mid_l, bad_l = band
+            if direction == "low":
+                bg, fg, verdict = (( *_HC_GOOD, good_l) if num <= good_b
+                                    else ((*_HC_MID, mid_l) if num <= bad_b
+                                          else (*_HC_BAD, bad_l)))
+            else:
+                bg, fg, verdict = (( *_HC_GOOD, good_l) if num >= good_b
+                                    else ((*_HC_MID, mid_l) if num >= bad_b
+                                          else (*_HC_BAD, bad_l)))
+            value_cell = {"text": _fmt(value, spec), "bg": bg, "color": fg}
+            verdict_cell = {"text": verdict, "bg": bg, "color": fg,
+                            "tooltip": interp}
+        else:
+            value_cell = {"text": _fmt(value, spec), "bg": "", "color": ""}
+            verdict_cell = {"text": "—", "bg": "", "color": "",
+                            "tooltip": interp}
+        rows.append([metric_cell, value_cell, verdict_cell])
 
-    return sections
+    return {
+        "title": "Múltiplos Menos Comuns",
+        "type": "heatmap",
+        "description": (
+            "Múltiplos de balanço menos observados, com leitura colorida: "
+            "verde = lado favorável da faixa · âmbar = faixa média · "
+            "vermelho = lado desfavorável. Faixas indicativas (setoriais "
+            "divergem) — pare o mouse na métrica para a fórmula."
+        ),
+        "columns": ["Métrica", "Valor", "Leitura"],
+        "rows": rows,
+    }
 
 
 def build_per_share_sections(ratios_dict: dict | None) -> list[dict]:

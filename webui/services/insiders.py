@@ -14,9 +14,14 @@ renders above the tabs):
                  líquido mensal + preview das últimas movimentações)
   transactions → "who moved what, when?"         (tabela completa das
                  últimas N movimentações, sortable + volume líquido
-                 acumulado em linha)
+                 acumulado em linha; [v1.26.1] cargo/tipo em selos
+                 coloridos — cada valor do vocabulário CVM com sua cor)
   by_role      → "which roles buy vs sell?"      (agregado por cargo +
-                 barras comparando volume comprado vs vendido)
+                 barras comparando volume comprado vs vendido; [v1.26.1]
+                 cargo em selo com a mesma cor da tabela Movimentações)
+  by_tipo      → "what kinds of movements?"      ([v1.26.1] agregado por
+                 tipo de movimentação + barras coloridas por tipo — o
+                 gêmeo do Por Cargo no eixo Tipo_Movimentacao)
   monthly      → "what's the trend?"             (24 meses, tabela +
                  chart de net mensal)
 
@@ -74,6 +79,70 @@ from tools.report_ops.formats import fmt_brl, fmt_int
 _COLOR_BUY = "#0d9488"    # teal   — compras / meses de compra líquida
 _COLOR_SELL = "#ef4444"   # red    — vendas / meses de venda líquida
 _COLOR_CUM = "#3b82f6"    # blue   — linha de volume acumulado
+
+# [v1.26.1] Cargo vocabulary → pill color. The five CVM Tipo_Cargo forms
+# the user listed, each its own hue so the Movimentações table reads at
+# a glance AND the Por Cargo / Por Tipo subtabs share the same mapping
+# (single source of truth — this dict).
+CARGO_COLORS: dict[str, str] = {
+    "Controlador ou Vinculado": "#7c3aed",              # violet
+    "Diretor ou Vinculado": "#0d9488",                  # teal
+    "Conselho de Administração ou Vinculado": "#b45309",  # amber-brown
+    "Órgão Estatutário ou Vinculado": "#be185d",          # rose
+    "Conselho Fiscal ou Vinculado": "#0369a1",            # sky
+}
+
+# [v1.26.1] Movement-type vocabulary → pill color. Compras lean green,
+# vendas lean red (the tab's existing semantic); position events
+# (posse/desligamento) get neutral/warm hues so they never read as
+# trades. Covers the VLMO values the user enumerated.
+TIPO_COLORS: dict[str, str] = {
+    "Compra à vista": "#16a34a",
+    "Compra à termo": "#059669",
+    "Venda à vista": "#dc2626",
+    "Ações de plano de remuneração": "#7c3aed",
+    "Outras Entradas": "#0891b2",
+    "Outras Saídas": "#ea580c",
+    "Posse": "#d97706",
+    "Desligamento/saída": "#64748b",
+}
+
+# Fallback rotation for values outside both vocabularies (VLMO carries
+# more forms — "Doação", "Transferência", "Exercício", …): a stable
+# hash picks a hue so an unseen value still gets a consistent color.
+_FALLBACK_HUES = ["#0ea5e9", "#8b5cf6", "#f97316", "#14b8a6", "#e11d48",
+                  "#65a30d", "#a16207", "#9333ea", "#475569", "#c026d3"]
+
+
+def _fallback_color(value: str, hues: list[str] = None) -> str:
+    h = hues or _FALLBACK_HUES
+    s = (value or "").strip().lower()
+    return h[sum(ord(c) for c in s) % len(h)]
+
+
+def cargo_color(cargo: Any) -> str:
+    """Stable pill color for a Tipo_Cargo value (vocabulary + fallback)."""
+    c = (cargo or "").strip()
+    return CARGO_COLORS.get(c) or _fallback_color(c)
+
+
+def tipo_color(tipo: Any) -> str:
+    """Stable pill color for a Tipo_Movimentacao value.
+
+    Vocabulary first; then semantic prefixes (any "Compra*" leans
+    green, any "Venda*" leans red — "Compra"/"Venda" plain forms and
+    future variants); then the stable-hash fallback.
+    """
+    t = (tipo or "").strip()
+    hit = TIPO_COLORS.get(t)
+    if hit:
+        return hit
+    low = t.lower()
+    if low.startswith("compra"):
+        return "#16a34a"
+    if low.startswith("venda"):
+        return "#dc2626"
+    return _fallback_color(t)
 
 # How many recent movements the transactions subtab renders + feeds the
 # cumulative chart with (the static dashboard's cumulative line covered
@@ -213,10 +282,11 @@ class InsiderService:
 
     def _tx_rows(self, movements: list[dict]) -> list[list[Any]]:
         """Transactions table rows — Data | Cargo | Tipo | Ativo | Qtd |
-        Preço | Volume. The Tipo cell keeps a tooltip with the movement
-        vocabulary (first column carries the date tooltip instead: the
-        generic renderer only draws tooltips on the leading cell, so the
-        date gets the cargo + tipo context — long cargos truncate)."""
+        Preço | Volume. [v1.26.1] Cargo and Tipo render as COLORED PILLS
+        (each vocabulary value its own hue — cargo_color/tipo_color; the
+        mapping repeats across Movimentações / Por Cargo / Por Tipo).
+        The date cell keeps the cargo + tipo context tooltip; the tipo
+        pill carries the movement vocabulary."""
         rows: list[list[Any]] = []
         for m in movements:
             data = m.get("Data_Movimentacao") or "—"
@@ -227,8 +297,9 @@ class InsiderService:
                 {"text": _fmt_date(data),
                  "tooltip": f"{cargo} — {tipo}"
                  + (f". {tip}" if tip else "")},
-                cargo,
-                tipo,
+                {"text": cargo, "pill": cargo_color(cargo)},
+                {"text": tipo, "pill": tipo_color(tipo),
+                 "tooltip": tip or None},
                 m.get("Tipo_Ativo") or "—",
                 fmt_int(m.get("Quantidade")),
                 fmt_brl(m.get("Preco_Unitario"), suffix=False),
@@ -573,7 +644,10 @@ class InsiderService:
             f"Movimentações por Cargo ({len(enriched)})",
             ["Cargo", "Transações", "Qtd Comprada", "Qtd Vendida",
              "Vol Comprado", "Vol Vendido", "Net Volume"],
-            [[r["cargo"], fmt_int(r["count"]),
+            # [v1.26.1] cargo pill — same color mapping the Movimentações
+            # table uses (the user's "apply the colors from previous page").
+            [[{"text": r["cargo"], "pill": cargo_color(r["cargo"])},
+              fmt_int(r["count"]),
               fmt_int(r["qtd_bought"]), fmt_int(r["qtd_sold"]),
               fmt_brl(r["vol_bought"]), fmt_brl(r["vol_sold"]),
               fmt_brl(r["net"])] for r in enriched],
@@ -627,7 +701,171 @@ class InsiderService:
         return {"ticker": tk, "status": "ok", "kpis": kpis,
                 "sections": sections}
 
-    # ── 4/4: Mensal ───────────────────────────────────────────────────────
+    # ── 4/5: Por Tipo [v1.26.1] ───────────────────────────────────────
+
+    def by_tipo(self, ticker: str) -> dict[str, Any]:
+        """Insider activity aggregated by movement type (Tipo_Movimentacao).
+
+        The Por Cargo twin on the movement-type axis — the same shape
+        (KPIs + sortable table + chart) so the two subtabs read alike.
+        The tipo pills + chart bars share the Movimentações table's
+        color mapping (TIPO_COLORS); volume only fills for movements
+        that carry one (compras/vendas — posse/desligamento count but
+        sum R$ 0,00, the note says so).
+        """
+        tk = (ticker or "").upper()
+        res = _safe(_vlmo_query, company=tk, by_tipo=True, limit=30)
+        tipos = res.get("by_tipo") if res.get("status") == "ok" else None
+        if not tipos:
+            return error_payload(
+                tk, "Sem movimentações de insiders — sincronize a fonte "
+                    "vlmo (CVM — movimentação de valores mobiliários por "
+                    "administradores) na página Sincronização.")
+
+        enriched: list[dict[str, Any]] = []
+        for r in tipos:
+            try:
+                vol = float(r.get("total_volume") or 0)
+            except (TypeError, ValueError):
+                vol = 0.0
+            try:
+                qty = float(r.get("total_qty") or 0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            enriched.append({
+                "tipo": r.get("Tipo_Movimentacao") or "—",
+                "count": int(r.get("transaction_count") or 0),
+                "qty": qty,
+                "vol": vol,
+                "first": r.get("earliest_date"),
+                "last": r.get("latest_date"),
+            })
+
+        most_freq = max(enriched, key=lambda r: r["count"])
+        biggest_vol = max(enriched, key=lambda r: r["vol"])
+        all_first = min((r["first"] for r in enriched if r["first"]),
+                        default=None)
+        all_last = max((r["last"] for r in enriched if r["last"]),
+                       default=None)
+
+        kpis = [
+            kpi("Tipos", fmt_int(len(enriched)),
+                "Tipos de movimentação distintos (Tipo_Movimentacao) em "
+                "todo o histórico sincronizado — cada um com sua cor."),
+            kpi("Mais Frequente", _trunc(most_freq["tipo"]),
+                f"{most_freq['tipo']} — {fmt_int(most_freq['count'])} "
+                "movimentações declaradas (todo o histórico)."),
+            kpi("Maior Volume (R$)",
+                _trunc(biggest_vol["tipo"]) if biggest_vol["vol"] > 0 else "—",
+                (f"{biggest_vol['tipo']} — {fmt_brl(biggest_vol['vol'])} "
+                 "em movimentações com preço declarado (todo o "
+                 "histórico).") if biggest_vol["vol"] > 0 else
+                "Nenhuma movimentação com volume declarado no histórico "
+                "sincronizado."),
+            kpi("Período",
+                f"{_fmt_date(all_first)} – {_fmt_date(all_last)}"
+                if all_first and all_last else "—",
+                "Da primeira à última movimentação declarada (todo o "
+                "histórico sincronizado)."),
+        ]
+
+        tbl = table_section(
+            f"Movimentações por Tipo ({len(enriched)})",
+            ["Tipo", "Transações", "Qtd Total", "Volume Total",
+             "Primeira", "Última"],
+            [[{"text": r["tipo"], "pill": tipo_color(r["tipo"]),
+               "tooltip": _movimentacao_tooltip(r["tipo"]) or None},
+              fmt_int(r["count"]),
+              fmt_int(r["qty"]) if r["qty"] else "—",
+              fmt_brl(r["vol"]) if r["vol"] else "—",
+              _fmt_date(r["first"]) if r["first"] else "—",
+              _fmt_date(r["last"]) if r["last"] else "—",
+              ] for r in enriched],
+            description=(
+                "Movimentações agrupadas por tipo (Tipo_Movimentacao) em "
+                "TODO o histórico sincronizado. Compras/vendas carregam "
+                "quantidade e volume; eventos de posição (posse, "
+                "desligamento, doação…) contam transações mas somam "
+                "R$ 0,00 — por isso a coluna Volume mostra \"—\"."
+            ),
+            note="VLMO, agregado por Tipo_Movimentacao (mesma paleta de "
+                 "cores da tabela Movimentações).",
+        )
+        tbl["sortable"] = True
+
+        sections: list[dict[str, Any]] = [tbl]
+
+        # Count chart — every tipo has a count (unlike volume), and the
+        # per-bar colors ARE the tipo vocabulary (the legend is gone —
+        # single series — but the pills above the chart carry the key).
+        labels = [_trunc(r["tipo"]) for r in enriched]
+        counts = [r["count"] for r in enriched]
+        colors = [tipo_color(r["tipo"]) for r in enriched]
+        if len(labels) >= 2:
+            sections.append(chart_section(
+                "Movimentações por Tipo",
+                {
+                    "type": "bar",
+                    "data": {
+                        "labels": labels,
+                        "datasets": [{
+                            "label": "Transações",
+                            "data": counts,
+                            "backgroundColor": colors,
+                            "borderColor": colors,
+                            "borderWidth": 1,
+                        }],
+                    },
+                    "options": {"scales": {
+                        "y": {"beginAtZero": True, "title": {
+                            "display": True, "text": "Movimentações"}},
+                        "x": {"ticks": {"maxTicksLimit": 10}},
+                    }},
+                },
+                description=(
+                    "Contagem de movimentações por tipo em TODO o "
+                    "histórico sincronizado — cada barra na cor do tipo "
+                    "(mesma paleta dos selos da tabela acima)."
+                ),
+            ))
+
+        # Volume chart — only tipos with declared volume (compras/vendas
+        # à vista etc.); the money view of the same aggregation.
+        vol_rows = [r for r in enriched if r["vol"] > 0]
+        if len(vol_rows) >= 2:
+            sections.append(chart_section(
+                "Volume Declarado por Tipo (R$)",
+                {
+                    "type": "bar",
+                    "data": {
+                        "labels": [_trunc(r["tipo"]) for r in vol_rows],
+                        "datasets": [{
+                            "label": "Volume (R$)",
+                            "data": [round(r["vol"], 2) for r in vol_rows],
+                            "backgroundColor": [tipo_color(r["tipo"])
+                                                 for r in vol_rows],
+                            "borderColor": [tipo_color(r["tipo"])
+                                            for r in vol_rows],
+                            "borderWidth": 1,
+                        }],
+                    },
+                    "options": {"scales": {
+                        "y": {"beginAtZero": True, "title": {
+                            "display": True, "text": "R$"}},
+                        "x": {"ticks": {"maxTicksLimit": 10}},
+                    }},
+                },
+                description=(
+                    "Volume declarado (Qtd × Preço) por tipo — só "
+                    "movimentações com preço (compras/vendas); eventos "
+                    "de posição não têm volume e ficam de fora."
+                ),
+            ))
+
+        return {"ticker": tk, "status": "ok", "kpis": kpis,
+                "sections": sections}
+
+    # ── 5/5: Mensal ───────────────────────────────────────────────────────
 
     def monthly(self, ticker: str) -> dict[str, Any]:
         """Monthly net buy/sell table + chart (last 24 months)."""

@@ -33,13 +33,13 @@ agent/
 │   ├── services/                     # Service layer (ONLY place that imports skills)
 │   │   ├── company.py                # Company header + ratios + price series
 │   │   ├── price.py                  # Preço tab (OHLCV, indicators, volatility, volume, Fibonacci)
-│   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch)
+│   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch; [v1.26.1] webui_payloads cache)
 │   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
 │   │   ├── historical.py             # [v1.24] Histórico tab (17 metrics × 5A — heatmap/bands/trend)
 │   │   ├── backtest.py               # [v1.25] Backtest tab (parametrized engine + meta catalog)
 │   │   ├── governance.py             # [v1.26] Governança tab (CGVN score/práticas — the self-assessment)
 │   │   ├── ipe.py                     # [v1.26 fix 1] Informações Periódicas tab (the IPE events explorer — its own tab)
-│   │   ├── proventos.py              # Proventos tab (dividends.db + yield at ex-date)
+│   │   ├── proventos.py              # Proventos tab (B3 ∪ DDM events + yield at ex-date; [v1.26.1] IPE announcements)
 │   │   ├── options.py                # [v1.8] Opções tab (chain, activity, IV, positions)
 │   │   ├── shareholders.py           # [v1.9] Acionistas tab (fre.db + dfp.db)
 │   │   ├── insiders.py               # [v1.10] Insiders tab (vlmo.db)
@@ -113,13 +113,13 @@ agent/
 | `webui/theme.py` | Theme registry — `render_theme_css()`, `available_themes()` |
 | `webui/services/company.py` | Company data — wraps `build_company_header()` + `compute_all_ratios()` |
 | `webui/services/price.py` | Price data — wraps `ohlcv_series` + `compute_sma` + indicators + Bollinger + Fibonacci |
-| `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch |
+| `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch; [v1.26.1] both payloads cached in `webui_payloads` (data_sources/_cache.py) keyed by the DFP+ITR × COTAHIST composite fingerprint — rebuilds automatically on new demonstrações/cotações, hits carry the ⚡ provenance note |
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/historical.py` | [v1.24] Histórico tab — 17 metrics vs their own 5A history (direction-aware heatmap + band charts + trend), ONE engine-cache-scoped build per ticker w/ TTL | 
 | `webui/services/backtest.py` | [v1.25] Backtest tab — the interactive simulator: parametrized engine (8 strategies w/ editable thresholds, position sizing, stop/take on close, fee guard), the bdi=2 + per-date-dedupe clean price fetch, meta() form catalog + run() payload (KPIs, curves ≤1200 pts, trade log); the skill's static modes stay untouched (shared data layer) |
 | `webui/services/governance.py` | [v1.26] Governança tab — CGVN only (split in fix 1): overview (score KPIs, four-bucket donut, per-chapter bars, score evolution across filings — generic payload) + practices (the per-filing table + filters); degrades with a PT-BR hint naming the sync source |
 | `webui/services/ipe.py` | [v1.26 fix 1] Informações Periódicas tab — the IPE faceted events explorer over `ipe.browse()` (AGO/AGE, avisos, fatos relevantes…), split from Governança into its own tab: CGVN = self-assessment, IPE = what the company filed; anos facet chronological (newest first) |
-| `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
+| `webui/services/proventos.py` | Proventos tab — B3 ∪ DDM merged events (no duplicates) + yield at ex-date; [v1.26.1] the Anúncios de Proventos — CVM (IPE) cross-reference section (data → CVM PDF link) |
 | `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
 | `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
@@ -136,12 +136,12 @@ agent/
 | `webui/services/focus.py` | [v1.12] Mercado page / Focus family — Boletim Focus: juros, inflação, câmbio, atividade, fiscal, externo (DDM) |
 | `webui/services/indexes.py` | [v1.14] Mercado page / Índices family — IBOV, SMLL, IDIV, IFIX, BDRX (b3-index) |
 | `webui/services/inflation.py` | [v1.15] Mercado page / Inflação family — IPCA, IGP-M, INPC (DDM) |
-| `webui/services/insiders.py` | [v1.10] Company Insiders tab — CVM insider trading: transações, mensal, por cargo |
+| `webui/services/insiders.py` | [v1.10] Company Insiders tab — CVM insider trading: transações, mensal, por cargo; [v1.26.1] the cargo/tipo color vocabulary (CARGO_COLORS/TIPO_COLORS — pills across all subtabs) + the Por Tipo subtab |
 | `webui/services/juros.py` | [v1.16] Mercado page / Juros family — Selic, CDI, meta Selic (DDM) |
 | `webui/services/poupanca.py` | [v1.23] Mercado page / Poupança family — the caderneta vs IPCA/CDI (12m compounded) + the per-index view with matrix-before-collapsed-histórico (DDM) |
 | `webui/services/macro.py` | [v1.11] Macro page — BCB SGS + Focus in 8 lazy subtabs; home.py imports its numerics (the no-forked-numerics rule) |
 | `webui/services/options.py` | [v1.8] Company Opções tab — B3 options: chain, IV, activity, positions |
-| `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição |
+| `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição; [v1.26.1 f1] Visão Geral = the CURRENT snapshot (controle × FF doughnut + top-N concentração — no more subtab duplicates) |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |

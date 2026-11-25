@@ -19,6 +19,7 @@ def query(
     company: str = "",
     limit: int = 50,
     by_role: bool = False,
+    by_tipo: bool = False,
     summary: bool = False,
     **kwargs,
 ) -> dict:
@@ -28,6 +29,8 @@ def query(
         company: Ticker, name fragment, or CNPJ. Required.
         limit: Max results. Default: 50.
         by_role: If True, group results by role (Tipo_Cargo).
+        by_tipo: If True, group results by movement type
+            (Tipo_Movimentacao — the [v1.26.1] Por Tipo subtab).
         summary: If True, return net buy/sell summary per month.
 
     Returns:
@@ -50,6 +53,8 @@ def query(
 
         if summary:
             return _query_summary(conn, cnpj, company)
+        elif by_tipo:
+            return _query_by_tipo(conn, cnpj, company, limit)
         elif by_role:
             return _query_by_role(conn, cnpj, company, limit)
         else:
@@ -151,6 +156,45 @@ def _query_by_role(conn, cnpj: str, company: str, limit: int) -> dict:
         "cnpj": cnpj,
         "count": len(rows),
         "by_role": [dict(r) for r in rows],
+    }
+
+
+def _query_by_tipo(conn, cnpj: str, company: str, limit: int) -> dict:
+    """Group insider transactions by movement type (Tipo_Movimentacao).
+
+    [v1.26.1] The Por Tipo subtab's data layer — mirrors _query_by_role
+    but on the movement-type axis: every VLMO vocabulary value ("Compra
+    à vista", "Venda à vista", "Ações de plano de remuneração",
+    "Outras Saídas", "Outras Entradas", "Desligamento/saída", "Posse",
+    "Compra à termo", …) with its count, total quantity, total volume
+    and date range. Volume/quantity only fill for movements that carry
+    them (compras/vendas); posse/desligamento count but sum 0.
+    """
+    rows = conn.execute(
+        """SELECT Tipo_Movimentacao,
+                  COUNT(*) as transaction_count,
+                  SUM(Quantidade) as total_qty,
+                  SUM(Volume) as total_volume,
+                  MIN(Data_Movimentacao) as earliest_date,
+                  MAX(Data_Movimentacao) as latest_date
+           FROM vlmo_movements
+           WHERE REPLACE(REPLACE(REPLACE(CNPJ_Companhia, '.', ''), '/', ''), '-', '') = ?
+           GROUP BY Tipo_Movimentacao
+           ORDER BY transaction_count DESC
+           LIMIT ?""",
+        (cnpj, limit),
+    ).fetchall()
+
+    if not rows:
+        return {"status": "not_found", "error": f"No insider movements for '{company}'",
+                "cnpj": cnpj}
+
+    return {
+        "status": "ok",
+        "company": company,
+        "cnpj": cnpj,
+        "count": len(rows),
+        "by_tipo": [dict(r) for r in rows],
     }
 
 

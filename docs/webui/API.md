@@ -151,7 +151,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `proventos` | `overview`, `historico`, `anual` | Company · Proventos tab |
 | `options` | `overview`, `chain`, `iv`, `activity`, `positions` | Company · Opções tab |
 | `shareholders` | `overview`, `holders`, `free_float`, `equity` | Company · Acionistas tab |
-| `insiders` | `overview`, `transactions`, `monthly`, `by_role` | Company · Insiders tab |
+| `insiders` | `overview`, `transactions`, `monthly`, `by_role`, `by_tipo` | Company · Insiders tab ([v1.26.1] `by_tipo` = the Por Tipo subtab — the by_role twin on the Tipo_Movimentacao axis; cargo/tipo pills + per-tipo colored charts) |
 | `historical` | `overview`, `valuation`, `profitability`, `leverage` | Company · Histórico tab [v1.24] |
 | `governance` | `overview` | Company · Governança tab [v1.26] — Visão Geral only; Práticas is the dedicated `/governance/practices` endpoint above. The Informações Periódicas tab [v1.26 fix 1] has NO registry key — it is the dedicated `/ipe/events` endpoint, one custom renderer |
 | `macro` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `retorno_real`, `focus`, `curva` | Macro page (8 lazy subtabs) |
@@ -237,7 +237,7 @@ Company header — returns the 3-part header HTML fragment (identity card + 4 re
 Tab content — returns the HTML fragment for a specific company tab.
 
 **Parameters:**
-- `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `proventos` | `options` | `shareholders` | `insiders` — the company page's 8 tabs
+- `tab`: `visao_geral` | `preco` | `financials` | `valuation` | `historical` | `proventos` | `options` | `shareholders` | `insiders` | `governance` | `ipe` | `backtest` — the company page's 12 tabs
 
 ---
 

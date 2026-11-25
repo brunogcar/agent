@@ -52,7 +52,10 @@ data_sources/
 │   ├── cotahist/                  # B3 official historical trade data — equities (cotahist table)
 │   ├── cotahist_derivatives/      # B3 options + term (cotahist_derivatives table — SAME cotahist.db,
 │   │                              # populated during the standard COTAHIST sync pass). No sync_engine.
-│   ├── dividends/                 # Corporate actions (cash/stock dividends, subscriptions)
+│   ├── dividends/                 # Corporate actions (cash/stock dividends, subscriptions).
+│   │                               # [v1.26.1] The DPA engine (skills/cvm/calculations/engines/
+│   │                               # dividends.py) reads this SHARE-CLASS CORRECTED (one row per
+│                               #   event — ISIN-matched) and MERGES ddm/dividends (deduped)
 │   └── index/                     # B3 indices (IBOV, SMLL, BDRX, IFIX, IDIV + 26 catalogued)
 │
 └── bcb/                           # BCB domain (Brazilian Central Bank)

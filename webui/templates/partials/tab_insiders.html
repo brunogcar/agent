@@ -1,7 +1,7 @@
 {# webui/templates/partials/tab_insiders.html — Insiders tab with subtabs.
 
 [WebUI v1.10] The CVM insider-trading view — a reorganized take on the
-static PETR4_insider_dashboard.html (4 flat tabs → 4 subtabs organized
+static PETR4_insider_dashboard.html (4 flat tabs → subtabs organized
 around questions; the static Overview duplicated the identity card +
 price chart the WebUI already renders above the tabs):
 
@@ -9,12 +9,17 @@ price chart the WebUI already renders above the tabs):
   Net Volume / Transações — janela de 24 meses — / Última Movimentação) +
   o chart de volume líquido mensal + preview das 20 últimas movimentações.
 - Movimentações: as 120 movimentações mais recentes (sortable, tooltip no
-  Tipo — compra/venda/posse/desligamento) + o volume líquido acumulado em
-  linha (o estático desenhava sobre apenas 10 pontos).
+  Tipo — compra/venda/posse/desligamento; [v1.26.1] cargo/tipo em selos
+  coloridos) + o volume líquido acumulado em linha (o estático desenhava
+  sobre apenas 10 pontos).
 - Por Cargo: agregado por Tipo_Cargo em TODO o histórico (a tabela do
   estático somava só "Compra"/"Venda" exatos — perdendo os "Compra à
   vista" — e o Net Volume exibia floats crus; ambos corrigidos no motor
-  de queries VLMO e formatados aqui) + barras comprado vs vendido.
+  de queries VLMO e formatados aqui; [v1.26.1] cargo em selo colorido) +
+  barras comprado vs vendido.
+- Por Tipo [v1.26.1]: agregado por Tipo_Movimentacao em TODO o histórico
+  (selos + barras na cor de cada tipo — o gêmeo do Por Cargo no eixo do
+  tipo de movimentação).
 - Mensal: 24 meses, tabela sortable + chart de net mensal (verde/vermelho).
 
 Data: InsiderService (webui/services/insiders.py) over the same query
@@ -27,6 +32,7 @@ valSectionsHtml / mountValCharts in app.js) via /sections/insiders:<sub>.
     <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadInsSubtab('overview')" data-lazy="ins:overview">Visão Geral</button>
     <button class="subtab-btn" :class="{ 'active': subtab === 'transactions' }" @click="subtab='transactions'" onclick="loadInsSubtab('transactions')" data-lazy="ins:transactions">Movimentações</button>
     <button class="subtab-btn" :class="{ 'active': subtab === 'by_role' }" @click="subtab='by_role'" onclick="loadInsSubtab('by_role')" data-lazy="ins:by_role">Por Cargo</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'by_tipo' }" @click="subtab='by_tipo'" onclick="loadInsSubtab('by_tipo')" data-lazy="ins:by_tipo">Por Tipo</button>
     <button class="subtab-btn" :class="{ 'active': subtab === 'monthly' }" @click="subtab='monthly'" onclick="loadInsSubtab('monthly')" data-lazy="ins:monthly">Mensal</button>
   </nav>
 
@@ -42,6 +48,11 @@ valSectionsHtml / mountValCharts in app.js) via /sections/insiders:<sub>.
 
   {# ── Por Cargo ── #}
   <div x-show="subtab === 'by_role'" style="display: none;" id="tab-ins-by_role" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Por Tipo [v1.26.1] — the by_role twin on the movement-type axis ── #}
+  <div x-show="subtab === 'by_tipo'" style="display: none;" id="tab-ins-by_tipo" data-ticker="{{ ticker }}">
     <div class="loading">{{ t("common.loading") }}</div>
   </div>
 

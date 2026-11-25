@@ -33,6 +33,20 @@ Provides:
     failure — the UI can now tell "checked, no warnings" apart from
     "couldn't check" (the old bare except showed a false all-clear).
   - *_error strings are PT-BR (raw exceptions logged server-side).
+
+[WebUI v1.26.1] PAYLOAD CACHE: overview() and statements() were rebuilt
+from scratch on every visit — the TTM (5 windows × ~30 engines), annual
+(10 years), quarterly (8), WACC/DuPont/Altman and red-flags builds — even
+though the result only changes when new demonstrações (DFP/ITR) or
+cotações sync. Both now ride data_sources._cache's webui_payloads table:
+the payload is stored keyed by the company's COMPOSITE fingerprint
+(DFP+ITR × COTAHIST — see _cache.webui_fingerprint), which embeds
+MAX(data_fim_exerc): the trimester reference. New filing/new quote →
+fingerprint changes → automatic rebuild. Cache hits return in ~1ms with
+a cache_note provenance line (the ⚡ line the UI shows); a fingerprint
+that can't be resolved (data sources missing) skips the cache entirely.
+This is also the foundation for the future cross-company comparador —
+per-(ticker, trimestre) metrics are now materialized in one place.
 """
 from __future__ import annotations
 
@@ -58,8 +72,40 @@ _QUARTERLY_PERIODS = 8
 class FinancialsService:
     """Financial data service — wraps financials modes directly."""
 
+    # [v1.26.1] Payload-cache namespaces (data_sources._cache.webui_payloads).
+    _NS_OVERVIEW = "financials_overview"
+    _NS_STATEMENTS = "financials_statements"
+
+    @staticmethod
+    def _fingerprint(tk: str) -> str | None:
+        """Composite DFP+ITR × COTAHIST fingerprint (None → skip cache)."""
+        try:
+            from data_sources import _cache as _dc
+            return _dc.webui_fingerprint(tk)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cache_note(cached_at: str | None) -> str | None:
+        """PT-BR provenance line for a cache hit (None when not a hit)."""
+        if not cached_at:
+            return None
+        ts = str(cached_at)
+        try:
+            from datetime import datetime as _dt
+            ts = _dt.fromisoformat(ts).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+        return (f"Pré-calculado em {ts} — os indicadores só mudam com "
+                "novas demonstrações (DFP/ITR) ou cotações; recalculam "
+                "automaticamente após a sincronização.")
+
     def overview(self, ticker: str) -> dict[str, Any]:
         """Overview data: TTM + annual + quarterly summaries + risk metrics.
+
+        [v1.26.1] Payload-cached (see module docstring): a hit returns the
+        stored JSON + the ⚡ cache_note; a miss builds (the v1.3 fix 1
+        body, unchanged) and stores.
 
         Returns the data needed for:
           - Resultado TTM table (real trailing-twelve-months, latest quarter)
@@ -72,6 +118,32 @@ class FinancialsService:
           - Red Flags (server-side accounting consistency checks)
         """
         tk = ticker.upper()
+
+        # ── [v1.26.1] payload cache ──
+        fp = self._fingerprint(tk)
+        if fp:
+            try:
+                from data_sources import _cache as _dc
+                cached = _dc.get_webui_payload(self._NS_OVERVIEW, tk, fp)
+            except Exception:
+                cached = None
+            if cached is not None:
+                note = self._cache_note(cached.pop("_cached_at", None))
+                if note:
+                    cached["cache_note"] = note
+                return cached
+
+        result = self._build_overview(tk)
+
+        if fp and "_error" not in result:
+            try:
+                from data_sources import _cache as _dc
+                _dc.set_webui_payload(self._NS_OVERVIEW, tk, fp, result)
+            except Exception:
+                pass
+        return result
+
+    def _build_overview(self, tk: str) -> dict[str, Any]:
         result: dict[str, Any] = {"ticker": tk}
 
         # ── 1. Latest TTM (real trailing twelve months) ──
@@ -227,6 +299,11 @@ class FinancialsService:
                    periods: int | None = None) -> dict[str, Any]:
         """All 5 statements (BPA/BPP/DRE/DFC/DVA) in ONE SQL pass.
 
+        [v1.26.1] Payload-cached like overview() (same composite
+        fingerprint; the columnar payload only changes with new
+        DFP/ITR filings). No cache_note on hits — the Demonstrações
+        subtab has no provenance line, the data just arrives fast.
+
         [v1.3 fix 1] Replaces the per-statement mode calls (bpa/bpp/dre/dfc/dva —
         5 SQL passes, cumulative quarterly values) with the single-fetch
         helpers used by the static dashboard's financials mode:
@@ -261,6 +338,32 @@ class FinancialsService:
         n = periods if periods else (10 if period == "annual" else 20)
         n = max(1, min(int(n), 40))
 
+        # ── [v1.26.1] payload cache ──
+        fp = self._fingerprint(tk)
+        cache_key = f"{tk}|{period}|{n}"
+        if fp:
+            try:
+                from data_sources import _cache as _dc
+                cached = _dc.get_webui_payload(self._NS_STATEMENTS, cache_key, fp)
+            except Exception:
+                cached = None
+            if cached is not None:
+                cached.pop("_cached_at", None)
+                return cached
+
+        result = self._build_statements(tk, period, n)
+
+        if fp and isinstance(result, dict) and result.get("status") == "ok":
+            try:
+                from data_sources import _cache as _dc
+                _dc.set_webui_payload(self._NS_STATEMENTS, cache_key, fp, result)
+            except Exception:
+                pass
+        return result
+
+    def _build_statements(self, tk: str, period: str,
+                          n: int) -> dict[str, Any]:
+        """The v1.3 fix 1 statements build (one SQL pass + columnar reshape)."""
         try:
             from skills._base import engine_cache_scope
             from skills.cvm.financials.fetchers import (

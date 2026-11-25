@@ -681,11 +681,96 @@ class ProventosService:
                     },
                 })
 
+        # ── [v1.26.1] IPE announcements — the CVM cross-reference ──
+        # The events above are the per-share sources (B3 ∪ DDM agenda).
+        # IPE carries the OFFICIAL filings (atas, avisos aos acionistas)
+        # announcing each provento — no parsed per-share rate, but the
+        # ground truth of what was announced and when. Surfacing them
+        # here shows what the per-share sources may have missed (the
+        # "way less proventos than it actually had" gap) with the
+        # document link for manual confirmation.
+        ipe_rows = self._ipe_announcements(tk)
+        if ipe_rows:
+            sections.append(self._ipe_section(ipe_rows))
+
         return {"ticker": tk, "status": "ok", "kpis": kpis, "sections": sections}
 
-    # ══════════════════════════════════════════════════════════════════════
-    # Subtab 2: Histórico (complete list)
-    # ══════════════════════════════════════════════════════════════════════
+    # ── [v1.26.1] IPE announcements (CVM) ──────────────────────────────────
+
+    def _ipe_announcements(self, tk: str) -> list[dict]:
+        """Proventos-related IPE filings for the ticker's CNPJ, newest first.
+
+        Matches the CVM category taxonomy: the dividend family lives in
+        the categoria "Dividendos, Juros sobre o Capital Próprio e
+        Outros" plus avisos/atas whose tipo mentions dividendos/juros.
+        Degrades to [] (missing ipe.db / bridge miss / any error — the
+        section simply doesn't render).
+        """
+        try:
+            from data_sources.cvm._db import connect_ipe
+            from data_sources.cvm._bridge import _resolve_via_bridge
+        except ImportError:
+            return []
+        try:
+            cnpj, _cd = _resolve_via_bridge(tk)
+        except Exception:
+            cnpj = None
+        if not cnpj:
+            return []
+        try:
+            conn = connect_ipe(read_only=True)
+        except Exception:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT data_entrega, categoria, tipo, assunto, link_download "
+                "FROM eventos WHERE cnpj = ? AND ("
+                "  lower(categoria) LIKE '%dividend%'"
+                "  OR lower(tipo) LIKE '%dividend%'"
+                "  OR lower(categoria) LIKE '%juros%capital%'"
+                "  OR lower(tipo) LIKE '%juros%capital%')"
+                " ORDER BY data_entrega DESC LIMIT 40",
+                (cnpj,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            _log_err("proventos ipe announcements", e)
+            return []
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _ipe_section(rows: list[dict]) -> dict[str, Any]:
+        """'Anúncios de Proventos — CVM (IPE)' table section."""
+        table_rows: list[list[Any]] = []
+        for r in rows:
+            entrega = r.get("data_entrega") or "—"
+            assunto = (r.get("assunto") or "").strip()
+            link = (r.get("link_download") or "").strip()
+            table_rows.append([
+                {"text": _fmt_date(entrega) if entrega != "—" else "—",
+                 "tooltip": assunto or None, "link": link or None},
+                r.get("categoria") or "—",
+                r.get("tipo") or "—",
+                assunto or "—",
+            ])
+        return {
+            "type": "table",
+            "title": f"Anúncios de Proventos — CVM ({len(rows)})",
+            "description": (
+                "Comunicados oficiais entregues à CVM (IPE — Informações "
+                "Periódicas e Eventuais) que anunciam proventos: atas e "
+                "avisos com dividendos/juros sobre capital próprio. É a "
+                "referência cruzada dos eventos acima — se um anúncio "
+                "não tem evento correspondente na lista, o valor por ação "
+                "está no documento (a data abre o PDF no site da CVM)."
+            ),
+            "columns": ["Data Entrega", "Categoria", "Tipo", "Assunto"],
+            "rows": table_rows,
+            "note": "Fonte: CVM IPE — filtrada por categoria/tipo de "
+                    "proventos. Não soma nos gráficos (sem valor por ação "
+                    "estruturado).",
+        }
 
     def historico(self, ticker: str) -> dict[str, Any]:
         """Full event list + corporate actions + subscriptions."""

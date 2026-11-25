@@ -8,7 +8,9 @@ but organized around the questions an investor asks about ownership, not
 around the static report's four flat tabs (its Overview duplicated the
 identity card + price chart the WebUI already renders above the tabs):
 
-  overview   → "who controls, who floats?"  (KPIs + evolução do free float)
+  overview   → "who controls, who floats?"  (KPIs + the CURRENT snapshot —
+               controle × free float + concentração top-N; [v1.26.1 fix1]
+               the evolução charts moved out — they live in free_float)
   holders    → "who are the shareholders?"  (full posição acionária table
                with % ON / % PN / % Total — the static showed only the top-5
                % Total, which hides that FRE percentages are per class)
@@ -396,9 +398,16 @@ class ShareholdersService:
         """The ownership state on one screen.
 
         6 KPI cards (% Free Float / Total Acionistas / PL Total /
-        Capital Social / Ações Totais / Maior Acionista) + the free float
-        evolution charts + a Mercado|Patrimônio two-column + the top-5
-        preview table.
+        Capital Social / Ações Totais / Maior Acionista) + the CURRENT
+        ownership snapshot + a Mercado|Patrimônio two-column.
+
+        [v1.26.1 fix1] This view used to repeat the other subtabs — the
+        two evolution charts lived (still live) in Free Float and the
+        top-5 preview table in Posição Acionária. The overview now shows
+        what only it can, the CURRENT structure: a controle × free float
+        doughnut + a top-N declared-holder concentration bar (measured in
+        quantities ÷ total emitido — robust to the per-class % Total
+        declarations that can sum past 100%).
         """
         tk = (ticker or "").upper()
         ff = _safe(_fre_free_float, company=tk)
@@ -483,9 +492,107 @@ class ShareholdersService:
 
         sections: list[dict[str, Any]] = []
 
-        # Evolution charts (2-up grid) — only with 2+ periods.
-        if ff_ok:
-            sections.extend(self._ff_charts(ff["periods"]))
+        # [v1.26.1 fix1] The CURRENT ownership snapshot — the two
+        # evolution charts ("Evolução do Free Float (%)" / "Evolução de
+        # Acionistas (PF/PJ/Inst.)") and the top-5 preview table used to
+        # render here too, duplicating the Free Float and Posição
+        # Acionária subtabs one click away. An overview answers "who
+        # controls, who floats?" TODAY:
+        #   1. controle × free float doughnut (the declared % circulação
+        #      vs the rest — control block + treasury + undeclared);
+        #   2. top-N declared-holder concentration, in quantities ÷ total
+        #      emitido (NOT % Total — amended per-class declarations can
+        #      double-count; quantities can't), with the declared free
+        #      float as the reference bar. "Outros" (the FRE's own
+        #      free-float aggregate row) is excluded from the tops.
+        ff_pct = latest_ff.get("pct_total_circulacao")
+
+        if ff_ok and ff_pct is not None:
+            ff_v = max(0.0, min(100.0, float(ff_pct)))
+            sections.append(chart_section(
+                "Estrutura de Propriedade — Atual",
+                {
+                    "type": "doughnut",
+                    "data": {
+                        "labels": ["Free Float", "Controle / Demais"],
+                        "datasets": [{
+                            "data": [round(ff_v, 2),
+                                      round(100.0 - ff_v, 2)],
+                            "backgroundColor": [_COLOR_FF, "#64748b"],
+                            "borderColor": "#ffffff",
+                            "borderWidth": 2,
+                        }],
+                    },
+                    "options": {"cutout": "60%"},
+                },
+                description=(
+                    "Retrato ATUAL da propriedade: free float declarado "
+                    "no FRE"
+                    + (f" (ref: {ff_ref})."
+                       if ff_ref not in ("-", None, "") else ".")
+                    + " O restante agrupa bloco de controle, tesouraria e "
+                    "demais posições não declaradas. As evoluções "
+                    "históricas ficam na subaba Free Float."
+                ),
+            ))
+
+        if sh_ok and cap_ok and qtd_total_sh:
+            declared = sorted(
+                (s for s in sh["shareholders"]
+                 if (s.get("acionista") or "").strip().lower() != "outros"
+                 and (s.get("qtd_total") or 0) > 0),
+                key=lambda s: s.get("qtd_total") or 0, reverse=True)
+            if declared:
+                total_sh = float(qtd_total_sh)
+                conc_labels: list[str] = []
+                conc_values: list[float] = []
+                for n in (1, 5, 10):
+                    if len(declared) >= n:
+                        qsum = sum((s.get("qtd_total") or 0)
+                                   for s in declared[:n])
+                        conc_labels.append(f"Top {n}")
+                        conc_values.append(
+                            round(qsum / total_sh * 100.0, 2))
+                if ff_pct is not None:
+                    conc_labels.append("Free Float")
+                    conc_values.append(
+                        round(max(0.0, float(ff_pct)), 2))
+                if conc_labels:
+                    sections.append(chart_section(
+                        "Concentração — Maiores Acionistas",
+                        {
+                            "type": "bar",
+                            "data": {
+                                "labels": conc_labels,
+                                "datasets": [{
+                                    "label": "% do total de ações (ON+PN)",
+                                    "data": conc_values,
+                                    "backgroundColor": [
+                                        _COLOR_FF if lbl == "Free Float"
+                                        else "#f59e0b"
+                                        for lbl in conc_labels],
+                                    "borderWidth": 0,
+                                }],
+                            },
+                            "options": {"scales": {
+                                "y": {"beginAtZero": True, "title": {
+                                    "display": True,
+                                    "text": "% do total (ON+PN)"}},
+                                "x": {"ticks": {"maxTicksLimit": 6}},
+                            }},
+                        },
+                        description=(
+                            "Fatia do capital detida pelos N maiores "
+                            "acionistas DECLARADOS no FRE, medida por "
+                            "quantidade (qtd_total ÷ total emitido) — "
+                            "robusta às declarações por classe que fazem "
+                            "% Total somar mais de 100%. A linha agregada "
+                            "\"Outros\" está excluída; a barra Free Float "
+                            "é o percentual declarado em circulação, para "
+                            "referência. Lista completa na subaba Posição "
+                            "Acionária."
+                        ),
+                    ))
 
         # Mercado | Patrimônio blocks.
         if ff_ok or cap_ok or eq_ok:
@@ -527,24 +634,6 @@ class ShareholdersService:
             elif left_rows:
                 sections.append(two_column_section(
                     "Mercado (free float)", left_rows, "", []))
-
-        # Top-5 preview (the detail lives in Posição Acionária).
-        if sh_ok:
-            top5 = sh["shareholders"][:5]
-            sections.append(table_section(
-                "Principais Acionistas",
-                ["Acionista", "% Total", "Qtde Total", "Controlador"],
-                [[_trunc(s.get("acionista", "") or "—", 40),
-                  _pct(s.get("pct_total")),
-                  fmt_int(s.get("qtd_total")),
-                  "Sim" if s.get("controlador") else "Não"] for s in top5],
-                description=(
-                    "Top 5 por % Total do capital (ON+PN) — lista completa "
-                    "na subaba Posição Acionária."
-                ),
-                note=(f"Data de referência: "
-                      f"{_fmt_date(sh.get('data_referencia'))}."),
-            ))
 
         return {"ticker": tk, "status": "ok", "kpis": kpis,
                 "sections": sections}

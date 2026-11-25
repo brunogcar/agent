@@ -2157,3 +2157,47 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
   .gov-sel { max-width: none; }
   .gov-cap, .gov-tip { max-width: 130px; }
 }
+
+/* ═══ [WebUI v1.26.1] Company page fixes & tweaks ════════════════════════
+   1. Collapsible indicator cards (Indicadores subtab — open by default,
+      click the header/chevron to fold; the canvas keeps its Chart.js
+      instance, only the container hides, so re-opening costs nothing).
+   2. .ins-pill — the insiders cargo/tipo vocabulary pills (each value
+      its own color, shared by Movimentações / Por Cargo / Por Tipo).
+   3. .fin-cache-note — the Financeiro "pré-calculado" provenance line. */
+
+.collapsible-chart > .chart-header {
+  cursor: pointer; user-select: none;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+.collapsible-chart > .chart-header .reg-title { flex: 1 1 auto; }
+.chart-collapse-btn {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px); color: var(--color-text-sec);
+  font-size: 12px; line-height: 1; cursor: pointer;
+  transition: transform 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.chart-collapse-btn:hover,
+.collapsible-chart > .chart-header:hover .chart-collapse-btn {
+  color: var(--color-text); border-color: var(--color-brand);
+}
+.collapsible-chart > .chart-header .chart-collapse-btn[aria-expanded="false"],
+.collapsible-chart.collapsed .chart-collapse-btn { transform: rotate(-90deg); }
+.collapsible-chart.collapsed > .chart-container { display: none; }
+.collapsible-chart.collapsed { border-style: dashed; }
+
+.ins-pill {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid; font-size: 10.5px; font-weight: 700;
+  white-space: nowrap; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; vertical-align: middle;
+}
+
+.fin-cache-note {
+  margin: 0 0 10px 0; font-size: 11px;
+  color: var(--color-text-sec);
+}
+.fin-cache-note .fin-cache-bolt { color: #0d9488; font-weight: 700; }

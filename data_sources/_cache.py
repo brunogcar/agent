@@ -135,6 +135,19 @@ CREATE TABLE IF NOT EXISTS engine_cache_meta (
     cached_at       TEXT NOT NULL,
     PRIMARY KEY (engine_name, cnpj)
 );
+
+-- [v1.26.1] WebUI payload cache — whole section payloads (the Financeiro
+-- overview/statements builds) cached under (namespace, key) with the
+-- company fingerprint they were computed from. Rebuilds automatically
+-- when the fingerprint changes (new DFP/ITR filing or cotação).
+CREATE TABLE IF NOT EXISTS webui_payloads (
+    namespace     TEXT NOT NULL,
+    key           TEXT NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    computed_at   TEXT NOT NULL,
+    PRIMARY KEY (namespace, key)
+);
 """
 
 
@@ -377,20 +390,50 @@ _SGS_ENGINE_TO_SERIES: dict[str, int] = {
 
 
 def _get_dividends_fingerprint(ticker: str) -> str | None:
-    """Returns MAX(data_pagamento) for dividends — only changes when a new dividend is paid."""
+    """Dividends fingerprint — B3 cash_dividends × DDM agenda combined.
+
+    [v1.26.1] FIX: this used to import the B3 catalog and query a
+    ``proventos`` table that only exists in the DDM schema — every call
+    raised "no such table", returned None, and the dividends engine
+    cache was NEVER valid (DPA recomputed on every request). Now it
+    reads what actually exists: MAX(event date) from B3's
+    cash_dividends + MAX(payment_date) from DDM's dividends (the DDM
+    agenda is the second source the DPA engine merged in v1.26.1 —
+    both must be able to invalidate the cache).
+    """
+    parts: list[str] = []
     try:
-        from data_sources.b3.dividends.catalog import connect as connect_div
-        conn = connect_div(read_only=True)
+        from data_sources.b3.dividends.catalog import connect as connect_b3
+        conn = connect_b3(read_only=True)
         try:
             row = conn.execute(
-                "SELECT MAX(data_pagamento) as max_date FROM proventos WHERE ticker = ?",
+                "SELECT MAX(COALESCE(payment_date, last_date_prior, "
+                "approved_on)) as max_date FROM cash_dividends "
+                "WHERE ticker = ?",
                 (ticker,),
             ).fetchone()
-            return row["max_date"] if row and row["max_date"] else None
+            if row and row["max_date"]:
+                parts.append("b3:" + str(row["max_date"]))
         finally:
             conn.close()
     except Exception:
-        return None
+        pass
+    try:
+        from data_sources.ddm.dividends.catalog import connect as connect_ddm
+        conn = connect_ddm(read_only=True)
+        try:
+            row = conn.execute(
+                "SELECT MAX(payment_date) as max_date FROM dividends "
+                "WHERE ticker = ?",
+                (ticker,),
+            ).fetchone()
+            if row and row["max_date"]:
+                parts.append("ddm:" + str(row["max_date"]))
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return "|".join(parts) if parts else None
 
 
 def get_current_fingerprint_uncached(engine_name: str, company: str) -> str | None:
@@ -644,6 +687,149 @@ def set_cached_periods(engine_name: str, company: str, periods: list | dict,
                 conn.close()
     except Exception:
         pass  # never break on cache write failure
+
+
+# ── WebUI payload cache (v1.26.1) ────────────────────────────────────────────
+# Whole-payload caching for the WebUI's expensive section builders (the
+# Financeiro overview/statements builds). Keyed by (namespace, key) and
+# validated against a COMPOSITE company fingerprint — the DFP+ITR filing
+# fingerprint × the COTAHIST quote fingerprint — so a cached payload
+# rebuilds automatically when either new demonstrações or new cotações
+# sync. The fingerprint string embeds MAX(data_fim_exerc) (the trimester
+# reference the user asked the cache to carry) — "store in db with
+# reference to trimester" is literally the fingerprint column.
+
+def webui_fingerprint(ticker: str) -> str | None:
+    """Composite fingerprint for WebUI payload caches (60s in-memory TTL).
+
+    DFP+ITR (the statements side — TTM/annual/quarterly/red-flags all
+    derive from it) joined with COTAHIST (the quotes side — WACC/DuPont/
+    Altman + year-end prices). Either side syncing new data invalidates.
+    Returns None when NEITHER side resolves (unknown ticker everywhere →
+    caller skips the cache entirely, builds fresh every time).
+    """
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return None
+    key = f"webui_composite|{tk}"
+    import time as _time
+    now = _time.time()
+    with _aux_lock:
+        hit = _fp_cache.get(key)
+        if hit and now - hit[1] < _FP_TTL:
+            return hit[0]
+    parts: list[str] = []
+    try:
+        cnpj = resolve_cnpj(tk)
+    except Exception:
+        cnpj = None
+    if cnpj:
+        try:
+            fp = _get_dfp_fingerprint(cnpj)
+            if fp:
+                parts.append("dfp:" + fp)
+        except Exception:
+            pass
+    try:
+        fp = _get_cotahist_fingerprint(tk)
+        if fp:
+            parts.append("cot:" + fp)
+    except Exception:
+        pass
+    composite = "|".join(parts) if parts else None
+    with _aux_lock:
+        _fp_cache[key] = (composite, now)
+    return composite
+
+
+def get_webui_payload(namespace: str, key: str,
+                      fingerprint: str | None) -> dict | None:
+    """Read a cached WebUI payload. None on miss / mismatch / any error.
+
+    The fingerprint match is the whole contract: a row cached under a
+    different fingerprint (new filings or quotes synced since) is a
+    miss, not a stale hit. On a hit the payload gains ``_cached_at``
+    (the ISO computed_at from the row) so callers can surface a
+    provenance note; strip it before re-storing.
+    """
+    if not is_enabled() or not fingerprint:
+        return None
+    try:
+        with _lock:
+            conn = connect(read_only=True)
+            try:
+                row = conn.execute(
+                    "SELECT fingerprint, payload_json, computed_at "
+                    "FROM webui_payloads WHERE namespace = ? AND key = ?",
+                    (namespace, key),
+                ).fetchone()
+            finally:
+                conn.close()
+        if row is None or row["fingerprint"] != fingerprint:
+            return None
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            return None
+        payload["_cached_at"] = row["computed_at"]
+        return payload
+    except Exception:
+        return None
+
+
+def set_webui_payload(namespace: str, key: str, fingerprint: str | None,
+                      payload: dict) -> str | None:
+    """Store a WebUI payload. Returns the stored computed_at (ISO) or None.
+
+    Never raises — a cache write failure degrades to "no cache", the
+    caller's payload is already built either way. Payloads are capped at
+    ~4 MB of JSON (defensive: a pathological payload must not bloat
+    engine_cache.db).
+    """
+    if not is_enabled() or not fingerprint or not isinstance(payload, dict):
+        return None
+    try:
+        payload_json = json.dumps(payload, cls=_StrictJSONEncoder)
+    except Exception:
+        return None
+    if len(payload_json) > 4_000_000:
+        return None
+    now = datetime.now().isoformat()
+    try:
+        with _lock:
+            conn = connect(read_only=False)
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO webui_payloads "
+                    "(namespace, key, fingerprint, payload_json, computed_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (namespace, key, fingerprint, payload_json, now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return now
+    except Exception:
+        return None
+
+
+def clear_webui_payloads(namespace: str | None = None) -> int:
+    """Clear WebUI payload cache rows (all, or one namespace)."""
+    try:
+        with _lock:
+            conn = connect(read_only=False)
+            try:
+                if namespace:
+                    cur = conn.execute(
+                        "DELETE FROM webui_payloads WHERE namespace = ?",
+                        (namespace,))
+                else:
+                    cur = conn.execute("DELETE FROM webui_payloads")
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+    except Exception:
+        return 0
 
 
 # ── Maintenance ──────────────────────────────────────────────────────────────

@@ -336,6 +336,10 @@ def _register_builtins() -> None:
              family="insiders", label="Insiders — Movimentações")
     register("insiders:by_role", _bind(InsiderService, "by_role"),
              family="insiders", label="Insiders — Por Cargo")
+    # [v1.26.1] Por Tipo — the by_role twin on the movement-type axis
+    # (query engine by_tipo=True; tipo pills + per-tipo colored bars).
+    register("insiders:by_tipo", _bind(InsiderService, "by_tipo"),
+             family="insiders", label="Insiders — Por Tipo")
     register("insiders:monthly", _bind(InsiderService, "monthly"),
              family="insiders", label="Insiders — Mensal")
 
