@@ -39,7 +39,11 @@ router = APIRouter(prefix="/webui", tags=["webui-pages"])
 # Tabs that have a page shell (must match api.py's _ALLOWED_TABS).
 # [v1.9] shareholders. [v1.10] insiders. [v1.24] historical (the
 # company-vs-its-own-history tab — between Valuation and Proventos).
-_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "historical", "proventos", "options", "shareholders", "insiders", "backtest"}
+# [v1.26] governance (Governança — CGVN) + ipe (Informações Periódicas
+# — the IPE event index, SPLIT into its own tab in v1.26 fix 1:
+# "both provide info, but they are not supposed to be together,
+# different purpose"; both between Insiders and Backtest).
+_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe", "backtest"}
 
 
 def _ctx(request: Request, **extra) -> dict:

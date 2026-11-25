@@ -37,6 +37,8 @@ agent/
 │   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
 │   │   ├── historical.py             # [v1.24] Histórico tab (17 metrics × 5A — heatmap/bands/trend)
 │   │   ├── backtest.py               # [v1.25] Backtest tab (parametrized engine + meta catalog)
+│   │   ├── governance.py             # [v1.26] Governança tab (CGVN score/práticas — the self-assessment)
+│   │   ├── ipe.py                     # [v1.26 fix 1] Informações Periódicas tab (the IPE events explorer — its own tab)
 │   │   ├── proventos.py              # Proventos tab (dividends.db + yield at ex-date)
 │   │   ├── options.py                # [v1.8] Opções tab (chain, activity, IV, positions)
 │   │   ├── shareholders.py           # [v1.9] Acionistas tab (fre.db + dfp.db)
@@ -115,6 +117,8 @@ agent/
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/historical.py` | [v1.24] Histórico tab — 17 metrics vs their own 5A history (direction-aware heatmap + band charts + trend), ONE engine-cache-scoped build per ticker w/ TTL | 
 | `webui/services/backtest.py` | [v1.25] Backtest tab — the interactive simulator: parametrized engine (8 strategies w/ editable thresholds, position sizing, stop/take on close, fee guard), the bdi=2 + per-date-dedupe clean price fetch, meta() form catalog + run() payload (KPIs, curves ≤1200 pts, trade log); the skill's static modes stay untouched (shared data layer) |
+| `webui/services/governance.py` | [v1.26] Governança tab — CGVN only (split in fix 1): overview (score KPIs, four-bucket donut, per-chapter bars, score evolution across filings — generic payload) + practices (the per-filing table + filters); degrades with a PT-BR hint naming the sync source |
+| `webui/services/ipe.py` | [v1.26 fix 1] Informações Periódicas tab — the IPE faceted events explorer over `ipe.browse()` (AGO/AGE, avisos, fatos relevantes…), split from Governança into its own tab: CGVN = self-assessment, IPE = what the company filed; anos facet chronological (newest first) |
 | `webui/services/proventos.py` | Proventos tab — dividends.db queries + yield at ex-date |
 | `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |

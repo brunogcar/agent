@@ -94,6 +94,32 @@
             hx-swap="innerHTML">
       {{ t("company.insiders") }}
     </button>
+    {# [v1.26] Governança tab — CGVN (Código de Melhores Práticas:
+       score, 54 práticas, evolução por exercício) — the
+       SELF-ASSESSMENT source. [v1.26 fix 1] Informações Periódicas
+       (IPE — the material-events index) SPLIT into its OWN tab right
+       after this one: "both provide info, but they are not supposed
+       to be together, different purpose". Between Insiders and
+       Backtest: estrutura → pessoas → governança → eventos →
+       simular. #}
+    <button class="tab-btn" :class="{ 'active': tab === 'governance' }"
+            @click="tab='governance'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/governance"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.governance") }}
+    </button>
+    {# [v1.26 fix 1] Informações Periódicas tab — the IPE event index
+       (AGO/AGE, avisos aos acionistas, fatos relevantes, calendário
+       de eventos corporativos — the faceted events explorer, its own
+       tab). What the company FILED, next to how it self-assesses. #}
+    <button class="tab-btn" :class="{ 'active': tab === 'ipe' }"
+            @click="tab='ipe'"
+            hx-get="/api/webui/company/{{ ticker }}/tab/ipe"
+            hx-target="#tab-content"
+            hx-swap="innerHTML">
+      {{ t("company.ipe") }}
+    </button>
     {# [v1.25] Backtest tab — the interactive simulator (reference:
        PETR4_backtest_dashboard.html / skills/cvm/backtest, reborn with
        parameters, scenarios and comparison). Last tab: the reading

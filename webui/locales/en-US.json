@@ -26,6 +26,8 @@
     "options": "Options",
     "shareholders": "Shareholders",
     "insiders": "Insiders",
+    "governance": "Governance",
+    "ipe": "Periodic Information",
     "backtest": "Backtest"
   },
   "sync": {

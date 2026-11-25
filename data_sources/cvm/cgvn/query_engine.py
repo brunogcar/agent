@@ -208,3 +208,113 @@ def _query_by_chapter(conn, cnpj: str, company: str) -> dict:
         "count": len(rows),
         "by_chapter": [dict(r) for r in rows],
     }
+
+
+# ── [WebUI v1.26] filings() — the per-exercício history ──────────────────────
+# The company page's Governança tab shows the score EVOLUTION across
+# filings (PETR4 has 9: refs 2018-12-31..2026-12-31). The label the user
+# reads is the EXERCÍCIO year (from cgvn_documents' Data_Fim_Exercicio_
+# Social — the ref 2026-12-31 filing covers exercício 2025), NOT the
+# Data_Referencia year. _query_* above only ever see the latest filing —
+# this is the first read of the full history.
+
+
+def filings(company: str = "") -> dict:
+    """All CGVN filings for a company — one row per Data_Referencia.
+
+    Joins cgvn_practices (per-filing adoption counts) with cgvn_documents
+    (entrega date, exercício window, download link). Exercício label =
+    the year of Data_Fim_Exercicio_Social; falls back to the ref year - 1
+    when no document row matches (defensive — the practices table is the
+    source of truth, documents is enrichment).
+
+    Returns:
+        {status, company, cnpj, count,
+         filings: [{data_referencia, data_entrega, exercicio, link,
+                    total, sim, nao, parcialmente, nao_se_aplica,
+                    score_pct}] — newest first.}
+    """
+    if not company:
+        return {"status": "error", "error": "company is required"}
+
+    try:
+        conn = connect_cgvn(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        cnpj = _resolve_company_cnpj(conn, company)
+        if not cnpj:
+            return {"status": "not_found",
+                    "error": f"Company '{company}' not found in CGVN database"}
+
+        # CNPJ strip chain — same as _query_* above, aliased for p.
+        rows = conn.execute(
+            """SELECT p.Data_Referencia AS ref,
+                       SUM(CASE WHEN p.Pratica_Adotada = 'Sim' THEN 1 ELSE 0 END) AS sim,
+                       SUM(CASE WHEN p.Pratica_Adotada = 'Não' THEN 1 ELSE 0 END) AS nao,
+                       SUM(CASE WHEN p.Pratica_Adotada = 'Parcialmente' THEN 1 ELSE 0 END) AS parcial,
+                       SUM(CASE WHEN p.Pratica_Adotada = 'Não se Aplica' THEN 1 ELSE 0 END) AS nsa,
+                       COUNT(*) AS total
+                FROM cgvn_practices p
+                WHERE REPLACE(REPLACE(REPLACE(p.CNPJ_Companhia, '.', ''), '/', ''), '-', '') = ?
+                GROUP BY p.Data_Referencia
+                ORDER BY p.Data_Referencia DESC""",
+            (cnpj,),
+        ).fetchall()
+
+        if not rows:
+            return {"status": "not_found",
+                    "error": f"No CGVN practices for '{company}'",
+                    "cnpj": cnpj}
+
+        # Document metadata per Data_Referencia (entrega, exercício, link).
+        # Multiple versions can exist — keep the latest entrega.
+        docs: dict[str, dict] = {}
+        for d in conn.execute(
+            """SELECT Data_Referencia AS ref, Data_Entrega AS entrega,
+                       Data_Inicio_Exercicio_Social AS ini,
+                       Data_Fim_Exercicio_Social AS fim, Link_Download AS link
+                FROM cgvn_documents
+                WHERE REPLACE(REPLACE(REPLACE(CNPJ_Companhia, '.', ''), '/', ''), '-', '') = ?
+                ORDER BY Data_Entrega""",
+            (cnpj,),
+        ).fetchall():
+            docs[d["ref"]] = dict(d)
+
+        out = []
+        for r in rows:
+            ref = r["ref"]
+            d = docs.get(ref) or {}
+            total = r["total"] or 0
+            # Exercício year: Data_Fim "2025-12-31" → 2025. Fallback:
+            # ref year - 1 (the CGVN convention: ref = exercício + 1).
+            exercicio = None
+            fim = (d.get("fim") or "")[:4]
+            if fim.isdigit():
+                exercicio = int(fim)
+            elif (ref or "")[:4].isdigit():
+                exercicio = int(ref[:4]) - 1
+            out.append({
+                "data_referencia": ref,
+                "data_entrega": d.get("entrega") or "",
+                "exercicio": exercicio,
+                "link": d.get("link") or "",
+                "total": total,
+                "sim": r["sim"] or 0,
+                "nao": r["nao"] or 0,
+                "parcialmente": r["parcial"] or 0,
+                "nao_se_aplica": r["nsa"] or 0,
+                "score_pct": round((r["sim"] or 0) / total, 4) if total else 0,
+            })
+
+        return {
+            "status": "ok",
+            "company": company,
+            "cnpj": cnpj,
+            "count": len(out),
+            "filings": out,
+        }
+
+    finally:
+        conn.close()

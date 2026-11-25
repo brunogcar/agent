@@ -1,0 +1,33 @@
+{# webui/templates/partials/tab_governance.html — Governança tab (CGVN).
+
+[v1.26 fix 1] Governança is the Código de Melhores Práticas
+SELF-ASSESSMENT only — how the company SAYS it is governed. The event
+index (IPE — AGO/AGE, avisos, fatos relevantes, calendários) moved to
+its OWN tab, Informações Periódicas (tab_ipe.html): "both provide
+info, but they are not supposed to be together, different purpose".
+
+- Visão Geral: the score KPIs + the four-bucket donut (Sim/Parcialmente/
+  Não/Não se Aplica — the reference dashboard dropped N/A), per-chapter
+  stacked bars (its "By Chapter" tab) and the SCORE EVOLUTION across
+  filings (the reference only ever showed the latest — PETR4 has 9
+  annual protocolos). Generic payload → /sections/governance:overview.
+- Práticas: the 54-practice table with Exercício/Capítulo/Situação
+  selects + busca; the huge Explicação texts expand on click.
+  Dedicated GET /governance/practices (filters are server-side).
+#}
+<div class="tab-governance" x-data="{ subtab: 'overview' }">
+  <nav class="subtab-nav">
+    <button class="subtab-btn" :class="{ 'active': subtab === 'overview' }" @click="subtab='overview'" onclick="loadGovSubtab('overview')" data-lazy="gov:overview">Visão Geral</button>
+    <button class="subtab-btn" :class="{ 'active': subtab === 'practices' }" @click="subtab='practices'" onclick="loadGovSubtab('practices')" data-lazy="gov:practices">Práticas</button>
+  </nav>
+
+  {# ── Visão Geral subtab (loads on tab open — see initApp) ── #}
+  <div x-show="subtab === 'overview'" id="tab-gov-overview" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+
+  {# ── Práticas subtab (CGVN) ── #}
+  <div x-show="subtab === 'practices'" style="display: none;" id="tab-gov-practices" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

@@ -92,6 +92,8 @@ Routes:
   GET /api/webui/company/{ticker}/proventos-anual       → Proventos Anual (JSON)
   GET /api/webui/company/{ticker}/backtest/meta         → Backtest form catalog (JSON) [v1.25]
   POST /api/webui/company/{ticker}/backtest/run         → run ONE parametrized scenario (JSON) [v1.25]
+  GET /api/webui/company/{ticker}/governance/practices  → CGVN práticas + filtros (JSON) [v1.26]
+  GET /api/webui/company/{ticker}/ipe/events           → IPE eventos facetados (JSON) [v1.26 fix 1 — its own tab]
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
 """
 from __future__ import annotations
@@ -111,6 +113,8 @@ from webui.services.financials import FinancialsService
 from webui.services.valuation import ValuationService
 from webui.services.proventos import ProventosService
 from webui.services.backtest import BacktestService
+from webui.services.governance import GovernanceService
+from webui.services.ipe import IpeService
 from webui.templating import templates
 # [v1.22] ONE ticker definition (webui/validators.py).
 from webui.validators import TICKER_PATTERN
@@ -132,6 +136,8 @@ _financials_service = _svc(FinancialsService)
 _valuation_service = _svc(ValuationService)
 _proventos_service = _svc(ProventosService)
 _backtest_service = _svc(BacktestService)
+_governance_service = _svc(GovernanceService)
+_ipe_service = _svc(IpeService)
 
 # ── [WebUI v1.5] Ticker validation ──────────────────────────────────────────
 # B3 symbols: letter + 3-5 alphanumerics + 1-2 digits + optional
@@ -154,7 +160,11 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 # [v1.8] options. [v1.9] shareholders. [v1.10] insiders.
 # [v1.24] historical SHIPS (the 4-subtab Histórico tab).
 # [v1.25] backtest (the interactive simulator tab).
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders", "backtest"}
+# [v1.26] governance (Governança — CGVN only) + ipe (Informações
+# Periódicas — the IPE event index, SPLIT into its own tab in
+# v1.26 fix 1: "both provide info, but they are not supposed to be
+# together, different purpose").
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe", "backtest"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -447,6 +457,53 @@ async def company_backtest_run(request: Request, ticker: Ticker):
     return JSONResponse(data, status_code=status)
 
 
+# ── [v1.26] Governança (CGVN) + Informações Periódicas (IPE, its own tab since v1.26 fix 1) ───────────────────────
+
+@router.get("/company/{ticker}/governance/practices")
+def company_governance_practices(
+    ticker: Ticker,
+    data_ref: str = Query(""),
+    capitulo: str = Query(""),
+    adotada: str = Query(""),
+    q: str = Query(""),
+):
+    """[v1.26] The Práticas subtab (Governança tab) — the CGVN
+    54-practice table for ONE filing (data_ref; default = latest) with
+    server-side Capítulo/Situação/busca filters, plus the filings list
+    for the Exercício select. The Visão Geral subtab goes through the
+    generic /sections/governance:overview endpoint (registry)."""
+    data = _governance_service.practices(
+        ticker.upper(), data_ref=data_ref, capitulo=capitulo,
+        adotada=adotada, q=q)
+    return JSONResponse(data)
+
+
+@router.get("/company/{ticker}/ipe/events")
+def company_ipe_events(
+    ticker: Ticker,
+    categoria: str = Query(""),
+    tipo: str = Query(""),
+    especie: str = Query(""),
+    ano: str = Query(""),
+    q: str = Query(""),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+):
+    """[v1.26 fix 1] The Informações Periódicas tab — ONE faceted page
+    of the ticker's IPE events (moved from /governance/events when the
+    tab was SPLIT: CGVN = self-assessment, IPE = filed events —
+    different purposes). Exact-match categoria/tipo/especie (the
+    sentinel __none__ selects the empty value), ano, keyword,
+    pagination; the response carries the four cascading facet lists
+    (each respects every filter except its own field; anos
+    CHRONOLOGICAL, newest first — the count-ordered select the user
+    reported, fixed)."""
+    data = _ipe_service.events(
+        ticker.upper(), categoria=categoria, tipo=tipo, especie=especie,
+        ano=ano, q=q, page=page, per_page=per_page)
+    return JSONResponse(data)
+
+
 @router.get("/company/{ticker}/tab/{tab}", response_class=HTMLResponse)
 def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
     """Tab content — HTML fragment for HTMX swap.
@@ -499,6 +556,27 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_proventos.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "governance":
+        # [v1.26] Governança — CGVN only (Código de Melhores Práticas:
+        # score/práticas/evolução). Visão Geral loads through the generic
+        # /sections/governance:overview endpoint; Práticas has its
+        # dedicated endpoint (filters are interactive state — the
+        # proventos:historico precedent).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_governance.html",
+            {"ticker": ticker, "t": tr},
+        )
+    elif tab == "ipe":
+        # [v1.26 fix 1] Informações Periódicas — the IPE event index in
+        # its OWN tab (split from Governança: different purpose — what
+        # the company FILED, not how it self-assesses). No subtabs: the
+        # faceted explorer pane boots on afterSettle (initIpeTab).
+        return templates.TemplateResponse(
+            request,
+            "partials/tab_ipe.html",
             {"ticker": ticker, "t": tr},
         )
     elif tab == "backtest":

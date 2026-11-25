@@ -1842,6 +1842,390 @@ window.loadHistSubtab = function(sub) {
     });
 };
 
+// ── [v1.26] Governança tab (CGVN) — score/práticas ──────────────────────
+// The Código de Melhores Práticas SELF-ASSESSMENT: how the company
+// SAYS it is governed. Visão Geral is the GENERIC payload (/sections/
+// governance:overview — KPIs + donut + chapter bars + score evolution);
+// Práticas is a custom renderer (filter bar + expandable rows are
+// interactive state — the proventos:historico precedent). The IPE
+// events explorer is its OWN tab since v1.26 fix 1 (see the
+// Informações Periódicas module below). All strings pass through esc().
+var govPr = { ticker: '', dataRef: '', capitulo: '', adotada: '',
+              q: '', timer: null };
+
+window.loadGovSubtab = function(sub) {
+  var panel = document.getElementById('tab-gov-' + sub);
+  if (!panel || panel._loaded || panel._loading) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  if (sub === 'overview') {
+    panel._loading = true;
+    fetch('/api/webui/company/' + encodeURIComponent(ticker) +
+          '/sections/governance:overview?_t=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        panel._loading = false;
+        panel._loaded = true;
+        renderValSubtab('overview', panel, data);
+      })
+      .catch(function(err) {
+        panel._loading = false;
+        panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+      });
+  } else if (sub === 'practices') {
+    govPr.ticker = ticker;
+    govPracticesLoad(panel);
+  }
+};
+
+// .. Práticas (CGVN) — Exercício/Capítulo/Situação selects + busca .....
+function govPracticesLoad(panel) {
+  panel._loading = true;
+  var url = '/api/webui/company/' + encodeURIComponent(govPr.ticker) +
+    '/governance/practices?data_ref=' + encodeURIComponent(govPr.dataRef) +
+    '&capitulo=' + encodeURIComponent(govPr.capitulo) +
+    '&adotada=' + encodeURIComponent(govPr.adotada) +
+    '&q=' + encodeURIComponent(govPr.q) + '&_t=' + Date.now();
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      panel._loading = false;
+      if (data._error) {
+        panel.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>';
+        return;
+      }
+      panel._loaded = true;
+      govPr.dataRef = data.data_referencia || '';
+      renderGovPractices(panel, data);
+    })
+    .catch(function(err) {
+      panel._loading = false;
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+}
+
+function _govAdotBadge(v) {
+  var cls = { 'Sim': 'ok', 'Parcialmente': 'warn', 'Não': 'err',
+              'Não se Aplica': 'na' }[v] || 'na';
+  return '<span class="gov-badge gov-badge-' + cls + '">' + esc(v || '—') + '</span>';
+}
+
+function renderGovPractices(panel, data) {
+  var filings = data.filings || [];
+  var exSel = '<select class="gov-sel" data-govp="data_ref" aria-label="Exercício">';
+  Array.prototype.forEach.call(filings, function(f) {
+    var lbl = String(f.exercicio || f.data_referencia || '—') +
+      ' — ' + _govPctBR(f.score_pct) + ' (' + f.sim + '/' + f.total + ')';
+    var sel = (f.data_referencia === data.data_referencia) ? ' selected' : '';
+    exSel += '<option value="' + esc(f.data_referencia) + '"' + sel + '>' +
+             esc(lbl) + '</option>';
+  });
+  exSel += '</select>';
+  var capSel = '<select class="gov-sel" data-govp="capitulo" aria-label="Capítulo">' +
+    '<option value="">Todos os capítulos</option>';
+  Array.prototype.forEach.call(data.capitulos || [], function(c) {
+    capSel += '<option value="' + esc(c) + '"' +
+      (c === data.filters.capitulo ? ' selected' : '') + '>' + esc(c) + '</option>';
+  });
+  capSel += '</select>';
+  var adoSel = '<select class="gov-sel" data-govp="adotada" aria-label="Situação">' +
+    '<option value="">Todas as situações</option>';
+  Array.prototype.forEach.call(data.adotadas || [], function(a) {
+    adoSel += '<option value="' + esc(a) + '"' +
+      (a === data.filters.adotada ? ' selected' : '') + '>' + esc(a) + '</option>';
+  });
+  adoSel += '</select>';
+
+  var linkHtml = data.link
+    ? ' · <a class="gov-doc-link" href="' + esc(data.link) + '" target="_blank" rel="noopener">📄 protocolo na CVM</a>'
+    : '';
+  var h = '<div class="gov-card">' +
+    '<div class="gov-pr-head">Exercício <strong>' + esc(String(data.exercicio || '—')) +
+    '</strong> · entregue em ' + esc(fmtDate(data.data_entrega)) + linkHtml + '</div>' +
+    '<div class="gov-filterbar">' +
+    '<label class="gov-fl">Exercício ' + exSel + '</label>' +
+    '<label class="gov-fl">Capítulo ' + capSel + '</label>' +
+    '<label class="gov-fl">Situação ' + adoSel + '</label>' +
+    '<label class="gov-fl gov-fl-grow">Busca <input type="search" class="gov-input" data-govp="q"' +
+    ' placeholder="prática, explicação, item…" value="' + esc(data.filters.q || '') + '"></label>' +
+    '<button type="button" class="gov-clear" data-govp-clear="1">Limpar</button>' +
+    '</div></div>';
+
+  var rows = data.rows || [];
+  h += '<div class="val-section"><div class="reg-title">Práticas Recomendadas — ' +
+    rows.length + ' linha(s)' +
+    (data.filters.capitulo ? ' · ' + esc(data.filters.capitulo) : '') + '</div>';
+  h += '<div class="gov-table-wrap"><table class="val-table gov-table"><thead><tr>' +
+    '<th>Item</th><th>Capítulo</th><th>Prática Recomendada</th><th>Situação</th><th></th>' +
+    '</tr></thead><tbody>';
+  Array.prototype.forEach.call(rows, function(r, i) {
+    h += '<tr class="gov-pr-row" data-govx="' + i + '">' +
+      '<td class="gov-item">' + esc(r.id_item) + '</td>' +
+      '<td class="gov-cap">' + esc(r.capitulo) + '</td>' +
+      '<td class="gov-prat">' + esc(r.pratica) + '</td>' +
+      '<td>' + _govAdotBadge(r.adotada) + '</td>' +
+      '<td class="gov-chev">▸</td></tr>';
+  });
+  if (!rows.length) {
+    h += '<tr><td colspan="5" class="gov-empty">Nenhuma prática para os filtros atuais.</td></tr>';
+  }
+  h += '</tbody></table></div>';
+  // Expandable detail rows (Explicação texts are huge — click reveals).
+  h += '<div class="gov-pr-details" style="display:none">';
+  Array.prototype.forEach.call(rows, function(r, i) {
+    h += '<div class="gov-pr-detail" data-govd="' + i + '">' +
+      '<span class="gov-pr-det-k">Princípio</span> ' + esc(r.principio || '—') +
+      '<br><span class="gov-pr-det-k">Explicação da companhia</span> ' +
+      esc(r.explicacao || '— sem explicação declarada') + '</div>';
+  });
+  h += '</div></div>';
+  panel.innerHTML = h;
+
+  // wire: selects + busca (debounce) + limpar + expandable rows
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-govp]'), function(el) {
+    if (el.tagName === 'SELECT') {
+      el.onchange = function() {
+        govPr[el.getAttribute('data-govp') === 'data_ref' ? 'dataRef'
+                : el.getAttribute('data-govp')] = el.value;
+        govPracticesLoad(panel);
+      };
+    } else {
+      el.oninput = function() {
+        clearTimeout(govPr.timer);
+        govPr.timer = setTimeout(function() { govPr.q = el.value; govPracticesLoad(panel); }, 350);
+      };
+    }
+  });
+  var clearBtn = panel.querySelector('[data-govp-clear]');
+  if (clearBtn) clearBtn.onclick = function() {
+    govPr.capitulo = ''; govPr.adotada = ''; govPr.q = '';
+    govPracticesLoad(panel);
+  };
+  panel._govToggle = panel._govToggle || function(ev) {
+    var tr = ev.target && ev.target.closest ? ev.target.closest('tr.gov-pr-row') : null;
+    if (!tr) return;
+    var i = tr.getAttribute('data-govx');
+    var det = panel.querySelector('.gov-pr-detail[data-govd="' + i + '"]');
+    if (!det) return;
+    var open = tr.classList.toggle('gov-open');
+    det.style.display = open ? '' : 'none';
+    var chev = tr.querySelector('.gov-chev');
+    if (chev) chev.textContent = open ? '▾' : '▸';
+  };
+  panel.onclick = panel._govToggle;
+}
+
+// .. percent helper (pt-BR) — shared by the Governança renderers .....
+function _govPctBR(v) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return Number(v * 100).toLocaleString('pt-BR',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+}
+
+// ── [v1.26 fix 1] Informações Periódicas tab (IPE) — faceted events ────
+// SPLIT from Governança into its OWN tab (the user's verdict: "both
+// provide info, but they are not supposed to be together, different
+// purpose") — CGVN is the self-assessment, IPE is WHAT THE COMPANY
+// FILED (AGO/AGE, avisos aos acionistas, fatos relevantes, calendário
+// de eventos corporativos). No subtabs: initIpeTab() boots the ONE
+// explorer pane (#tab-ipe-events) when the tab fragment lands
+// (afterSettle — the initBacktestTab no-op-away-from-the-tab
+// precedent). The .gov-* CSS classes are SHARED with Governança
+// (same card/filterbar/chip look). The Ano select is CHRONOLOGICAL,
+// newest first — server-side since v1.26 fix 1.
+var ipeEv = { ticker: '', categoria: '', tipo: '', especie: '', ano: '',
+              q: '', page: 1, pages: 1, timer: null };
+
+window.initIpeTab = function() {
+  var panel = document.getElementById('tab-ipe-events');
+  if (!panel || panel._loaded || panel._loading) return;
+  var ticker = panel.getAttribute('data-ticker');
+  if (!ticker) return;
+  ipeEv.ticker = ticker;
+  ipeLoad(panel);
+};
+
+function _ipeFacetOptions(field, facets, current, emptyLabel) {
+  var list = (facets && facets[field]) || [];
+  var h = '';
+  var has = {};
+  Array.prototype.forEach.call(list, function(o) {
+    var val = o.v === '' ? '__none__' : o.v;
+    has[val] = true;
+    var lbl = o.v === '' ? emptyLabel : o.v;
+    h += '<option value="' + esc(val) + '"' +
+      (val === current ? ' selected' : '') + '>' + esc(lbl) + ' (' + o.n + ')</option>';
+  });
+  // the current value may be absent from the narrowed facet list (a
+  // combination with no co-occurrence) — keep it visible so the user
+  // sees WHY the table is empty instead of a silently-reset select.
+  if (current && !has[current]) {
+    var curLbl = current === '__none__' ? emptyLabel : current;
+    h = '<option value="' + esc(current) + '" selected>' + esc(curLbl) + ' (0)</option>' + h;
+  }
+  return h;
+}
+
+function ipeLoad(panel) {
+  panel._loading = true;
+  var url = '/api/webui/company/' + encodeURIComponent(ipeEv.ticker) +
+    '/ipe/events?categoria=' + encodeURIComponent(ipeEv.categoria) +
+    '&tipo=' + encodeURIComponent(ipeEv.tipo) +
+    '&especie=' + encodeURIComponent(ipeEv.especie) +
+    '&ano=' + encodeURIComponent(ipeEv.ano) +
+    '&q=' + encodeURIComponent(ipeEv.q) +
+    '&page=' + ipeEv.page + '&per_page=25&_t=' + Date.now();
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      panel._loading = false;
+      if (data._error) {
+        panel.innerHTML = '<div class="error">Erro: ' + esc(data._error) + '</div>';
+        return;
+      }
+      panel._loaded = true;
+      ipeEv.page = data.page || 1;
+      ipeEv.pages = data.pages || 1;
+      renderIpeEvents(panel, data);
+    })
+    .catch(function(err) {
+      panel._loading = false;
+      panel.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+    });
+}
+
+function ipeReset() {
+  ipeEv.page = 1;
+}
+
+function renderIpeEvents(panel, data) {
+  var f = data.filters || {};
+  var facets = data.facets || {};
+
+  // Quick chips — only values that exist for this ticker (data-driven,
+  // no dead chips). Presence is checked against the chip's OWN field's
+  // facet (Assembleias → categorias; AGO/AGE → tipos). Active = set.
+  var chipHtml = '';
+  var chipFacet = { categoria: 'categorias', tipo: 'tipos' };
+  Array.prototype.forEach.call(data.chips || [], function(c) {
+    var fl = (facets[chipFacet[c.field]] ) || [];
+    var present = Array.prototype.some.call(fl, function(o) { return o.v === c.value; });
+    if (!present) return;
+    var active = f[c.field] === c.value;
+    chipHtml += '<button type="button" class="gov-chip' + (active ? ' active' : '') +
+      '" data-chip-field="' + esc(c.field) + '" data-chip-val="' + esc(c.value) +
+      '" aria-pressed="' + (active ? 'true' : 'false') + '">' + esc(c.label) + '</button>';
+  });
+
+  var catSel = '<select class="gov-sel" data-ipef="categoria" aria-label="Categoria">' +
+    '<option value="">Todas as categorias</option>' +
+    _ipeFacetOptions('categorias', facets, f.categoria, '— sem categoria —') + '</select>';
+  var tipSel = '<select class="gov-sel" data-ipef="tipo" aria-label="Tipo">' +
+    '<option value="">Todos os tipos</option>' +
+    _ipeFacetOptions('tipos', facets, f.tipo, '— sem tipo —') + '</select>';
+  var espSel = '<select class="gov-sel" data-ipef="especie" aria-label="Espécie">' +
+    '<option value="">Todas as espécies</option>' +
+    _ipeFacetOptions('especies', facets, f.especie, '— sem espécie —') + '</select>';
+  var anoSel = '<select class="gov-sel" data-ipef="ano" aria-label="Ano">' +
+    '<option value="">Todos os anos</option>' +
+    _ipeFacetOptions('anos', facets, f.ano, '—') + '</select>';
+
+  var h = '<div class="gov-card">' +
+    '<div class="gov-ev-head"><strong>' + esc(data.nome || ipeEv.ticker) + '</strong>' +
+    ' · <span class="gov-ev-total">' + Number(data.total || 0).toLocaleString('pt-BR') +
+    ' evento(s) com os filtros atuais</span></div>';
+  if (chipHtml) h += '<div class="gov-chips">' + chipHtml + '</div>';
+  h += '<div class="gov-filterbar">' +
+    '<label class="gov-fl">Categoria ' + catSel + '</label>' +
+    '<label class="gov-fl">Tipo ' + tipSel + '</label>' +
+    '<label class="gov-fl">Espécie ' + espSel + '</label>' +
+    '<label class="gov-fl">Ano ' + anoSel + '</label>' +
+    '<label class="gov-fl gov-fl-grow">Busca <input type="search" class="gov-input" data-ipef="q"' +
+    ' placeholder="assunto…" value="' + esc(f.q || '') + '"></label>' +
+    '<button type="button" class="gov-clear" data-ipef-clear="1">Limpar</button>' +
+    '</div></div>';
+
+  var evs = data.events || [];
+  h += '<div class="val-section"><div class="reg-title">Eventos — Informações Periódicas e Eventuais (CVM)</div>';
+  h += '<div class="gov-table-wrap"><table class="val-table gov-table gov-ev-table"><thead><tr>' +
+    '<th>Data</th><th>Categoria</th><th>Tipo</th><th>Espécie</th><th>Assunto</th><th></th>' +
+    '</tr></thead><tbody>';
+  Array.prototype.forEach.call(evs, function(e) {
+    var title = e.assunto || e.tipo || e.categoria || '—';
+    var ver = (e.versao && e.versao > 1)
+      ? ' <span class="gov-ver" title="Reapresentação">v' + esc(String(e.versao)) + '</span>' : '';
+    h += '<tr>' +
+      '<td class="gov-date">' + esc(fmtDate(e.data_entrega)) + ver + '</td>' +
+      '<td class="gov-cat">' + esc(e.categoria || '—') + '</td>' +
+      '<td class="gov-tip">' + esc(e.tipo || '—') + '</td>' +
+      '<td class="gov-esp">' + esc(e.especie || '—') + '</td>' +
+      '<td class="gov-assunto">' + esc(title) +
+        (e.data_referencia && e.data_referencia !== e.data_entrega
+          ? ' <span class="gov-ref">(ref. ' + esc(fmtDate(e.data_referencia)) + ')</span>' : '') +
+      '</td>' +
+      '<td>' + (e.link_download
+        ? '<a class="gov-doc-link" href="' + esc(e.link_download) +
+          '" target="_blank" rel="noopener" title="Abrir documento na CVM">📄</a>'
+        : '—') + '</td></tr>';
+  });
+  if (!evs.length) {
+    h += '<tr><td colspan="6" class="gov-empty">Nenhum evento para os filtros atuais.</td></tr>';
+  }
+  h += '</tbody></table></div>';
+  // pager (the Carteira ledger pattern)
+  if ((data.pages || 1) > 1) {
+    h += '<div class="cart-pager">' +
+      '<span class="cart-pager-info">' + Number(data.total || 0).toLocaleString('pt-BR') +
+      ' evento(s)</span>' +
+      '<button type="button" class="cart-btn cart-pager-btn" data-ipepg="prev"' +
+      (data.page <= 1 ? ' disabled' : '') + '>◀</button>' +
+      '<span class="cart-pager-page">' + data.page + ' / ' + data.pages + '</span>' +
+      '<button type="button" class="cart-btn cart-pager-btn" data-ipepg="next"' +
+      (data.page >= data.pages ? ' disabled' : '') + '>▶</button>' +
+      '</div>';
+  }
+  h += '</div>';
+  panel.innerHTML = h;
+
+  // wire: facet selects (reset page), busca (debounce), limpar, chips, pager
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-ipef]'), function(el) {
+    if (el.tagName === 'SELECT') {
+      el.onchange = function() {
+        ipeEv[el.getAttribute('data-ipef')] = el.value;
+        ipeReset(); ipeLoad(panel);
+      };
+    } else {
+      el.oninput = function() {
+        clearTimeout(ipeEv.timer);
+        ipeEv.timer = setTimeout(function() {
+          ipeEv.q = el.value; ipeReset(); ipeLoad(panel);
+        }, 350);
+      };
+    }
+  });
+  var evClear = panel.querySelector('[data-ipef-clear]');
+  if (evClear) evClear.onclick = function() {
+    ipeEv.categoria = ''; ipeEv.tipo = ''; ipeEv.especie = '';
+    ipeEv.ano = ''; ipeEv.q = '';
+    ipeReset(); ipeLoad(panel);
+  };
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-chip-field]'), function(ch) {
+    ch.onclick = function() {
+      var fld = ch.getAttribute('data-chip-field');
+      var val = ch.getAttribute('data-chip-val');
+      ipeEv[fld] = (ipeEv[fld] === val) ? '' : val;   // toggle
+      ipeReset(); ipeLoad(panel);
+    };
+  });
+  Array.prototype.forEach.call(panel.querySelectorAll('[data-ipepg]'), function(btn) {
+    btn.onclick = function() {
+      var d = btn.getAttribute('data-ipepg') === 'next' ? 1 : -1;
+      ipeEv.page = Math.min(Math.max(1, ipeEv.page + d), ipeEv.pages);
+      ipeLoad(panel);
+    };
+  });
+}
+
 // ── [v1.25] Backtest tab — the interactive simulator ──────────────────────
 // The static PETR4_backtest_dashboard.html was ONE frozen scenario per
 // HTML file (fixed thresholds, no costs, no stops, no comparison). This
@@ -4263,7 +4647,8 @@ function prefetchSubtab(e) {
               jur: window.loadJurosSubtab, pou: window.loadPoupancaSubtab,
               aco: window.loadAcoesSubtab,
               div: window.loadDividendosSubtab,
-              hist: window.loadHistSubtab };
+              hist: window.loadHistSubtab,
+              gov: window.loadGovSubtab };
   var fn = fns[parts[0]];
   if (fn && parts[1]) { try { fn(parts[1]); } catch (err) { /* noop */ } }
 }
@@ -7269,6 +7654,12 @@ function initApp() {
     // [v1.24] Histórico — first subtab of the historical tab (the
     // KPI row + heatmap; the heavy 5A charts load on subtab click).
     loadHistSubtab('overview');
+    // [v1.26] Governança — first subtab (CGVN KPIs + donut + evolução;
+    // Práticas loads on subtab click).
+    loadGovSubtab('overview');
+    // [v1.26 fix 1] Informações Periódicas — its OWN tab now (no-op
+    // elsewhere: only the ipe tab carries #tab-ipe-events).
+    initIpeTab();
     // [v1.25] Backtest — the interactive simulator (no-op elsewhere:
     // only the backtest tab carries #bt-root; the guard is on the pane).
     initBacktestTab();

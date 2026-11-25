@@ -1,0 +1,22 @@
+{# webui/templates/partials/tab_ipe.html — Informações Periódicas tab (IPE).
+
+[v1.26 fix 1] Its OWN tab, SPLIT from Governança (the user's verdict:
+"both provide info, but they are not supposed to be together,
+different purpose"). IPE = Informações Periódicas e Eventuais — the
+CVM's material-EVENT index: what the company FILED with the market
+over the years (AGO/AGE, aviso aos acionistas, fatos relevantes,
+calendário de eventos corporativos…). Governança (CGVN) answers "how
+does it self-assess its practices" — THIS answers "what did it file".
+
+No subtabs: one faceted explorer pane. Categoria/Tipo/Espécie/Ano
+selects driven by the ticker's own data (cascading facets), quick
+chips (Assembleias · AGO · AGE · Aviso aos Acionistas · Fato Relevante
+· Calendário), busca, server-side pagination (~4.700 events for a
+PETR4). Dedicated GET /ipe/events (the pane boots on afterSettle —
+initIpeTab(); the Ano select is chronological, newest first).
+#}
+<div class="tab-ipe" id="ipe-root">
+  <div id="tab-ipe-events" data-ticker="{{ ticker }}">
+    <div class="loading">{{ t("common.loading") }}</div>
+  </div>
+</div>

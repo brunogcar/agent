@@ -127,13 +127,21 @@ Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w
 
 **Response (ok):** `performance` (retorno total, CAGR, max drawdown, Sharpe rf=0, win rate, trades, buy&hold, alpha, fator de lucro, retorno médio, tempo médio, capital final), `trades` (entrada/saída/preços/ações/PnL/retorno/dias/motivo — `stop_loss|take_profit|signal|max_holding|end_of_period`), `curves` (labels + equity + buy_hold + drawdown + price + entry/exit markers, downsampled to ≤1200 pts) and `warnings` (missing DFP/ITR series → "sincronize CVM"; no entries → "ajuste os limiares"). The price series is bdi_code=2 (lote padrão), ONE row per session — DIR/REC rights rows never poison the simulation.
 
+### `GET /api/webui/company/{ticker}/governance/practices`
+
+[v1.26] The Práticas subtab — the CGVN practices table for ONE filing plus the filings list for the Exercício select. Params: `data_ref` (a filing's Data_Referencia; default/unknown → latest — a stale select never 404s the pane), `capitulo` (exact chapter), `adotada` (exact adoption: Sim/Parcialmente/Não/Não se Aplica), `q` (busca in prática/explicação/item). **Response (ok):** `data_referencia`, `exercicio` (from the document's Data_Fim_Exercicio_Social — the CGVN ref=exercício+1 convention), `data_entrega`, `link` (the protocolo PDF on CVM), `filings` (every filing: exercício/score/sim/total), `capitulos`, `adotadas`, `filters`, `rows` (id_item/capítulo/princípio/prática/adotada/explicação — the Explicação texts are huge, rows expand client-side).
+
+### `GET /api/webui/company/{ticker}/ipe/events`
+
+[v1.26 fix 1] The Informações Periódicas tab — its OWN tab since the split (moved from `/governance/events`; CGVN is the self-assessment, IPE is what the company FILED — "different purpose"). ONE faceted page of the ticker's IPE events (Informações Periódicas e Eventuais: AGO/AGE, avisos, fatos relevantes, calendários…). Params: `categoria`/`tipo`/`especie` (EXACT match; the sentinel `__none__` selects the EMPTY value — 14% of real rows carry no tipo), `ano` (ano_origem), `q` (assunto substring), `page` (1-based), `per_page` (1-100, default 25). **Response (ok):** `total`/`page`/`pages`, `events` (data_entrega/data_referencia/categoria/tipo/especie/assunto/versao/protocolo/link_download — versao > 1 = reapresentação, badged not deduped; empty assunto falls back to tipo → categoria client-side), `chips` (the quick presets) and **`facets`** — the four cascading lists (`categorias`/`tipos`/`especies`/`anos`, each `{v, n}`): every facet respects ALL filters EXCEPT its own field (pick Tipo=AGO and the Categoria facet narrows to Assembleia). Facet ordering: `anos` CHRONOLOGICAL (newest first — [v1.26 fix 1] the user-reported count-ordered Ano select), the rest most-used first. No generic key — the whole tab is this one custom-rendered endpoint (the backtest precedent).
+
 ### Lazy subtab endpoints (aliases of `/sections/{key}`)
 
 Each family also has dedicated endpoints over the same service methods — `financials-overview`, `financials-statements`, `valuation-overview|-multiples|-intrinsic|-fundamentals|-all`, `proventos-overview|-historico|-anual`. Same payloads as `/sections/{key}`; kept for the existing client loaders.
 
 ### Section families (the registry keys)
 
-[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (17 families, 73 keys — [v1.24] + the historical family):
+[v1.22.1] Every lazy subtab is a `<family>:<sub>` key registered in `webui/adapters/registry.py` behind ONE generic endpoint per scope — `GET /api/webui/company/{ticker}/sections/{key}` (company tabs), `GET /api/webui/macro/sections/{key}` (the Macro page, no ticker segment) and the Mercado families under the mercado endpoints. The full key set (18 families, 74 keys — [v1.26] + the governance family):
 
 | Family | Keys | Loaded by |
 |---|---|---|
@@ -145,6 +153,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `shareholders` | `overview`, `holders`, `free_float`, `equity` | Company · Acionistas tab |
 | `insiders` | `overview`, `transactions`, `monthly`, `by_role` | Company · Insiders tab |
 | `historical` | `overview`, `valuation`, `profitability`, `leverage` | Company · Histórico tab [v1.24] |
+| `governance` | `overview` | Company · Governança tab [v1.26] — Visão Geral only; Práticas is the dedicated `/governance/practices` endpoint above. The Informações Periódicas tab [v1.26 fix 1] has NO registry key — it is the dedicated `/ipe/events` endpoint, one custom renderer |
 | `macro` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `retorno_real`, `focus`, `curva` | Macro page (8 lazy subtabs) |
 | `focus` | `overview`, `juros`, `inflacao`, `cambio`, `atividade`, `fiscal`, `externo` | Mercado · Focus |
 | `fluxo` | `overview`, `mensal`, `anual`, `por_investidor` | Mercado · Fluxo |
@@ -155,7 +164,7 @@ Each family also has dedicated endpoints over the same service methods — `fina
 | `acoes` | `overview`, `evolucao` | Mercado · Ações |
 | `dividendos` | `overview`, `empresas`, `calendario`, `bdrs` | Mercado · Proventos |
 
-The company page's 10 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `historical`, `proventos`, `options`, `shareholders`, `insiders`, `backtest` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click).
+The company page's 12 tabs: `visao_geral`, `preco`, `financials`, `valuation`, `historical`, `proventos`, `options`, `shareholders`, `insiders`, `governance`, `ipe`, `backtest` — each has a page shell (`/webui/company/{ticker}/{tab}`) and lazy-loads its families' keys on first visit (pointer-intent prefetch ~300ms before the click). [v1.26 fix 1] `ipe` (Informações Periódicas) is split from `governance`: different purpose — what the company FILED vs how it self-assesses.
 
 ---
 

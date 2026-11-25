@@ -356,6 +356,19 @@ def _register_builtins() -> None:
     register("historical:leverage", _bind(HistoricalService, "leverage"),
              family="historical", label="Histórico — Alavancagem e Risco")
 
+    # [v1.26] Governança — the CGVN score/práticas tab (reference:
+    # skills/cvm/governance + PETR4_governance_dashboard.html).
+    # overview is a FLAT payload → generic renderer (KPIs + donut +
+    # per-chapter stacked bars + the score evolution across filings);
+    # the Práticas subtab has a DEDICATED endpoint (GET
+    # /governance/practices) — its filter bar is interactive client
+    # state, the proventos:historico precedent. The IPE events explorer
+    # is its OWN tab since v1.26 fix 1 (GET /ipe/events — no adapter
+    # key; the whole tab is one custom renderer).
+    from webui.services.governance import GovernanceService
+    register("governance:overview", _bind(GovernanceService, "overview"),
+             family="governance", label="Governança — Visão Geral")
+
     # [v1.11] Macro — the /webui/macro page (reference: skills/bcb/macro
     # static report + macro_dashboard.html). Ticker-less FLAT payloads
     # (market-wide — no company scope) served by the dedicated
