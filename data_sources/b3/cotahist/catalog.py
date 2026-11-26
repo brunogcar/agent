@@ -23,9 +23,25 @@ CSV_ENCODING = "latin-1"  # COTAHIST uses latin1
 
 # [v1.0.1] BDI codes to keep during sync (filter out options/bonds/warrants).
 # 02 = Lote Padrão (equities), 12 = Fundos Imobiliários (FIIs),
-# 14 = Certificado de Investimento Coletivo, 96 = Fracionário
+# 14 = Certificado de Investimento Coletivo (ETFs), 96 = Fracionário
+# [v1.28.2] 34/35/36 = BDR Nível I/II/III — the FOREIGN companies' shares
+# traded on B3 (AAPL34, MSFT34, GOGL34...). They were missing from the
+# filter, so BDR rows never reached the DB at all: the Painel's "Maiores
+# Altas BDR" card screened a universe that didn't exist ("Sem dados"
+# forever). An incremental sync can't backfill them (it only inserts
+# rows NEWER than the latest refdate), so sync_engine detects a
+# BDR-less current year and rebuilds it once — see _sync_year.
 # This reduces the DB from ~5.7GB to ~1-2GB by dropping ~85% of rows.
-BDI_FILTER = {2, 12, 14, 96}
+BDI_FILTER = {2, 12, 14, 34, 35, 36, 96}
+
+# The share-like BDI universe — every code above EXCEPT the fractional
+# (96) duplicates. [v1.28.2] The quote queries (market_snapshot /
+# quotes_for) select this set: equities, FIIs, ETFs and BDRs are all
+# quotable instruments a landing page or a portfolio can hold; the old
+# `bdi_code = 2` scope silently hid ETFs (the Painel's BOVA11/SMAL11/
+# IVVB11 KPI row rendered empty — ETFs carry BDI 14) and would have
+# hidden BDR rows too.
+BDI_SHARE_LIKE = {2, 12, 14, 34, 35, 36}
 
 
 # ── Fixed-width column layout ────────────────────────────────────────────────

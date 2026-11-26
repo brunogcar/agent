@@ -10,11 +10,15 @@ answers "where does Brazil stand?" in one glance:
                IGP-M (mês) · IGP-M (12m) · USD/BRL (ptax)  [BCB SGS]
   ETF row    → BOVA11 · SMAL11 · IVVB11 — last close + day % [cotahist,
                v1.28.1: "add kpi to BOVA11 SMAL11 IVVB11 with the % it
-               rose or fell"]
+               rose or fell"; v1.28.2 the row actually FILLS — the
+               snapshot's universe now includes ETFs, BDI 14]
   7 cards    → Top 10 IBOV · Top 10 SMLL          [b3-index + cotahist]
                Mais Negócios · Maiores Volumes ·
-               Maiores Altas · Maiores Altas BDR ·
-               Maiores Baixas                      [cotahist]
+               Maiores Altas · Maiores Baixas ·
+               Maiores Altas BDR                  [cotahist]
+               (v1.28.2: the BDR card sits AFTER Maiores Baixas — the
+               native rankings first, the BDR slice last — and it FILLS
+               now that BDR rows reach the DB, BDI 34/35/36)
 
 [v1.21 fix 1] KPI row reorganized (rates → inflation mês+12m → FX) with
 the three additions the user asked (IPCA mês, IGP-M mês, TR); new
@@ -37,8 +41,12 @@ Per the v1.7–v1.18 service lineage:
     explicit +/- signs on variations); the client only colorizes.
   - Variation = close vs the symbol's PREVIOUS COTAHIST SESSION
     (DENSE_RANK per symbol), lote padrão spot rows only
-    (market_type=10, bdi_code=2 — no options, no rights, no
-    fractional-market duplicates). Gainers/losers require >= 100 trades
+    (market_type=10, share-like BDIs — no options, no rights, no
+    fractional-market duplicates; v1.28.2: the snapshot universe spans
+    equities/FIIs/ETFs/BDRs and each row carries its bdi_code — the
+    four ranking cards slice it to EQUITIES (bdi 2) so their content
+    is unchanged, the BDR card scopes by ticker, the ETF row reads the
+    three tickers). Gainers/losers require >= 100 trades
     (illiquid one-lot prints would own the ranking).
 
 Serving: ``GET /api/webui/home`` (api.py) → loadHomeData() in app.js
@@ -81,6 +89,9 @@ from tools.report_ops.formats import fmt_brl, fmt_num
 
 # ── the skill's display helpers (no forked numerics) ────────────────────────
 from skills.b3.index.helpers import format_pct as _fmt_weight  # "10,886%"
+# [v1.28.2] the shared *34/35/36 predicate — BDRs are the FOREIGN
+# companies' shares traded on B3 (BDI 34/35/36, ticker suffix mirrors it)
+from skills.ddm.dividends.helpers import is_bdr as _is_bdr
 
 _MIN_TRADES = 100    # liquidity gate for the gainers/losers ranking
 
@@ -225,7 +236,13 @@ class HomeService:
     def _etfs(quotes: dict | None) -> list[dict[str, Any]]:
         """BOVA11 / SMAL11 / IVVB11 — close + signed day % from the same
         snapshot the cards read. Empty when cotahist is down (the row
-        renders nothing — the KPI note already names the source)."""
+        renders nothing — the KPI note already names the source).
+
+        [v1.28.2] The row actually FILLS now: ETFs carry BDI 14 in
+        COTAHIST, and the snapshot's old ``bdi_code = 2`` scope excluded
+        them — the row rendered empty on every real DB (the sandbox's
+        synthetic cotahist.db was the only place it ever worked). The
+        share-like universe fix lives in market_snapshot()."""
         out: list[dict[str, Any]] = []
         for tk, what in _ETF_ROW:
             q = (quotes or {}).get(tk) or {}
@@ -289,8 +306,8 @@ class HomeService:
                 {"key": "negocios", "title": "Mais Negócios", **err},
                 {"key": "volumes", "title": "Maiores Volumes (R$)", **err},
                 {"key": "altas", "title": "Maiores Altas", **err},
-                {"key": "altas_bdr", "title": "Maiores Altas BDR", **err},
                 {"key": "baixas", "title": "Maiores Baixas", **err},
+                {"key": "altas_bdr", "title": "Maiores Altas BDR", **err},
             ]
 
         session = _fmt_date(snap.get("session_date", "")) or "-"
@@ -306,9 +323,16 @@ class HomeService:
                 "extra": extra,
             }
 
+        # [v1.28.2] The four ranking cards stay NATIVES-ONLY (BDI 2) —
+        # their content is byte-identical to what they always showed.
+        # The snapshot's universe spans equities/FIIs/ETFs/BDRs now (it
+        # has to: the ETF row and the BDR card read it), so the slice is
+        # explicit instead of implicit in the SQL.
+        natives = [s for s in symbols if s.get("bdi_code") == 2]
+
         # Mais negócios — by trade_count (volume as the card's context).
         top = _card_rows()
-        by_trades = sorted(symbols, key=lambda s: -s["trade_count"])[:top]
+        by_trades = sorted(natives, key=lambda s: -s["trade_count"])[:top]
         trades_card = {
             "key": "negocios", "title": "Mais Negócios", "subtitle": sub,
             "error": None,
@@ -318,7 +342,7 @@ class HomeService:
         }
 
         # Maiores volumes — financial volume (quantidade × preço).
-        by_volume = sorted(symbols, key=lambda s: -s.get("volume") or 0.0)[:top]
+        by_volume = sorted(natives, key=lambda s: -s.get("volume") or 0.0)[:top]
         volume_card = {
             "key": "volumes", "title": "Maiores Volumes (R$)", "subtitle": sub,
             "error": None,
@@ -333,20 +357,28 @@ class HomeService:
         }
 
         # Variações — close vs previous session, liquidity-gated.
-        liquid = [s for s in symbols
+        liquid = [s for s in natives
                   if s.get("variation_pct") is not None
                   and s["trade_count"] >= _MIN_TRADES]
         gainers = sorted(liquid, key=lambda s: -s["variation_pct"])[:top]
         losers = sorted(liquid, key=lambda s: s["variation_pct"])[:top]
 
         # [v1.28.1] Maiores Altas BDR — the same gainers ranking scoped
-        # to the *34 universe (the Proventos family's is_bdr predicate:
+        # to the BDR universe (the Proventos family's is_bdr predicate:
         # BDRs are the FOREIGN companies' shares traded on B3), same
-        # liquidity gate. Sits right after Maiores Altas (the user's
-        # ask: "add maiores altas BDR").
-        bdr_gainers = sorted(
-            (s for s in liquid if s["ticker"].endswith("34")),
-            key=lambda s: -s["variation_pct"])[:top]
+        # liquidity gate. [v1.28.2] the card MOVED after Maiores Baixas
+        # (the user's ask: native rankings first, the BDR slice last) —
+        # and the predicate itself is the SHARED helper (suffix 34/35/36,
+        # no forked inline check — the no-forked-numerics rule,
+        # predicates included). The BDR rows only exist in the DB after
+        # the one-time cotahist re-sync (BDI 34/35/36 joined the sync
+        # filter in v1.28.2).
+        bdr_liquid = [s for s in symbols
+                      if s.get("variation_pct") is not None
+                      and s["trade_count"] >= _MIN_TRADES
+                      and _is_bdr(s["ticker"])]
+        bdr_gainers = sorted(bdr_liquid,
+                             key=lambda s: -s["variation_pct"])[:top]
 
         return [
             trades_card,
@@ -354,12 +386,12 @@ class HomeService:
             {"key": "altas", "title": "Maiores Altas", "subtitle": sub,
              "error": None,
              "items": [row(s) for s in gainers]},
-            {"key": "altas_bdr", "title": "Maiores Altas BDR", "subtitle": sub,
-             "error": None,
-             "items": [row(s) for s in bdr_gainers]},
             {"key": "baixas", "title": "Maiores Baixas", "subtitle": sub,
              "error": None,
              "items": [row(s) for s in losers]},
+            {"key": "altas_bdr", "title": "Maiores Altas BDR", "subtitle": sub,
+             "error": None,
+             "items": [row(s) for s in bdr_gainers]},
         ]
 
     # ── the landing payload ─────────────────────────────────────────────────

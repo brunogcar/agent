@@ -183,3 +183,160 @@ class TestRoute:
         from data_sources.b3.cotahist import route
         r = route(mode="status")
         assert r["status"] == "ok"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# [v1.28.2] THE SHARE-LIKE UNIVERSE + THE BDR BACKFILL PROBE
+# The quote queries scoped bdi_code=2 (equities): ETFs (BDI 14) never
+# reached the Painel's BOVA11/SMAL11/IVVB11 KPI row, and BDR rows (BDI
+# 34/35/36, once the sync filter carries them) would have met the same
+# fate. market_snapshot/quotes_for now span the share-like set and each
+# row exposes its bdi_code (the callers slice); _bdr_rows_missing drives
+# the one-time current-year rebuild in _sync_year.
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestShareLikeUniverse:
+
+    def test_market_snapshot_spans_the_share_like_bdIs(self, cotahist_db):
+        """ETF (14), FII (12) and BDR (34) rows are quoted, each carrying
+        its bdi_code — the equities-only scope is gone."""
+        import sqlite3 as s3
+        conn = s3.connect(str(cotahist_db))
+        # two sessions so variation_pct (close vs prev) exists
+        for d, bova, aapl, hgbs in (("2025-07-01", 120.0, 20.0, 9.0),
+                                    ("2025-07-02", 122.4, 21.2, 9.2)):
+            for sym, name, bdi, close in (("BOVA11", "ISHARES BOVA", 14, bova),
+                                          ("AAPL34", "APPLE BDR", 34, aapl),
+                                          ("HGBS11", "CSHG FII", 12, hgbs)):
+                conn.execute(
+                    "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+                    " market_type, close, volume, trade_count, _ingested_at)"
+                    " VALUES (?, ?, ?, ?, 10, ?, 1000, 500, 'x')",
+                    (d, sym, name, bdi, close))
+        conn.commit()
+        conn.close()
+
+        from data_sources.b3.cotahist.query_engine import market_snapshot
+        snap = market_snapshot()
+        assert snap["status"] == "ok"
+        by_tk = {s["ticker"]: s for s in snap["symbols"]}
+        assert by_tk["BOVA11"]["bdi_code"] == 14
+        assert by_tk["AAPL34"]["bdi_code"] == 34
+        assert by_tk["HGBS11"]["bdi_code"] == 12
+        # close + signed variation vs the previous session
+        assert by_tk["BOVA11"]["close"] == 122.4
+        assert round(by_tk["BOVA11"]["variation_pct"], 2) == 2.0
+        assert round(by_tk["AAPL34"]["variation_pct"], 2) == 6.0
+
+    def test_market_snapshot_still_excludes_non_share_like_rows(self, cotahist_db):
+        """Fractional (96) duplicates stay out; NULL-bdi rows stay out —
+        only the share-like BDI set is quoted."""
+        import sqlite3 as s3
+        conn = s3.connect(str(cotahist_db))
+        # proper equity rows for two sessions…
+        for d, close in (("2025-06-15", 60.95), ("2025-06-16", 61.20)):
+            conn.execute(
+                "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+                " market_type, close, volume, trade_count, _ingested_at)"
+                " VALUES (?, 'PETR4', 'PETROBRAS', 2, 10, ?, 5.0e7, 88000, 'x')",
+                (d, close))
+        # …plus a fractional duplicate of the second session (bdi 96,
+        # fracionário market) with a wilder close — it must not leak in
+        conn.execute(
+            "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+            " market_type, close, volume, trade_count, _ingested_at)"
+            " VALUES ('2025-06-16', 'PETR4', 'PETROBRAS', 96, 70, 99.0,"
+            " 100, 10, 'x')")
+        conn.commit()
+        conn.close()
+
+        from data_sources.b3.cotahist.query_engine import market_snapshot
+        snap = market_snapshot()
+        assert snap["status"] == "ok"
+        petr = [s for s in snap["symbols"] if s["ticker"] == "PETR4"]
+        assert len(petr) == 1                     # one row, not the duplicate
+        assert petr[0]["close"] == 61.20          # the bdi 2 (lote padrão) close
+        assert round(petr[0]["variation_pct"], 2) == 0.41
+        # the fixture's NULL-bdi VALE3 row never shows up
+        assert "VALE3" not in {s["ticker"] for s in snap["symbols"]}
+
+    def test_quotes_for_covers_non_equity_positions(self, cotahist_db):
+        """A portfolio can hold ETFs/FIIs/BDRs — quotes_for quotes them
+        (the old bdi=2 scope left those positions quote-less)."""
+        import sqlite3 as s3
+        conn = s3.connect(str(cotahist_db))
+        for d, close in (("2025-07-01", 300.0), ("2025-07-02", 306.0)):
+            conn.execute(
+                "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+                " market_type, close, volume, trade_count, _ingested_at)"
+                " VALUES (?, 'IVVB11', 'ISHARES S&P 500', 14, 10, ?, 1000,"
+                " 200, 'x')", (d, close))
+        conn.commit()
+        conn.close()
+
+        from data_sources.b3.cotahist.query_engine import quotes_for
+        r = quotes_for(["IVVB11", "NOPE4"])
+        assert r["status"] == "ok"
+        got = {s["ticker"]: s for s in r["symbols"]}
+        assert got["IVVB11"]["close"] == 306.0
+        assert round(got["IVVB11"]["variation_pct"], 2) == 2.0
+        assert got["IVVB11"]["bdi_code"] == 14
+        assert "NOPE4" not in got      # absent symbols degrade per-ticker
+
+
+class TestBdrBackfillProbe:
+
+    def _conn(self, db):
+        import sqlite3 as s3
+        c = s3.connect(str(db))
+        c.row_factory = s3.Row
+        return c
+
+    def test_missing_when_the_year_has_no_bdr_rows(self, cotahist_db):
+        """A pre-extension DB (equities only) reports the year BDR-less —
+        the signal that makes _sync_year rebuild the current year once."""
+        from data_sources.b3.cotahist.sync_engine import _bdr_rows_missing
+        conn = self._conn(cotahist_db)
+        try:
+            assert _bdr_rows_missing(conn, 2025) is True
+        finally:
+            conn.close()
+
+    def test_present_once_a_bdr_row_exists(self, cotahist_db):
+        """A single BDR row anywhere in the year satisfies the probe (the
+        incremental path resumes; no rebuild loop)."""
+        import sqlite3 as s3
+        conn = s3.connect(str(cotahist_db))
+        conn.execute(
+            "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+            " market_type, close, volume, trade_count, _ingested_at)"
+            " VALUES ('2025-06-16', 'AAPL34', 'APPLE BDR', 34, 10, 21.0,"
+            " 1000, 400, 'x')")
+        conn.commit()
+        conn.close()
+
+        from data_sources.b3.cotahist.sync_engine import _bdr_rows_missing
+        conn = self._conn(cotahist_db)
+        try:
+            assert _bdr_rows_missing(conn, 2025) is False
+        finally:
+            conn.close()
+
+    def test_probe_is_year_scoped(self, cotahist_db):
+        """BDR rows in OTHER years don't satisfy the probe for 2026."""
+        import sqlite3 as s3
+        conn = s3.connect(str(cotahist_db))
+        conn.execute(
+            "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+            " market_type, close, volume, trade_count, _ingested_at)"
+            " VALUES ('2024-06-16', 'AAPL34', 'APPLE BDR', 34, 10, 21.0,"
+            " 1000, 400, 'x')")
+        conn.commit()
+        conn.close()
+
+        from data_sources.b3.cotahist.sync_engine import _bdr_rows_missing
+        conn = self._conn(cotahist_db)
+        try:
+            assert _bdr_rows_missing(conn, 2026) is True
+        finally:
+            conn.close()

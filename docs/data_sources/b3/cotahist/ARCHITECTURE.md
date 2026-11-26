@@ -21,7 +21,7 @@ Unzip → COTAHIST_A{year}.TXT (~765MB, latin-1 encoding)
   ↓
 Stream parse: line-by-line (245 bytes/record, 26 columns)
   ↓
-BDI filter: keep only BDI codes {02, 12, 14, 96} (equities + FIIs + fractional)
+BDI filter: keep only BDI codes {02, 12, 14, 34, 35, 36, 96} (equities + FIIs + ETFs + BDRs + fractional)
   ↓
 Batch INSERT: 50,000 rows per transaction
   ↓
@@ -46,7 +46,7 @@ Record sync_state (year, rows_added, duration_s)
 
 ## Design Decisions
 
-- **BDI filter at sync time**: COTAHIST contains every B3 security — stocks, bonds, options, warrants, funds. BDI codes {02, 12, 14, 96} filter to equities + FIIs + fractional, reducing the DB from ~5.7GB to ~1-2GB.
+- **BDI filter at sync time**: COTAHIST contains every B3 security — stocks, bonds, options, warrants, funds. BDI codes {02, 12, 14, 34, 35, 36, 96} filter to equities + FIIs + ETFs + BDRs + fractional, reducing the DB from ~5.7GB to ~1-2GB. [v1.28.2] BDRs (34/35/36) joined the filter — they were dropped entirely, so the WebUI Painel's "Maiores Altas BDR" card screened a universe that never reached the DB. A DB synced before the extension gets a one-time current-year rebuild on the next sync (`_bdr_rows_missing` → full re-sync; the incremental path can't backfill old dates). Past years keep their pre-BDR state unless force-synced by hand.
 - **market_type=10 default**: A ticker can trade on both lote padrão (10) and fracionário (12) markets on the same day, producing duplicate rows. Defaulting to market_type=10 avoids duplicates.
 - **Streaming parser**: The TXT file is ~765MB per year. Line-by-line streaming avoids loading the entire file into memory.
 - **Batch INSERT (50K)**: Reduces SQLite write overhead. Without batching, individual INSERTs are 10x slower.

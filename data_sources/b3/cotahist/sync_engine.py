@@ -11,6 +11,13 @@ Each year is ~87MB ZIP → ~765MB TXT → ~2-5 min download + parse + store.
 rows with refdate > MAX(refdate) in the DB. This avoids re-parsing + re-inserting
 ~170K rows when only 1 new trading day was added. Past years are skipped
 entirely (already synced). When force=True, full-refresh (DELETE year + re-INSERT).
+
+[v1.28.2] BDR backfill: BDRs (BDI 34/35/36) joined BDI_FILTER, but a DB
+synced before the extension has no BDR rows for ingested dates — and the
+incremental path can't add them. When the CURRENT year is synced but carries
+zero BDR rows, _sync_year falls through to the full path once (delete year +
+rebuild with the extended filter). Past years keep their pre-BDR state unless
+force-synced by hand.
 """
 
 from __future__ import annotations
@@ -69,6 +76,36 @@ def _get_latest_refdate(conn, year: int) -> str:
         return row["d"] if row and row["d"] else ""
     except sqlite3.Error:
         return ""
+
+
+# [v1.28.2] BDR BDI codes (Nível I/II/III) — the filter extension that
+# brought BDRs into the DB. Kept local to the sync so catalog.py owns the
+# FILTER set and the sync engine owns the backfill decision.
+_BDR_BDIS = (34, 35, 36)
+
+
+def _bdr_rows_missing(conn, year: int) -> bool:
+    """[v1.28.2] True when the year's stored rows carry ZERO BDR codes.
+
+    A DB synced before the BDR filter extension (BDI 34/35/36) has no BDR
+    rows for dates already ingested — and the incremental path only
+    inserts rows NEWER than the latest refdate, so BDRs would stay
+    missing forever. The probe rides idx_cotahist_refdate (year range)
+    and short-circuits at the first BDR row found: on a BDR-carrying DB
+    it stops within the first session block, on a pre-extension DB it
+    scans the year once (~1s on a 1GB DB — a sync operation anyway).
+    """
+    in_list = ",".join(str(c) for c in _BDR_BDIS)
+    try:
+        row = conn.execute(
+            f"SELECT 1 FROM cotahist "
+            f"WHERE refdate >= ? AND bdi_code IN ({in_list}) LIMIT 1",
+            (f"{year}-01-01",),
+        ).fetchone()
+        return row is None
+    except sqlite3.Error:
+        # Table missing / schema oddity — let the normal paths handle it.
+        return False
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -168,15 +205,31 @@ def _sync_year(year: int, force: bool = False) -> dict:
                 # Already synced — check if we need incremental update.
                 latest_in_db = _get_latest_refdate(conn, year)
                 if latest_in_db:
-                    # Incremental: download + parse, but only INSERT new rows.
-                    _progress(f"[cotahist] Year {year}: incremental sync (latest_in_db={latest_in_db})")
-                    result = _incremental_sync(conn, year, latest_in_db, now)
-                    if result.get("status") == "ok":
-                        duration = round(time.time() - t0, 1)
-                        _progress(f"[cotahist] Year {year}: {result['rows']:,} new rows in {duration}s")
-                        return {**result, "duration_s": duration, "synced_at": now}
-                    # If incremental failed (e.g., download error), fall through to full sync.
-                    _progress(f"[cotahist] Year {year}: incremental failed ({result.get('error')}), falling back to full sync")
+                    # [v1.28.2] BDR BACKFILL — a year synced before BDI
+                    # 34/35/36 joined BDI_FILTER has no BDR rows, and the
+                    # incremental path (below) only inserts rows NEWER
+                    # than latest_in_db, so BDRs would NEVER land. When
+                    # the CURRENT year carries zero BDR rows, fall through
+                    # to the full path once: it deletes + rebuilds the
+                    # year with the extended filter (one ~87MB download,
+                    # a few minutes). Past years are left alone (the
+                    # registry syncs the current year; force-sync older
+                    # ones by hand if their BDR history is wanted).
+                    if year == datetime.now().year and _bdr_rows_missing(conn, year):
+                        _progress(
+                            f"[cotahist] Year {year}: no BDR rows (BDI 34/35/36) "
+                            f"— full re-sync to backfill the BDR universe"
+                        )
+                    else:
+                        # Incremental: download + parse, but only INSERT new rows.
+                        _progress(f"[cotahist] Year {year}: incremental sync (latest_in_db={latest_in_db})")
+                        result = _incremental_sync(conn, year, latest_in_db, now)
+                        if result.get("status") == "ok":
+                            duration = round(time.time() - t0, 1)
+                            _progress(f"[cotahist] Year {year}: {result['rows']:,} new rows in {duration}s")
+                            return {**result, "duration_s": duration, "synced_at": now}
+                        # If incremental failed (e.g., download error), fall through to full sync.
+                        _progress(f"[cotahist] Year {year}: incremental failed ({result.get('error')}), falling back to full sync")
                 else:
                     # No existing rows — skip (already synced but empty).
                     return {

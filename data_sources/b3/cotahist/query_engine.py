@@ -15,12 +15,18 @@ from __future__ import annotations
 
 import re
 
-from data_sources.b3.cotahist.catalog import connect, db_path
+from data_sources.b3.cotahist.catalog import connect, db_path, BDI_SHARE_LIKE
 
 # B3 share-like symbols (PETR4, BOVA11, UNIT11, AAPL34…) — the same shape
 # the WebUI ticker validation uses. Filters option series (PETRF274 —
 # 3 trailing digits) and malformed codes out of the market-wide snapshot.
 _SYMBOL_RE = re.compile(r"^[A-Z]{4,6}\d{1,2}[A-Z]?$")
+
+# [v1.28.2] The quotable universe in the WHERE clauses below — the share-like
+# BDI set as an SQL IN list ("bdi_code = 2" was the old scope: equities only,
+# which silently hid ETFs — BDI 14 — from the landing page's BOVA11/SMAL11/
+# IVVB11 KPI row, and would have hidden the BDR rows too).
+_BDI_IN = "(" + ",".join(str(c) for c in sorted(BDI_SHARE_LIKE)) + ")"
 
 
 def query(
@@ -115,9 +121,16 @@ def market_snapshot() -> dict:
     altas / maiores baixas) and the quote enrichment of the index top-10
     cards (value + variação vs previous close per constituent).
 
-    Scope: lote padrão spot rows (market_type=10, bdi_code=2 — stocks,
-    units, BDRs, ETFs, FIIs; drops subscription rights / split receipts
-    / fractional-market duplicates), close > 0, share-like symbols only.
+    Scope: lote padrão spot rows (market_type=10, bdi_code IN (2, 12, 14,
+    34, 35, 36) — the share-like universe: stocks, units, FIIs, ETFs and
+    BDRs, no subscription rights / split receipts / fractional-market
+    duplicates, close > 0, share-like symbols only. [v1.28.2] the scope
+    used to be bdi_code=2 (equities): the ETFs (BDI 14) never reached the
+    quotes map, so the Painel's BOVA11/SMAL11/IVVB11 KPI row rendered
+    empty and BDR rows (BDI 34/35/36, once synced) would have met the
+    same fate; each symbol row now carries its ``bdi_code`` so the
+    callers can slice the universe (the rankings stay equities-only, the
+    BDR card scopes by ticker, the ETF row reads the three tickers).
 
     [v1.19 fix 1] PERF: the window functions originally ran over the WHOLE
     table — every session ever synced, all BDIs — which took minutes on a
@@ -133,8 +146,9 @@ def market_snapshot() -> dict:
           "session_date": "2026-11-20",       # latest session overall
           "symbols": [
             {"ticker": "PETR4", "name": "PETROBRAS PN N2",
-             "close": 34.5, "prev_close": 38.9,     # None when single-session
-             "variation_pct": -11.31,               # None without prev_close
+             "bdi_code": 2,                       # 2=equity 12=FII 14=ETF
+             "close": 34.5, "prev_close": 38.9,   # None when single-session
+             "variation_pct": -11.31,             # None without prev_close
              "volume": 2.1e9, "trade_count": 88000},
             ...
           ]
@@ -164,16 +178,16 @@ def market_snapshot() -> dict:
 
         # Step 2 — the ranked CTE, restricted to the recent window.
         rows = conn.execute(
-            """
+            f"""
             WITH scoped AS (
-              SELECT symbol, corp_name, refdate, close, volume, trade_count
+              SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count
               FROM cotahist
-              WHERE market_type = 10 AND bdi_code = 2
+              WHERE market_type = 10 AND bdi_code IN {_BDI_IN}
                 AND close IS NOT NULL AND close > 0
                 AND refdate >= ?
             ),
             deduped AS (
-              SELECT symbol, corp_name, refdate, close, volume, trade_count,
+              SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count,
                      ROW_NUMBER() OVER (
                        PARTITION BY symbol, refdate
                        ORDER BY volume DESC, trade_count DESC) AS d,
@@ -181,7 +195,7 @@ def market_snapshot() -> dict:
                        PARTITION BY symbol ORDER BY refdate DESC) AS s
               FROM scoped
             )
-            SELECT r1.symbol, r1.corp_name, r1.refdate,
+            SELECT r1.symbol, r1.corp_name, r1.refdate, r1.bdi_code,
                    r1.close, r1.volume, r1.trade_count,
                    r2.close AS prev_close
             FROM deduped r1
@@ -211,6 +225,7 @@ def market_snapshot() -> dict:
         symbols.append({
             "ticker": ticker,
             "name": (r["corp_name"] or "").strip(),
+            "bdi_code": int(r["bdi_code"]) if r["bdi_code"] else None,
             "close": close,
             "prev_close": prev,
             "variation_pct": variation,
@@ -238,10 +253,16 @@ def market_snapshot() -> dict:
 def quotes_for(symbols: list[str]) -> dict:
     """Latest-session quote per requested symbol (own last session).
 
+    [v1.28.2] Same share-like universe as market_snapshot() (equities,
+    FIIs, ETFs, BDRs — bdi_code IN (2, 12, 14, 34, 35, 36)): a portfolio
+    can hold any of them, and the old ``bdi_code = 2`` scope left ETF/FII/
+    BDR positions quote-less.
+
     Returns the market_snapshot() symbols shape filtered to ``symbols``::
 
         {"status": "ok",
          "symbols": [{"ticker": "POMO4", "name": "MARCOPOLO",
+                      "bdi_code": 2,
                       "close": 2.44, "prev_close": 2.40,
                       "variation_pct": 1.67,
                       "volume": 1.2e5, "trade_count": 340}],
@@ -271,14 +292,14 @@ def quotes_for(symbols: list[str]) -> dict:
             rows = conn.execute(
                 f"""
                 WITH scoped AS (
-                  SELECT symbol, corp_name, refdate, close, volume, trade_count
+                  SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count
                   FROM cotahist
-                  WHERE market_type = 10 AND bdi_code = 2
+                  WHERE market_type = 10 AND bdi_code IN {_BDI_IN}
                     AND close IS NOT NULL AND close > 0
                     AND symbol IN ({marks})
                 ),
                 deduped AS (
-                  SELECT symbol, corp_name, refdate, close, volume, trade_count,
+                  SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count,
                          ROW_NUMBER() OVER (
                            PARTITION BY symbol, refdate
                            ORDER BY volume DESC, trade_count DESC) AS d,
@@ -286,7 +307,7 @@ def quotes_for(symbols: list[str]) -> dict:
                            PARTITION BY symbol ORDER BY refdate DESC) AS s
                   FROM scoped
                 )
-                SELECT r1.symbol, r1.corp_name, r1.refdate,
+                SELECT r1.symbol, r1.corp_name, r1.refdate, r1.bdi_code,
                        r1.close, r1.volume, r1.trade_count,
                        r2.close AS prev_close
                 FROM deduped r1
@@ -305,6 +326,7 @@ def quotes_for(symbols: list[str]) -> dict:
                 out.append({
                     "ticker": (r["symbol"] or "").strip().upper(),
                     "name": (r["corp_name"] or "").strip(),
+                    "bdi_code": int(r["bdi_code"]) if r["bdi_code"] else None,
                     "close": close,
                     "prev_close": prev,
                     "variation_pct": variation,

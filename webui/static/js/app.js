@@ -2503,9 +2503,14 @@ function btToolShowEmpty() {
 }
 
 // open ONE ticker: loading card → /backtest/meta → the full shell
+// [v1.28.2] + the stale-response guard (the cmpLoad/scrLoad rule): the
+// meta build for ticker A must never overwrite the shell of ticker B.
+var btToolReqSeq = 0;
+
 function btToolOpen() {
   var box = document.getElementById('bt-tool-result');
   if (!box || !btState.ticker) return;
+  var seq = ++btToolReqSeq;
   destroyChartsIn(box);
   btState.meta = null;
   btState.result = null;
@@ -2517,6 +2522,7 @@ function btToolOpen() {
         '/backtest/meta?_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(meta) {
+      if (seq !== btToolReqSeq) return;  // superseded — a newer ticker owns the pane
       toolLoadingStop('bt-load');
       if (meta._error) {
         box.innerHTML = '<div class="error">Erro: ' + esc(meta._error) + '</div>' +
@@ -2528,6 +2534,7 @@ function btToolOpen() {
       _btRenderShell();
     })
     .catch(function(err) {
+      if (seq !== btToolReqSeq) return;  // superseded — stay quiet
       toolLoadingStop('bt-load');
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
         '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
@@ -4802,14 +4809,22 @@ window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos 
 // counter, one card per tool, timers tracked by id.
 var _toolLoadTimers = {};
 
-function toolLoadingHtml(id, title, hint) {
+// [v1.28.2] + the optional Cancelar button (cancelFn = a global handler
+// name for the inline onclick): the screener's minutes-long first pass is
+// cancellable; the other tools pass nothing and render exactly as before.
+function toolLoadingHtml(id, title, hint, cancelFn) {
   return '<div class="cmp-loading" id="' + id + '" role="status" aria-live="polite">' +
     '<div class="cmp-loading-spin" aria-hidden="true"></div>' +
     '<div class="cmp-loading-body">' +
     '<div class="cmp-loading-title">' + title + '</div>' +
     (hint ? '<div class="cmp-loading-hint">' + hint + '</div>' : '') +
     '<div class="cmp-loading-elapsed" id="' + id + '-elapsed">carregando…</div>' +
-    '</div></div>';
+    '</div>' +
+    (cancelFn
+      ? '<button type="button" class="cmp-range-btn cmp-loading-cancel" onclick="' +
+        cancelFn + '">Cancelar</button>'
+      : '') +
+    '</div>';
 }
 
 function toolLoadingStart(id) {
@@ -5030,9 +5045,18 @@ function cmpShowEmpty() {
     'crescimento e o desempenho da ação em base 100.</p></div>';
 }
 
+// [v1.28.2] STALE-RESPONSE GUARD — removing/adding a ticker re-enters
+// cmpLoad while a slow first build is still in flight; the older answer
+// used to be free to land LAST and overwrite the newer comparison (and
+// to kill ITS elapsed timer — both loads share the 'cmp-load' id).
+// Every load takes a ticket from this counter; a response only touches
+// the pane while it still holds the LATEST ticket.
+var cmpReqSeq = 0;
+
 function cmpLoad() {
   var box = document.getElementById('cmp-result');
   if (!box) return;
+  var seq = ++cmpReqSeq;
   destroyChartsIn(box);
   cmpState.data = null;
   // [v1.28.1] the shared loading card — spinner + ticker set + elapsed
@@ -5048,6 +5072,7 @@ function cmpLoad() {
         '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      if (seq !== cmpReqSeq) return;  // superseded — a newer set owns the pane
       toolLoadingStop('cmp-load');
       if (!data || data.status !== 'ok') {
         box.innerHTML = '<div class="error">' +
@@ -5058,6 +5083,7 @@ function cmpLoad() {
       cmpRender(box, data);
     })
     .catch(function(err) {
+      if (seq !== cmpReqSeq) return;  // superseded — stay quiet
       toolLoadingStop('cmp-load');
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
     });
@@ -5556,27 +5582,42 @@ function scrShowEmpty() {
     'uma linha por métrica com o veredito.</p></div>';
 }
 
+// [v1.28.2] STALE-RESPONSE GUARD + CANCELAR — the screener's first pass
+// runs minutes; switching tickers mid-flight used to let ticker A's late
+// answer overwrite B's cached screen (and kill B's elapsed timer). Every
+// load takes a ticket (scrReqSeq); a response only touches the pane while
+// it still holds the LATEST ticket. scrAbort also kills the superseded
+// request's socket — Cancelar uses the same lever on purpose.
+var scrReqSeq = 0;
+var scrAbort = null;
+
 function scrLoad() {
   var box = document.getElementById('scr-result');
   if (!box) return;
+  var seq = ++scrReqSeq;
+  if (scrAbort) { try { scrAbort.abort(); } catch (e) { /* noop */ } }
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  scrAbort = ac;
   destroyChartsIn(box);
   scrState.data = null;
   // [v1.28.1] the shared loading card — the first pass on a big sector
   // computes EVERY company and can take minutes (a real POMO4 run took
   // 123s); the elapsed counter + the "why" hint keep the wait legible
   // (the ask: "while its loading it should display some message to say
-  // its carregando").
+  // its carregando"). [v1.28.2] the card now carries a Cancelar button.
   box.innerHTML = toolLoadingHtml('scr-load',
     'Peneirando ' + esc(scrState.ticker) + ' contra o setor',
     'Cada empresa do setor é calculada na primeira vez — em setores ' +
     'grandes a primeira análise pode levar alguns minutos. As próximas ' +
-    'visitas ficam pré-calculadas (⚡).');
+    'visitas ficam pré-calculadas (⚡).', 'scrCancel()');
   toolLoadingStart('scr-load');
   fetch('/api/webui/tools/screener?ticker=' +
         encodeURIComponent(scrState.ticker) +
-        '&_t=' + Date.now())
+        '&_t=' + Date.now(), ac ? { signal: ac.signal } : undefined)
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      if (seq !== scrReqSeq) return;  // superseded — a newer ticker owns the pane
+      if (scrAbort === ac) scrAbort = null;
       toolLoadingStop('scr-load');
       if (!data || data.status !== 'ok') {
         box.innerHTML = '<div class="error">' +
@@ -5589,12 +5630,39 @@ function scrLoad() {
       scrRender(box, data);
     })
     .catch(function(err) {
+      if (seq !== scrReqSeq) return;  // superseded / canceled — stay quiet
+      if (scrAbort === ac) scrAbort = null;
       toolLoadingStop('scr-load');
+      if (ac && err && err.name === 'AbortError') return;  // Cancelar owns the UI
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
         '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
         'onclick="scrClear()">← escolher outro ticker</button></p>';
     });
 }
+
+// [v1.28.2] Cancelar — kills the WAIT, not the work: the fetch aborts
+// and the pane rests, while the server finishes the sector build and
+// caches it (the retry picks up the ⚡ payload when it's ready).
+window.scrCancel = function() {
+  scrReqSeq++;  // the in-flight answer, if any, is stale from this moment
+  if (scrAbort) { try { scrAbort.abort(); } catch (e) { /* noop */ } scrAbort = null; }
+  toolLoadingStop('scr-load');
+  var box = document.getElementById('scr-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<p class="cmp-empty-title">Análise cancelada.</p>' +
+    '<p class="cmp-empty-hint">O servidor continua calculando o setor em ' +
+    'segundo plano — quando terminar, a análise de ' + esc(scrState.ticker) +
+    ' sai pré-calculada (⚡).</p>' +
+    '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+    'onclick="scrRetry()">analisar ' + esc(scrState.ticker) + ' novamente</button> ' +
+    '<button type="button" class="cmp-range-btn" ' +
+    'onclick="scrClear()">← escolher outro ticker</button></p></div>';
+};
+
+window.scrRetry = function() { scrLoad(); };
 
 function scrRender(box, data) {
   var html = scrHeadHtml(data);
@@ -5769,8 +5837,20 @@ function scrSortedRows(data) {
     return Number(v);
   };
   rows.sort(function(a, b) {
-    if (key === 'ticker') return dir * String(a.ticker).localeCompare(String(b.ticker));
-    if (key === 'segmento') return dir * String(a.segmento || '').localeCompare(String(b.segmento || ''));
+    // [v1.28.2] text sorts: explicit pt-BR collation (deterministic
+    // across browsers/locales), and on the segmento column the missing
+    // values ('' → rendered '—') go LAST like every numeric column —
+    // '' used to win ascending, putting the least-informative rows on
+    // top of the table.
+    if (key === 'ticker') return dir * String(a.ticker).localeCompare(String(b.ticker), 'pt-BR');
+    if (key === 'segmento') {
+      var sa = String(a.segmento || '').trim();
+      var sb = String(b.segmento || '').trim();
+      if (!sa && !sb) return 0;
+      if (!sa) return 1;   // missing always last
+      if (!sb) return -1;
+      return dir * sa.localeCompare(sb, 'pt-BR');
+    }
     var na = num(a), nb = num(b);
     if (na === null && nb === null) return 0;
     if (na === null) return 1;    // missing values always last
@@ -5912,10 +5992,13 @@ var SCR_VERDICTS = {
   na:        { txt: '—',        cls: 'na',   title: 'sem comparação possível (valor indisponível ou mediana sem dados)' }
 };
 
-// [v1.28.1] the Meu Valor heat tint — how FAR from the median, in which
-// DIRECTION (the "add heat map like you did with others tabs" ask;
-// the valuation overview heatmap's green/amber/red language, applied
-// RELATIVE to the sector median instead of absolute thresholds):
+// [v1.28.1] the heat tint — how FAR from the median, in which DIRECTION
+// (the "add heat map like you did with others tabs" ask; the valuation
+// overview heatmap's green/amber/red language, applied RELATIVE to the
+// sector median instead of absolute thresholds). [v1.28.2] applied to
+// BOTH the Meu Valor cell and the vs Setor verdict cell (the user's
+// review: the heat belongs on the comparison column; the Meu Valor tint
+// stays):
 //   |delta| < 10%  → no tint (statistically at the median)
 //   10-30% / 30-75% / 75%+ → 1 / 2 / 3 (the intensity steps)
 //   favorable (cheap/above) → green; unfavorable (expensive/below) → red
@@ -5937,8 +6020,9 @@ function scrVsHtml(data) {
     'setor. Múltiplos de valuation e alavancagem: menor que a mediana = ' +
     'barata. Qualidade (ROE, ROA, margens, Div Yield, crescimento): maior ' +
     'que a mediana = acima. Múltiplos negativos são prejuízo — ficam sem ' +
-    'veredito. O fundo do Meu Valor marca a distância da mediana: verde = ' +
-    'favorável, vermelho = desfavorável — quanto mais forte, mais distante.</p>' +
+    'veredito. O fundo do Meu Valor e do vs Setor marca a distância da ' +
+    'mediana: verde = favorável, vermelho = desfavorável — quanto mais ' +
+    'forte, mais distante.</p>' +
     '<div class="scr-tablewrap"><table class="scr-table scr-vs-table"><thead><tr>' +
     '<th>Métrica</th><th>Meu Valor</th><th>Mediana do Setor</th><th>Delta</th><th>vs Setor</th>' +
     '</tr></thead><tbody>';
@@ -5951,7 +6035,12 @@ function scrVsHtml(data) {
       '<td class="scr-heat-cell ' + scrHeatCls(r) + '">' + esc(r.my_fmt) + '</td>' +
       '<td>' + esc(r.med_fmt) + '</td>' +
       '<td class="scr-delta-' + deltaCls + '">' + esc(r.delta_fmt) + '</td>' +
-      '<td><span class="scr-badge scr-badge-' + v.cls + '" title="' + esc(v.title) + '">' +
+      // [v1.28.2] the heat tint rides the VERDICT cell too (the user's
+      // ask: the distance-to-median heat on the vs Setor column, keeping
+      // the Meu Valor tint) — same bands, same colors, so the whole row
+      // reads at one glance: how far (intensity) and which way (green/
+      // red), with the badge spelling the verdict out.
+      '<td class="scr-heat-cell ' + scrHeatCls(r) + '"><span class="scr-badge scr-badge-' + v.cls + '" title="' + esc(v.title) + '">' +
       esc(v.txt) + '</span></td></tr>';
   });
   html += '</tbody></table></div></div>';

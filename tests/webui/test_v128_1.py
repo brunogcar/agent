@@ -186,25 +186,33 @@ def test_screener_table_rows_carry_raw_companions(memory_root, monkeypatch):
 
 def test_screener_namespace_bumped_to_v2():
     from webui.services.screener import ScreenerService
-    assert ScreenerService._NS == "tools_screener_v2"
+    # [v1.28.2] v3 — cached v2 payloads carry the ratio-formula delta
+    # (sign-flipped on negative medians); they must not serve.
+    assert ScreenerService._NS == "tools_screener_v3"
 
 
 # ── 3. Painel — the ETF row + the Maiores Altas BDR card ─────────────────────
 
 def _snap_fixture() -> dict:
-    """A market snapshot with the three ETFs + a BDR + a native."""
-    def sym(tk, name, close, prev, trades):
-        return {"ticker": tk, "name": name, "close": close, "prev_close": prev,
+    """A market snapshot with the three ETFs + a BDR + a native.
+
+    [v1.28.2] rows carry bdi_code (2=equity, 12=FII, 14=ETF, 34/35/36=
+    BDR): the snapshot's universe spans the share-like instruments and
+    the ranking cards slice it in the service (natives stay bdi 2).
+    """
+    def sym(tk, name, close, prev, trades, bdi=2):
+        return {"ticker": tk, "name": name, "bdi_code": bdi,
+                "close": close, "prev_close": prev,
                 "variation_pct": (close / prev - 1) * 100 if prev else None,
                 "volume": 1e6, "trade_count": trades}
-    return {"status": "ok", "session_date": "2026-11-24", "count": 5,
+    return {"status": "ok", "session_date": "2026-11-24", "count": 6,
             "symbols": [
-                sym("BOVA11", "ISHARES BOVA", 129.35, 127.80, 9000),
-                sym("SMAL11", "ISHARES SMAL", 122.10, 124.00, 4500),
-                sym("IVVB11", "ISHARES S&P 500", 345.60, 343.10, 3200),
-                sym("AAPL34", "APPLE BDR", 25.40, 23.90, 400),   # +6,27%
-                sym("MSBR34", "MSFT-WTF BDR", 8.10, 8.40, 400),  # illiquid-ish
-                sym("PETR4", "PETROBRAS", 40.87, 40.38, 88000),  # a native
+                sym("BOVA11", "ISHARES BOVA", 129.35, 127.80, 9000, bdi=14),
+                sym("SMAL11", "ISHARES SMAL", 122.10, 124.00, 4500, bdi=14),
+                sym("IVVB11", "ISHARES S&P 500", 345.60, 343.10, 3200, bdi=14),
+                sym("AAPL34", "APPLE BDR", 25.40, 23.90, 400, bdi=34),   # +6,27%
+                sym("MSBR34", "MSFT-WTF BDR", 8.10, 8.40, 400, bdi=34),  # illiquid-ish
+                sym("PETR4", "PETROBRAS", 40.87, 40.38, 88000),          # a native
             ]}
 
 
@@ -223,21 +231,30 @@ def test_etfs_row_from_the_snapshot():
     assert HomeService._etfs({}) == []
 
 
-def test_bdr_gainers_card_scopes_to_the_34_suffix():
+def test_bdr_gainers_card_scopes_to_the_bdr_suffixes():
     from webui.services.home import HomeService
     cards = HomeService()._ranking_cards(_snap_fixture())
     bdr = next(c for c in cards if c["key"] == "altas_bdr")
     assert bdr["title"] == "Maiores Altas BDR"
     assert [i["ticker"] for i in bdr["items"]] == ["AAPL34", "MSBR34"]
     assert bdr["items"][0]["variation"].startswith("+")
-    # the general Maiores Altas card covers the WHOLE market (the BDR
-    # that rose the most legitimately leads it) — the altas_bdr card is
-    # the *34-scoped companion, not a replacement
+    # [v1.28.2] the BDR card sits AFTER Maiores Baixas (the user's ask:
+    # native rankings first, the BDR slice last)
+    keys = [c["key"] for c in cards]
+    assert keys.index("altas_bdr") > keys.index("baixas")
+    assert keys == ["negocios", "volumes", "altas", "baixas", "altas_bdr"]
+    # [v1.28.2] the four ranking cards stay NATIVES-ONLY (bdi 2): the
+    # snapshot universe spans ETFs/FIIs/BDRs now, so the equities slice
+    # is explicit — the cards' content is unchanged (a BDR can no longer
+    # lead Maiores Altas; an ETF can't top Mais Negócios)
     altas = next(c for c in cards if c["key"] == "altas")
-    assert altas["items"][0]["ticker"] == "AAPL34"
-    # the degraded branch carries the BDR card too
+    assert [i["ticker"] for i in altas["items"]] == ["PETR4"]
+    negocios = next(c for c in cards if c["key"] == "negocios")
+    assert [i["ticker"] for i in negocios["items"]] == ["PETR4"]
+    # the degraded branch carries the BDR card too (last, same as the ok path)
     dead = HomeService()._ranking_cards({"status": "not_synced"})
-    assert any(c["key"] == "altas_bdr" for c in dead)
+    assert [c["key"] for c in dead] == [
+        "negocios", "volumes", "altas", "baixas", "altas_bdr"]
 
 
 def test_bdr_gainers_respect_the_liquidity_gate():
@@ -245,7 +262,7 @@ def test_bdr_gainers_respect_the_liquidity_gate():
     snap = _snap_fixture()
     # both BDRs below the 100-trade gate → the card renders empty
     for s in snap["symbols"]:
-        if s["ticker"].endswith("34"):
+        if s["bdi_code"] in (34, 35, 36):
             s["trade_count"] = 3
     cards = HomeService()._ranking_cards(snap)
     bdr = next(c for c in cards if c["key"] == "altas_bdr")

@@ -6,13 +6,17 @@ B3's official historical trade data. Annual ZIP files contain every daily quote 
 
 **Key characteristics:**
 - **Official source** — B3's own historical data, not third-party
-- **Dual-table storage** — equities (BDI 02/12/14/96) → `cotahist` table;
-  derivatives (BDI 78/82/83/84/26 — options + term) → `cotahist_derivatives`
+- **Dual-table storage** — equities (BDI 02/12/14/34/35/36/96) → `cotahist`
+  table; derivatives (BDI 78/82/83/84/26 — options + term) → `cotahist_derivatives`
   table in the SAME `cotahist.db`. One sync pass writes to both. See
   [COTAHIST_DERIVATIVES.md](COTAHIST_DERIVATIVES.md).
-- **BDI-filtered** — equities (02), FIIs (12), ETFs (14), fractional (96) for
-  the `cotahist` table. Derivatives BDI codes {78, 82, 83, 84, 26} are written
-  to the separate `cotahist_derivatives` table (no longer skipped).
+- **BDI-filtered** — equities (02), FIIs (12), ETFs (14), BDRs (34/35/36),
+  fractional (96) for the `cotahist` table. Derivatives BDI codes {78, 82,
+  83, 84, 26} are written to the separate `cotahist_derivatives` table (no
+  longer skipped). [v1.28.2] BDRs joined the filter — a DB synced before
+  the extension gets a ONE-TIME current-year rebuild on the next sync (the
+  incremental path only inserts newer dates, so it can't backfill BDRs);
+  past years keep their pre-BDR state unless force-synced by hand.
 - **Fixed-width format** — 245-byte records, 26 columns, latin1 encoding
 - **Bulk download** — one ZIP per year (~10-89MB compressed)
 - **No rate limits** — bulk file download, not paginated API
@@ -70,10 +74,16 @@ No env vars required. No auth. No rate limits.
 
 **BDI Filter:** The standard COTAHIST sync dispatches each row by BDI code:
 - **Equities table** (`cotahist`): BDI codes 02 (equities), 12 (FIIs), 14 (ETFs),
-  96 (fractional).
+  34/35/36 (BDRs Nível I/II/III — v1.28.2), 96 (fractional).
 - **Derivatives table** (`cotahist_derivatives`): BDI codes 78 (calls), 82
   (puts), 83 (index calls), 84 (index puts), 26 (term). See
   [COTAHIST_DERIVATIVES.md](COTAHIST_DERIVATIVES.md).
+
+**BDR backfill (v1.28.2):** DBs synced before the BDR extension carry no BDR
+rows for ingested dates, and the incremental sync can't add them (it only
+inserts rows NEWER than the latest refdate). The next sync detects a BDR-less
+current year and rebuilds it once with the extended filter (~87MB download, a
+few minutes). To backfill older years: `python -c "from data_sources.b3.cotahist.sync_engine import sync; print(sync(year=2024, force=True))"` per year.
 
 Rows with BDI codes outside both sets (bonds, warrants, etc.) are still
 skipped — they have no analytical use case yet.

@@ -89,8 +89,11 @@ class ScreenerService:
     # RAW numeric values alongside the formatted strings (price_raw,
     # mktcap_raw, roe_raw, …) — the client sorts the columns and paints
     # the best-of-each-column ✓ from them; cached v1 payloads lack the
-    # keys, so the namespace moves.
-    _NS = "tools_screener_v2"
+    # keys, so the namespace moves. v3 [v1.28.2]: the delta is the
+    # SIGNED distance (mine − med) / |med| — cached v2 payloads still
+    # carry the ratio formula, whose sign flips on negative medians
+    # (the heat tint contradicted the badge); they must not serve.
+    _NS = "tools_screener_v3"
 
     def __init__(self) -> None:
         self._cmp = ComparisonService()
@@ -499,7 +502,19 @@ class ScreenerService:
             delta = None
             if mine is not None and med not in (None, 0):
                 try:
-                    delta = float(mine) / float(med) - 1.0
+                    # [v1.28.2] SIGNED distance, not a ratio: the old
+                    # mine/med − 1 flipped direction whenever the median
+                    # was negative (caixa líquida −2 vs mediana −1 read
+                    # "+100% acima" — red heat on the sector's BEST
+                    # balance sheet while the badge said "barata"; a
+                    # ratio over a negative base carries no direction).
+                    # (mine − med) / |med| is numerically IDENTICAL for
+                    # positive medians (where the ratio was always right)
+                    # and sign-honest for negative ones — the heat tint
+                    # (which reads delta's sign) and the verdict badge
+                    # (which compares mine vs med directly) can no longer
+                    # disagree.
+                    delta = (float(mine) - float(med)) / abs(float(med))
                 except Exception:
                     delta = None
             rows.append({

@@ -63,9 +63,18 @@
 - [x] ~~**Company page fixes & tweaks (the user's ten-item list)**~~ **SHIPPED in v1.26.1**: single-series charts drop the legend (one renderer rule — pies/doughnuts exempt, explicit server asks win), the Histograma de Preço highlights the bar holding the current price (white outline + tooltip), the Indicadores subtab's seven charts are collapsible (open by default), Financeiro overview/statements are PAYLOAD-CACHED (the new `webui_payloads` table keyed by the DFP+ITR × COTAHIST fingerprint — the trimester reference; ~1ms hits with the ⚡ provenance note, automatic rebuild on sync), Múltiplos Menos Comuns is a colored heatmap (Histórico's Heatmap de Valoração pattern), the DPA engine is share-class correct + DDM-merged (the "DPA missing while the company pays" fix + the doubled dual-class DPA + the latent dividends-fingerprint bug), Proventos Visão Geral gained the Anúncios de Proventos — CVM (IPE) cross-reference (data → CVM PDF), and Insiders got the cargo/tipo color pills + the **Por Tipo** subtab (the by_role twin on the movement-type axis). Pinned by `tests/webui/test_v1261.py` (18 tests). **fix 1:** the histogram outline went THEME-AWARE (the fixed white one vanished on the light theme — it reads the theme's --text token now), the Acionistas Visão Geral stopped duplicating its own subtabs (the evolution charts + top-5 preview left; the CURRENT-structure snapshot — controle × FF doughnut + top-N concentração — took their place), and the stray version banner that rendered at the top of every page is gone (20 tests).
 
 ### Screener
-- [ ] **Sector screener** — select sector → all companies with key metrics (P/L, DY, ROE, market cap).
-- [ ] **Filter + sort** — by P/L range, DY range, market cap range.
-- [ ] **Peer comparison** — side-by-side of 2-5 tickers. [v1.26.1] The foundation exists now: Financeiro overview payloads are materialized per (ticker, trimestre) in the `webui_payloads` table — the comparison reads the same rows the Financeiro tab hits.
+- [x] ~~**Sector screener**~~ **SHIPPED in v1.28** (the Ferramentas' second tool — one ticker × its whole sector: the median KPI row, the sector table one class per company, the position charts, the Meu Valor × Mediana verdict table with heat tint).
+- [x] ~~**Sort**~~ **SHIPPED in v1.28.1** (every sector-table header sorts, missing values last, best-per-column ✓). The range-filter half stays open:
+- [ ] **Range filters** — P/L range, DY range, market cap range over the sector table.
+- [x] ~~**Peer comparison**~~ **SHIPPED in v1.27** (Comparação, the Ferramentas' first tool — up to 4 tickers side by side, every grid row ranked). [v1.26.1] The foundation: Financeiro overview payloads materialized per (ticker, trimestre) in the `webui_payloads` table — the comparison reads the same rows the Financeiro tab hits.
+
+### Ferramentas — the v1.28.2 review round (parked ideas)
+The self-review's feature suggestions — deliberately NOT in v1.28.2 (a fixes-only round); triage these into versions when the mood strikes.
+- [ ] **Cross-tool navigation** — "abrir no Screener" / "simular no Backtest" links between the tools; the `?s=`/`?b=`/`?t=` deep links already exist, the glue is just links.
+- [ ] **Screener — Posição column** — the subject's rank inside the sector per metric ("P/L: 12º de 38").
+- [ ] **Comparação — Mediana do Setor column** — each grid row against the sector median, not just the compared tickers.
+- [ ] **Screener — "copiar resumo"** — the Meu Valor × Mediana verdict table as a markdown summary in the clipboard.
+- [ ] **Cancelar on the other loads** — the screener's Cancelar pattern extended to Comparação/Backtest.
 
 ### Polish
 - [ ] **Theme accent color** — user-selectable accent (teal, blue, violet, orange) via CSS variable override; pairs naturally with the v1.20 settings schema.

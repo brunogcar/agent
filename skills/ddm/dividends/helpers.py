@@ -123,14 +123,22 @@ def format_date(d) -> str:
 # ── [v2] shared numerics (skill static + WebUI DividendosService) ───────────
 
 def is_bdr(ticker: str) -> bool:
-    """True for B3 BDR tickers — suffix "34" (AAPL34, GDBR34, MSFT34...).
+    """True for B3 BDR tickers — suffix 34/35/36 (AAPL34, GDBR34, MSFT34...).
 
     BDRs (Brazilian Depositary Receipts) are FOREIGN companies' shares
     traded on B3; their per-share payouts dwarf B3 natives (the agenda's
     top values R$ 1,70-6,32 are all BDRs vs natives topping at ~R$ 1,13),
     which is why every Proventos view splits on this predicate.
+
+    [v1.28.2] The suffix mirrors the BDI code (Nível I/II/III): almost
+    every listed BDR carries 34, but 35/36 are BDR suffixes too — no B3
+    native instrument uses them (natives are 3/4/5/6/7/8/9/11/12), so
+    the three-way match cannot misclassify. The Painel's Maiores Altas
+    BDR card uses the same predicate.
     """
-    return bool(ticker) and str(ticker).strip().upper().endswith("34")
+    if not ticker:
+        return False
+    return str(ticker).strip().upper().endswith(("34", "35", "36"))
 
 
 def _val(d: dict) -> float | None:

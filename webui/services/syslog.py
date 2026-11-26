@@ -72,6 +72,9 @@ class SystemLog:
         self._lock = threading.RLock()
         self._buf: deque[dict[str, Any]] = deque(maxlen=500)
         self._next_id = 1
+        # [v1.28.2] the day the buffer is currently on (None → the first
+        # log() opens with a date separator; a midnight crossing adds one).
+        self._cur_date = None
 
     # ── configuration (live, from settings) ──────────────────────────────────
 
@@ -98,7 +101,13 @@ class SystemLog:
     # ── write ────────────────────────────────────────────────────────────────
 
     def log(self, level: str, source: str, message: str) -> None:
-        """Append one entry (thread-safe; drops below the min level)."""
+        """Append one entry (thread-safe; drops below the min level).
+
+        [v1.28.2] When the calendar day changes mid-session, a
+        ``── dd/mm/aaaa ──`` separator lands first (and the buffer opens
+        with one): the tail's timestamps are time-only, so without it the
+        23:59 and the 00:01 lines look like the same day forever.
+        """
         if _LEVELS.get(level, 0) < self._min_level():
             return
         msg = str(message).replace("\n", " ")[:_MAX_MSG]
@@ -108,11 +117,22 @@ class SystemLog:
         # lock ordering between the two services can be armed into a
         # cross-lock deadlock (both locks are RLock for reentrancy).
         size = self._buffer_size()
+        now = datetime.now()
         with self._lock:
             self._retrim(size)
+            if now.date() != self._cur_date:
+                self._cur_date = now.date()
+                self._buf.append({
+                    "id": self._next_id,
+                    "ts": now.strftime("%H:%M:%S"),
+                    "level": "info",
+                    "source": "webui",
+                    "message": f"── {now.strftime('%d/%m/%Y')} ──",
+                })
+                self._next_id += 1
             self._buf.append({
                 "id": self._next_id,
-                "ts": datetime.now().strftime("%H:%M:%S"),
+                "ts": now.strftime("%H:%M:%S"),
                 "level": level if level in _LEVELS else "info",
                 "source": str(source)[:24] or "webui",
                 "message": msg,
@@ -202,9 +222,11 @@ class _StdoutTee:
                                              error on "Traceback")
 
     The original stream receives every byte first (PowerShell output is
-    unchanged). ``_guard`` stops re-entrant captures — a print from
-    inside syslog internals must not loop. Thread-safe: ``_lock`` owns
-    the partial-line buffer (interleaved prints from worker threads
+    unchanged). ``_guard`` (thread-local [v1.28.2]) stops re-entrant
+    captures — a print from inside syslog internals must not loop, but
+    prints from OTHER threads keep flowing (the old process-wide flag
+    silently dropped them while one capture ran). Thread-safe: ``_lock``
+    owns the partial-line buffer (interleaved prints from worker threads
     never merge two half-lines). Everything but write/writelines/flush
     delegates to the original stream (isatty, encoding, fileno…).
     """
@@ -216,7 +238,13 @@ class _StdoutTee:
         self._is_stderr = is_stderr
         self._lock = threading.Lock()
         self._pending = ""
-        self._guard = False
+        # [v1.28.2] the reentrancy guard is THREAD-LOCAL now: the old
+        # process-wide flag made a print() from ANY other thread land in
+        # the bit bucket while one capture ran (two worker threads
+        # printing at once = one line missing from the drawer). Prints
+        # re-entering from the CAPTURING thread are still swallowed
+        # (that's the loop protection); everyone else buffers normally.
+        self._guard = threading.local()
 
     # ── stream API ──
     def write(self, text) -> int:
@@ -245,10 +273,10 @@ class _StdoutTee:
 
     # ── capture ──
     def _capture(self, text) -> None:
-        if not text or self._guard:
+        if not text or getattr(self._guard, "busy", False):
             return
         try:
-            self._guard = True
+            self._guard.busy = True
             with self._lock:
                 self._pending += str(text)
                 lines = self._pending.split("\n")
@@ -260,7 +288,7 @@ class _StdoutTee:
         except Exception:
             pass  # a log tee must never take the app down
         finally:
-            self._guard = False
+            self._guard.busy = False
 
     def _emit(self, line: str) -> None:
         low = line.lower()

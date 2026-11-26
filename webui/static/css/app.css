@@ -2557,6 +2557,9 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   margin-top: 6px;
 }
+/* [v1.28.2] the loading card's Cancelar button — pinned right so the
+   spinner + title keep their rhythm; only the screener passes one. */
+.cmp-loading-cancel { margin-left: auto; flex: none; }
 
 /* ── the screener's SORTABLE headers ──
    Every th is a button-like cell: cursor + hover accent + the ▲/▼/↕
