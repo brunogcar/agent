@@ -5,7 +5,7 @@ take on the static ``inflation_dashboard.html`` reference (built by
 skills/ddm/inflation/modes/dashboard.py: 4 flat tabs — IGP-M, IPCA and INPC
 each with Histórico + Matriz subtabs, plus a Comparativo tab). Fourth
 family of the Mercado page (focus v1.12, fluxo v1.13, índices v1.14) —
-the Brazilian price indices scraped from dadosdemercado.com.br
+the Brazilian price indices scraped from the DDM source
 (IGP-M/FGV, IPCA e INPC/IBGE).
 
 Per the v1.8–v1.14 reorganization spirit the static's gaps get fixed,
@@ -99,7 +99,7 @@ from skills.ddm.inflation.helpers import (
 )
 
 _ERR = ("Índices de preços indisponíveis — sincronize a fonte "
-        "ddm-inflation (DDM — índices de preços, dadosdemercado.com.br) "
+        "ddm-inflation (DDM — índices de preços) "
         "na página Sincronização.")
 
 # ── index columns: slug, display name, source, chart color (the skill's
@@ -271,8 +271,7 @@ class InflationService:
                 _pct(last.get("month_value")),
                 f"Variação de {_br_month(last.get('ref_date'))} · "
                 f"acumulado no ano: {_pct(last.get('year_acumulado'))}. "
-                f"Fonte: {_BY_SLUG[s['slug']][1]} via "
-                "dadosdemercado.com.br.",
+                f"Fonte: {_BY_SLUG[s['slug']][1]}.",
             ))
             kpis.append(kpi(
                 f"{name} — 12m",
@@ -407,7 +406,7 @@ class InflationService:
                 f"{_br_month(last.get('ref_date'))})."),
             kpi(f"{name} — 12m", _pct(last.get("acumulado_12m")),
                 "Soma das variações dos últimos 12 meses (janela móvel). "
-                f"Fonte: {source} via dadosdemercado.com.br."),
+                f"Fonte: {source}."),
         ]
 
         sections: list[dict[str, Any]] = [

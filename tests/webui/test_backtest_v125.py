@@ -365,9 +365,16 @@ def test_http_run_ok_and_errors(client):
 
 
 def test_http_tab_and_page(client):
+    # [v1.28.1] the Backtest TAB is GONE (the simulator moved to the
+    # Ferramentas page); the per-ticker endpoints stay (the tool calls
+    # them for whichever ticker is picked). The tab fragment 404s in
+    # PT-BR, the company page no longer links it, and the tools page
+    # carries the third family pill instead.
     r = client.get("/api/webui/company/PETR4/tab/backtest")
-    assert r.status_code == 200
-    assert 'id="bt-root"' in r.text and "data-ticker" in r.text
-    r2 = client.get("/webui/company/PETR4/backtest")
-    assert r2.status_code == 200
-    assert "tab/backtest" in r2.text
+    assert r.status_code == 404
+    r2 = client.get("/webui/company/PETR4/backtest", follow_redirects=False)
+    assert r2.status_code == 302  # unknown tab → redirect to the overview
+    r3 = client.get("/webui/tools")
+    assert r3.status_code == 200
+    assert 'id="family-pill-backtest"' in r3.text
+    assert 'id="bt-tool-search"' in r3.text

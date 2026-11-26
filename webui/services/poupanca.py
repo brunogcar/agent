@@ -1,7 +1,7 @@
 """webui/services/poupanca.py — Mercado page / Poupança family data service (DDM).
 
 [v1.23] The Poupança family of the ``/webui/mercado`` page — the Brazilian
-savings-account monthly yield (dadosdemercado.com.br, ``ddm-poupanca``
+savings-account monthly yield (``ddm-poupanca``
 source, ``memory_db/ddm/poupanca.db``). Seventh DDM family (focus v1.12,
 fluxo v1.13, índices v1.14, inflação v1.15, juros v1.16, ações v1.17,
 proventos v1.18) — placed BETWEEN Juros and Ações: the caderneta is renda
@@ -120,7 +120,7 @@ from skills.ddm.poupanca.helpers import (
 from skills.ddm.inflation.helpers import _heat_color as _heat_seq
 
 _ERR = ("Poupança indisponível — sincronize a fonte "
-        "ddm-poupanca (DDM — poupança, dadosdemercado.com.br) na página "
+        "ddm-poupanca (DDM — poupança) na página "
         "Sincronização.")
 
 # [skill pattern] The static dashboard's palette — rendimento emerald
@@ -331,7 +331,7 @@ class PoupancaService:
                 f"acumulado no ano: {_pct(last.get('acumulado_no_ano'))}. "
                 "A caderneta rende 0,5% ao mês + TR enquanto a Selic "
                 "estiver acima de 8,5% a.a., ou 70% da Selic + TR abaixo "
-                "disso. Fonte: dadosdemercado.com.br."),
+                "disso."),
             kpi("Poupança — ano", _pct(last.get("acumulado_no_ano")),
                 f"Acumulado no ano corrente (jan a "
                 f"{_br_month(last.get('ref_date'))}) — a soma dos "

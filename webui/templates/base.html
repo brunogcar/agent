@@ -74,6 +74,16 @@
   the P/L and ROE position charts with the median dashed line, and the
   Meu Valor × Mediana verdict table with its badges; see
   docs/webui/CHANGELOG.md)
+[WebUI v1.28.1] ?v=82 (the Ferramentas trio + the visible log: the
+  Backtest tool MOVES here from the company page (picker + ?b= deep
+  link, BR dd/mm/aaaa chart axes, aligned trade log, +2 KPI cards);
+  Screener — sortable sector table with best-of-column ✓, heat-tinted
+  Meu Valor × Mediana, proper loading cards everywhere; Comparação —
+  every grid row ranked (✓ on Mercado + Dividendos too); Painel —
+  BOVA11/SMAL11/IVVB11 ETF row + Maiores Altas BDR; the 📜 drawer —
+  HTTP/App filter pills + the terminal tail (print tee: [ratios]/[webui]
+  lines, uvicorn banners, request query strings); see
+  docs/webui/CHANGELOG.md)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -102,7 +112,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=81">
+  <link rel="stylesheet" href="/static/css/app.css?v=82">
 </head>
 <body>
   <div class="app-shell">
@@ -236,7 +246,12 @@
                 title="{{ t('common.close') }}">✕</button>
       </div>
       <div class="syslog-filters" id="syslog-filters" role="group" aria-label="{{ t('logs.filter_label') }}">
+        {# [v1.28.1] HTTP/App join the level pills — the drawer now also
+           carries the terminal tail (ratios progress, [webui] notes),
+           so a source filter keeps the request lines findable. #}
         <button class="syslog-pill is-active" data-filter="all">{{ t('logs.filter_all') }}</button>
+        <button class="syslog-pill" data-filter="http">{{ t('logs.filter_http') }}</button>
+        <button class="syslog-pill" data-filter="app">{{ t('logs.filter_app') }}</button>
         <button class="syslog-pill" data-filter="warning">{{ t('logs.filter_warning') }}</button>
         <button class="syslog-pill" data-filter="error">{{ t('logs.filter_error') }}</button>
       </div>
@@ -251,6 +266,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=81"></script>
+  <script src="/static/js/app.js?v=82"></script>
 </body>
 </html>

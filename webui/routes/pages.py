@@ -42,8 +42,10 @@ router = APIRouter(prefix="/webui", tags=["webui-pages"])
 # [v1.26] governance (Governança — CGVN) + ipe (Informações Periódicas
 # — the IPE event index, SPLIT into its own tab in v1.26 fix 1:
 # "both provide info, but they are not supposed to be together,
-# different purpose"; both between Insiders and Backtest).
-_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe", "backtest"}
+# different purpose"; both between Insiders and where Backtest used
+# to live). [v1.28.1] backtest REMOVED — the simulator moved to the
+# Ferramentas page ("lets move backtest from companies to tools").
+_PAGE_TABS = {"visao_geral", "preco", "financials", "valuation", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe"}
 
 
 def _ctx(request: Request, **extra) -> dict:
@@ -125,11 +127,11 @@ def macro_page(request: Request):
 def mercado_page(request: Request):
     """[v1.12] Mercado page — the DDM dashboards' home.
 
-    Market-level data from dadosdemercado.com.br (Boletim Focus now;
-    dividends, índices, fluxo, inflação and juros as later families),
-    next to Macro (realized BCB SGS indicators). Family + subtab shell
-    (macro.html pattern, one level deeper — the company page's tab /
-    subtab architecture on a standalone page).
+    Market-level data (Boletim Focus now; dividends, índices, fluxo,
+    inflação and juros as later families), next to Macro (realized BCB
+    SGS indicators). Family + subtab shell (macro.html pattern, one
+    level deeper — the company page's tab / subtab architecture on a
+    standalone page).
     """
     return templates.TemplateResponse(
         request, "pages/mercado.html", _ctx(request, active_tab="mercado"),

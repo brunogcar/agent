@@ -99,9 +99,9 @@
        SELF-ASSESSMENT source. [v1.26 fix 1] Informações Periódicas
        (IPE — the material-events index) SPLIT into its OWN tab right
        after this one: "both provide info, but they are not supposed
-       to be together, different purpose". Between Insiders and
-       Backtest: estrutura → pessoas → governança → eventos →
-       simular. #}
+       to be together, different purpose". Between Insiders and where
+       Backtest used to live: estrutura → pessoas → governança →
+       eventos. #}
     <button class="tab-btn" :class="{ 'active': tab === 'governance' }"
             @click="tab='governance'"
             hx-get="/api/webui/company/{{ ticker }}/tab/governance"
@@ -120,18 +120,11 @@
             hx-swap="innerHTML">
       {{ t("company.ipe") }}
     </button>
-    {# [v1.25] Backtest tab — the interactive simulator (reference:
-       PETR4_backtest_dashboard.html / skills/cvm/backtest, reborn with
-       parameters, scenarios and comparison). Last tab: the reading
-       flow ends in simulation — you backtest AFTER studying the
-       company. #}
-    <button class="tab-btn" :class="{ 'active': tab === 'backtest' }"
-            @click="tab='backtest'"
-            hx-get="/api/webui/company/{{ ticker }}/tab/backtest"
-            hx-target="#tab-content"
-            hx-swap="innerHTML">
-      {{ t("company.backtest") }}
-    </button>
+    {# [v1.28.1] Backtest tab REMOVED — the simulator moved to the
+       Ferramentas page (🧰 → Backtest, its own ticker picker): "lets
+       move backtest from companies to tools, to be with the other
+       interactive tools we added". The per-ticker endpoints stay; the
+       tool calls them for whichever ticker is picked. #}
     {# [v1.21 fix 1] ⭐ Watch button — adds/removes this ticker on the
        Painel's Tickers Observados (initCompanyWatch() in app.js owns the
        state + toggle). Lives in the tab bar so it's on EVERY tab,

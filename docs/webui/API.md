@@ -39,12 +39,14 @@ Return JSON. Used by Chart.js and programmatic clients.
 
 ### `GET /api/webui/home`
 
-[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + 5 ranked ticker cards (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Altas; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
+[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + **[v1.28.1] the ETF row** (`etfs`: BOVA11/SMAL11/IVVB11 — last close + signed day % from the same cotahist snapshot) + 6 ranked ticker cards [v1.28.1: + Maiores Altas BDR] (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Volumes; Maiores Altas; **Maiores Altas BDR** — the *34 universe, same 100-trade liquidity gate; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
 
 ```json
 {
   "status": "ok",
   "kpis": [{"label": "Selic (a.a.)", "value": "13,65%", "tooltip": "…"}],
+  "etfs": [{"ticker": "BOVA11", "value": "R$ 129,35", "variation": "+1,21%",
+            "tooltip": "ETF que replica o Ibovespa — …"}],
   "cards": [
     {"key": "ibov", "title": "IBOV · Top 10", "subtitle": "Maiores pesos — carteira de 05/08/2026",
      "error": null,
@@ -53,7 +55,7 @@ Return JSON. Used by Chart.js and programmatic clients.
   ]
 }
 ```
-`kpis_note` (optional) carries the SGS degradation message; `variation` is `null` without a previous-session close; `extra` is `null` on the altas/baixas cards. Rendered by `loadHomeData()` (app.js).
+`kpis_note` (optional) carries the SGS degradation message; `variation` is `null` without a previous-session close; `extra` is `null` on the altas/baixas cards; [v1.28.1] `etfs` is `[]` when cotahist is down (the row renders nothing). Card keys: `ibov`/`smll`/`negocios`/`volumes`/`altas`/`altas_bdr` [v1.28.1]/`baixas`. Rendered by `loadHomeData()` (app.js).
 
 ### `GET /api/webui/company/{ticker}/sections/{key}`
 
@@ -120,7 +122,7 @@ Returns Fibonacci data for the Fibonacci subtab (1Y): swing extremes (4w/12w/52w
 
 ### `GET /api/webui/company/{ticker}/backtest/meta`
 
-[v1.25] The Backtest form catalog — ONE fetch primes the whole interactive form: the 8 strategies (label/description/kind + each one's parametrizable entry/exit conditions as `{key, label, default, min, max, step, scale, suffix}` specs; thresholds in % convert via `scale`), the ticker's available price range (`range.first/last`) and the engine defaults (3A window clamped, capital R$ 10.000, 100% position, 252 dias máx.).
+[v1.25; v1.28.1 — the FERRAMENTAS tool's data] The Backtest form catalog — ONE fetch primes the whole interactive form: the 8 strategies (label/description/kind + each one's parametrizable entry/exit conditions as `{key, label, default, min, max, step, scale, suffix}` specs; thresholds in % convert via `scale`), the ticker's available price range (`range.first/last`) and the engine defaults (3A window clamped, capital R$ 10.000, 100% position, 252 dias máx.). The company TAB is gone (the simulator lives in 🧰 Ferramentas → Backtest with its own ticker picker + `?b=` deep link); the endpoints stay per-ticker by design.
 
 ### `POST /api/webui/company/{ticker}/backtest/run`
 
@@ -290,7 +292,10 @@ negative = caixa líquido).
   "kpis": [{"label": "Mediana P/L", "value": "11,87"}, …],
   "table": [{"ticker", "name", "is_subject", "price", "market_cap",
              "p_l", "p_vpa", "ev_ebitda", "roe", "dy", "receita",
-             "ebitda", "marg_ebitda", "cresc", "segmento", "partial"}],
+             "ebitda", "marg_ebitda", "cresc", "segmento", "partial",
+             "price_raw", "mktcap_raw", "p_l_raw", "p_vpa_raw",
+             "ev_ebitda_raw", "roe_raw", "dy_raw", "receita_raw",
+             "ebitda_raw", "marg_ebitda_raw", "cresc_raw"}],
   "vs_rows": [{"label": "P/L", "tip", "my_fmt": "2,60",
                "med_fmt": "11,87", "delta_fmt": "-78,10%",
                "verdict": "cheap", "direction": "cheap"}],
@@ -383,7 +388,7 @@ The system surface: the log drawer's feed + the schema-driven settings store. Li
 
 ### `GET /api/webui/logs`
 
-System-log ring-buffer entries (JSON). The log captures every non-static HTTP request (method, path, status, duration), the sync job lifecycle, startup events and Python WARNING+ records — in memory, per process.
+System-log ring-buffer entries (JSON). The log captures every non-static HTTP request (method, path + query string — [v1.28.1] the meaningful `?…` rides along, the `_t=` cache-buster stripped — status, duration), the sync job lifecycle, startup events, Python WARNING+ records, uvicorn's own INFO banners [v1.28.1] and — [v1.28.1] the TERMINAL TAIL: every `print()` the process emits (the `[ratios] 12/49 roe (0.00s) = 0.5841` progress lines, the `[webui] … partial: …` notes, engine tracebacks) via the stdout/stderr tee, tagged with parsed sources (`ratios`/`webui`/`app`/`stderr`). In memory, per process.
 
 **Parameters:**
 - `?after=<id>` — only entries with id greater than this (incremental tail); omit/0 → the last `limit` entries

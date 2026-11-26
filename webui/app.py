@@ -276,11 +276,15 @@ def create_app() -> FastAPI:
     # ── [v1.20] System log capture: requests + Python logging WARNING+ ──────
     # Outermost middleware (last added = first to see the request) so even
     # TrustedHost rejections are logged. Pure ASGI — SSE streams untouched.
+    # [v1.28.1] + the print() tee — every [ratios]/[webui] line the
+    # terminal prints also lands in the 📜 drawer (the "powershell logs"
+    # ask); uvicorn's own INFO banners are hooked in too.
     from webui.services.syslog import (
-        RequestLoggingMiddleware, attach_logging_handler,
+        RequestLoggingMiddleware, attach_logging_handler, attach_print_tee,
     )
     app.add_middleware(RequestLoggingMiddleware)
     attach_logging_handler()
+    attach_print_tee()
 
     # ── WebUI routes ─────────────────────────────────────────────────────────
     from webui.routes import pages, api, sync, preflight, system, portfolio

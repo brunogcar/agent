@@ -75,7 +75,11 @@ class ComparisonService:
 
     # v2: the payload shape moved (price_hist in, leader KPIs out) — the
     # bumped namespace keeps any v1-shaped cached payload from serving.
-    _NS = "tools_comparison_v2"
+    # v3 [v1.28.1]: the ranking now covers EVERY row — Mercado and
+    # Dividendos included (the user's ask: "not highlighting the best
+    # option for all the items"). Old cached payloads carry the
+    # half-ranked grid, so the namespace moves again.
+    _NS = "tools_comparison_v3"
 
     def __init__(self) -> None:
         self._company = CompanyService()
@@ -447,6 +451,9 @@ class ComparisonService:
 #   candidates = ordered [(source_dict_key, metric_key), …] — first hit wins
 #   fmt        = apply_fmt spec ("brl", "num", "pct", …)
 #   best       = None | "min" | "max" — highlight direction for the row
+#                ([v1.28.1] set on EVERY row — the grid always shows a ✓;
+#                the user's ask: "not highlighting the best option for
+#                all the items" in Mercado and Dividendos)
 #   pos_only   = multiples/debt ranks skip non-positive values (a negative
 #                P/L is a loss, not a bargain; negative coverage is distress)
 #   tip        = PT-BR tooltip with the formula
@@ -454,20 +461,24 @@ class ComparisonService:
 
 _ROWS: list[tuple[str, str, list[tuple[str, str]], str, str | None, bool, str]] = [
     # ── Mercado ──
+    # [v1.28.1] EVERY row ranks now (the user's ask) — the cheapest
+    # share price takes the cotação line (menor = mais barata), the
+    # size rows rank max (the Demonstrativos precedent: for a ranked
+    # table, biggest market cap/EV/share count IS the line's winner).
     ("mercado", "Última Cotação",
-     [("mkt", "price"), ("val", "price")], "brl_full", None, False,
-     "Fechamento do último pregão com negócio (COTAHIST)."),
+     [("mkt", "price"), ("val", "price")], "brl_full", "min", False,
+     "Fechamento do último pregão com negócio (COTAHIST) — menor = ação mais barata."),
     ("mercado", "Var. Dia",
      [("mkt", "var_day")], "pct", "max", False,
      "Variação percentual do último pregão."),
     ("mercado", "Market Cap",
-     [("val", "market_cap")], "brl", None, False,
+     [("val", "market_cap")], "brl", "max", False,
      "Cotação × total de ações = valor de mercado da companhia."),
     ("mercado", "Enterprise Value (EV)",
-     [("val", "ev")], "brl", None, False,
+     [("val", "ev")], "brl", "max", False,
      "Market cap + dívida líquida — o custo total para comprar a companhia."),
     ("mercado", "Total de Ações",
-     [("val", "total_shares")], "int", None, False,
+     [("val", "total_shares")], "int", "max", False,
      "Ações emitidas em circulação."),
 
     # ── Valuation ──
@@ -532,26 +543,32 @@ _ROWS: list[tuple[str, str, list[tuple[str, str]], str, str | None, bool, str]] 
      "Último trimestre vs trimestre imediatamente anterior."),
 
     # ── Dividendos ──
+    # [v1.28.1] the whole group ranks max — DPA, payout, event count
+    # and annual remuneration: more money to shareholders wins the line
+    # (the user's ask: "not highlighting the best option for all the
+    # items").
     ("dividendos", "Div Yield",
      [("val", "dividend_yield")], "pct", "max", False,
      "Proventos dos últimos 12 meses / cotação atual."),
     ("dividendos", "DPA",
-     [("val", "dpa")], "brl_full", None, False,
+     [("val", "dpa")], "brl_full", "max", False,
      "Dividendos por ação (12 meses)."),
     ("dividendos", "Payout",
-     [("fin", "payout")], "pct", None, False,
+     [("fin", "payout")], "pct", "max", False,
      "Proventos / Lucro Líquido — quanto do lucro é distribuído."),
     ("dividendos", "Eventos (B3)",
-     [("div", "event_count")], "int", None, False,
+     [("div", "event_count")], "int", "max", False,
      "Eventos de proventos registrados na B3."),
     ("dividendos", "Remun. Total (últ. ano)",
-     [("div", "annual_total")], "brl", None, False,
+     [("div", "annual_total")], "brl", "max", False,
      "Dividendos + JCP pagos no último exercício (DVA)."),
 
     # ── Endividamento e Liquidez ──
+    # [v1.28.1] Dívida Bruta joins the ranked rows (min — less debt is
+    # better), completing the every-row-ranks grid.
     ("endividamento", "Dívida Bruta",
-     [("fin", "divida_bruta")], "brl", None, False,
-     "Empréstimos e financiamentos (último anual)."),
+     [("fin", "divida_bruta")], "brl", "min", False,
+     "Empréstimos e financiamentos (último anual) — menor = menos alavancado."),
     ("endividamento", "Dívida/PL",
      [("val", "divida_pl")], "num", "min", True,
      "Dívida bruta / Patrimônio Líquido."),
@@ -573,8 +590,9 @@ _ROWS: list[tuple[str, str, list[tuple[str, str]], str, str | None, bool, str]] 
 
     # ── Demonstrativos (último anual) — the annual-statement rows rank
     # MAX like every other row (the biggest Receita/EBITDA/Lucro/… wins
-    # the line, ✓ included — the user's ask); only the MERCADO size rows
-    # (market cap, EV, total de ações) stay unranked. ──
+    # the line, ✓ included — the user's ask). [v1.28.1] since the
+    # Mercado size rows now rank too, EVERY row of the grid carries a
+    # ✓ (except rows where fewer than 2 companies have data). ──
     ("demonstrativos", "Receita Líquida",
      [("fin", "receita_liquida")], "brl", "max", False,
      "Receita líquida do último exercício anual fechado."),

@@ -85,7 +85,12 @@ _POSITIVE_ONLY_LABELS = {"P/L", "P/VPA", "EV/EBITDA", "PSR", "P/EBIT"}
 class ScreenerService:
     """Screener tool — one screen(ticker) call, one JSON payload."""
 
-    _NS = "tools_screener_v1"
+    # v1 [v1.28]: original. v2 [v1.28.1]: the peers-table rows now carry
+    # RAW numeric values alongside the formatted strings (price_raw,
+    # mktcap_raw, roe_raw, …) — the client sorts the columns and paints
+    # the best-of-each-column ✓ from them; cached v1 payloads lack the
+    # keys, so the namespace moves.
+    _NS = "tools_screener_v2"
 
     def __init__(self) -> None:
         self._cmp = ComparisonService()
@@ -548,6 +553,10 @@ class ScreenerService:
                 for label in ("P/L", "P/VPA", "EV/EBITDA", "ROE", "Div Yield")]
 
         # peers table — P/L cheapest-first, the subject row marked.
+        # [v1.28.1] Every row ALSO carries the RAW values (``*_raw``) —
+        # the client's sortable headers and the best-per-column ✓ read
+        # them (parsing PT-BR formatted strings back to numbers is the
+        # _valSortKey hack; raw is exact and cached with the payload).
         table = []
         for p in peers:
             e = by_ticker.get(p["ticker"]) or {}
@@ -558,6 +567,13 @@ class ScreenerService:
             price = mkt.get("price")
             if price is None:
                 price = val.get("price")
+            roe_raw = val.get("roe")
+            if roe_raw is None:
+                roe_raw = fin.get("roe")
+            marg_raw = (val.get("marg_ebitda") if val.get("marg_ebitda") is not None
+                        else fin.get("marg_ebitda"))
+            if marg_raw is None:
+                marg_raw = grw.get("marg_ebitda")
             table.append({
                 "ticker": p["ticker"],
                 "name": p["name"] or names.get(p["ticker"], ""),
@@ -568,16 +584,26 @@ class ScreenerService:
                 "p_l_raw": val.get("p_l"),
                 "p_vpa": _fmt(val.get("p_vpa"), "num"),
                 "ev_ebitda": _fmt(val.get("ev_ebitda"), "num"),
-                "roe": _fmt(val.get("roe") or fin.get("roe"), "pct"),
+                "roe": _fmt(roe_raw, "pct"),
                 "dy": _fmt(val.get("dividend_yield"), "pct"),
                 "receita": _fmt(fin.get("receita_liquida"), "brl"),
                 "ebitda": _fmt(fin.get("ebitda"), "brl"),
-                "marg_ebitda": _fmt(
-                    val.get("marg_ebitda") or fin.get("marg_ebitda")
-                    or grw.get("marg_ebitda"), "pct"),
+                "marg_ebitda": _fmt(marg_raw, "pct"),
                 "cresc": _fmt(grw.get("receita_yoy"), "pct"),
                 "segmento": segments.get(p["ticker"], ""),
                 "partial": bool(e.get("error")),
+                # ── raw companions (None-safe: the client's sort puts
+                #    missing values last; the ✓ needs 2+ eligible) ──
+                "price_raw": price,
+                "mktcap_raw": val.get("market_cap"),
+                "p_vpa_raw": val.get("p_vpa"),
+                "ev_ebitda_raw": val.get("ev_ebitda"),
+                "roe_raw": roe_raw,
+                "dy_raw": val.get("dividend_yield"),
+                "receita_raw": fin.get("receita_liquida"),
+                "ebitda_raw": fin.get("ebitda"),
+                "marg_ebitda_raw": marg_raw,
+                "cresc_raw": grw.get("receita_yoy"),
             })
 
         def _pl_key(r: dict[str, Any]) -> tuple:

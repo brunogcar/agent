@@ -5,8 +5,8 @@ take on the static ``focus_dashboard.html`` reference (built by
 skills/ddm/focus/modes/dashboard.py, 13 flat tabs: 1 Focus overview with
 4 year subtabs + 12 per-indicator tabs). The Mercado page is the new home
 for the DDM dashboards (focus now; dividends, índices, fluxo, inflação
-and juros as later families) — market-level data from
-dadosdemercado.com.br, next to Macro (realized BCB SGS indicators).
+and juros as later families) — market-level data,
+next to Macro (realized BCB SGS indicators).
 
 Per the v1.12 design the LANDING subtab carries the general content (the
 static's Focus tab — the Boletim summary, one table per reference year)
@@ -36,7 +36,7 @@ valSectionsHtml + mountValCharts in app.js).
 Data layer = the SAME query engine the skill's static dashboard runs
 (read-only; no SQL duplication in the WebUI):
   - ``data_sources.ddm.focus.query_engine`` (memory_db/ddm/focus.db —
-    the weekly Boletim snapshot scraped from dadosdemercado.com.br)
+    the weekly Boletim snapshot scraped from the DDM source)
 
 Formatting = the skill's helpers (``skills/ddm/focus/helpers.py`` —
 ``format_value`` carries the per-indicator unit: % (4 dec), R$ (2 dec),
@@ -145,7 +145,7 @@ def _snapshot() -> dict[str, Any]:
     if data.get("status") != "ok":
         return {"_error": (
             "Boletim Focus indisponível — sincronize a fonte ddm-focus "
-            "(DDM — Boletim Focus, dadosdemercado.com.br) na página "
+            "(DDM — Boletim Focus) na página "
             "Sincronização.")}
     summ = _summary()
     obs: list[dict[str, Any]] = data.get("observations", [])

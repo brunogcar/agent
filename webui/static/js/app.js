@@ -2273,18 +2273,30 @@ function renderIpeEvents(panel, data) {
   });
 }
 
-// ── [v1.25] Backtest tab — the interactive simulator ──────────────────────
-// The static PETR4_backtest_dashboard.html was ONE frozen scenario per
-// HTML file (fixed thresholds, no costs, no stops, no comparison). This
-// module is the interactive rebirth: a parameter form fed by
+// ── [v1.25] Backtest — the interactive simulator. [v1.28.1] a FERRAMENTAS
+// tool (moved from the company tab — the user's ask: "lets move backtest
+// from companies to tools, to be with the other interactive tools we
+// added — you will have do adapt to search for ticker"). The static
+// PETR4_backtest_dashboard.html was ONE frozen scenario per HTML file
+// (fixed thresholds, no costs, no stops, no comparison). This module is
+// the interactive rebirth: a TICKER PICKER (the screener's single-
+// selection pattern, ?b=PETR4 deep link) opens a parameter form fed by
 // /backtest/meta (every strategy ships its own threshold specs), runs
 // via POST /backtest/run, renders KPIs + equity × buy&hold + drawdown +
 // price-with-trade-markers + the trade log, and keeps a PINNED SCENARIO
 // list (localStorage, per ticker) with a comparison table + overlaid
 // equity curves — the "different scenarios" the static report could
 // never do. All server strings pass through esc(); charts are destroyed
-// via canvas._chart (destroyChartsIn covers the HTMX tab swap).
-var btState = { meta: null, ticker: '', result: null, running: false };
+// via canvas._chart (destroyChartsIn covers every re-render).
+//
+// [v1.28.1] polish: chart axes + tooltips in dd/mm/aaaa (the BR
+// standard — they were aaaa-mm-dd), the trade log's headers aligned
+// with the data columns (th-num over the right-aligned .val-val cells),
+// two new KPI cards (Retorno Médio/Trade + Tempo Médio Posição — the
+// payload already carried them, the grid never showed them) and a
+// proper loading card while /backtest/meta opens a ticker.
+var btState = { meta: null, ticker: '', result: null, running: false,
+                toolBooted: false, activeIdx: -1 };
 
 // scenario pin colors (fixed roster — the overlay legend stays readable)
 var BT_SCEN_COLORS = ['#0d9488', '#2563eb', '#d97706', '#7c3aed', '#dc2626',
@@ -2304,35 +2316,250 @@ function _btNum(v, dec) {
 }
 function _btSignClass(v) { return v > 0 ? 'pos' : (v < 0 ? 'neg' : 'neu'); }
 
-window.initBacktestTab = function() {
-  var root = document.getElementById('bt-root');
-  if (!root || root._booted) return;
-  root._booted = true;
-  btState.ticker = root.getAttribute('data-ticker') || '';
+// [v1.28.1] ISO aaaa-mm-dd → dd/mm/aaaa for the chart axes/tooltips
+// (fmtDate passes anything that isn't a full ISO date through — the
+// downsampled labels are always full dates, so this is exact).
+function _btDateFmt(v) { return fmtDate(String(v)); }
+
+// [v1.28.1] Shared x-axis + tooltip config for every backtest chart —
+// the BR date format on the ticks AND the tooltip title.
+function _btDateScale(maxTicks) {
+  return { grid: { color: chartTheme().grid },
+           ticks: { color: chartTheme().text, maxTicksLimit: maxTicks || 10,
+                    callback: function(v) {
+                      return _btDateFmt(this.getLabelForValue(v));
+                    } } };
+}
+function _btDateTooltip() {
+  return { callbacks: { title: function(items) {
+            return items && items[0] ? _btDateFmt(items[0].label) : '';
+          } } };
+}
+// date-formatted tooltip + a custom label callback (the money lines)
+function _btDateTooltipLabel(labelFn) {
+  var tip = _btDateTooltip();
+  tip.callbacks.label = labelFn;
+  return tip;
+}
+
+// ── the picker (the screener's single-ticker pattern, its own ids) ──
+
+window.btToolFocusPicker = function() {
+  var el = document.getElementById('bt-tool-search');
+  if (el) el.focus();
+};
+
+function initBacktestTool() {
+  var input = document.getElementById('bt-tool-search');
+  var drop = document.getElementById('bt-tool-dropdown');
+  if (!input || !drop || btState.toolBooted) return;
+  btState.toolBooted = true;
+
+  // Deep link: ?b=PETR4 — opens the simulator and switches the family
+  // pill (same as the screener's ?s= boot).
+  var bootTk = '';
+  try {
+    bootTk = (new URLSearchParams(window.location.search).get('b') || '')
+      .trim().toUpperCase();
+  } catch (e) { /* noop */ }
+  if (/^[A-Z0-9]{4,6}$/.test(bootTk)) {
+    btState.ticker = bootTk;
+    try {
+      var pill = document.getElementById('family-pill-backtest');
+      if (pill) pill.click();
+    } catch (e) { /* noop */ }
+  }
+
+  var debounce = null;
+  input.addEventListener('input', function() {
+    clearTimeout(debounce);
+    var q = input.value.trim();
+    if (!q) { btToolDropHide(drop); return; }
+    debounce = setTimeout(function() { btToolDropSearch(drop, q); }, 250);
+  });
+  input.addEventListener('keydown', function(ev) {
+    var items = drop._items || [];
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      if (!items.length) return;
+      ev.preventDefault();
+      btState.activeIdx = ev.key === 'ArrowDown'
+        ? Math.min(btState.activeIdx + 1, items.length - 1)
+        : Math.max(btState.activeIdx - 1, 0);
+      btToolDropRender(drop);
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      var tk = (btState.activeIdx >= 0 && items[btState.activeIdx])
+        ? items[btState.activeIdx].ticker
+        : input.value.trim().toUpperCase();
+      if (tk) { btToolSetTicker(tk); input.value = ''; btToolDropHide(drop); }
+    } else if (ev.key === 'Escape') {
+      btToolDropHide(drop);
+    }
+  });
+  document.addEventListener('click', function(ev) {
+    if (!drop.hidden && drop.parentNode && !drop.parentNode.contains(ev.target)) {
+      btToolDropHide(drop);
+    }
+  });
+
+  if (btState.ticker) btToolOpen(); else btToolShowEmpty();
+}
+
+function btToolDropSearch(drop, q) {
+  fetch('/api/webui/tools/comparison/search?q=' + encodeURIComponent(q))
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var items = (d && d.results) || [];
+      if (!items.length) {
+        drop._items = null; btState.activeIdx = -1;
+        drop.hidden = true;
+        return;
+      }
+      drop._items = items;
+      btState.activeIdx = -1;
+      btToolDropRender(drop);
+    })
+    .catch(function() { btToolDropHide(drop); });
+}
+
+function btToolDropRender(drop) {
+  var items = drop._items || [];
+  var current = btState.ticker;
+  var html = '';
+  items.forEach(function(it, i) {
+    var isCur = it.ticker === current;
+    html += '<button type="button" class="cmp-drop-item' +
+      (i === btState.activeIdx ? ' active' : '') + (isCur ? ' added' : '') +
+      '" data-tk="' + esc(it.ticker) + '">' +
+      '<span class="cmp-drop-tk">' + esc(it.ticker) + '</span>' +
+      '<span class="cmp-drop-name">' + esc(it.name || '') + '</span>' +
+      (isCur ? '<span class="cmp-drop-added">no backtest</span>' : '') +
+      '</button>';
+  });
+  drop.innerHTML = html;
+  drop.hidden = false;
+  Array.prototype.forEach.call(drop.querySelectorAll('.cmp-drop-item'), function(btn) {
+    btn.addEventListener('click', function() {
+      var input = document.getElementById('bt-tool-search');
+      btToolSetTicker(btn.getAttribute('data-tk') || '');
+      if (input) input.value = '';
+      btToolDropHide(drop);
+    });
+  });
+}
+
+function btToolDropHide(drop) {
+  drop.hidden = true;
+  drop._items = null;
+  btState.activeIdx = -1;
+}
+
+function btToolSetTicker(tk) {
+  tk = String(tk || '').trim().toUpperCase();
+  // Same B3 shape the server validates — anything from the dropdown or
+  // free typing must match before it reaches the API.
+  if (!/^[A-Z0-9]{4,6}$/.test(tk) || tk === btState.ticker) return;
+  btState.ticker = tk;
+  btToolSyncUrl();
+  btToolOpen();
+}
+
+function btToolSyncUrl() {
+  // Only THIS tool's ?b= key is rewritten — the comparison's ?t= and
+  // the screener's ?s= deep links survive alongside.
+  try {
+    var url = new URL(window.location.href);
+    if (btState.ticker) {
+      url.searchParams.set('b', btState.ticker);
+    } else {
+      url.searchParams.delete('b');
+    }
+    window.history.replaceState('', '', url.pathname + url.search);
+  } catch (e) { /* noop */ }
+}
+
+window.btToolClear = function() {
+  btState.ticker = '';
   btState.meta = null;
   btState.result = null;
+  btToolSyncUrl();
+  btToolShowEmpty();
+  btToolFocusPicker();
+};
+
+function btToolShowEmpty() {
+  var box = document.getElementById('bt-tool-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<div class="cmp-empty-icon">⏪</div>' +
+    '<p class="cmp-empty-title">Escolha um ticker para simular</p>' +
+    '<p class="cmp-empty-hint">Informe o ticker acima. O backtest roda ' +
+    '8 estratégias (valor, qualidade, renda, composta, cruzamento de ' +
+    'médias e buy &amp; hold) com parâmetros livres — período, capital, ' +
+    '% de posição, dias máximos, stop, take e corretagem — e fixa ' +
+    'cenários lado a lado para comparar.</p></div>';
+}
+
+// open ONE ticker: loading card → /backtest/meta → the full shell
+function btToolOpen() {
+  var box = document.getElementById('bt-tool-result');
+  if (!box || !btState.ticker) return;
+  destroyChartsIn(box);
+  btState.meta = null;
+  btState.result = null;
+  box.innerHTML = toolLoadingHtml('bt-load',
+    'Abrindo o backtest de ' + esc(btState.ticker),
+    'Carregando as estratégias e o histórico de preços do ticker…');
+  toolLoadingStart('bt-load');
   fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) +
         '/backtest/meta?_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(meta) {
+      toolLoadingStop('bt-load');
       if (meta._error) {
-        root.innerHTML = '<div class="error">Erro: ' + esc(meta._error) + '</div>';
+        box.innerHTML = '<div class="error">Erro: ' + esc(meta._error) + '</div>' +
+          '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+          'onclick="btToolClear()">← escolher outro ticker</button></p>';
         return;
       }
       btState.meta = meta;
       _btRenderShell();
     })
     .catch(function(err) {
-      root.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
+      toolLoadingStop('bt-load');
+      box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
+        '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+        'onclick="btToolClear()">← escolher outro ticker</button></p>';
     });
-};
+}
 
 function _btRenderShell() {
-  var root = document.getElementById('bt-root');
-  if (!root) return;
+  // [v1.28.1] The shell renders INSIDE the tool's result box — the
+  // company tab's #bt-root partial is gone; the picker above owns the
+  // ticker now. Everything below (#bt-result, #bt-scenarios, the form
+  // inputs) keeps its v1.25 ids — btRun/btPinScenario/… unchanged.
+  var box = document.getElementById('bt-tool-result');
+  if (!box) return;
   var m = btState.meta;
   var d = m.defaults || {};
-  var html = '';
+  var html = '<div class="tab-backtest" id="bt-root">';
+
+  // ── 0. the ticker context row (the picker is above; this anchors
+  //    WHAT is being simulated, with a jump into the company page) ──
+  html += '<div class="bt-tickerbar">' +
+    '<div class="bt-ticker-main"><span class="bt-ticker-label">Simulando</span>' +
+    '<span class="bt-ticker-tk">' + esc(btState.ticker) + '</span>' +
+    (m.range ? '<span class="bt-ticker-range">' + esc(fmtDate(m.range.first)) +
+     ' → ' + esc(fmtDate(m.range.last)) + '</span>' : '') +
+    '</div>' +
+    '<div class="bt-ticker-actions">' +
+    '<a class="cmp-range-btn" href="/webui/company/' + encodeURIComponent(btState.ticker) +
+    '" title="Abrir a página da empresa">abrir empresa ↗</a>' +
+    '<button type="button" class="cmp-range-btn" title="Escolher outro ticker"' +
+    ' onclick="btToolClear()">trocar ticker</button>' +
+    '</div></div>';
 
   // ── 1. Parâmetros ──
   html += '<div class="bt-card bt-form-card">';
@@ -2394,7 +2621,8 @@ function _btRenderShell() {
   // ── 3. Cenários ──
   html += '<div id="bt-scenarios"></div>';
 
-  root.innerHTML = html;
+  html += '</div>';  // .tab-backtest#bt-root
+  box.innerHTML = html;
   btStrategyChange();          // primes thresholds + kind-specific visibility
   _btRenderScenarios();
 }
@@ -2571,7 +2799,9 @@ function _btRenderResult(r) {
     html += '<div class="bt-warn">⚠ ' + esc(w) + '</div>';
   });
 
-  // KPI grid
+  // KPI grid — [v1.28.1] + Retorno Médio/Trade and Tempo Médio de
+  // Posição (the payload always carried them; the grid never showed
+  // them — "you can improve if possible").
   var kpis = [
     { label: 'Retorno Total', value: _btPct(perf.total_return_pct), cls: _btSignClass(perf.total_return_pct) },
     { label: 'CAGR', value: _btPct(perf.cagr_pct), cls: _btSignClass(perf.cagr_pct) },
@@ -2581,6 +2811,8 @@ function _btRenderResult(r) {
     { label: 'Alpha vs B&H', value: _btPct(perf.alpha_vs_buy_hold), cls: _btSignClass(perf.alpha_vs_buy_hold) },
     { label: 'Fator de Lucro', value: perf.profit_factor === null ? '∞' : _btNum(perf.profit_factor, 2), cls: perf.profit_factor >= 1 ? 'pos' : 'neg' },
     { label: 'Trades', value: _btNum(perf.num_trades), cls: 'neu' },
+    { label: 'Retorno Médio/Trade', value: _btPct(perf.avg_trade_pct), cls: _btSignClass(perf.avg_trade_pct) },
+    { label: 'Tempo Médio Posição', value: perf.avg_holding_days === null ? '—' : _btNum(perf.avg_holding_days, 1) + ' pregões', cls: 'neu' },
     { label: 'Capital Final', value: fmtBRL(perf.final_equity), cls: _btSignClass(perf.final_equity - perf.initial_capital) }
   ];
   html += '<div class="kpi-grid">';
@@ -2603,12 +2835,18 @@ function _btRenderResult(r) {
     '<div class="chart-container"><canvas id="bt-price-chart"></canvas></div></div>';
   html += '</div>';
 
-  // trade log
+  // trade log — [v1.28.1] headers now MATCH the data alignment
+  // (th-num over the right-aligned .val-val cells, th-ctr over the
+  // centered reason badges — the old all-left headers over right
+  // data read diagonally: "headers and data are not aligned").
   var trades = r.trades || [];
   html += '<div class="bt-table-wrap"><div class="reg-title">Trade Log — ' +
     trades.length + ' operação(ões)</div>' +
-    '<table class="val-table"><thead><tr><th>Entrada</th><th>Preço</th><th>Saída</th>' +
-    '<th>Preço</th><th>Ações</th><th>Resultado</th><th>Retorno</th><th>Dias</th><th>Motivo</th></tr></thead><tbody>';
+    '<table class="val-table bt-tradelog"><thead><tr><th>Entrada</th>' +
+    '<th class="th-num">Preço</th><th>Saída</th>' +
+    '<th class="th-num">Preço</th><th class="th-num">Ações</th>' +
+    '<th class="th-num">Resultado</th><th class="th-num">Retorno</th>' +
+    '<th class="th-num">Dias</th><th class="th-ctr">Motivo</th></tr></thead><tbody>';
   trades.forEach(function(t) {
     html += '<tr><td>' + esc(fmtDate(t.entry_date)) + '</td>' +
       '<td class="val-val">' + _btNum(t.entry_price, 2) + '</td>' +
@@ -2620,7 +2858,7 @@ function _btRenderResult(r) {
       '<td class="val-val ' + (t.return_pct > 0 ? 'bt-pos' : (t.return_pct < 0 ? 'bt-neg' : '')) + '">' +
       _btPct(t.return_pct) + '</td>' +
       '<td class="val-val">' + _btNum(t.holding_days) + '</td>' +
-      '<td><span class="bt-reason ' + esc(String(t.exit_reason)) + '">' +
+      '<td class="bt-reason-cell"><span class="bt-reason ' + esc(String(t.exit_reason)) + '">' +
       esc(_btReasonLabel(t.exit_reason)) + '</span></td></tr>';
   });
   if (!trades.length) html += '<tr><td colspan="9">Nenhum trade executado.</td></tr>';
@@ -2655,12 +2893,12 @@ function _btMountCharts(r) {
           borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, tension: 0.1, fill: false }
       ]},
       options: { responsive: true, maintainAspectRatio: false,
-        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 10 } },
+        scales: { x: _btDateScale(10),
                   y: { grid: { color: th.grid }, ticks: { color: th.text } } },
         plugins: { legend: { position: 'top' },
-          tooltip: { callbacks: { label: function(ctx) {
+          tooltip: _btDateTooltipLabel(function(ctx) {
             return ctx.dataset.label + ': ' + fmtBRL(ctx.parsed.y);
-          } } } } }
+          }) } }
     });
   }
 
@@ -2676,10 +2914,10 @@ function _btMountCharts(r) {
           tension: 0.1, fill: { target: 'origin' } }
       ]},
       options: { responsive: true, maintainAspectRatio: false,
-        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 6 } },
+        scales: { x: _btDateScale(6),
                   y: { grid: { color: th.grid }, ticks: { color: th.text,
                     callback: function(v) { return v + '%'; } } } },
-        plugins: { legend: { display: false } } }
+        plugins: { legend: { display: false }, tooltip: _btDateTooltip() } }
     });
   }
 
@@ -2707,10 +2945,10 @@ function _btMountCharts(r) {
           backgroundColor: '#ef4444', borderColor: '#dc2626' }
       ]},
       options: { responsive: true, maintainAspectRatio: false,
-        scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 6 } },
+        scales: { x: _btDateScale(6),
                   y: { grid: { color: th.grid }, ticks: { color: th.text,
                     callback: function(v) { return 'R$ ' + _btNum(v, 2); } } } },
-        plugins: { legend: { position: 'top' } } }
+        plugins: { legend: { position: 'top' }, tooltip: _btDateTooltip() } }
     });
   }
 }
@@ -2810,10 +3048,14 @@ function _btRenderScenarios() {
     return;
   }
 
-  // comparison table
+  // comparison table — [v1.28.1] th-num headers over the right-aligned
+  // .val-val cells, th-ctr over the actions column (the same alignment
+  // fix as the trade log).
   html += '<div class="bt-table-wrap"><table class="val-table bt-scen-table"><thead><tr>' +
-    '<th>Cenário</th><th>Retorno</th><th>CAGR</th><th>Max DD</th><th>Sharpe</th>' +
-    '<th>Win Rate</th><th>Alpha</th><th>Trades</th><th></th></tr></thead><tbody>';
+    '<th>Cenário</th><th class="th-num">Retorno</th><th class="th-num">CAGR</th>' +
+    '<th class="th-num">Max DD</th><th class="th-num">Sharpe</th>' +
+    '<th class="th-num">Win Rate</th><th class="th-num">Alpha</th>' +
+    '<th class="th-num">Trades</th><th class="th-ctr"></th></tr></thead><tbody>';
   list.forEach(function(s, i) {
     var p = s.performance || {};
     var color = BT_SCEN_COLORS[i % BT_SCEN_COLORS.length];
@@ -2876,12 +3118,12 @@ function _btMountScenChart(list) {
     type: 'line',
     data: { labels: labels, datasets: datasets },
     options: { responsive: true, maintainAspectRatio: false,
-      scales: { x: { grid: { color: th.grid }, ticks: { color: th.text, maxTicksLimit: 10 } },
+      scales: { x: _btDateScale(10),
                 y: { grid: { color: th.grid }, ticks: { color: th.text } } },
       plugins: { legend: { position: 'top' },
-        tooltip: { callbacks: { label: function(ctx) {
+        tooltip: _btDateTooltipLabel(function(ctx) {
           return ctx.dataset.label + ': ' + fmtBRL(ctx.parsed.y);
-        } } } } }
+        }) } }
   });
 }
 
@@ -3907,6 +4149,9 @@ function initSyslogDrawer() {
   function entryLine(e) {
     var line = document.createElement('div');
     line.className = 'log-line log-' + e.level;
+    // [v1.28.1] the source rides as a data attribute — the drawer's
+    // HTTP/App filter pills are pure CSS over it.
+    if (e.source) line.setAttribute('data-source', e.source);
     var ts = document.createElement('span'); ts.className = 'log-ts'; ts.textContent = e.ts;
     var src = document.createElement('span'); src.className = 'log-src'; src.textContent = e.source;
     var msg = document.createElement('span'); msg.className = 'log-msg'; msg.textContent = e.message;
@@ -4549,6 +4794,42 @@ window.loadDividendosSubtab = mercadoLoader('dividendos'); // [v1.18] proventos 
 // compute every company's ratios/annual/growth/dividends and can take a
 // few seconds — the loading line says so).
 
+// [v1.28.1] The tools' shared LOADING CARD — the one-line italic
+// "Carregando…" was easy to miss on the slow first builds (the
+// screener's first pass on a 40-company sector runs MINUTES — the
+// user saw a blank page and asked for a "carregando" message). A
+// spinner + what's loading + why it can be slow + a live elapsed
+// counter, one card per tool, timers tracked by id.
+var _toolLoadTimers = {};
+
+function toolLoadingHtml(id, title, hint) {
+  return '<div class="cmp-loading" id="' + id + '" role="status" aria-live="polite">' +
+    '<div class="cmp-loading-spin" aria-hidden="true"></div>' +
+    '<div class="cmp-loading-body">' +
+    '<div class="cmp-loading-title">' + title + '</div>' +
+    (hint ? '<div class="cmp-loading-hint">' + hint + '</div>' : '') +
+    '<div class="cmp-loading-elapsed" id="' + id + '-elapsed">carregando…</div>' +
+    '</div></div>';
+}
+
+function toolLoadingStart(id) {
+  toolLoadingStop(id);
+  var t0 = Date.now();
+  var el = function() {
+    var node = document.getElementById(id + '-elapsed');
+    if (!node) { delete _toolLoadTimers[id]; return; }
+    var s = Math.floor((Date.now() - t0) / 1000);
+    node.textContent = 'carregando há ' + (s < 60 ? s + 's'
+      : Math.floor(s / 60) + 'min ' + (s % 60) + 's');
+  };
+  el();
+  _toolLoadTimers[id] = setInterval(el, 1000);
+}
+
+function toolLoadingStop(id) {
+  if (_toolLoadTimers[id]) { clearInterval(_toolLoadTimers[id]); delete _toolLoadTimers[id]; }
+}
+
 var CMP_MAX = 4;
 var CMP_COLORS = ['#0d9488', '#f59e0b', '#8b5cf6', '#e11d48'];
 var cmpState = { booted: false, tickers: [], perfRange: '1A', histRange: '1A', data: null, activeIdx: -1 };
@@ -4577,7 +4858,10 @@ function initToolsPage() {
 
   // [v1.28] Screener — the second tool boots alongside (its own pane;
   // its own guards, independent of the comparison picker's elements).
+  // [v1.28.1] Backtest — the third tool (moved from the company tab;
+  // its own picker + ?b= deep link, same boot pattern).
   initScreener();
+  initBacktestTool();
 
   if (!input || !drop) return;
 
@@ -4751,14 +5035,20 @@ function cmpLoad() {
   if (!box) return;
   destroyChartsIn(box);
   cmpState.data = null;
-  box.innerHTML = '<div class="loading">Comparando ' + esc(cmpState.tickers.join(' × ')) +
-    ' — os indicadores de cada empresa são calculados na primeira vez ' +
-    '(pode levar alguns segundos)…</div>';
+  // [v1.28.1] the shared loading card — spinner + ticker set + elapsed
+  // (the ask: "while its loading it should display some message to say
+  // its carregando").
+  box.innerHTML = toolLoadingHtml('cmp-load',
+    'Comparando ' + esc(cmpState.tickers.join(' × ')),
+    'Os indicadores de cada empresa são calculados na primeira vez — ' +
+    'pode levar alguns segundos.');
+  toolLoadingStart('cmp-load');
   fetch('/api/webui/tools/comparison?tickers=' +
         encodeURIComponent(cmpState.tickers.join(',')) +
         '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      toolLoadingStop('cmp-load');
       if (!data || data.status !== 'ok') {
         box.innerHTML = '<div class="error">' +
           esc((data && data.error) || 'falha na comparação') + '</div>';
@@ -4768,6 +5058,7 @@ function cmpLoad() {
       cmpRender(box, data);
     })
     .catch(function(err) {
+      toolLoadingStop('cmp-load');
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
     });
 }
@@ -4834,9 +5125,8 @@ function cmpGridHtml(data) {
   });
   html += '</tbody></table></div>' +
     '<p class="cmp-legend">✓ = melhor valor da linha entre as empresas comparadas ' +
-    '(múltiplos menores, rentabilidade / rendimento / crescimento / ' +
-    'demonstrativos anuais maiores, endividamento menor). Market cap e ' +
-    'Enterprise Value não ranqueiam — tamanho de mercado não é qualidade.</p>';
+    '(múltiplos, cotação e endividamento menores; rentabilidade, ' +
+    'rendimento, crescimento, tamanho e demonstrativos anuais maiores).</p>';
   return html;
 }
 
@@ -4900,15 +5190,13 @@ function cmpHistHtml(data) {
     '<div class="cmp-range-bar" role="group" aria-label="Período da cotação">' +
     cmpRangeBarHtml(cmpState.histRange, 'cmpHistRange') + '</div></div>' +
     '<p class="cmp-chart-desc">Fechamentos de cada empresa no período selecionado ' +
-    '— mensais nos períodos longos, diários nos curtos — com a variação do ' +
-    'período em cada cartão.</p>' +
+    '— mensais nos períodos longos, diários nos curtos.</p>' +
     '<div class="cmp-hist-grid" style="--n:' + data.companies.length + '">';
   data.companies.forEach(function(c) {
     html += '<div class="cmp-hist-cell">' +
       '<div class="cmp-hist-head">' +
       '<span class="cmp-dot" style="background:' + safeColor(c.color, '#0d9488') + '"></span>' +
       '<span class="cmp-hist-tk">' + esc(c.ticker) + '</span>' +
-      '<span class="cmp-hist-var" id="cmp-hist-var-' + esc(c.ticker) + '"></span>' +
       '</div>' +
       '<div class="cmp-hist-chart"><canvas id="cmp-hist-' + esc(c.ticker) + '"></canvas>' +
       '<div class="cmp-hist-none" id="cmp-hist-none-' + esc(c.ticker) + '" hidden>sem cotações no período</div></div>' +
@@ -4937,15 +5225,12 @@ function cmpMountHist() {
   data.companies.forEach(function(c) {
     var canvas = document.getElementById('cmp-hist-' + c.ticker);
     if (!canvas) return;
-    var varEl = document.getElementById('cmp-hist-var-' + c.ticker);
     var noneEl = document.getElementById('cmp-hist-none-' + c.ticker);
     var pts = cmpWindow(src[c.ticker] || [], cutoff);
     destroyChartsIn(canvas);
-    if (varEl) {
-      varEl.innerHTML = (pts.length >= 2 && pts[0].close > 0)
-        ? fmtPctColored(pts[pts.length - 1].close / pts[0].close - 1)
-        : '<span class="muted">—</span>';
-    }
+    // [v1.28.1] the period-% chip is GONE ("not really needed") — the
+    // card is just the line now; the Desempenho base-100 chart owns the
+    // period comparison story.
     if (pts.length < 2) {
       // nothing to draw — say so, don't show a void. The inline display
       // matters: Chart.js stamps display:block on every canvas it owns,
@@ -5097,7 +5382,8 @@ function cmpMountCharts(box, data) {
 // sector and can take a few seconds — the loading line says so).
 // ═══════════════════════════════════════════════════════════════════
 
-var scrState = { booted: false, ticker: '', histRange: '1A', data: null, activeIdx: -1 };
+var scrState = { booted: false, ticker: '', histRange: '1A', data: null,
+                activeIdx: -1, sortKey: 'p_l', sortDir: 'asc' };
 
 window.scrFocusPicker = function() {
   var el = document.getElementById('scr-search');
@@ -5156,6 +5442,18 @@ function initScreener() {
       scrDropHide(drop);
     }
   });
+
+  // [v1.28.1] the sector table's sort — ONE delegated listener on the
+  // result box (the table re-renders on every sort/screen; per-th
+  // listeners would need re-binding every time).
+  var scrBox = document.getElementById('scr-result');
+  if (scrBox) {
+    scrBox.addEventListener('click', function(ev) {
+      var th = ev.target && ev.target.closest ? ev.target.closest('th.scr-sortable') : null;
+      if (!th) return;
+      scrSortBy(th.getAttribute('data-scrsort') || '');
+    });
+  }
 
   if (scrState.ticker) scrLoad(); else scrShowEmpty();
 }
@@ -5263,14 +5561,23 @@ function scrLoad() {
   if (!box) return;
   destroyChartsIn(box);
   scrState.data = null;
-  box.innerHTML = '<div class="loading">Peneirando ' + esc(scrState.ticker) +
-    ' contra o setor — os indicadores de cada empresa do setor são ' +
-    'calculados na primeira vez (pode levar alguns segundos)…</div>';
+  // [v1.28.1] the shared loading card — the first pass on a big sector
+  // computes EVERY company and can take minutes (a real POMO4 run took
+  // 123s); the elapsed counter + the "why" hint keep the wait legible
+  // (the ask: "while its loading it should display some message to say
+  // its carregando").
+  box.innerHTML = toolLoadingHtml('scr-load',
+    'Peneirando ' + esc(scrState.ticker) + ' contra o setor',
+    'Cada empresa do setor é calculada na primeira vez — em setores ' +
+    'grandes a primeira análise pode levar alguns minutos. As próximas ' +
+    'visitas ficam pré-calculadas (⚡).');
+  toolLoadingStart('scr-load');
   fetch('/api/webui/tools/screener?ticker=' +
         encodeURIComponent(scrState.ticker) +
         '&_t=' + Date.now())
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      toolLoadingStop('scr-load');
       if (!data || data.status !== 'ok') {
         box.innerHTML = '<div class="error">' +
           esc((data && data.error) || 'falha no screener') + '</div>' +
@@ -5282,6 +5589,7 @@ function scrLoad() {
       scrRender(box, data);
     })
     .catch(function(err) {
+      toolLoadingStop('scr-load');
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
         '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
         'onclick="scrClear()">← escolher outro ticker</button></p>';
@@ -5351,10 +5659,9 @@ function scrHistHtml(data) {
     '<div class="cmp-range-bar" role="group" aria-label="Período da cotação">' +
     cmpRangeBarHtml(scrState.histRange, 'scrHistRange') + '</div></div>' +
     '<p class="cmp-chart-desc">Fechamentos no período selecionado — mensais ' +
-    'nos períodos longos, diários nos curtos — com a variação do período.</p>' +
+    'nos períodos longos, diários nos curtos.</p>' +
     '<div class="scr-hist-chart"><canvas id="scr-hist"></canvas>' +
     '<div class="cmp-hist-none" id="scr-hist-none" hidden>sem cotações no período</div></div>' +
-    '<span class="scr-hist-var" id="scr-hist-var"></span>' +
     '</div>';
 }
 
@@ -5373,18 +5680,14 @@ function scrMountHist() {
   if (!data || !data.price_hist) return;
   var canvas = document.getElementById('scr-hist');
   if (!canvas) return;
-  var varEl = document.getElementById('scr-hist-var');
   var noneEl = document.getElementById('scr-hist-none');
   var daily = cmpRangeDaily(scrState.histRange);
   var src = (data.price_hist[daily ? 'daily' : 'monthly'] || {})[data.ticker] || [];
   var cutoff = cmpRangeCutoff(scrState.histRange, daily);
   var pts = cmpWindow(src, cutoff);
   destroyChartsIn(canvas);
-  if (varEl) {
-    varEl.innerHTML = (pts.length >= 2 && pts[0].close > 0)
-      ? fmtPctColored(pts[pts.length - 1].close / pts[0].close - 1)
-      : '<span class="muted">—</span>';
-  }
+  // [v1.28.1] the period-% chip is GONE ("there is some % number on each
+  // chart bottom left corner… not really needed") — just the line.
   if (pts.length < 2) {
     // nothing to draw — say so, don't show a void (the v1.21 fix 3
     // lesson: an inline display beats the hidden attribute).
@@ -5413,22 +5716,127 @@ function scrMountHist() {
 }
 
 // ── the sector table (one class per company, P/L cheapest-first) ──
+//
+// [v1.28.1] SORTABLE + RANKED, the user's two asks: "not possible to
+// sort the info on headers" and "doesnt display with green V and
+// background the best one for each type like comparison". Every header
+// is a sort button (click → toggle asc/desc; the active column carries
+// ▲/▼; missing values always last), and every metric column paints the
+// best value green with ✓ — the comparison grid's convention, applied
+// per COLUMN here: multiples and the share price rank min (cheapest),
+// everything else ranks max. The *_raw numbers the payload now ships
+// drive both (no PT-BR string re-parsing); ties share the ✓, and a
+// column needs 2+ eligible values to rank at all (a lone value can't
+// win a comparison — the comparison grid rule).
 
-function scrTableHtml(data) {
-  var html = '<div class="cmp-chartcard">' +
-    '<div class="cmp-chart-head"><div class="cmp-chart-title">Empresas do Setor' +
+var SCR_COLS = [
+  { key: 'price',       raw: 'price_raw',       label: 'Preço',       dir: 'min' },
+  { key: 'market_cap',  raw: 'mktcap_raw',      label: 'Market Cap',  dir: 'max' },
+  { key: 'p_l',         raw: 'p_l_raw',         label: 'P/L',         dir: 'min', pos: true },
+  { key: 'p_vpa',       raw: 'p_vpa_raw',       label: 'P/VPA',       dir: 'min', pos: true },
+  { key: 'ev_ebitda',   raw: 'ev_ebitda_raw',   label: 'EV/EBITDA',   dir: 'min', pos: true },
+  { key: 'roe',         raw: 'roe_raw',         label: 'ROE',         dir: 'max' },
+  { key: 'dy',          raw: 'dy_raw',          label: 'Div Yield',   dir: 'max' },
+  { key: 'receita',     raw: 'receita_raw',     label: 'Receita Líq.', dir: 'max', fin: true },
+  { key: 'ebitda',      raw: 'ebitda_raw',      label: 'EBITDA',      dir: 'max', fin: true },
+  { key: 'marg_ebitda', raw: 'marg_ebitda_raw', label: 'Marg. EBITDA', dir: 'max' },
+  { key: 'cresc',       raw: 'cresc_raw',       label: 'Cresc. Rec.', dir: 'max' }
+];
+
+function _scrCol(key) {
+  var col = null;
+  SCR_COLS.forEach(function(c) { if (c.key === key) col = c; });
+  return col;
+}
+
+function _scrSortTh(key, label, extraCls) {
+  var active = scrState.sortKey === key;
+  return '<th class="scr-sortable' + (extraCls ? ' ' + extraCls : '') +
+    (active ? ' is-active' : '') + '" data-scrsort="' + esc(key) +
+    '" scope="col" title="ordenar por ' + esc(label) + '">' + esc(label) +
+    '<span class="scr-sort-ind" aria-hidden="true">' +
+    (active ? (scrState.sortDir === 'asc' ? '▲' : '▼') : '↕') + '</span></th>';
+}
+
+function scrSortedRows(data) {
+  var rows = (data.table || []).slice();
+  var key = scrState.sortKey;
+  var col = _scrCol(key);
+  var dir = scrState.sortDir === 'desc' ? -1 : 1;
+  var num = function(r) {
+    var v = col ? r[col.raw] : null;
+    if (v === null || v === undefined || isNaN(Number(v))) return null;
+    return Number(v);
+  };
+  rows.sort(function(a, b) {
+    if (key === 'ticker') return dir * String(a.ticker).localeCompare(String(b.ticker));
+    if (key === 'segmento') return dir * String(a.segmento || '').localeCompare(String(b.segmento || ''));
+    var na = num(a), nb = num(b);
+    if (na === null && nb === null) return 0;
+    if (na === null) return 1;    // missing values always last
+    if (nb === null) return -1;
+    return dir * (na - nb);
+  });
+  return rows;
+}
+
+// best value per metric column → {colKey: [row indexes]} (ties share it)
+function _scrBestMap(rows) {
+  var best = {};
+  SCR_COLS.forEach(function(col) {
+    var eligible = [];
+    rows.forEach(function(r, i) {
+      var v = r[col.raw];
+      if (v === null || v === undefined || isNaN(Number(v))) return;
+      var n = Number(v);
+      if (col.pos && n <= 0) return;  // a negative P/L is a loss, not a bargain
+      eligible.push([i, n]);
+    });
+    if (eligible.length < 2) return;
+    var target = eligible[0][1];
+    eligible.forEach(function(e) {
+      if (col.dir === 'min' ? e[1] < target : e[1] > target) target = e[1];
+    });
+    eligible.forEach(function(e) {
+      if (e[1] === target) (best[col.key] = best[col.key] || []).push(e[0]);
+    });
+  });
+  return best;
+}
+
+function _scrCell(r, i, best, key, extraCls) {
+  var isBest = !!(best[key] && best[key].indexOf(i) >= 0);
+  return '<td class="' + (extraCls ? extraCls + ' ' : '') + 'scr-cell' +
+    (isBest ? ' scr-best' : '') + '">' + esc(r[key]) +
+    (isBest ? ' <span class="cmp-bestbadge" title="melhor da coluna">✓</span>' : '') +
+    '</td>';
+}
+
+function scrTableInnerHtml(data) {
+  var rows = scrSortedRows(data);
+  var best = _scrBestMap(rows);
+  var html = '<div class="cmp-chart-head"><div class="cmp-chart-title">Empresas do Setor' +
     (data.sector ? ' — ' + esc(data.sector) : '') + '</div></div>' +
     '<p class="cmp-chart-desc">Todas as companhias do setor na Bridge (uma ' +
-    'classe de ação por empresa — a mais líquida), ordenadas pelo P/L ' +
-    '(menor = mais barata). A linha destacada é a empresa analisada.</p>' +
+    'classe de ação por empresa — a mais líquida). Clique nos títulos para ' +
+    'ordenar; ✓ marca o melhor valor de cada coluna. A linha destacada é a ' +
+    'empresa analisada.</p>' +
     '<div class="scr-tablewrap"><table class="scr-table"><thead><tr>' +
-    '<th>Empresa</th><th>Preço</th><th>Market Cap</th><th>P/L</th><th>P/VPA</th>' +
-    '<th>EV/EBITDA</th><th>ROE</th><th>Div Yield</th>' +
-    '<th class="scr-col-fin">Receita Líq.</th><th class="scr-col-fin">EBITDA</th>' +
-    '<th>Marg. EBITDA</th><th>Cresc. Rec.</th>' +
-    '<th class="scr-col-seg">Segmento</th>' +
+    _scrSortTh('ticker', 'Empresa') +
+    _scrSortTh('price', 'Preço') +
+    _scrSortTh('market_cap', 'Market Cap') +
+    _scrSortTh('p_l', 'P/L') +
+    _scrSortTh('p_vpa', 'P/VPA') +
+    _scrSortTh('ev_ebitda', 'EV/EBITDA') +
+    _scrSortTh('roe', 'ROE') +
+    _scrSortTh('dy', 'Div Yield') +
+    _scrSortTh('receita', 'Receita Líq.', 'scr-col-fin') +
+    _scrSortTh('ebitda', 'EBITDA', 'scr-col-fin') +
+    _scrSortTh('marg_ebitda', 'Marg. EBITDA') +
+    _scrSortTh('cresc', 'Cresc. Rec.') +
+    _scrSortTh('segmento', 'Segmento', 'scr-col-seg') +
     '</tr></thead><tbody>';
-  (data.table || []).forEach(function(r) {
+  rows.forEach(function(r, i) {
     var cls = r.is_subject ? ' class="scr-subject"' : '';
     var star = r.is_subject ? ' <span class="scr-star" title="empresa analisada">★</span>' : '';
     var warn = r.partial
@@ -5438,22 +5846,44 @@ function scrTableHtml(data) {
       '<th scope="row"><a class="scr-tk" href="/webui/company/' +
       encodeURIComponent(r.ticker) + '">' + esc(r.ticker) + '</a>' + star + warn +
       '<span class="scr-name" title="' + esc(r.name || '') + '">' + esc(r.name || '') + '</span></th>' +
-      '<td>' + esc(r.price) + '</td>' +
-      '<td>' + esc(r.market_cap) + '</td>' +
-      '<td>' + esc(r.p_l) + '</td>' +
-      '<td>' + esc(r.p_vpa) + '</td>' +
-      '<td>' + esc(r.ev_ebitda) + '</td>' +
-      '<td>' + esc(r.roe) + '</td>' +
-      '<td>' + esc(r.dy) + '</td>' +
-      '<td class="scr-col-fin">' + esc(r.receita) + '</td>' +
-      '<td class="scr-col-fin">' + esc(r.ebitda) + '</td>' +
-      '<td>' + esc(r.marg_ebitda) + '</td>' +
-      '<td>' + esc(r.cresc) + '</td>' +
+      _scrCell(r, i, best, 'price') +
+      _scrCell(r, i, best, 'market_cap') +
+      _scrCell(r, i, best, 'p_l') +
+      _scrCell(r, i, best, 'p_vpa') +
+      _scrCell(r, i, best, 'ev_ebitda') +
+      _scrCell(r, i, best, 'roe') +
+      _scrCell(r, i, best, 'dy') +
+      _scrCell(r, i, best, 'receita', 'scr-col-fin') +
+      _scrCell(r, i, best, 'ebitda', 'scr-col-fin') +
+      _scrCell(r, i, best, 'marg_ebitda') +
+      _scrCell(r, i, best, 'cresc') +
       '<td class="scr-col-seg">' + esc(r.segmento || '—') + '</td>' +
       '</tr>';
   });
-  html += '</tbody></table></div></div>';
+  html += '</tbody></table></div>';
   return html;
+}
+
+function scrTableHtml(data) {
+  // The card carries its own id — scrSortBy re-renders JUST this card
+  // (charts and the rest of the screen stay mounted).
+  return '<div class="cmp-chartcard" id="scr-table-card">' +
+    scrTableInnerHtml(data) + '</div>';
+}
+
+function scrSortBy(key) {
+  if (!key || !scrState.data) return;
+  if (scrState.sortKey === key) {
+    scrState.sortDir = scrState.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    scrState.sortKey = key;
+    // natural first direction: cheapest-first on min columns,
+    // highest-first on max columns, A→Z on the text ones
+    var col = _scrCol(key);
+    scrState.sortDir = (col && col.dir === 'max') ? 'desc' : 'asc';
+  }
+  var card = document.getElementById('scr-table-card');
+  if (card) card.innerHTML = scrTableInnerHtml(scrState.data);
 }
 
 // ── the position charts (server configs) ──
@@ -5482,6 +5912,24 @@ var SCR_VERDICTS = {
   na:        { txt: '—',        cls: 'na',   title: 'sem comparação possível (valor indisponível ou mediana sem dados)' }
 };
 
+// [v1.28.1] the Meu Valor heat tint — how FAR from the median, in which
+// DIRECTION (the "add heat map like you did with others tabs" ask;
+// the valuation overview heatmap's green/amber/red language, applied
+// RELATIVE to the sector median instead of absolute thresholds):
+//   |delta| < 10%  → no tint (statistically at the median)
+//   10-30% / 30-75% / 75%+ → 1 / 2 / 3 (the intensity steps)
+//   favorable (cheap/above) → green; unfavorable (expensive/below) → red
+function scrHeatCls(r) {
+  if (!r || r.delta === null || r.delta === undefined) return '';
+  if (r.verdict !== 'cheap' && r.verdict !== 'expensive' &&
+      r.verdict !== 'above' && r.verdict !== 'below') return '';
+  var fav = r.direction === 'above' ? r.delta > 0 : r.delta < 0;
+  var mag = Math.abs(r.delta);
+  var lvl = mag >= 0.75 ? 3 : mag >= 0.30 ? 2 : mag >= 0.10 ? 1 : 0;
+  if (!lvl) return '';
+  return 'scr-heat-' + (fav ? 'pos' : 'neg') + lvl;
+}
+
 function scrVsHtml(data) {
   var html = '<div class="cmp-chartcard">' +
     '<div class="cmp-chart-head"><div class="cmp-chart-title">Meu Valor × Mediana do Setor</div></div>' +
@@ -5489,7 +5937,8 @@ function scrVsHtml(data) {
     'setor. Múltiplos de valuation e alavancagem: menor que a mediana = ' +
     'barata. Qualidade (ROE, ROA, margens, Div Yield, crescimento): maior ' +
     'que a mediana = acima. Múltiplos negativos são prejuízo — ficam sem ' +
-    'veredito.</p>' +
+    'veredito. O fundo do Meu Valor marca a distância da mediana: verde = ' +
+    'favorável, vermelho = desfavorável — quanto mais forte, mais distante.</p>' +
     '<div class="scr-tablewrap"><table class="scr-table scr-vs-table"><thead><tr>' +
     '<th>Métrica</th><th>Meu Valor</th><th>Mediana do Setor</th><th>Delta</th><th>vs Setor</th>' +
     '</tr></thead><tbody>';
@@ -5499,7 +5948,7 @@ function scrVsHtml(data) {
       : (r.verdict === 'expensive' || r.verdict === 'below') ? 'bad' : 'na';
     html += '<tr><th scope="row" class="cmp-rowlabel" title="' + esc(r.tip || '') + '">' +
       esc(r.label) + (r.tip ? ' <span class="cmp-info" aria-hidden="true">ⓘ</span>' : '') + '</th>' +
-      '<td>' + esc(r.my_fmt) + '</td>' +
+      '<td class="scr-heat-cell ' + scrHeatCls(r) + '">' + esc(r.my_fmt) + '</td>' +
       '<td>' + esc(r.med_fmt) + '</td>' +
       '<td class="scr-delta-' + deltaCls + '">' + esc(r.delta_fmt) + '</td>' +
       '<td><span class="scr-badge scr-badge-' + v.cls + '" title="' + esc(v.title) + '">' +
@@ -5612,6 +6061,26 @@ function homeCard(card) {
   return h + '</div>';
 }
 
+function homeEtfHtml(etfs) {
+  // [v1.28.1] The ETF row — BOVA11 / SMAL11 / IVVB11 with the day %
+  // ("add kpi to BOVA11 SMAL11 IVVB11 with the % it rose or fell").
+  // Colorized by the leading sign — the ticker-row variation contract.
+  if (!etfs || !etfs.length) return '';
+  var h = '<div class="home-etfs">';
+  etfs.forEach(function(e) {
+    var v = e.variation;
+    var cls = v === null || v === undefined ? 'val-zero'
+      : (v.charAt(0) === '-' ? 'val-neg' : (v.charAt(0) === '+' ? 'val-pos' : 'val-zero'));
+    h += '<div class="home-etf-card" title="' + valEsc(e.tooltip || '') + '">' +
+      '<span class="home-etf-tk">' + valEsc(e.ticker) + '</span>' +
+      '<span class="home-etf-val">' + valEsc(e.value) + '</span>' +
+      '<span class="home-etf-var ' + cls + '">' +
+      (v === null || v === undefined ? '—' : valEsc(v)) + '</span>' +
+      '</div>';
+  });
+  return h + '</div>';
+}
+
 function renderHome(kpiBox, cardsBox, data) {
   if (data._error) {
     if (kpiBox) kpiBox.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
@@ -5621,6 +6090,7 @@ function renderHome(kpiBox, cardsBox, data) {
   if (kpiBox) {
     kpiBox.innerHTML =
       (data.kpis && data.kpis.length ? valKpisHtml(data.kpis) : '') +
+      homeEtfHtml(data.etfs) +
       (data.kpis_note
         ? '<div class="home-note">' + valEsc(data.kpis_note) + '</div>'
         : '');
@@ -8752,9 +9222,9 @@ function initApp() {
     // [v1.26 fix 1] Informações Periódicas — its OWN tab now (no-op
     // elsewhere: only the ipe tab carries #tab-ipe-events).
     initIpeTab();
-    // [v1.25] Backtest — the interactive simulator (no-op elsewhere:
-    // only the backtest tab carries #bt-root; the guard is on the pane).
-    initBacktestTab();
+    // [v1.28.1] Backtest — the simulator lives in the FERRAMENTAS page
+    // now (initToolsPage boots it); the company tab's boot call is gone
+    // with the tab itself.
     // [v1.11] Macro — first subtab of the macro page (no-op elsewhere:
     // the loader guards on the pane's existence).
     loadMacroSubtab('overview');

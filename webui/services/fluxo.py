@@ -5,7 +5,7 @@ take on the static ``fluxo_dashboard.html`` reference (built by
 skills/ddm/fluxo/modes/dashboard.py, 5 flat tabs: 1 Fluxo overview + 4
 per-investor tabs each with Diário/Mensal/Anual subtabs). Second family
 of the Mercado page (focus was v1.12) — the B3 investment flow by
-investor type, also from dadosdemercado.com.br.
+investor type.
 
 Per the v1.8–v1.12 reorganization spirit the static's parallel
 per-investor navigation collapses into comparison views (the static's
@@ -143,8 +143,8 @@ def _snapshot() -> dict[str, Any]:
     if data.get("status") != "ok":
         return {"_error": (
             "Fluxo de investimento indisponível — sincronize a fonte "
-            "ddm-fluxo (DDM — fluxo de investidores, dadosdemercado."
-            "com.br) na página Sincronização.")}
+            "ddm-fluxo (DDM — fluxo de investidores) na página "
+            "Sincronização.")}
     obs: list[dict[str, Any]] = data.get("observations", [])
     if not obs:
         return {"_error": (

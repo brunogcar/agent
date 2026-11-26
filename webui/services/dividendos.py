@@ -6,7 +6,7 @@ skills/ddm/dividends/modes/dashboard.py: 1 flat tab — 4 KPIs + the
 8-bucket distribution chart + the sortable agenda table over the WHOLE
 agenda). Seventh family of the Mercado page (focus v1.12, fluxo v1.13,
 índices v1.14, inflação v1.15, juros v1.16, ações v1.17) — the agenda de
-dividendos from dadosdemercado.com.br/agenda-de-dividendos (~94 events:
+dividendos (~94 events:
 Código | Tipo | Valor (R$) | Registro | Ex | Pagamento; Dividendo vs JCP).
 
 The headline of v1.18 is the BDR SPLIT: the agenda mixes B3 natives with
@@ -94,7 +94,7 @@ from skills.ddm.dividends.helpers import (
 )
 
 _ERR = ("Agenda de proventos indisponível — sincronize a fonte "
-        "ddm-dividends (DDM — dividendos, dadosdemercado.com.br) na "
+        "ddm-dividends (DDM — dividendos) na "
         "página Sincronização.")
 
 # The tipo palette (Dividendo teal / JCP amber) + the BDR slate accent —

@@ -178,8 +178,10 @@ def test_build_groups_formats_and_ranks():
 
     var_day = next(r for r in by_key["mercado"]["rows"] if r["label"] == "Var. Dia")
     assert var_day["best"] == [0]                   # +1,2% beats −0,8%
+    # [v1.28.1] size ranks max now too — "not highlighting the best
+    # option for all the items" (the Demonstrativos precedent)
     mcap = next(r for r in by_key["mercado"]["rows"] if r["label"] == "Market Cap")
-    assert mcap["best"] == []                       # size never ranks
+    assert mcap["best"] == [0]                       # 338 bi > 82 bi
     assert mcap["values"][0].startswith("R$ 338,")  # compact bi
 
 
@@ -211,10 +213,11 @@ def test_demonstrativos_rank_like_every_other_row():
     assert lucro["best"] == [0]           # 110,61 bi > 11,81 bi
     receita = next(r for r in demo if r["label"] == "Receita Líquida")
     assert receita["best"] == [0]         # 497,55 bi > 213,59 bi
-    # …while the MERCADO size rows still never rank
+    # [v1.28.1] …and the MERCADO size rows rank too (the every-row-ranks
+    # grid — "not highlighting the best option for all the items")
     mcap = next(r for r in by_key["mercado"]["rows"]
                 if r["label"] == "Market Cap")
-    assert mcap["best"] == []
+    assert mcap["best"] == [0]
     # a one-sided Demonstrativos row keeps its column but can't rank
     groups = _build_groups([PETR_ENTRY, _entry("XXXX3")])
     demo = next(g for g in groups if g["key"] == "demonstrativos")["rows"]

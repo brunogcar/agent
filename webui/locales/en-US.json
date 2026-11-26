@@ -68,6 +68,8 @@
     "clear": "Clear the view",
     "filter_label": "Filter by level",
     "filter_all": "All",
+    "filter_http": "HTTP",
+    "filter_app": "App",
     "filter_warning": "Warnings",
     "filter_error": "Errors",
     "new_entries": "new lines",

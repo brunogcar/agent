@@ -6,7 +6,7 @@ skills/ddm/juros/modes/dashboard.py: 4 flat tabs — Selic, Meta Selic and
 CDI each with Histórico + Matriz subtabs, plus a Comparativo tab). Fifth
 family of the Mercado page (focus v1.12, fluxo v1.13, índices v1.14,
 inflação v1.15) — the Brazilian interest rates scraped from
-dadosdemercado.com.br (Selic/BCB, Meta Selic/Copom, CDI/interbank).
+the DDM source (Selic/BCB, Meta Selic/Copom, CDI/interbank).
 
 Per the v1.8–v1.15 reorganization spirit the static's gaps get fixed,
 not copied:
@@ -107,7 +107,7 @@ from skills.ddm.juros.helpers import (
 )
 
 _ERR = ("Taxas de juros indisponíveis — sincronize a fonte "
-        "ddm-juros (DDM — juros, dadosdemercado.com.br) na página "
+        "ddm-juros (DDM — juros) na página "
         "Sincronização.")
 
 # ── rate columns: slug, display name, source, chart color (the skill's
@@ -272,8 +272,7 @@ class JurosService:
                 _pct(last.get("month_value")),
                 f"Taxa de {_br_month(last.get('ref_date'))} · "
                 f"média no ano: {_pct(last.get('media_no_ano'))}. "
-                f"Fonte: {_BY_SLUG[s['slug']][1]} via "
-                "dadosdemercado.com.br.",
+                f"Fonte: {_BY_SLUG[s['slug']][1]}.",
             ))
             kpis.append(kpi(
                 f"{name} — 12m",
@@ -409,7 +408,7 @@ class JurosService:
                 f"{_br_month(last.get('ref_date'))} (o ano em curso)."),
             kpi(f"{name} — 12m", _pct(last.get("media_12m")),
                 "Média das taxas dos últimos 12 meses (janela móvel). "
-                f"Fonte: {source} via dadosdemercado.com.br."),
+                f"Fonte: {source}."),
         ]
 
         # Meta Selic runs one month ahead when the next meta is already

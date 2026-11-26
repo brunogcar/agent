@@ -399,7 +399,7 @@ def _register_builtins() -> None:
 
     # [v1.12] Mercado — the /webui/mercado page, the new home for the
     # DDM dashboards (reference: skills/ddm/focus static report +
-    # focus_dashboard.html; market-level data from dadosdemercado.com.br).
+    # focus_dashboard.html; market-level data).
     # Focus family first (Boletim Focus — the weekly expectations
     # bulletin, 3 time windows × 4 reference years); índices (v1.14),
     # fluxo (v1.13), inflação (v1.15) and juros (v1.16) joined as later
@@ -424,7 +424,7 @@ def _register_builtins() -> None:
              family="focus", label="Mercado — Focus: Fiscal")
 
     # [v1.13] Mercado — Fluxo family (the B3 investment flow by investor
-    # type, also from dadosdemercado.com.br; reference:
+    # type; reference:
     # skills/ddm/fluxo static report + fluxo_dashboard.html). The static's
     # 5 flat tabs (1 Fluxo + 4 per-investor × Diário/Mensal/Anual) become
     # 4 comparison-driven subtabs over the same fluxo.db query engine.
@@ -466,7 +466,7 @@ def _register_builtins() -> None:
              family="indices", label="Mercado — Índices: IDIV")
 
     # [v1.15] Mercado — Inflação family (the Brazilian price indices from
-    # dadosdemercado.com.br; reference: skills/ddm/inflation static
+    # the DDM source; reference: skills/ddm/inflation static
     # report + inflation_dashboard.html). The static's 4 flat tabs (IGP-M,
     # IPCA and INPC each with Histórico + Matriz subtabs, plus a
     # Comparativo tab) become 4 subtabs: the comparison lands on the
@@ -486,7 +486,7 @@ def _register_builtins() -> None:
              family="inflacao", label="Mercado — Inflação: INPC")
 
     # [v1.16] Mercado — Juros family (the Brazilian interest rates from
-    # dadosdemercado.com.br; reference: skills/ddm/juros static report +
+    # the DDM source; reference: skills/ddm/juros static report +
     # juros_dashboard.html). The static's 4 flat tabs (Selic, Meta Selic
     # and CDI each with Histórico + Matriz subtabs, plus a Comparativo
     # tab) become 4 subtabs: the comparison lands on the overview (the
@@ -506,7 +506,7 @@ def _register_builtins() -> None:
              family="juros", label="Mercado — Juros: CDI")
 
     # [v1.23] Mercado — Poupança family (the Brazilian savings-account
-    # monthly yield from dadosdemercado.com.br; reference:
+    # monthly yield; reference:
     # skills/ddm/poupanca static report + poupanca_dashboard.html). The
     # static's single Poupanca tab (Historico + Matriz subtabs) becomes
     # 2 subtabs: the Visão Geral is the COMPARISON the static never drew
@@ -528,7 +528,7 @@ def _register_builtins() -> None:
              family="poupanca", label="Mercado — Poupança: Poupança")
 
     # [v1.17] Mercado — Ações family (the B3 listed stocks from
-    # dadosdemercado.com.br; reference: skills/ddm/acoes static report +
+    # the DDM source; reference: skills/ddm/acoes static report +
     # acoes_dashboard.html). The static's single tab becomes 2 subtabs:
     # Visão Geral (the current snapshot — KPIs + distribution + top-10 +
     # the full sortable table) and Evolução (the distribution OVER TIME,
@@ -545,7 +545,7 @@ def _register_builtins() -> None:
              family="acoes", label="Mercado — Ações: Evolução")
 
     # [v1.18] Mercado — Proventos family (the agenda de dividendos from
-    # dadosdemercado.com.br; reference: skills/ddm/dividends static
+    # the DDM source; reference: skills/ddm/dividends static
     # report + dividends_dashboard.html). DISPLAY name "Proventos" (the
     # PT-BR umbrella for dividends + JCP — the company tab's term);
     # family key "dividendos" (the data source's name — the company

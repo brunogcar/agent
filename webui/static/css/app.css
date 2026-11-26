@@ -7,6 +7,12 @@
  * The theme JSON provides: --bg, --bg-sec, --bg-card, --text, --text-sec,
  * --border, --brand, --brand-dim, --accent, --info, --success, --warning,
  * --danger, --chart-grid, --chart-text.
+ *
+ * [WebUI v1.28.1] closes the file with the Ferramentas polish layer:
+ * the shared .cmp-loading card, the screener's sortable + best-ranked
+ * sector table and heat-tinted verdict table, the Painel's .home-etfs
+ * row, the backtest tool's .bt-tickerbar + aligned trade log, and the
+ * log drawer's HTTP/App source filters.
  */
 
 /* ── Semantic tokens (map theme primitives to roles) ── */
@@ -2278,10 +2284,8 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
 }
 .cmp-hist-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
 .cmp-hist-tk { font-weight: 700; font-family: var(--font-mono); font-size: 12.5px; }
-.cmp-hist-var {
-  margin-left: auto; font-size: 11px; font-weight: 600;
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-}
+/* [v1.28.1] .cmp-hist-var (the period-% chip, top-right of each mini
+   chart) removed with its element — "not really needed". */
 .cmp-hist-chart { position: relative; height: 130px; }
 .cmp-hist-none {
   position: absolute; inset: 0;
@@ -2456,10 +2460,10 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
 .scr-kpis .kpi-value { font-family: var(--font-mono); }
 
 /* ── the Cotação Histórica card (single company — taller than the
-   comparison mini-cards, its own card not a grid cell) ── */
+   comparison mini-cards, its own card not a grid cell). [v1.28.1] the
+   period-% chip under the chart is GONE ("not really needed") — just
+   the line. ── */
 .scr-hist-card .scr-hist-chart { position: relative; height: 230px; }
-.scr-hist-var { font-size: 12px; font-weight: 700; margin-top: 8px;
-  display: inline-block; }
 
 /* ── the sector table ── */
 .scr-tablewrap { overflow-x: auto; border: 1px solid var(--color-border);
@@ -2520,3 +2524,131 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
 
 /* the error-page "back" link */
 .scr-back { margin-top: var(--space-3); }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   v1.28.1 — the Ferramentas trio's polish layer: the shared loading
+   card, the sortable+ranked screener table, the vs-median heat tints,
+   the Painel's ETF row, the backtest tool's ticker bar + aligned log,
+   and the log drawer's HTTP/App filters.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── the tools' shared loading card (comparison / screener / backtest) ── */
+.cmp-loading {
+  display: flex; align-items: center; gap: var(--space-4);
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: var(--space-5);
+}
+.cmp-loading-spin {
+  flex-shrink: 0; width: 28px; height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: cmp-loading-rotate 0.9s linear infinite;
+}
+@keyframes cmp-loading-rotate { to { transform: rotate(360deg); } }
+.cmp-loading-body { min-width: 0; }
+.cmp-loading-title { font-size: 14px; font-weight: 700; color: var(--color-text); }
+.cmp-loading-hint {
+  font-size: 12px; color: var(--color-text-sec); line-height: 1.5;
+  margin-top: 4px; max-width: 640px;
+}
+.cmp-loading-elapsed {
+  font-size: 11px; color: var(--color-text-sec);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+}
+
+/* ── the screener's SORTABLE headers ──
+   Every th is a button-like cell: cursor + hover accent + the ▲/▼/↕
+   indicator; the active column keeps the text color so the sort state
+   reads at a glance. */
+.scr-table th.scr-sortable { cursor: pointer; user-select: none; }
+.scr-table th.scr-sortable:hover,
+.scr-table th.scr-sortable.is-active { color: var(--color-brand); }
+.scr-sort-ind {
+  font-size: 9px; margin-left: 4px; opacity: 0.55;
+}
+.scr-table th.scr-sortable.is-active .scr-sort-ind { opacity: 1; }
+.scr-table th.scr-sortable:not(.is-active) .scr-sort-ind { opacity: 0.3; }
+
+/* ── the screener's best-of-column ✓ (the comparison grid convention,
+   applied per column) ── */
+.scr-table td.scr-cell {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.scr-table td.scr-best { font-weight: 700; background: rgba(34, 197, 94, 0.10); }
+@supports (background: color-mix(in srgb, red 10%, transparent)) {
+  .scr-table td.scr-best {
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  }
+}
+
+/* ── the Meu Valor heat tints (distance to the sector median) ──
+   Three intensity steps each way; color-mix keeps them theme-aware
+   (the flat rgba fallbacks cover the very old browsers). */
+.scr-heat-cell { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scr-heat-pos1 { background: rgba(34, 197, 94, 0.08); }
+.scr-heat-pos2 { background: rgba(34, 197, 94, 0.18); }
+.scr-heat-pos3 { background: rgba(34, 197, 94, 0.32); font-weight: 700; }
+.scr-heat-neg1 { background: rgba(220, 38, 38, 0.08); }
+.scr-heat-neg2 { background: rgba(220, 38, 38, 0.18); }
+.scr-heat-neg3 { background: rgba(220, 38, 38, 0.32); font-weight: 700; }
+@supports (background: color-mix(in srgb, red 10%, transparent)) {
+  .scr-heat-pos1 { background: color-mix(in srgb, var(--color-success) 8%, transparent); }
+  .scr-heat-pos2 { background: color-mix(in srgb, var(--color-success) 18%, transparent); }
+  .scr-heat-pos3 { background: color-mix(in srgb, var(--color-success) 32%, transparent); }
+  .scr-heat-neg1 { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
+  .scr-heat-neg2 { background: color-mix(in srgb, var(--color-danger) 18%, transparent); }
+  .scr-heat-neg3 { background: color-mix(in srgb, var(--color-danger) 32%, transparent); }
+}
+
+/* ── the Painel's ETF row (BOVA11 · SMAL11 · IVVB11 + day %) ── */
+.home-etfs {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3); margin-top: var(--space-4);
+}
+.home-etf-card {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 10px 14px;
+}
+.home-etf-tk { font-weight: 700; font-family: var(--font-mono); font-size: 13px; }
+.home-etf-val {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 13px; color: var(--color-text-sec);
+}
+.home-etf-var {
+  margin-left: auto; font-weight: 700; font-size: 13px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+
+/* ── the backtest tool's ticker context bar (Simulando PETR4 + the
+   range + abrir empresa / trocar ticker) ── */
+.bt-tickerbar {
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 10px 14px;
+}
+.bt-ticker-main { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.bt-ticker-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--color-text-sec); font-weight: 700;
+}
+.bt-ticker-tk { font-weight: 800; font-family: var(--font-mono); font-size: 15px; }
+.bt-ticker-range {
+  font-size: 11px; color: var(--color-text-sec);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.bt-ticker-actions { margin-left: auto; display: flex; gap: var(--space-2); }
+
+/* ── the backtest trade log's centered reason column (the alignment
+   fix: th-ctr header + centered badge; must come AFTER .val-table
+   td:last-child to win the equal-specificity tie) ── */
+.bt-table-wrap td.bt-reason-cell {
+  text-align: center; font-family: inherit; white-space: nowrap;
+}
+
+/* ── the log drawer's source filters (HTTP / App pills — pure CSS,
+   driven by the list's data-filter + each line's data-source) ── */
+.syslog-list[data-filter="http"] .log-line:not([data-source="http"]) { display: none; }
+.syslog-list[data-filter="app"] .log-line[data-source="http"] { display: none; }

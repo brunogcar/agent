@@ -90,8 +90,8 @@ Routes:
   GET /api/webui/company/{ticker}/proventos-overview    → Proventos Visão Geral (JSON)
   GET /api/webui/company/{ticker}/proventos-historico   → Proventos Histórico completo (JSON)
   GET /api/webui/company/{ticker}/proventos-anual       → Proventos Anual (JSON)
-  GET /api/webui/company/{ticker}/backtest/meta         → Backtest form catalog (JSON) [v1.25]
-  POST /api/webui/company/{ticker}/backtest/run         → run ONE parametrized scenario (JSON) [v1.25]
+  GET /api/webui/company/{ticker}/backtest/meta         → Backtest form catalog (JSON) [v1.25; v1.28.1 — the Ferramentas tool's data]
+  POST /api/webui/company/{ticker}/backtest/run         → run ONE parametrized scenario (JSON) [v1.25; v1.28.1 — the Ferramentas tool's data]
   GET /api/webui/company/{ticker}/governance/practices  → CGVN práticas + filtros (JSON) [v1.26]
   GET /api/webui/company/{ticker}/ipe/events           → IPE eventos facetados (JSON) [v1.26 fix 1 — its own tab]
   GET /api/webui/company/{ticker}/tab/{tab} → tab content (HTML fragment)
@@ -163,12 +163,15 @@ _ADAPTER_KEY_RE = re.compile(r"^[a-z0-9_-]+:[a-z0-9_-]+$")
 # company.html hides its button until it exists). [v1.6] proventos.
 # [v1.8] options. [v1.9] shareholders. [v1.10] insiders.
 # [v1.24] historical SHIPS (the 4-subtab Histórico tab).
-# [v1.25] backtest (the interactive simulator tab).
 # [v1.26] governance (Governança — CGVN only) + ipe (Informações
 # Periódicas — the IPE event index, SPLIT into its own tab in
 # v1.26 fix 1: "both provide info, but they are not supposed to be
 # together, different purpose").
-_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe", "backtest"}
+# [v1.28.1] backtest REMOVED — the simulator moved to the Ferramentas
+# page (its own picker, ?b= deep link; "lets move backtest from
+# companies to tools"). The /backtest/meta + /backtest/run endpoints
+# stay — the tool calls them per selected ticker.
+_ALLOWED_TABS = {"visao_geral", "valuation", "preco", "financials", "historical", "proventos", "options", "shareholders", "insiders", "governance", "ipe"}
 
 # Shared range map (was duplicated ×2 and silently fell back to 1A on typos).
 _RANGE_YEARS = {
@@ -279,7 +282,7 @@ def mercado_sections(key: str):
     """[v1.12] Generic mercado subtab endpoint — ticker-less dispatch.
 
     Same shape as the macro /sections/{key} endpoint: mercado page
-    families build market-wide payloads (DDM — dadosdemercado.com.br).
+    families build market-wide payloads (DDM — market data sources).
     Key format "<family>:<sub>" (v1.12: focus:overview/inflacao/
     atividade/juros/cambio/externo/fiscal; v1.13: fluxo:overview/mensal/
     anual/por_investidor; v1.15: inflacao:overview/igpm/ipca/inpc).
@@ -467,7 +470,12 @@ def company_proventos_anual(ticker: Ticker):
     return JSONResponse(data)
 
 
-# ── [v1.25] Backtest — the interactive simulator ─────────────────────────
+# ── [v1.25] Backtest — the interactive simulator ─────────────────────────────
+# [v1.28.1] The company TAB is gone (the simulator lives in the
+# Ferramentas page now — its own picker, ?b= deep link: "lets move
+# backtest from companies to tools"); BOTH endpoints stay — they are
+# per-ticker by design and the tool calls them for whichever ticker
+# the user picks.
 
 @router.get("/company/{ticker}/backtest/meta")
 def company_backtest_meta(ticker: Ticker):
@@ -627,15 +635,6 @@ def company_tab_fragment(request: Request, ticker: Ticker, tab: str):
         return templates.TemplateResponse(
             request,
             "partials/tab_ipe.html",
-            {"ticker": ticker, "t": tr},
-        )
-    elif tab == "backtest":
-        # [v1.25] The interactive simulator shell — the form, the result
-        # area and the scenario manager. The client fetches /backtest/meta
-        # (form catalog) on load and POSTs /backtest/run per simulation.
-        return templates.TemplateResponse(
-            request,
-            "partials/tab_backtest.html",
             {"ticker": ticker, "t": tr},
         )
     elif tab == "options":

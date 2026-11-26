@@ -59,11 +59,35 @@ the empty state explains it).
      metric — multiples and leverage rank lower-better, quality ranks
      higher-better) + the grouped-bars chart of my value vs the median.
 
+  [v1.28.1] the sector table's headers are now SORTABLE (click to
+  toggle asc/desc — raw values ship with the payload) and every
+  metric column carries the best-of-column ✓ (green, the comparison
+  grid's convention); the Meu Valor × Mediana table's "Meu Valor"
+  cell wears the heat tint (distance to the median, favorable green /
+  unfavorable red, three intensities); the Cotação Histórica card
+  lost the period-% chip ("not really needed").
+
+- Backtest [v1.28.1]: the interactive simulator MOVED here from the
+  company page (the user's ask: "lets move backtest from companies to
+  tools, to be with the other interactive tools we added — you will
+  have to adapt to search for ticker"). The initBacktestTool third of
+  initToolsPage(): the same single-ticker picker as the screener
+  (?b=PETR4 deep link) opens the FULL simulator — form (strategies +
+  thresholds + period presets + capital/position/stop/take/fee),
+  result (KPI cards, equity × buy & hold, drawdown, price with
+  entry/exit markers, trade log) and the pinned-scenarios manager
+  (localStorage per ticker). Same /backtest/meta + /backtest/run
+  endpoints; chart axes and tooltips in dd/mm/aaaa now (the BR
+  standard), the trade log headers aligned with the data columns, and
+  two new KPI cards (retorno médio por trade, tempo médio de posição).
+
 Data: GET /api/webui/tools/comparison?tickers=… + GET
 /api/webui/tools/screener?ticker=… (webui/services/comparison.py +
 webui/services/screener.py — payload-cached on composite fingerprints,
 the v1.26.1 webui_payloads foundation) + GET
-/api/webui/tools/comparison/search?q=… for BOTH pickers. #}
+/api/webui/tools/comparison/search?q=… for ALL THREE pickers +
+GET/POST /api/webui/company/{ticker}/backtest/meta|run for the
+simulator. #}
 <div class="page-tools" id="tools-root" x-data="{ family: 'comparacao' }">
   <div class="macro-header">
     <h1>🧰 {{ t("nav.tools") }}</h1>
@@ -79,6 +103,10 @@ the v1.26.1 webui_payloads foundation) + GET
             :class="{ 'active': family === 'screener' }"
             @click="family='screener'"
             onclick="scrFocusPicker()">Screener</button>
+    <button id="family-pill-backtest" class="subtab-btn mercado-family-btn"
+            :class="{ 'active': family === 'backtest' }"
+            @click="family='backtest'"
+            onclick="btToolFocusPicker()">Backtest</button>
   </nav>
 
   {# ── Comparação tool panel ── #}
@@ -138,6 +166,38 @@ the v1.26.1 webui_payloads foundation) + GET
           Div Yield…) e mostra onde a empresa está: mais barata ou mais
           cara que o setor, melhor ou pior em rentabilidade, margens e
           dividendos — uma linha por métrica com o veredito.
+        </p>
+      </div>
+    </div>
+  </div>
+  {# ── Backtest tool panel [v1.28.1] — the simulator moved here from
+     the company page (picker first: on the company tab the ticker was
+     the page's context; here the user searches for it). #}
+  <div x-show="family === 'backtest'" id="family-backtest" style="display: none;">
+    {# The picker: one ticker — same single-selection pattern as the
+       screener (its own input + dropdown, the shared search endpoint). #}
+    <div class="cmp-picker" id="bt-tool-picker">
+      <div class="cmp-picker-inputwrap">
+        <input type="text" id="bt-tool-search" class="cmp-search"
+               placeholder="Ticker para simular (ex.: PETR4, VALE3…)"
+               aria-label="Ticker para o backtest"
+               autocomplete="off" spellcheck="false">
+        <div id="bt-tool-dropdown" class="cmp-dropdown" hidden></div>
+      </div>
+    </div>
+
+    {# The simulator itself (JS renders the form + result + scenarios
+       here — the whole v1.25 engine UI, ticker now picker-driven). #}
+    <div id="bt-tool-result" class="cmp-result">
+      <div class="cmp-empty" id="bt-tool-empty">
+        <div class="cmp-empty-icon">⏪</div>
+        <p class="cmp-empty-title">Escolha um ticker para simular</p>
+        <p class="cmp-empty-hint">
+          Informe o ticker acima. O backtest roda 8 estratégias
+          (valor, qualidade, renda, composta, cruzamento de médias e
+          buy &amp; hold) com parâmetros livres — período, capital,
+          % de posição, dias máximos, stop, take e corretagem — e fixa
+          cenários lado a lado para comparar.
         </p>
       </div>
     </div>

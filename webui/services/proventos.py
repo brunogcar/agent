@@ -327,7 +327,7 @@ class ProventosService:
         events.sort(key=lambda e: e["event_date"] or "")
         return events
 
-    # ── [v1.22.4] second source: DDM agenda (dadosdemercado.com.br) ─────────
+    # ── [v1.22.4] second source: DDM agenda ─────────
 
     _DDM_TYPES = {"Dividendo": ("Dividendo", "div"),
                   "JCP": ("JCP", "jcp")}

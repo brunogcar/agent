@@ -1,21 +1,36 @@
 """webui/services/syslog.py — the in-app system log (the 📜 drawer's data).
 
 [v1.20] "What is going on inside the WebUI" — the terminal tail made
-visible in-app. THREE capture paths feed ONE ring buffer:
+visible in-app. FOUR capture paths feed ONE ring buffer:
 
   1. RequestLoggingMiddleware (pure ASGI, streaming-safe — no
      BaseHTTPMiddleware, so SSE responses pass through untouched):
-     method + path + status + duration for every non-static request.
-     4xx → warning, 5xx/exceptions → error, everything else → info.
-     OPTIONS preflights and /static/ assets are skipped (noise).
+     method + path + QUERY STRING + status + duration for every
+     non-static request. 4xx → warning, 5xx/exceptions → error,
+     everything else → info. OPTIONS preflights and /static/ assets are
+     skipped (noise). [v1.28.1] the query string rides along (the
+     `_t=` cache-buster stripped) — `?q=pomo4` says much more than a
+     bare /tools/comparison/search.
   2. RingBufferHandler on the ROOT Python logger (WARNING+): unhandled
-     ASGI exceptions, uvicorn errors, library warnings — anything that
-     already goes through ``logging`` shows up here too. uvicorn.access
-     records are skipped (the middleware already logs requests with a
-     duration; double lines would be pure noise).
+     ASGI exceptions, library warnings — anything that already goes
+     through ``logging`` shows up here too. [v1.28.1] the handler ALSO
+     attaches to the "uvicorn"/"uvicorn.error" loggers at INFO — the
+     startup/shutdown banner lines the terminal prints ("Application
+     startup complete", "Shutting down") land in the drawer too.
+     uvicorn.access records are still skipped (the middleware already
+     logs requests with a duration; double lines would be pure noise).
   3. Explicit ``syslog.log()`` calls: sync job lifecycle (started /
      completed / failed / per-ticker bulk progress), startup freshness
      check, settings changes, the auto-sync scheduler.
+  4. [v1.28.1] StdoutTee on sys.stdout + sys.stderr: EVERY print() the
+     process emits — the "[ratios] 12/49 roe (0.00s) = 0.58" progress
+     lines, the "[webui] screener POMO4 partial: …" degradation notes,
+     engine tracebacks — lands in the drawer with a parsed source badge
+     (ratios / webui / app / stderr). The user's ask: "log do sistema
+     doesnt display powershell logs… is just display info like GET …
+     → 200 · 7ms". The tee is line-buffered (partial writes coalesce),
+     thread-safe, reentrancy-guarded and idempotent; the original
+     stream keeps receiving every byte (PowerShell looks the same).
 
 Consumed by ``GET /api/webui/logs`` (snapshot/since) and
 ``GET /api/webui/logs/stream`` (SSE: one snapshot event + 1s polls —
@@ -34,6 +49,7 @@ Behavior notes:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from collections import deque
@@ -127,7 +143,10 @@ class RingBufferHandler(logging.Handler):
 
     uvicorn.access is skipped (the request middleware already logs those,
     with a duration); uvicorn.error tracebacks ("Exception in ASGI
-    application") are the main thing this path catches.
+    application") are the main thing this path catches. [v1.28.1] The
+    same handler class attaches to "uvicorn"/"uvicorn.error" at INFO —
+    those loggers don't propagate to the root, and their startup banner
+    lines are part of "what the terminal shows".
     """
 
     def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover
@@ -140,7 +159,8 @@ class RingBufferHandler(logging.Handler):
             extra = ""
             if record.exc_info and record.exc_info[0] is not None:
                 extra = f" ({record.exc_info[0].__name__})"
-            syslog.log(level, "py",
+            source = "uvicorn" if record.name.startswith("uvicorn") else "py"
+            syslog.log(level, source,
                        f"{record.name}: {record.getMessage()}{extra}")
         except Exception:
             # A logging handler must never take the app down.
@@ -148,12 +168,128 @@ class RingBufferHandler(logging.Handler):
 
 
 def attach_logging_handler() -> None:
-    """Idempotently attach the ring-buffer handler to the root logger."""
+    """Idempotently attach the ring-buffer handler to the root logger
+    (WARNING+) AND to the uvicorn loggers (INFO — startup/shutdown
+    banners; uvicorn.access stays skipped inside emit)."""
     root = logging.getLogger()
     if not any(isinstance(h, RingBufferHandler) for h in root.handlers):
         handler = RingBufferHandler()
         handler.setLevel(logging.WARNING)
         root.addHandler(handler)
+    # [v1.28.1] uvicorn's own loggers don't reach the root — hook them
+    # directly so the terminal's startup/shutdown lines show in-app too.
+    for name in ("uvicorn", "uvicorn.error"):
+        logger = logging.getLogger(name)
+        if not any(isinstance(h, RingBufferHandler) for h in logger.handlers):
+            handler = RingBufferHandler()
+            handler.setLevel(logging.INFO)
+            logger.addHandler(handler)
+
+
+# ── capture path 4 [v1.28.1]: print() tee → ring buffer ──────────────────────
+class _StdoutTee:
+    """Line-buffered wrapper around sys.stdout / sys.stderr.
+
+    Every complete line written to the wrapped stream is ALSO appended to
+    the ring buffer, tagged by what the line looks like:
+
+      "[ratios] 12/49 roe (0.00s) = 0.58"  → source "ratios" (info)
+      "[webui] screener POMO4 partial: …"  → source "webui" (warning on
+                                             "failed", error on
+                                             "Traceback")
+      anything else on stdout              → source "app" (info)
+      anything else on stderr              → source "stderr" (warning;
+                                             error on "Traceback")
+
+    The original stream receives every byte first (PowerShell output is
+    unchanged). ``_guard`` stops re-entrant captures — a print from
+    inside syslog internals must not loop. Thread-safe: ``_lock`` owns
+    the partial-line buffer (interleaved prints from worker threads
+    never merge two half-lines). Everything but write/writelines/flush
+    delegates to the original stream (isatty, encoding, fileno…).
+    """
+
+    _MAX_LINE = 600  # same tail-not-dump cap as SystemLog.log
+
+    def __init__(self, original, is_stderr: bool) -> None:
+        self._original = original
+        self._is_stderr = is_stderr
+        self._lock = threading.Lock()
+        self._pending = ""
+        self._guard = False
+
+    # ── stream API ──
+    def write(self, text) -> int:
+        try:
+            try:
+                n = self._original.write(text)
+            except Exception:
+                n = len(text) if text else 0
+            self._capture(text)
+            return n
+        except Exception:
+            return len(text) if text else 0
+
+    def writelines(self, lines) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        try:
+            self._original.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):  # isatty, encoding, fileno, buffer…
+        return getattr(self._original, name)
+
+    # ── capture ──
+    def _capture(self, text) -> None:
+        if not text or self._guard:
+            return
+        try:
+            self._guard = True
+            with self._lock:
+                self._pending += str(text)
+                lines = self._pending.split("\n")
+                self._pending = lines.pop()  # last = partial (or "")
+            for line in lines:
+                line = line.rstrip("\r").strip()
+                if line:
+                    self._emit(line[: self._MAX_LINE])
+        except Exception:
+            pass  # a log tee must never take the app down
+        finally:
+            self._guard = False
+
+    def _emit(self, line: str) -> None:
+        low = line.lower()
+        if "[ratios]" in low:
+            source, level = "ratios", "info"
+        elif line.startswith("[webui]") or low.startswith("[webui]"):
+            source = "webui"
+            level = ("error" if "traceback" in low
+                     else "warning" if "failed" in low else "info")
+        elif self._is_stderr:
+            source = "stderr"
+            level = "error" if "traceback" in low else "warning"
+        else:
+            source, level = "app", "info"
+        syslog.log(level, source, line)
+
+
+def attach_print_tee() -> None:
+    """Idempotently wrap sys.stdout + sys.stderr in _StdoutTee."""
+    for stream, is_stderr in ((sys.stdout, False), (sys.stderr, True)):
+        if stream is None:
+            continue
+        if isinstance(stream, _StdoutTee):
+            continue
+        try:
+            setattr(sys, "stderr" if is_stderr else "stdout",
+                    _StdoutTee(stream, is_stderr))
+        except Exception:
+            pass  # never block startup on a logging concern
 
 
 # ── capture path 1: pure ASGI request middleware ─────────────────────────────
@@ -175,6 +311,18 @@ class RequestLoggingMiddleware:
     def __init__(self, app) -> None:
         self.app = app
 
+    @staticmethod
+    def _path_with_query(scope) -> str:
+        """[v1.28.1] path + the MEANINGFUL query string — the `_t=`
+        cache-buster is stripped, anything else (?q=pomo4, ?ticker=POMO4)
+        rides along ("i want that log to display more info")."""
+        path = scope.get("path", "?")
+        qs = (scope.get("query_string") or b"").decode("latin-1", "replace")
+        if qs:
+            import re as _re
+            qs = _re.sub(r"(^|&)_t=\d+", r"\1", qs).strip("&")
+        return f"{path}?{qs}" if qs else path
+
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -189,7 +337,8 @@ class RequestLoggingMiddleware:
         # SSE endpoints stay open for minutes — log the OPEN, not the close
         # (the completion line would only appear when the drawer disconnects).
         if path.endswith("/stream"):
-            syslog.log("info", "http", f"{method} {path} · SSE aberto")
+            syslog.log("info", "http",
+                       f"{method} {self._path_with_query(scope)} · SSE aberto")
             await self.app(scope, receive, send)
             return
 
@@ -206,7 +355,8 @@ class RequestLoggingMiddleware:
         except Exception as e:
             elapsed = _fmt_ms(time.perf_counter() - start)
             syslog.log("error", "http",
-                       f"{method} {path} → exceção ({type(e).__name__}) · {elapsed}")
+                       f"{method} {self._path_with_query(scope)} → exceção "
+                       f"({type(e).__name__}) · {elapsed}")
             raise
         else:
             status = state["status"]
@@ -214,7 +364,8 @@ class RequestLoggingMiddleware:
             level = ("error" if status >= 500
                      else "warning" if status >= 400
                      else "info")
-            syslog.log(level, "http", f"{method} {path} → {status} · {elapsed}")
+            syslog.log(level, "http",
+                       f"{method} {self._path_with_query(scope)} → {status} · {elapsed}")
 
 
 def _fmt_ms(seconds: float) -> str:

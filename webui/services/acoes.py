@@ -6,7 +6,7 @@ skills/ddm/acoes/modes/dashboard.py: 1 flat tab — 4 KPIs + the 22-range
 price-distribution bar chart + the sortable stocks table). Sixth family
 of the Mercado page (focus v1.12, fluxo v1.13, índices v1.14, inflação
 v1.15, juros v1.16) — the B3 listed stocks scraped from
-dadosdemercado.com.br/acoes (~370 tickers: Ticker | Nome | Negócios |
+the DDM source (~370 tickers: Ticker | Nome | Negócios |
 Última (R$) | Variação).
 
 The headline of v1.17 is the EVOLUTION: the /acoes page is a LIVE quote
@@ -116,7 +116,7 @@ from skills.ddm.acoes.helpers import (
 )
 
 _ERR = ("Cotações das ações B3 indisponíveis — sincronize a fonte "
-        "ddm-acoes (DDM — ações B3, dadosdemercado.com.br) na página "
+        "ddm-acoes (DDM — ações B3) na página "
         "Sincronização.")
 
 # The 22 palette ranges grouped into 5 readable bands for the evolução
@@ -269,8 +269,7 @@ class AcoesService:
         # ── KPIs (6) ────────────────────────────────────────────────────────
         kpis: list[dict[str, Any]] = [
             kpi("Total de Ações", _int(len(stocks)),
-                "Ações B3 listadas na página /acoes do "
-                "dadosdemercado.com.br"
+                "Ações B3 listadas na B3"
                 + (f" · snapshot de {_fmt_data(ref_date)}." if ref_date
                    else ".")),
         ]

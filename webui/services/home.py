@@ -8,9 +8,13 @@ answers "where does Brazil stand?" in one glance:
 
   KPI row    → Selic (anualizada) · TR · IPCA (mês) · IPCA (12m) ·
                IGP-M (mês) · IGP-M (12m) · USD/BRL (ptax)  [BCB SGS]
-  6 cards    → Top 10 IBOV · Top 10 SMLL          [b3-index + cotahist]
+  ETF row    → BOVA11 · SMAL11 · IVVB11 — last close + day % [cotahist,
+               v1.28.1: "add kpi to BOVA11 SMAL11 IVVB11 with the % it
+               rose or fell"]
+  7 cards    → Top 10 IBOV · Top 10 SMLL          [b3-index + cotahist]
                Mais Negócios · Maiores Volumes ·
-               Maiores Altas · Maiores Baixas      [cotahist]
+               Maiores Altas · Maiores Altas BDR ·
+               Maiores Baixas                      [cotahist]
 
 [v1.21 fix 1] KPI row reorganized (rates → inflation mês+12m → FX) with
 the three additions the user asked (IPCA mês, IGP-M mês, TR); new
@@ -80,6 +84,13 @@ from skills.b3.index.helpers import format_pct as _fmt_weight  # "10,886%"
 
 _MIN_TRADES = 100    # liquidity gate for the gainers/losers ranking
 
+# [v1.28.1] The Painel's ETF row — the three reference ETFs the user
+# asked for ("add kpi to BOVA11 SMAL11 IVVB11 with the % it rose or
+# fell"). (ticker, what it replicates) — the tooltip's text.
+_ETF_ROW = (("BOVA11", "Ibovespa"),
+            ("SMAL11", "Índice Small Cap"),
+            ("IVVB11", "S&P 500"))
+
 from webui.services.settings import settings_service
 
 
@@ -136,7 +147,8 @@ def _quote_text(close: float | None) -> str:
 
 # ── service ─────────────────────────────────────────────────────────────────
 class HomeService:
-    """Painel landing page — KPI row + 6 ranked ticker cards (FLAT, no ticker)."""
+    """Painel landing page — KPI row + ETF row + 7 ranked ticker cards
+    (FLAT, no ticker)."""
 
     # ── KPI row (BCB SGS — same computation as the Macro family) ────────────
     def _kpis(self) -> tuple[list[dict[str, Any]], str | None]:
@@ -208,6 +220,27 @@ class HomeService:
             return None
         return {s["ticker"]: s for s in snap.get("symbols", [])}
 
+    # ── [v1.28.1] ETF row (cotahist) ─────────────────────────────────────────
+    @staticmethod
+    def _etfs(quotes: dict | None) -> list[dict[str, Any]]:
+        """BOVA11 / SMAL11 / IVVB11 — close + signed day % from the same
+        snapshot the cards read. Empty when cotahist is down (the row
+        renders nothing — the KPI note already names the source)."""
+        out: list[dict[str, Any]] = []
+        for tk, what in _ETF_ROW:
+            q = (quotes or {}).get(tk) or {}
+            if not q.get("close"):
+                continue
+            out.append({
+                "ticker": tk,
+                "value": _quote_text(q.get("close")),
+                "variation": _signed_pct(q.get("variation_pct")),
+                "tooltip": (f"ETF que replica o {what} — fechamento e "
+                            "variação do último pregão com negócio "
+                            "(COTAHIST)."),
+            })
+        return out
+
     # ── index cards (IBOV / SMLL) ───────────────────────────────────────────
     def _index_card(self, code: str, title: str, quotes: dict | None
                     ) -> dict[str, Any]:
@@ -256,6 +289,7 @@ class HomeService:
                 {"key": "negocios", "title": "Mais Negócios", **err},
                 {"key": "volumes", "title": "Maiores Volumes (R$)", **err},
                 {"key": "altas", "title": "Maiores Altas", **err},
+                {"key": "altas_bdr", "title": "Maiores Altas BDR", **err},
                 {"key": "baixas", "title": "Maiores Baixas", **err},
             ]
 
@@ -305,12 +339,24 @@ class HomeService:
         gainers = sorted(liquid, key=lambda s: -s["variation_pct"])[:top]
         losers = sorted(liquid, key=lambda s: s["variation_pct"])[:top]
 
+        # [v1.28.1] Maiores Altas BDR — the same gainers ranking scoped
+        # to the *34 universe (the Proventos family's is_bdr predicate:
+        # BDRs are the FOREIGN companies' shares traded on B3), same
+        # liquidity gate. Sits right after Maiores Altas (the user's
+        # ask: "add maiores altas BDR").
+        bdr_gainers = sorted(
+            (s for s in liquid if s["ticker"].endswith("34")),
+            key=lambda s: -s["variation_pct"])[:top]
+
         return [
             trades_card,
             volume_card,
             {"key": "altas", "title": "Maiores Altas", "subtitle": sub,
              "error": None,
              "items": [row(s) for s in gainers]},
+            {"key": "altas_bdr", "title": "Maiores Altas BDR", "subtitle": sub,
+             "error": None,
+             "items": [row(s) for s in bdr_gainers]},
             {"key": "baixas", "title": "Maiores Baixas", "subtitle": sub,
              "error": None,
              "items": [row(s) for s in losers]},
@@ -351,12 +397,14 @@ class HomeService:
         kpis, kpis_note = self._kpis()
         snap = _market_snapshot()          # ONE call — quotes + rankings
         quotes = self._quotes(snap)
+        etfs = self._etfs(quotes)
         cards = [
             self._index_card("IBOV", "IBOV · Top 10", quotes),
             self._index_card("SMLL", "SMLL · Top 10", quotes),
             *self._ranking_cards(snap),
         ]
-        out: dict[str, Any] = {"status": "ok", "kpis": kpis, "cards": cards}
+        out: dict[str, Any] = {"status": "ok", "kpis": kpis,
+                               "etfs": etfs, "cards": cards}
         if kpis_note:
             out["kpis_note"] = kpis_note
         return out

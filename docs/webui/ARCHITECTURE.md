@@ -36,7 +36,7 @@ agent/
 │   │   ├── financials.py             # Financeiro tab (TTM overview + 5-statement single fetch; [v1.26.1] webui_payloads cache)
 │   │   ├── valuation.py              # Valuation tab (ratios mode + report-builder sections)
 │   │   ├── historical.py             # [v1.24] Histórico tab (17 metrics × 5A — heatmap/bands/trend)
-│   │   ├── backtest.py               # [v1.25] Backtest tab (parametrized engine + meta catalog)
+│   │   ├── backtest.py               # [v1.25] Backtest — the interactive simulator ([v1.28.1] a Ferramentas tool: per-ticker meta/run endpoints, picker-driven)
 │   │   ├── governance.py             # [v1.26] Governança tab (CGVN score/práticas — the self-assessment)
 │   │   ├── ipe.py                     # [v1.26] Informações Periódicas tab (the IPE events explorer — its own tab)
 │   │   ├── proventos.py              # Proventos tab (B3 ∪ DDM events + yield at ex-date; [v1.26.1] IPE announcements)
@@ -52,19 +52,19 @@ agent/
 │   │   ├── poupanca.py               # [v1.23] Mercado Poupança family (× IPCA × CDI)
 │   │   ├── acoes.py                  # [v1.17] Mercado Ações family
 │   │   ├── dividendos.py             # [v1.18] Mercado Proventos family (BDR split)
-│   │   ├── home.py                   # [v1.19] Painel landing (SGS KPIs + 5 ranked cards, TTL memo)
+│   │   ├── home.py                   # [v1.19] Painel landing (SGS KPIs + [v1.28.1] ETF row + ranked cards, TTL memo)
 │   │   ├── sync.py                   # Freshness check + background sync + SSE pub/sub + scheduler
 │   │   ├── preflight.py              # [v1.7] Pre-flight checklist (DBs, system, adapters, config)
 │   │   ├── settings.py               # [v1.20] Schema-driven settings store (webui_settings.json)
-│   │   └── syslog.py                 # [v1.20] System log ring buffer + request middleware + logging handler
+│   │   └── syslog.py                 # [v1.20] System log ring buffer + request middleware + logging handler + [v1.28.1] the print() tee (the terminal tail)
 │   ├── templates/                    # Jinja2 templates
 │   │   ├── base.html                 # Shell: sidebar + topbar + content area + 📜 log drawer
 │   │   ├── pages/                    # Full HTML pages (extend base.html)
-│   │   │   ├── dashboard.html        # [v1.19] Painel (KPI row + 5 cards + bottom sync box)
+│   │   │   ├── dashboard.html        # [v1.19] Painel (KPI row + [v1.28.1] ETF row + 7 cards + bottom sync box)
 │   │   │   ├── company.html          # Company view (header + tabs)
 │   │   │   ├── macro.html            # Macro indicators
 │   │   │   ├── mercado.html          # Mercado page (family pills + subtabs)
-│   │   │   ├── tools.html           # [v1.27] Ferramentas page (Comparação: picker + grid + charts)
+│   │   │   ├── tools.html           # [v1.27] Ferramentas page (Comparação + Screener + [v1.28.1] Backtest: pickers + grid/charts/simulator)
 │   │   │   ├── sync.html             # Sync status + pre-flight panel + SSE log
 │   │   │   └── settings.html         # [v1.20] Schema-driven settings (JS-rendered form)
 │   │   └── partials/                 # HTMX fragments (no <html> wrapper)
@@ -117,14 +117,14 @@ agent/
 | `webui/services/financials.py` | Financeiro tab — TTM overview + all-5-statements single fetch; [v1.26.1] both payloads cached in `webui_payloads` (data_sources/_cache.py) keyed by the DFP+ITR × COTAHIST composite fingerprint — rebuilds automatically on new demonstrações/cotações, hits carry the ⚡ provenance note |
 | `webui/services/valuation.py` | Valuation tab — ratios mode + report-builder sections |
 | `webui/services/historical.py` | [v1.24] Histórico tab — 17 metrics vs their own 5A history (direction-aware heatmap + band charts + trend), ONE engine-cache-scoped build per ticker w/ TTL | 
-| `webui/services/backtest.py` | [v1.25] Backtest tab — the interactive simulator: parametrized engine (8 strategies w/ editable thresholds, position sizing, stop/take on close, fee guard), the bdi=2 + per-date-dedupe clean price fetch, meta() form catalog + run() payload (KPIs, curves ≤1200 pts, trade log); the skill's static modes stay untouched (shared data layer) |
+| `webui/services/backtest.py` | [v1.25] Backtest — the interactive simulator: parametrized engine (8 strategies w/ editable thresholds, position sizing, stop/take on close, fee guard), the bdi=2 + per-date-dedupe clean price fetch, meta() form catalog + run() payload (KPIs, curves ≤1200 pts, trade log); the skill's static modes stay untouched (shared data layer). [v1.28.1] MOVED to the Ferramentas page — the company tab is gone, the per-ticker endpoints stay, the picker (?b= deep link) drives them; chart axes/tooltips in dd/mm/aaaa, aligned trade log/Cenários headers, +2 KPI cards (retorno médio, tempo médio) |
 | `webui/services/governance.py` | [v1.26] Governança tab — CGVN only: overview (score KPIs, four-bucket donut, per-chapter bars, score evolution across filings — generic payload) + practices (the per-filing table + filters); degrades with a PT-BR hint naming the sync source |
 | `webui/services/ipe.py` | [v1.26] Informações Periódicas tab — the IPE faceted events explorer over `ipe.browse()` (AGO/AGE, avisos, fatos relevantes…), split from Governança into its own tab: CGVN = self-assessment, IPE = what the company filed; anos facet chronological (newest first) |
 | `webui/services/proventos.py` | Proventos tab — B3 ∪ DDM merged events (no duplicates) + yield at ex-date; [v1.26.1] the Anúncios de Proventos — CVM (IPE) cross-reference section (data → CVM PDF link) |
-| `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + 5 ranked ticker cards over `market_snapshot()` (cotahist) + b3-index |
+| `webui/services/home.py` | [v1.19] Painel landing — SGS KPI row (macro.py's numerics) + [v1.28.1] the BOVA11/SMAL11/IVVB11 ETF row (close + signed day %, same snapshot) + the ranked ticker cards over `market_snapshot()` (cotahist — incl. [v1.28.1] Maiores Altas BDR, the *34 universe under the same liquidity gate) + b3-index |
 | `webui/services/sync.py` | Sync service — freshness check, background sync, SSE pub/sub |
 | `webui/services/preflight.py` | [v1.7] Pre-flight checks — DB/schema/WAL/rows, sync coverage, system, adapters, config; [v1.7.1] itr.db re-key marker (`PRAGMA user_version`) |
-| `webui/services/syslog.py` | [v1.20] System log — the in-memory ring buffer behind the 📜 drawer (request middleware + root-logger handler + explicit points) |
+| `webui/services/syslog.py` | [v1.20] System log — the in-memory ring buffer behind the 📜 drawer (request middleware + root-logger handler + explicit points). [v1.28.1] FOUR capture paths: + the stdout/stderr print() tee ([ratios]/[webui]/app/stderr sources — the terminal tail the user asked to see in-app) + uvicorn INFO banners + request lines carrying the query string (_t= stripped); the drawer gains HTTP/App filter pills |
 | `webui/services/settings.py` | [v1.20] Schema-driven settings — SCHEMA dict + JSON store (`memory_db/webui_settings.json`) |
 | `webui/services/portfolio.py` | [v1.21] Carteira — users/accounts/txs/watchlist JSON store, the PM (preço médio) position engine, `quotes_for()` enrichment, CVM ticker-metadata cache; [v1.22] hardening — shorts in the totals, corrupt-store quarantine/.bak/PT-BR-503, deterministic replay `(date, created_at, seq)`, flip fee split, mixed-leg PM "—", cross-user move block, short-open warnings; [v1.22.2] notas registry (dedup + undo), alerts, the ledger pager/filters, the undo-toast registry, export/restore, per-symbol quote dates, gross long/short exposure, replay memoization (store-revision keyed), fsum aggregates, MappingProxyType quote map, threadpool mutations, tx reconciliation at the store boundary, the `corp` tx type (eventos corporativos — replays first within its date), the `_ticker_ladder` PM walk |
 | `webui/services/portfolio_provents.py` | [v1.22.3] Proventos per position / yield-on-cost — the txs × dividends.db join with the DATA COM entitlement rule (the engine's ladder gives the quantity at any date; corp actions re-base first) + the position-detail drawer payload (per-account PM ladder + proventos) |
@@ -143,8 +143,8 @@ agent/
 | `webui/services/macro.py` | [v1.11] Macro page — BCB SGS + Focus in 8 lazy subtabs; home.py imports its numerics (the no-forked-numerics rule) |
 | `webui/services/options.py` | [v1.8] Company Opções tab — B3 options: chain, IV, activity, positions |
 | `webui/services/shareholders.py` | [v1.9] Company Acionistas tab — CVM shareholders: holders, free float, evolução da posição; [v1.26.1] Visão Geral = the CURRENT snapshot (controle × FF doughnut + top-N concentração — no more subtab duplicates) |
-| `webui/services/comparison.py` | [v1.27] Ferramentas / Comparação — 2-4 companies side by side (the online-shop grid): per-ticker fetch of ratios + annual + dividends + growth + sector + cotahist in a ThreadPool (one engine_cache_scope per worker), server-side best-in-row ranking (positive-only for multiples/debt), radar + bars + the two-resolution price_hist (whole-history month-ends + ~13 months of dailies) for the client-side Cotação Histórica cards and base-100 chart; payload-cached in webui_payloads ("tools_comparison", ordered-tickers key, every ticker's composite fingerprint); the bdi=2/dedupe clean price fetch (the v1.25 backtest rule — DIR rights rows made Var. Dia read +22.506% before it) |
-| `webui/services/screener.py` | [v1.28] Ferramentas / Screener — ONE ticker × its whole sector's MEDIANS: peer discovery via the bridge ticker_map.setor_ativ (accent-insensitive key, CAD fallback for the subject), CNPJ-root dedupe one-class-per-company (most liquid by 365-day cotahist volume, suffix preference fallback), 40-company liquidity cap, medians over the sector incl. the subject (available values only; positive-only for multiples — net debt the exception), per-metric verdicts (cheap/expensive for multiples+leverage, above/below for quality), the peers table + P/L/ROE position charts (subject amber + median dashed line) + vs-median bars; reuses the comparison service's engine readers (imported); payload-cached in webui_payloads ("tools_screener_v1", fingerprint = every sector company + the peer list itself) |
+| `webui/services/comparison.py` | [v1.27] Ferramentas / Comparação — 2-4 companies side by side (the online-shop grid): per-ticker fetch of ratios + annual + dividends + growth + sector + cotahist in a ThreadPool (one engine_cache_scope per worker), server-side best-in-row ranking ([v1.28.1] EVERY row ranks — Mercado sizes + the Dividendos set + Dívida Bruta joined; positive-only for multiples/debt), radar + bars + the two-resolution price_hist (whole-history month-ends + ~13 months of dailies) for the client-side Cotação Histórica cards and base-100 chart; payload-cached in webui_payloads ([v1.28.1] "tools_comparison_v3", ordered-tickers key, every ticker's composite fingerprint); the bdi=2/dedupe clean price fetch (the v1.25 backtest rule — DIR rights rows made Var. Dia read +22.506% before it) |
+| `webui/services/screener.py` | [v1.28] Ferramentas / Screener — ONE ticker × its whole sector's MEDIANS: peer discovery via the bridge ticker_map.setor_ativ (accent-insensitive key, CAD fallback for the subject), CNPJ-root dedupe one-class-per-company (most liquid by 365-day cotahist volume, suffix preference fallback), 40-company liquidity cap, medians over the sector incl. the subject (available values only; positive-only for multiples — net debt the exception), per-metric verdicts (cheap/expensive for multiples+leverage, above/below for quality), the peers table + P/L/ROE position charts (subject amber + median dashed line) + vs-median bars; reuses the comparison service's engine readers (imported); payload-cached in webui_payloads ([v1.28.1] "tools_screener_v2" — the peers-table rows now carry the *_raw numeric companions the client's sortable headers and best-of-column ✓ read; fingerprint = every sector company + the peer list itself) |
 | `webui/routes/pages.py` | HTML page routes — `/webui`, `/webui/company/{ticker}`, etc. |
 | `webui/routes/api.py` | JSON + HTMX partials — search, header, `/sections/{key}` dispatch, charts, tabs |
 | `webui/routes/sync.py` | SSE stream + sync status + sync trigger |
@@ -305,9 +305,9 @@ class CompanyService:
 - Deltas are computed from the DRE subtotals (Custos = Receita − Lucro Bruto), so the chart needs no per-line code presence and degrades gracefully when a subtotal is missing
 - The card lives inside a custom-rendered subtab (financials:overview, `generic=False`), so this doesn't bypass the adapter contract — new TABS still go through the registry
 
-### 14. The System Log Is a Ring Buffer Fed by Three Capture Paths (v1.20)
+### 14. The System Log Is a Ring Buffer Fed by FOUR Capture Paths (v1.20; v1.28.1)
 
-**Decision:** The 📜 drawer's data is ONE in-memory, per-process ring buffer (`webui/services/syslog.py`) with three feeders: a pure-ASGI request middleware (method/path/status/duration for every non-static request — SSE-safe, no BaseHTTPMiddleware), a root-logger handler (WARNING+; unhandled ASGI exceptions land here), and explicit `syslog.log()` points (sync lifecycle, startup, scheduler, settings changes).
+**Decision:** The 📜 drawer's data is ONE in-memory, per-process ring buffer (`webui/services/syslog.py`) with four feeders: a pure-ASGI request middleware (method/path + query string (`_t=` stripped)/status/duration for every non-static request — SSE-safe, no BaseHTTPMiddleware), a root-logger handler (WARNING+; unhandled ASGI exceptions land here; [v1.28.1] the same handler class hooks the uvicorn/uvicorn.error loggers at INFO so the startup/shutdown banners show too), explicit `syslog.log()` points (sync lifecycle, startup, scheduler, settings changes) and — [v1.28.1] — the PRINT TEE: sys.stdout + sys.stderr wrapped in a line-buffered, thread-safe, reentrancy-guarded `_StdoutTee` so every `print()` the process emits (the `[ratios]` progress lines, the `[webui] … partial:` notes, engine tracebacks) lands in the drawer with a parsed source badge (ratios/webui/app/stderr). The original stream keeps receiving every byte — PowerShell output is unchanged.
 
 **Rationale:**
 - In-memory ONLY, deliberately: the panel answers "what happened since I opened it" — a tail, not a log file. Persisting history is a `logging` config concern, not a UI feature (and the terminal already has everything)
