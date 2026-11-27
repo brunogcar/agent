@@ -359,8 +359,32 @@ def tools_screener(ticker: str = Query("")):
     company plus the peer list (the v1.26.1 webui_payloads foundation).
     Validation errors (missing/bad ticker) return the canonical
     {"status": "error", "error": …} payload.
+
+    [v1.28.4] The verdict rows also carry the subject's POSITION per
+    metric inside the sector (pos_rank/pos_of/pos_fmt — "P/L: 12º de
+    38").
     """
     return JSONResponse(_screener_service.screen(ticker))
+
+
+@router.get("/tools/comparison/medians")
+def tools_comparison_medians(ticker: str = Query("")):
+    """[v1.28.4] The Comparação's Mediana do Setor column.
+
+    One payload per REFERENCE ticker (the first compared company): the
+    sector resolved from it, every company fetched with the same
+    engines the comparison grid reads, and ONE median per comparison
+    row metric (positive-only rows median positive values only). The
+    column fills progressively — the grid renders immediately from the
+    fast comparison payload, this endpoint's answer lands in the
+    Mediana cells when it's ready (the first build of a big sector
+    computes every company and can take minutes; the payload is cached
+    on the sector's composite fingerprint, so it happens ONCE — every
+    later comparison rides ⚡).
+    Validation errors return the canonical
+    {"status": "error", "error": …} payload.
+    """
+    return JSONResponse(_screener_service.sector_medians(ticker))
 
 
 def _range_years(range_: str) -> float:

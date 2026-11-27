@@ -97,7 +97,19 @@ class ScreenerService:
     # SIGNED distance (mine − med) / |med| — cached v2 payloads still
     # carry the ratio formula, whose sign flips on negative medians
     # (the heat tint contradicted the badge); they must not serve.
-    _NS = "tools_screener_v3"
+    # v4 [v1.28.4]: the vs_rows carry the POSITION keys (pos_rank/
+    # pos_of/pos_fmt — the subject's rank per metric inside the
+    # sector); cached v3 payloads lack them, so the namespace moves.
+    _NS = "tools_screener_v4"
+
+    # [v1.28.4] The Comparação's Mediana do Setor column rides its OWN
+    # payload (the comparison itself stays fast — the medians compute
+    # the WHOLE sector, the slow first build the screener already
+    # knows). Same webui_payloads foundation, key = the reference
+    # ticker, fingerprint = the same composite of every sector company
+    # (identical to the screener's, so the two caches invalidate
+    # together on any new demonstração/cotação/membership change).
+    _MED_NS = "tools_sector_medians_v1"
 
     def __init__(self) -> None:
         self._cmp = ComparisonService()
@@ -163,6 +175,82 @@ class ScreenerService:
             try:
                 from data_sources import _cache as _dc
                 _dc.set_webui_payload(self._NS, tk, fp, payload)
+            except Exception:
+                pass
+        return payload
+
+    # ── [v1.28.4] the Comparação's Mediana do Setor column ──────────────
+
+    def sector_medians(self, ticker: Any) -> dict[str, Any]:
+        """The sector medians for the comparison grid's EVERY row.
+
+        One payload per reference ticker: the sector is resolved from
+        it (the FIRST compared company — the column header names the
+        sector), every company of the sector is fetched with the SAME
+        engines the comparison reads, and each comparison _ROWS metric
+        gets its sector median (positive-only rows median positive
+        values only, exactly like the screener's verdict table). Cached
+        on the sector's composite fingerprint — the slow first build
+        happens ONCE per sector, then every comparison rides ⚡.
+        """
+        from webui.services.comparison import _ROWS as _cmp_rows
+
+        tk, err = self.validate(ticker)
+        if err:
+            return {"status": "error", "error": err}
+
+        sector, peers = self._sector_companies(tk)
+        if not peers:
+            return {
+                "status": "error",
+                "error": (f"não foi possível identificar o setor de {tk} — "
+                          "sincronize a Bridge (Sincronização → Bridge) e o "
+                          "CAD para o mapeamento ticker → setor"),
+            }
+
+        tks = [p["ticker"] for p in peers]
+        fp = self._fingerprint(tks)
+        if fp:
+            try:
+                from data_sources import _cache as _dc
+                cached = _dc.get_webui_payload(self._MED_NS, tk, fp)
+            except Exception:
+                cached = None
+            if cached is not None:
+                note = self._cache_note(cached.pop("_cached_at", None))
+                if note:
+                    cached["cache_note"] = note
+                return cached
+
+        entries = self._fetch_all(peers)
+
+        medians: dict[str, dict[str, Any]] = {}
+        for _gk, label, candidates, spec, _best, pos_only, _tip in _cmp_rows:
+            vals = [_row_value(e, candidates) for e in entries]
+            med = self._median(vals, positive_only=pos_only)
+            if med is None:
+                continue  # metric unknown across the sector — no cell
+            medians[label] = {"raw": med, "fmt": _fmt(med, spec)}
+
+        if not medians:
+            return {
+                "status": "error",
+                "error": (f"nenhum indicador encontrado para o setor de "
+                          f"{tk} — sincronize as fontes CVM (DFP/ITR) e "
+                          "Cotações na página Sincronização"),
+            }
+
+        payload: dict[str, Any] = {
+            "status": "ok",
+            "ticker": tk,
+            "sector": sector,
+            "company_count": len(peers),
+            "medians": medians,
+        }
+        if fp:
+            try:
+                from data_sources import _cache as _dc
+                _dc.set_webui_payload(self._MED_NS, tk, fp, payload)
             except Exception:
                 pass
         return payload
@@ -388,6 +476,12 @@ class ScreenerService:
                 ComparisonService._fetch_ratios(entry)
                 ComparisonService._fetch_financials(entry)
                 ComparisonService._fetch_growth(entry)
+                # [v1.28.4] the dividends bucket too — the comparison
+                # grid's Dividendos rows (DPA, payout, eventos, remun.)
+                # read it; the sector_medians payload needs every bucket
+                # the comparison's _ROWS can ask for. The screener's own
+                # payload ignores it (one extra cheap read per company).
+                ComparisonService._fetch_dividends(entry)
         except Exception as e:
             if not entry["error"]:
                 entry["error"] = str(e)
@@ -491,6 +585,47 @@ class ScreenerService:
             return "above"
         return "below" if m < med else "na"
 
+    # [v1.28.4] The subject's RANK per metric inside the sector — the
+    # Posição column ("P/L: 12º de 38"). Eligibility mirrors the median
+    # (positive-only multiples — a loss never ranks); the direction
+    # mirrors the verdict ("cheap": smallest = 1º; "above": largest =
+    # 1º); ties share the better rank (standard competition ranking:
+    # strictly-better count + 1). A subject with no eligible value
+    # carries no position — but an honest denominator when there is
+    # one (None, N).
+    @staticmethod
+    def _position(mine: Any, vals: list[Any], direction: str,
+                  positive_only: bool) -> tuple[int | None, int | None]:
+        try:
+            m = None if mine is None else float(mine)
+        except Exception:
+            m = None
+        if m is None or m != m:  # missing / garbage / NaN
+            m = None
+        eligible: list[float] = []
+        for v in vals:
+            if v is None or isinstance(v, bool):
+                continue
+            try:
+                f = float(v)
+            except Exception:
+                continue
+            if f != f:  # NaN
+                continue
+            if positive_only and f <= 0:
+                continue
+            eligible.append(f)
+        n = len(eligible) or None
+        if m is None or (positive_only and m <= 0):
+            return None, n
+        if not eligible or m not in eligible:
+            return None, n
+        # how many companies are STRICTLY better (smaller on "cheap",
+        # larger on "above") — ties share the better rank.
+        better = sum(1 for f in eligible
+                     if (f < m if direction == "cheap" else f > m))
+        return better + 1, n
+
     def _vs_rows(self, subject: dict[str, Any],
                  entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """The Meu Valor × Mediana table — one row per metric."""
@@ -521,6 +656,14 @@ class ScreenerService:
                     delta = (float(mine) - float(med)) / abs(float(med))
                 except Exception:
                     delta = None
+            # [v1.28.4] the Posição column — the subject's rank per
+            # metric ("P/L: 12º de 38"), computed on the SAME
+            # eligibility the median uses.
+            pos_rank, pos_of = self._position(mine, vals, direction,
+                                               positive_only)
+            pos_fmt = (f"{pos_rank}º de {pos_of}"
+                       if pos_rank is not None and pos_of is not None
+                       else "—")
             rows.append({
                 "label": label,
                 "tip": tip,
@@ -533,6 +676,9 @@ class ScreenerService:
                 "delta_fmt": _fmt(delta, "pct") if delta is not None else "—",
                 "verdict": self._verdict(direction, mine, med, positive_only),
                 "direction": direction,
+                "pos_rank": pos_rank,
+                "pos_of": pos_of,
+                "pos_fmt": pos_fmt,
             })
         return rows
 

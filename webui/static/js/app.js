@@ -2482,6 +2482,12 @@ window.btToolClear = function() {
   btState.ticker = '';
   btState.meta = null;
   btState.result = null;
+  // [v1.28.4] clearing also kills any run in flight (the btToolOpen
+  // rule — a late answer has no pane to land on anyway, but the fetch
+  // socket and the running flag deserve the clean death).
+  btRunSeq++;
+  if (btRunAbort) { try { btRunAbort.abort(); } catch (e) { /* noop */ } btRunAbort = null; }
+  btState.running = false;
   btToolSyncUrl();
   btToolShowEmpty();
   btToolFocusPicker();
@@ -2505,24 +2511,41 @@ function btToolShowEmpty() {
 // open ONE ticker: loading card → /backtest/meta → the full shell
 // [v1.28.2] + the stale-response guard (the cmpLoad/scrLoad rule): the
 // meta build for ticker A must never overwrite the shell of ticker B.
+// [v1.28.4] + CANCELAR (the screener's pattern on the tool's two loads
+// — this one and the run): the loading card carries the button and the
+// fetch rides an AbortController; the pane rests on a cancel message
+// while the server keeps computing (a cached meta answers instantly on
+// the retry).
 var btToolReqSeq = 0;
+var btToolAbort = null;
 
 function btToolOpen() {
   var box = document.getElementById('bt-tool-result');
   if (!box || !btState.ticker) return;
   var seq = ++btToolReqSeq;
+  if (btToolAbort) { try { btToolAbort.abort(); } catch (e) { /* noop */ } }
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  btToolAbort = ac;
+  // [v1.28.4] a ticker switch ALSO kills any run in flight — its late
+  // answer must never land in the new ticker's result box (the seq
+  // bump makes the aborted fetch's handlers stay quiet).
+  btRunSeq++;
+  if (btRunAbort) { try { btRunAbort.abort(); } catch (e) { /* noop */ } btRunAbort = null; }
+  btState.running = false;
   destroyChartsIn(box);
   btState.meta = null;
   btState.result = null;
   box.innerHTML = toolLoadingHtml('bt-load',
     'Abrindo o backtest de ' + esc(btState.ticker),
-    'Carregando as estratégias e o histórico de preços do ticker…');
+    'Carregando as estratégias e o histórico de preços do ticker…',
+    'btToolCancel()');
   toolLoadingStart('bt-load');
   fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) +
-        '/backtest/meta?_t=' + Date.now())
+        '/backtest/meta?_t=' + Date.now(), ac ? { signal: ac.signal } : undefined)
     .then(function(r) { return r.json(); })
     .then(function(meta) {
       if (seq !== btToolReqSeq) return;  // superseded — a newer ticker owns the pane
+      if (btToolAbort === ac) btToolAbort = null;
       toolLoadingStop('bt-load');
       if (meta._error) {
         box.innerHTML = '<div class="error">Erro: ' + esc(meta._error) + '</div>' +
@@ -2535,12 +2558,38 @@ function btToolOpen() {
     })
     .catch(function(err) {
       if (seq !== btToolReqSeq) return;  // superseded — stay quiet
+      if (btToolAbort === ac) btToolAbort = null;
       toolLoadingStop('bt-load');
+      if (ac && err && err.name === 'AbortError') return;  // Cancelar owns the UI
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>' +
         '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
         'onclick="btToolClear()">← escolher outro ticker</button></p>';
     });
 }
+
+// [v1.28.4] Cancelar on the meta load — kills the WAIT, not the work
+// (the scrCancel rule): the pane rests on a cancel message with both
+// ways out (retry / another ticker).
+window.btToolCancel = function() {
+  btToolReqSeq++;  // the in-flight answer, if any, is stale from this moment
+  if (btToolAbort) { try { btToolAbort.abort(); } catch (e) { /* noop */ } btToolAbort = null; }
+  toolLoadingStop('bt-load');
+  var box = document.getElementById('bt-tool-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<p class="cmp-empty-title">Abertura cancelada.</p>' +
+    '<p class="cmp-empty-hint">O carregamento do backtest de ' +
+    esc(btState.ticker) + ' foi interrompido — tentar de novo é imediato ' +
+    '(o que já foi calculado fica em cache).</p>' +
+    '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+    'onclick="btToolRetry()">abrir ' + esc(btState.ticker) + ' novamente</button> ' +
+    '<button type="button" class="cmp-range-btn" ' +
+    'onclick="btToolClear()">← escolher outro ticker</button></p></div>';
+};
+
+window.btToolRetry = function() { btToolOpen(); };
 
 function _btRenderShell() {
   // [v1.28.1] The shell renders INSIDE the tool's result box — the
@@ -2732,23 +2781,43 @@ function _btCollect() {
   return p;
 }
 
+// [v1.28.4] CANCELAR on the RUN — the last load that lacked it: a
+// full-range simulation grinds pregão a pregão for a while; the run
+// rides the shared loading card (spinner + elapsed + Cancelar) and an
+// AbortController. The seq ticket guards the button-state handoffs
+// (cancel → retry while the aborted fetch is still rejecting).
+var btRunSeq = 0;
+var btRunAbort = null;
+
 window.btRun = function() {
   var root = document.getElementById('bt-root');
   var box = document.getElementById('bt-result');
   if (!root || !box || btState.running) return;
   var params = _btCollect();
+  var seq = ++btRunSeq;
+  if (btRunAbort) { try { btRunAbort.abort(); } catch (e) { /* noop */ } }
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  btRunAbort = ac;
   btState.running = true;
   var btn = document.getElementById('bt-run-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Executando…'; }
-  box.innerHTML = '<div class="loading">Rodando o backtest…</div>';
-  fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) + '/backtest/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params)
-  })
+  box.innerHTML = toolLoadingHtml('bt-run-load',
+    'Rodando o backtest de ' + esc(btState.ticker),
+    'A simulação percorre os pregões do período no servidor — cancelar ' +
+    'interrompe a espera, não a simulação (os parâmetros ficam aí).',
+    'btCancelRun()');
+  toolLoadingStart('bt-run-load');
+  var init = { method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(params) };
+  if (ac) init.signal = ac.signal;
+  fetch('/api/webui/company/' + encodeURIComponent(btState.ticker) + '/backtest/run', init)
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      if (seq !== btRunSeq) return;  // superseded / canceled
+      if (btRunAbort === ac) btRunAbort = null;
       btState.running = false;
+      toolLoadingStop('bt-run-load');
       if (btn) { btn.disabled = false; btn.textContent = '▶ Executar backtest'; }
       if (data._error) {
         box.innerHTML = '<div class="bt-card"><div class="error">Erro: ' +
@@ -2759,12 +2828,41 @@ window.btRun = function() {
       _btRenderResult(data);
     })
     .catch(function(err) {
+      if (seq !== btRunSeq) return;  // superseded / canceled — stay quiet
+      if (btRunAbort === ac) btRunAbort = null;
       btState.running = false;
+      toolLoadingStop('bt-run-load');
       if (btn) { btn.disabled = false; btn.textContent = '▶ Executar backtest'; }
+      if (ac && err && err.name === 'AbortError') return;  // Cancelar owns the UI
       box.innerHTML = '<div class="bt-card"><div class="error">Erro: ' +
         esc(err.message) + '</div></div>';
     });
 };
+
+// [v1.28.4] Cancelar on the run — the button comes back, the pane
+// rests on a cancel message, the Parâmetros card above is untouched
+// (one click from running it again — maybe with a shorter período).
+window.btCancelRun = function() {
+  btRunSeq++;  // the in-flight answer, if any, is stale from this moment
+  if (btRunAbort) { try { btRunAbort.abort(); } catch (e) { /* noop */ } btRunAbort = null; }
+  btState.running = false;
+  var btn = document.getElementById('bt-run-btn');
+  if (btn) { btn.disabled = false; btn.textContent = '▶ Executar backtest'; }
+  toolLoadingStop('bt-run-load');
+  var box = document.getElementById('bt-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<p class="cmp-empty-title">Backtest cancelado.</p>' +
+    '<p class="cmp-empty-hint">A espera foi interrompida. Os parâmetros ' +
+    'continuam configurados no cartão acima — execute de novo, ou encurte ' +
+    'o período antes.</p>' +
+    '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+    'onclick="btRunRetry()">▶ executar novamente</button></p></div>';
+};
+
+window.btRunRetry = function() { btRun(); };
 
 // compact one-line scenario summary (labels come from the meta specs)
 function _btParamSummary(p) {
@@ -4854,6 +4952,48 @@ function toolLoadingStop(id) {
   if (_toolLoadTimers[id]) { clearInterval(_toolLoadTimers[id]); delete _toolLoadTimers[id]; }
 }
 
+// [v1.28.4] CROSS-TOOL NAVIGATION — the glue over the ?s=/?b=/?t=
+// deep links that already existed ("abrir no Screener" / "simular no
+// Backtest" / "comparar"). One global per destination: validate the
+// B3 shape, switch the family pill (the click drives Alpine's family
+// state — the same lever the deep-link boots pull), then hand the
+// ticker to the tool's own setter (which owns its ?key= URL sync and
+// its load). A same-ticker no-op is fine: the pill click alone
+// reveals the already-rendered screen.
+function _toolTk(tk) {
+  tk = String(tk || '').trim().toUpperCase();
+  return /^[A-Z0-9]{4,6}$/.test(tk) ? tk : '';
+}
+
+window.toolOpenScreener = function(tk) {
+  tk = _toolTk(tk);
+  if (!tk) return;
+  var pill = document.getElementById('family-pill-screener');
+  if (pill) { try { pill.click(); } catch (e) { /* noop */ } }
+  scrSetTicker(tk);
+  scrFocusPicker();
+};
+
+window.toolOpenBacktest = function(tk) {
+  tk = _toolTk(tk);
+  if (!tk) return;
+  var pill = document.getElementById('family-pill-backtest');
+  if (pill) { try { pill.click(); } catch (e) { /* noop */ } }
+  btToolSetTicker(tk);
+  btToolFocusPicker();
+};
+
+window.toolCompare = function(tk) {
+  tk = _toolTk(tk);
+  if (!tk) return;
+  var pill = document.getElementById('family-pill-comparacao');
+  if (pill) { try { pill.click(); } catch (e) { /* noop */ } }
+  // adding the ticker joins (or heads) the current selection — the
+  // chips stay editable; cmpMaybeLoad re-renders only when 2+ exist.
+  cmpAddTicker(tk);
+  cmpFocusPicker();
+};
+
 var CMP_MAX = 4;
 var CMP_COLORS = ['#0d9488', '#f59e0b', '#8b5cf6', '#e11d48'];
 var cmpState = { booted: false, tickers: [], perfRange: '1A', histRange: '1A', data: null, activeIdx: -1 };
@@ -5060,28 +5200,39 @@ function cmpShowEmpty() {
 // to kill ITS elapsed timer — both loads share the 'cmp-load' id).
 // Every load takes a ticket from this counter; a response only touches
 // the pane while it still holds the LATEST ticket.
+// [v1.28.4] + CANCELAR (the screener's pattern extended here — "the
+// screener's Cancelar pattern extended to Comparação/Backtest"): the
+// loading card carries the button, the fetch rides an AbortController,
+// and the pane rests on a cancel message while the server keeps
+// computing and caching (the retry rides ⚡).
 var cmpReqSeq = 0;
+var cmpAbort = null;
 
 function cmpLoad() {
   var box = document.getElementById('cmp-result');
   if (!box) return;
   var seq = ++cmpReqSeq;
+  if (cmpAbort) { try { cmpAbort.abort(); } catch (e) { /* noop */ } }
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  cmpAbort = ac;
+  cmpMedStop();  // a new comparison owns the medians pane too
   destroyChartsIn(box);
   cmpState.data = null;
   // [v1.28.1] the shared loading card — spinner + ticker set + elapsed
   // (the ask: "while its loading it should display some message to say
-  // its carregando").
+  // its carregando"). [v1.28.4] the card now carries a Cancelar button.
   box.innerHTML = toolLoadingHtml('cmp-load',
     'Comparando ' + esc(cmpState.tickers.join(' × ')),
     'Os indicadores de cada empresa são calculados na primeira vez — ' +
-    'pode levar alguns segundos.');
+    'pode levar alguns segundos.', 'cmpCancel()');
   toolLoadingStart('cmp-load');
   fetch('/api/webui/tools/comparison?tickers=' +
         encodeURIComponent(cmpState.tickers.join(',')) +
-        '&_t=' + Date.now())
+        '&_t=' + Date.now(), ac ? { signal: ac.signal } : undefined)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (seq !== cmpReqSeq) return;  // superseded — a newer set owns the pane
+      if (cmpAbort === ac) cmpAbort = null;
       toolLoadingStop('cmp-load');
       if (!data || data.status !== 'ok') {
         box.innerHTML = '<div class="error">' +
@@ -5093,10 +5244,35 @@ function cmpLoad() {
     })
     .catch(function(err) {
       if (seq !== cmpReqSeq) return;  // superseded — stay quiet
+      if (cmpAbort === ac) cmpAbort = null;
       toolLoadingStop('cmp-load');
+      if (ac && err && err.name === 'AbortError') return;  // Cancelar owns the UI
       box.innerHTML = '<div class="error">Erro: ' + esc(err.message) + '</div>';
     });
 }
+
+// [v1.28.4] Cancelar — kills the WAIT, not the work (the scrCancel
+// rule): the chips stay so the selection is one click from a retry.
+window.cmpCancel = function() {
+  cmpReqSeq++;
+  if (cmpAbort) { try { cmpAbort.abort(); } catch (e) { /* noop */ } cmpAbort = null; }
+  cmpMedStop();
+  toolLoadingStop('cmp-load');
+  var box = document.getElementById('cmp-result');
+  if (!box) return;
+  destroyChartsIn(box);
+  box.innerHTML =
+    '<div class="cmp-empty">' +
+    '<p class="cmp-empty-title">Comparação cancelada.</p>' +
+    '<p class="cmp-empty-hint">O servidor continua calculando os ' +
+    'indicadores em segundo plano — quando terminar, a comparação de ' +
+    esc(cmpState.tickers.join(' × ')) + ' sai pré-calculada (⚡).</p>' +
+    '<p class="scr-back"><button type="button" class="cmp-range-btn" ' +
+    'onclick="cmpRetry()">comparar ' + esc(cmpState.tickers.join(' × ')) +
+    ' novamente</button></p></div>';
+};
+
+window.cmpRetry = function() { cmpLoad(); };
 
 function cmpRender(box, data) {
   // The Cotação Histórica cards open the comparison (the product-photo
@@ -5113,6 +5289,10 @@ function cmpRender(box, data) {
   }
   box.innerHTML = html;
   cmpMountCharts(box, data);
+  // [v1.28.4] the Mediana do Setor column fills progressively — the
+  // grid is already on screen; the medians land in their cells when
+  // the (possibly slow, first-time) sector build answers.
+  cmpLoadMedians();
 }
 
 // ── the grid (online-shop comparison table) ──
@@ -5120,11 +5300,20 @@ function cmpRender(box, data) {
 function cmpCoCardHtml(c) {
   var varHtml = (c.var_day === null || c.var_day === undefined)
     ? '' : ' <span class="cmp-co-var">' + fmtPctColored(c.var_day) + '</span>';
+  // [v1.28.4] CROSS-TOOL LINKS — every column card carries the two
+  // jumps (🎯 abrir no Screener, ⏪ simular no Backtest) beside the ✕:
+  // the analysis flow continues from whoever won the line.
   return '<div class="cmp-co-card">' +
     '<div class="cmp-co-top">' +
     '<span class="cmp-dot" style="background:' + safeColor(c.color, '#0d9488') + '"></span>' +
     '<a class="cmp-co-tk" href="/webui/company/' + encodeURIComponent(c.ticker) + '">' +
     esc(c.ticker) + '</a>' +
+    '<span class="cmp-tool-links">' +
+    '<button type="button" class="cmp-tool-link" title="Abrir ' + esc(c.ticker) +
+    ' no Screener" onclick="toolOpenScreener(\'' + esc(c.ticker) + '\')">🎯</button>' +
+    '<button type="button" class="cmp-tool-link" title="Simular ' + esc(c.ticker) +
+    ' no Backtest" onclick="toolOpenBacktest(\'' + esc(c.ticker) + '\')">⏪</button>' +
+    '</span>' +
     '<button type="button" class="cmp-co-x" title="Remover ' + esc(c.ticker) +
     ' da comparação" onclick="cmpRemoveTicker(\'' + esc(c.ticker) + '\')">✕</button>' +
     '</div>' +
@@ -5142,9 +5331,21 @@ function cmpGridHtml(data) {
   data.companies.forEach(function(c) {
     html += '<th class="cmp-co" scope="col">' + cmpCoCardHtml(c) + '</th>';
   });
+  // [v1.28.4] THE MEDIANA DO SETOR COLUMN — one extra column AFTER the
+  // companies ("each row against the sector, not just the compared
+  // tickers"): the reference is the FIRST compared company's sector;
+  // the cells start as quiet placeholders and fill progressively when
+  // the medians payload lands (cmpLoadMedians — the grid itself renders
+  // immediately from the fast comparison payload).
+  html += '<th class="cmp-med-th" scope="col" id="cmp-med-th">' +
+    '<span class="cmp-med-title">Mediana do Setor</span>' +
+    '<span class="cmp-med-sector" id="cmp-med-sector">' +
+    (data.companies[0] && data.companies[0].sector
+      ? esc(data.companies[0].sector) : 'setor de ' +
+      esc((data.companies[0] || {}).ticker || '')) + '</span></th>';
   html += '</tr></thead><tbody>';
   data.groups.forEach(function(g) {
-    html += '<tr class="cmp-group"><td colspan="' + (n + 1) + '">' + esc(g.name) + '</td></tr>';
+    html += '<tr class="cmp-group"><td colspan="' + (n + 2) + '">' + esc(g.name) + '</td></tr>';
     g.rows.forEach(function(row) {
       html += '<tr><th scope="row" class="cmp-rowlabel" title="' + esc(row.tip || '') + '">' +
         esc(row.label) + (row.tip ? ' <span class="cmp-info" aria-hidden="true">ⓘ</span>' : '') +
@@ -5163,14 +5364,85 @@ function cmpGridHtml(data) {
           (isBest ? ' <span class="cmp-bestbadge" title="melhor da linha">✓</span>' : '') +
           '</td>';
       });
+      // the mediana cell — keyed by row label so the progressive
+      // fill can find it (data-cmp-med="P/L").
+      html += '<td class="cmp-cell cmp-med-cell" data-cmp-med="' + esc(row.label) + '">' +
+        '<span class="cmp-med-pending">…</span></td>';
       html += '</tr>';
     });
   });
   html += '</tbody></table></div>' +
     '<p class="cmp-legend">✓ = melhor valor da linha entre as empresas comparadas ' +
     '(múltiplos, cotação e endividamento menores; rentabilidade, ' +
-    'rendimento, crescimento, tamanho e demonstrativos anuais maiores).</p>';
+    'rendimento, crescimento, tamanho e demonstrativos anuais maiores). ' +
+    '<span id="cmp-med-note" class="cmp-med-note">A coluna Mediana do Setor ' +
+    'compara cada linha com o setor inteiro — calculando…</span></p>';
   return html;
+}
+
+// ── [v1.28.4] the Mediana do Setor fill — one progressive fetch ──
+// The reference is the FIRST compared ticker (the column header names
+// its sector). The first build of a big sector computes every company
+// (minutes, the screener's lesson) — the fetch is quiet (the cells'
+// placeholders pulse), it is CANCELED by a new comparison / by
+// Cancelar (cmpMedStop), and its answer only fills the cells while it
+// still owns the pane (the seq ticket — the cmpLoad rule).
+var cmpMedSeq = 0;
+var cmpMedAbort = null;
+
+function cmpMedStop() {
+  cmpMedSeq++;
+  if (cmpMedAbort) { try { cmpMedAbort.abort(); } catch (e) { /* noop */ } cmpMedAbort = null; }
+}
+
+function cmpLoadMedians() {
+  var ref = cmpState.tickers[0];
+  if (!ref) return;
+  var seq = ++cmpMedSeq;
+  if (cmpMedAbort) { try { cmpMedAbort.abort(); } catch (e) { /* noop */ } }
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  cmpMedAbort = ac;
+  fetch('/api/webui/tools/comparison/medians?ticker=' +
+        encodeURIComponent(ref) + '&_t=' + Date.now(),
+        ac ? { signal: ac.signal } : undefined)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (seq !== cmpMedSeq) return;  // superseded — a newer comparison owns the pane
+      if (cmpMedAbort === ac) cmpMedAbort = null;
+      var note = document.getElementById('cmp-med-note');
+      var sectorEl = document.getElementById('cmp-med-sector');
+      if (!data || data.status !== 'ok') {
+        // the column degrades to "—" — the comparison itself stands
+        var pend = document.querySelectorAll('.cmp-med-cell .cmp-med-pending');
+        Array.prototype.forEach.call(pend, function(el) { el.textContent = '—'; });
+        if (note) note.textContent = '';
+        return;
+      }
+      if (sectorEl) {
+        sectorEl.textContent = data.sector + ' · ' + data.company_count +
+          ' empresa' + (data.company_count > 1 ? 's' : '');
+      }
+      Array.prototype.forEach.call(
+        document.querySelectorAll('.cmp-med-cell'), function(cell) {
+          var label = cell.getAttribute('data-cmp-med') || '';
+          var m = (data.medians || {})[label];
+          cell.textContent = m ? m.fmt : '—';
+        });
+      if (note) {
+        note.textContent = 'A coluna Mediana do Setor compara cada linha com ' +
+          'as ' + data.company_count + ' empresas do setor de ' +
+          (data.ticker || '') + '.';
+      }
+    })
+    .catch(function(err) {
+      if (seq !== cmpMedSeq) return;  // superseded — stay quiet
+      if (cmpMedAbort === ac) cmpMedAbort = null;
+      if (ac && err && err.name === 'AbortError') return;
+      var pend = document.querySelectorAll('.cmp-med-cell .cmp-med-pending');
+      Array.prototype.forEach.call(pend, function(el) { el.textContent = '—'; });
+      var note = document.getElementById('cmp-med-note');
+      if (note) note.textContent = '';
+    });
 }
 
 // ── the charts ──
@@ -5426,7 +5698,11 @@ function cmpMountCharts(box, data) {
 // ═══════════════════════════════════════════════════════════════════
 
 var scrState = { booted: false, ticker: '', histRange: '1A', data: null,
-                activeIdx: -1, sortKey: 'p_l', sortDir: 'asc' };
+                activeIdx: -1, sortKey: 'p_l', sortDir: 'asc',
+                // [v1.28.4] the sector-table range filters (min–max
+                // bounds as typed — strings; '' = no bound)
+                filter: { plMin: '', plMax: '', dyMin: '', dyMax: '',
+                          mcMin: '', mcMax: '' } };
 
 window.scrFocusPicker = function() {
   var el = document.getElementById('scr-search');
@@ -5617,6 +5893,11 @@ function scrLoad() {
   scrAbort = ac;
   destroyChartsIn(box);
   scrState.data = null;
+  // [v1.28.4] a new sector = new bounds — the range filters reset with
+  // the load (a P/L band chosen on one sector means nothing on the
+  // next; the sortKey keeps its memory, the filter doesn't).
+  scrState.filter = { plMin: '', plMax: '', dyMin: '', dyMax: '',
+                      mcMin: '', mcMax: '' };
   // [v1.28.1] the shared loading card — the first pass on a big sector
   // computes EVERY company and can take minutes (a real POMO4 run took
   // 123s); the elapsed counter + the "why" hint keep the wait legible
@@ -5704,6 +5985,9 @@ function scrRender(box, data) {
 function scrHeadHtml(data) {
   var varHtml = (data.var_day === null || data.var_day === undefined)
     ? '' : ' <span class="cmp-co-var">' + fmtPctColored(data.var_day) + '</span>';
+  // [v1.28.4] CROSS-TOOL — the head carries the jump into the other
+  // tools (⏪ simular no Backtest · ⚖ comparar) beside "trocar ticker"
+  // — the analysis flow continues without retyping the ticker.
   return '<div class="scr-head">' +
     '<div class="scr-head-main">' +
     '<div class="scr-head-tk">' + esc(data.ticker) + '</div>' +
@@ -5716,8 +6000,14 @@ function scrHeadHtml(data) {
     '<div class="scr-head-side">' +
     '<div class="scr-head-price">' + fmtBRL(data.price) + varHtml + '</div>' +
     (data.price_date ? '<div class="scr-head-date">' + esc(data.price_date) + '</div>' : '') +
+    '<div class="scr-head-tools">' +
+    '<button type="button" class="cmp-range-btn" title="Simular ' + esc(data.ticker) +
+    ' no Backtest" onclick="toolOpenBacktest(\'' + esc(data.ticker) + '\')">⏪ simular no Backtest</button>' +
+    '<button type="button" class="cmp-range-btn" title="Adicionar ' + esc(data.ticker) +
+    ' à comparação" onclick="toolCompare(\'' + esc(data.ticker) + '\')">⚖ comparar</button>' +
     '<button type="button" class="cmp-range-btn scr-head-x" title="Escolher outro ticker"' +
     ' onclick="scrClear()">trocar ticker</button>' +
+    '</div>' +
     '</div></div>';
 }
 
@@ -5914,15 +6204,140 @@ function _scrCell(r, i, best, key, extraCls) {
     '</td>';
 }
 
-function scrTableInnerHtml(data) {
+// ── [v1.28.4] the sector-table RANGE FILTERS ─────────────────────────
+// P/L, Div Yield (%) and Market Cap (R$ bi) min–max bounds over the
+// already-rendered sector table — pure client-side (the payload is on
+// screen; a filter never refetches). The inputs debounce 400ms and
+// re-render JUST the table card (the scrSortBy lever). Rules:
+//   · an empty bound is no bound ("8–" = P/L ≥ 8);
+//   · a row MISSING a filtered metric is OUT (a screener can't rank
+//     what it can't read);
+//   · the ★ subject row stays visible even when the filters exclude
+//     it — the analysis is ABOUT it (the count line says when that
+//     happened);
+//   · the ✓ best-of-column re-ranks inside the FILTERED set (that is
+//     what a screener is).
+var SCR_FILTER_KEYS = ['plMin', 'plMax', 'dyMin', 'dyMax', 'mcMin', 'mcMax'];
+var _scrFilterTimer = null;
+
+// "8,5" (PT-BR comma) → 8.5; garbage/empty → null (no bound)
+function _scrFilterNum(s) {
+  s = String(s === null || s === undefined ? '' : s).trim().replace(',', '.');
+  if (!s) return null;
+  var v = Number(s);
+  return isNaN(v) ? null : v;
+}
+
+function scrFilterActive() {
+  return SCR_FILTER_KEYS.some(function(k) {
+    return String(scrState.filter[k] || '').trim() !== '';
+  });
+}
+
+// one row against the active bounds — [raw key, scale, minKey, maxKey]:
+// DY ships a fraction (×100 → the input is in percentage points) and
+// market cap ships R$ (÷1e9 → the input is in bi).
+function _scrRowPasses(r, f) {
+  var checks = [
+    ['p_l_raw', 1, 'plMin', 'plMax'],
+    ['dy_raw', 100, 'dyMin', 'dyMax'],
+    ['mktcap_raw', 1 / 1e9, 'mcMin', 'mcMax']
+  ];
+  for (var i = 0; i < checks.length; i++) {
+    var lo = _scrFilterNum(f[checks[i][2]]);
+    var hi = _scrFilterNum(f[checks[i][3]]);
+    if (lo === null && hi === null) continue;
+    var raw = r[checks[i][0]];
+    if (raw === null || raw === undefined || isNaN(Number(raw))) return false;
+    var v = Number(raw) * checks[i][1];
+    if (lo !== null && v < lo) return false;
+    if (hi !== null && v > hi) return false;
+  }
+  return true;
+}
+
+// the visible rows: sorted, then filtered — with the subject pinned
+// back in when the bounds exclude it.
+function scrFilteredRows(data) {
   var rows = scrSortedRows(data);
+  if (!scrFilterActive()) return { rows: rows, subjectOutside: false };
+  var kept = rows.filter(function(r) {
+    return _scrRowPasses(r, scrState.filter);
+  });
+  var subjectOutside = !kept.some(function(r) { return r.is_subject; });
+  if (subjectOutside) {
+    rows.forEach(function(r) { if (r.is_subject) kept.push(r); });
+  }
+  return { rows: kept, subjectOutside: subjectOutside };
+}
+
+function _scrFilterInput(fkey, ph) {
+  return '<input type="text" inputmode="decimal" autocomplete="off" ' +
+    'class="scr-filter-input" data-scrf="' + fkey + '" placeholder="' + ph +
+    '" value="' + esc(scrState.filter[fkey] || '') + '" aria-label="filtro ' +
+    ph + '" oninput="scrFilterInput(this)">';
+}
+
+function scrFilterBarHtml(visible, total, subjectOutside) {
+  return '<div class="scr-filterbar">' +
+    '<span class="scr-filter-label">🔎 Filtros</span>' +
+    '<label class="scr-filter-group">P/L ' + _scrFilterInput('plMin', 'mín') +
+    '–' + _scrFilterInput('plMax', 'máx') + '</label>' +
+    '<label class="scr-filter-group">Div Yield % ' +
+    _scrFilterInput('dyMin', 'mín') + '–' + _scrFilterInput('dyMax', 'máx') +
+    '</label>' +
+    '<label class="scr-filter-group">Market Cap (R$ bi) ' +
+    _scrFilterInput('mcMin', 'mín') + '–' + _scrFilterInput('mcMax', 'máx') +
+    '</label>' +
+    (scrFilterActive()
+      ? '<button type="button" class="cmp-range-btn" ' +
+        'onclick="scrClearFilters()">limpar</button>' : '') +
+    '<span class="scr-filter-count">' + visible + ' de ' + total +
+    ' empresas' +
+    (subjectOutside
+      ? ' · a ★ analisada está fora dos filtros (fica visível)' : '') +
+    '</span></div>';
+}
+
+window.scrFilterInput = function(input) {
+  var key = input.getAttribute('data-scrf');
+  if (!key) return;
+  scrState.filter[key] = input.value;
+  clearTimeout(_scrFilterTimer);
+  // the debounce rides the TYPING, not the render — a filter that
+  // re-rendered on every keystroke would eat the cursor (the card's
+  // innerHTML swaps whole).
+  _scrFilterTimer = setTimeout(function() {
+    if (scrState.data) {
+      var card = document.getElementById('scr-table-card');
+      if (card) card.innerHTML = scrTableInnerHtml(scrState.data);
+    }
+  }, 400);
+};
+
+window.scrClearFilters = function() {
+  SCR_FILTER_KEYS.forEach(function(k) { scrState.filter[k] = ''; });
+  clearTimeout(_scrFilterTimer);
+  if (scrState.data) {
+    var card = document.getElementById('scr-table-card');
+    if (card) card.innerHTML = scrTableInnerHtml(scrState.data);
+  }
+};
+
+function scrTableInnerHtml(data) {
+  var fr = scrFilteredRows(data);
+  var rows = fr.rows;
   var best = _scrBestMap(rows);
+  var total = (data.table || []).length;
   var html = '<div class="cmp-chart-head"><div class="cmp-chart-title">Empresas do Setor' +
     (data.sector ? ' — ' + esc(data.sector) : '') + '</div></div>' +
     '<p class="cmp-chart-desc">Todas as companhias do setor na Bridge (uma ' +
     'classe de ação por empresa — a mais líquida). Clique nos títulos para ' +
     'ordenar; ✓ marca o melhor valor de cada coluna. A linha destacada é a ' +
-    'empresa analisada.</p>' +
+    'empresa analisada. Os filtros de faixa (P/L, Div Yield, Market Cap) ' +
+    'estreitam a lista — o ✓ re-ranqueia dentro do que sobrou, e a ★ ' +
+    'analisada nunca sai da tabela.</p>' +
+    scrFilterBarHtml(rows.length, total, fr.subjectOutside) +
     '<div class="scr-tablewrap"><table class="scr-table"><thead><tr>' +
     _scrSortTh('ticker', 'Empresa') +
     _scrSortTh('price', 'Preço') +
@@ -6037,7 +6452,12 @@ function scrHeatCls(r) {
 
 function scrVsHtml(data) {
   var html = '<div class="cmp-chartcard">' +
-    '<div class="cmp-chart-head"><div class="cmp-chart-title">Meu Valor × Mediana do Setor</div></div>' +
+    '<div class="cmp-chart-head"><div class="cmp-chart-title">Meu Valor × Mediana do Setor</div>' +
+    // [v1.28.4] COPIAR RESUMO — the verdict table as a markdown summary
+    // in the clipboard (the whole screen in a paste-ready block).
+    '<button type="button" class="cmp-range-btn scr-copy-btn" id="scr-copy-btn" ' +
+    'title="Copiar a tabela de vereditos como markdown" ' +
+    'onclick="scrCopySummary()">📋 copiar resumo</button></div>' +
     '<p class="cmp-chart-desc">Cada métrica da empresa contra a mediana do ' +
     'setor. Múltiplos de valuation e alavancagem: menor que a mediana = ' +
     'barata. Qualidade (ROE, ROA, margens, Div Yield, crescimento): maior ' +
@@ -6046,7 +6466,9 @@ function scrVsHtml(data) {
     'mediana: verde = favorável, vermelho = desfavorável — quanto mais ' +
     'forte, mais distante.</p>' +
     '<div class="scr-tablewrap"><table class="scr-table scr-vs-table"><thead><tr>' +
-    '<th>Métrica</th><th>Meu Valor</th><th>Mediana do Setor</th><th>Delta</th><th>vs Setor</th>' +
+    '<th>Métrica</th><th>Meu Valor</th><th>Mediana do Setor</th>' +
+    '<th title="A posição da empresa no ranking do setor para esta métrica">Posição</th>' +
+    '<th>Delta</th><th>vs Setor</th>' +
     '</tr></thead><tbody>';
   (data.vs_rows || []).forEach(function(r) {
     var v = SCR_VERDICTS[r.verdict] || SCR_VERDICTS.na;
@@ -6056,6 +6478,14 @@ function scrVsHtml(data) {
       esc(r.label) + (r.tip ? ' <span class="cmp-info" aria-hidden="true">ⓘ</span>' : '') + '</th>' +
       '<td class="scr-heat-cell ' + scrHeatCls(r) + '">' + esc(r.my_fmt) + '</td>' +
       '<td>' + esc(r.med_fmt) + '</td>' +
+      // [v1.28.4] the Posição column — the subject's rank inside the
+      // sector per metric ("P/L: 12º de 38"). 1º wears the success
+      // green — the top of the sector on that metric; ties share the
+      // better rank server-side (standard competition ranking).
+      '<td class="scr-pos' + (r.pos_rank === 1 ? ' scr-pos-top' : '') + '"' +
+      ((r.pos_rank && r.pos_of) ? ' title="' + r.pos_rank + 'º entre as ' +
+        r.pos_of + ' empresas do setor com valor válido"' : '') + '>' +
+      esc(r.pos_fmt || '—') + '</td>' +
       '<td class="scr-delta-' + deltaCls + '">' + esc(r.delta_fmt) + '</td>' +
       // [v1.28.2] the heat tint rides the VERDICT cell too (the user's
       // ask: the distance-to-median heat on the vs Setor column, keeping
@@ -6078,6 +6508,74 @@ function scrVsHtml(data) {
   });
   return html;
 }
+
+// ── [v1.28.4] COPIAR RESUMO — the verdict table as markdown ──────────
+// The button sits on the verdict card's head: one click, the whole
+// screen (subject + sector + one markdown row per metric, values as
+// the PT-BR strings the table already shows) lands in the clipboard,
+// ready to paste anywhere markdown renders. The async Clipboard API
+// goes first; the execCommand textarea fallback covers the older /
+// non-secure contexts; the button tells which one won.
+function _scrClipboardFallback(text) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function _scrClipboard(text) {
+  return new Promise(function(resolve) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function() { resolve(true); },
+        function() { resolve(_scrClipboardFallback(text)); });
+    } else {
+      resolve(_scrClipboardFallback(text));
+    }
+  });
+}
+
+window.scrCopySummary = function() {
+  var d = scrState.data;
+  if (!d) return;
+  var lines = [];
+  lines.push('# ' + d.ticker + (d.name ? ' — ' + d.name : ''));
+  if (d.sector) {
+    lines.push('*Setor: ' + d.sector + ' · ' + (d.company_count || '—') +
+      ' empresa' + ((d.company_count || 0) > 1 ? 's' : '') + '*' +
+      (d.price !== null && d.price !== undefined
+        ? ' · Preço ' + fmtBRL(d.price) : '') +
+      (d.price_date ? ' (' + d.price_date + ')' : ''));
+  }
+  lines.push('');
+  lines.push('| Métrica | Meu Valor | Mediana do Setor | Posição | Delta | Veredito |');
+  lines.push('| --- | --- | --- | --- | --- | --- |');
+  (d.vs_rows || []).forEach(function(r) {
+    var v = SCR_VERDICTS[r.verdict] || SCR_VERDICTS.na;
+    lines.push('| ' + r.label + ' | ' + (r.my_fmt || '—') + ' | ' +
+      (r.med_fmt || '—') + ' | ' + (r.pos_fmt || '—') + ' | ' +
+      (r.delta_fmt || '—') + ' | ' + v.txt + ' |');
+  });
+  lines.push('');
+  lines.push('_Fonte: WebUI Screener — dados CVM (DFP/ITR) e B3 (COTAHIST)._');
+  var btn = document.getElementById('scr-copy-btn');
+  _scrClipboard(lines.join('\n')).then(function(ok) {
+    if (!btn) return;
+    btn.textContent = ok ? '✓ copiado' : '✗ não copiou';
+    setTimeout(function() {
+      btn.textContent = '📋 copiar resumo';
+    }, 2000);
+  });
+};
 
 function scrMountCharts(box, data) {
   (data.charts || []).forEach(function(ch) {

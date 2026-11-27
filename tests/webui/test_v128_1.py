@@ -188,7 +188,9 @@ def test_screener_namespace_bumped_to_v2():
     from webui.services.screener import ScreenerService
     # [v1.28.2] v3 — cached v2 payloads carry the ratio-formula delta
     # (sign-flipped on negative medians); they must not serve.
-    assert ScreenerService._NS == "tools_screener_v3"
+    # [v1.28.4] v4 — the vs_rows carry the Posição keys (pos_rank/
+    # pos_of/pos_fmt); cached v3 payloads lack them.
+    assert ScreenerService._NS == "tools_screener_v4"
 
 
 # ── 3. Painel — the ETF row + the Maiores Altas BDR card ─────────────────────

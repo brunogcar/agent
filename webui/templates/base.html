@@ -112,6 +112,17 @@
   Mín (52) · Máx (52) · Var. (52) (quotes_for() ships the session
   high/low; the 52-week series feeds Var. (52)); see
   docs/webui/CHANGELOG.md)
+[WebUI v1.28.4] ?v=90 (the cross-tool round: the 🎯/⏪/⚖ links
+  between the Ferramentas — every comparison column and the screener
+  head carry "abrir no Screener" / "simular no Backtest" / "comparar";
+  the Screener's Posição column — the subject's rank per metric inside
+  the sector ("P/L: 12º de 38"; 1º in green) + the range filters on
+  the sector table (P/L · Div Yield % · Market Cap R$ bi, min–max) +
+  📋 copiar resumo (the verdict table as markdown in the clipboard);
+  the Comparação's Mediana do Setor column (every grid row against the
+  sector median — progressive fill, cached per sector); Cancelar on
+  the Comparação and BOTH Backtest loads (meta + run); see
+  docs/webui/CHANGELOG.md)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -140,7 +151,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=89">
+  <link rel="stylesheet" href="/static/css/app.css?v=90">
 </head>
 <body>
   <div class="app-shell">
@@ -294,6 +305,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=89"></script>
+  <script src="/static/js/app.js?v=90"></script>
 </body>
 </html>

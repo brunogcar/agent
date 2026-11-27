@@ -2824,3 +2824,92 @@ button.cart-widget-link:hover { text-decoration: underline; }
    driven by the list's data-filter + each line's data-source) ── */
 .syslog-list[data-filter="http"] .log-line:not([data-source="http"]) { display: none; }
 .syslog-list[data-filter="app"] .log-line[data-source="http"] { display: none; }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   v1.28.4 — the cross-tool round: the 🎯/⏪/⚖ tool-link buttons (the
+   comparison column cards + the screener head), the Comparação's
+   Mediana do Setor column (progressive fill), the Screener's Posição
+   column + copiar resumo button, the sector-table range filters, and
+   the Cancelar buttons on the Comparação/Backtest loads (the loading
+   card's button shape already exists from v1.28.2).
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ── the cross-tool icon buttons (🎯 Screener · ⏪ Backtest) that sit
+   beside each comparison column's ticker, and the ⏪/⚖ row on the
+   screener head — small, quiet, brand on hover ── */
+.scr-head-tools {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  justify-content: flex-end;
+}
+.cmp-tool-links { display: inline-flex; gap: 4px; margin-left: 1px; }
+.cmp-tool-link {
+  width: 22px; height: 22px; font-size: 11px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 1px solid var(--color-border); border-radius: 5px;
+  background: var(--color-bg-card); color: var(--color-text-sec);
+  cursor: pointer;
+}
+.cmp-tool-link:hover {
+  color: var(--color-brand); border-color: var(--color-brand);
+  background: var(--color-brand-dim);
+}
+
+/* ── the Comparação's Mediana do Setor column — one extra column after
+   the companies; the header names the sector (the reference ticker's),
+   the cells start as pulsing placeholders and fill when the medians
+   payload lands (the first build of a big sector takes minutes) ── */
+.cmp-med-th { min-width: 108px; vertical-align: bottom; }
+.cmp-med-title { display: block; }
+.cmp-med-sector {
+  display: block; font-size: 9.5px; letter-spacing: 0.2px;
+  text-transform: none; opacity: 0.85; margin-top: 2px;
+  max-width: 130px; white-space: normal; line-height: 1.35;
+}
+.cmp-med-cell {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  background: var(--color-bg-sec);
+}
+.cmp-med-pending { animation: scr-med-pulse 1.2s ease-in-out infinite; }
+@keyframes scr-med-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+.cmp-med-note { color: var(--color-text-sec); }
+
+/* ── the Screener's Posição column ("P/L: 12º de 38") — mono, quiet;
+   1º (the sector's top on that metric) wears the success green ── */
+.scr-pos {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  color: var(--color-text-sec); white-space: nowrap;
+}
+.scr-pos-top { color: var(--color-success); font-weight: 700; }
+
+/* the copiar resumo button — pinned right on the verdict card's head
+   (the cmp-chart-head row already flexes) */
+.cmp-chart-head .scr-copy-btn { margin-left: auto; flex: none; }
+
+/* ── the sector-table RANGE FILTER bar — P/L · Div Yield (%) · Market
+   Cap (R$ bi), min–max inputs, a limpar button and the N de M count ── */
+.scr-filterbar {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: 8px 12px; margin-bottom: 10px;
+  background: var(--color-bg-sec); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); font-size: 11.5px;
+}
+.scr-filter-label {
+  font-weight: 700; font-size: 10px; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--color-text-sec);
+}
+.scr-filter-group {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--color-text-sec); white-space: nowrap;
+}
+.scr-filter-input {
+  width: 62px; padding: 3px 7px; font-size: 12px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  border: 1px solid var(--color-border); border-radius: 5px;
+  background: var(--color-bg-card); color: var(--color-text);
+}
+.scr-filter-input:focus { outline: none; border-color: var(--color-brand); }
+.scr-filter-count { margin-left: auto; color: var(--color-text-sec); font-size: 11px; }
+@media (max-width: 720px) {
+  .scr-filter-count { margin-left: 0; width: 100%; }
+}
