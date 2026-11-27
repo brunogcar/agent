@@ -340,3 +340,71 @@ class TestBdrBackfillProbe:
             assert _bdr_rows_missing(conn, 2026) is True
         finally:
             conn.close()
+
+
+class TestRange52w:
+    """[v1.28.3] range_52w() — the trailing-52-week high/low per symbol
+    (the Painel's Tickers Observados "Máx/Mín 52 sem" columns)."""
+
+    def _seed(self, db, rows):
+        """rows: (refdate, symbol, bdi, high, low, close[, market_type])"""
+        import sqlite3 as s3
+        conn = s3.connect(str(db))
+        for r in rows:
+            mt = r[6] if len(r) > 6 else 10
+            conn.execute(
+                "INSERT INTO cotahist (refdate, symbol, corp_name, bdi_code,"
+                " market_type, high, low, close, volume, trade_count,"
+                " _ingested_at) VALUES (?, ?, 'X', ?, ?, ?, ?, ?, 1000, 100,"
+                " 'x')", (r[0], r[1], r[2], mt, r[3], r[4], r[5]))
+        conn.commit()
+        conn.close()
+
+    def test_high_low_over_the_trailing_window(self, cotahist_db):
+        """MAX(high)/MIN(low) over the DB's last 365 days — the anchor is
+        the DB's own latest refdate, not the wall clock."""
+        self._seed(cotahist_db, [
+            ("2026-11-20", "PETR4", 2, 40.10, 38.00, 39.00),   # in-window high
+            ("2026-10-15", "PETR4", 2, 36.00, 30.15, 31.00),   # in-window low
+            ("2025-11-19", "PETR4", 2, 99.00, 25.00, 98.00),   # 1d before cutoff — OUT
+            ("2025-06-10", "PETR4", 2, 41.00, 39.00, 40.50),   # ~17 months old — OUT
+        ])
+        from data_sources.b3.cotahist.query_engine import range_52w
+        res = range_52w(["PETR4"])
+        assert res["status"] == "ok"
+        assert res["ref_date"] == "2026-11-20"
+        assert res["window_from"] == "2025-11-20"
+        row = res["symbols"][0]
+        assert row["ticker"] == "PETR4"
+        assert row["high_52"] == 40.10          # the 99.00 print is outside
+        assert row["low_52"] == 30.15           # the 25.00 print is outside
+
+    def test_universe_and_zero_print_guards(self, cotahist_db):
+        """Fractional duplicates stay out; a spurious zero LOW never owns
+        the MIN; unrequested/absent symbols are simply missing."""
+        self._seed(cotahist_db, [
+            ("2026-11-20", "VALE3", 2, 70.00, 65.00, 68.00),
+            # zero-low print same session — the WHOLE row is dropped
+            # (a corrupt print's high must not own the MAX either)
+            ("2026-11-20", "VALE3", 2, 71.00, 0.0, 68.50),
+            # fractional duplicate (bdi 96, mercado 70) with wilder prices
+            ("2026-11-20", "VALE3", 96, 95.00, 50.00, 90.00, 70),
+            # an ETF — share-like, so it IS quoted
+            ("2026-11-20", "BOVA11", 14, 130.00, 125.00, 129.00),
+        ])
+        from data_sources.b3.cotahist.query_engine import range_52w
+        res = range_52w(["VALE3", "BOVA11", "ZZZZ99"])
+        assert res["status"] == "ok"
+        by_tk = {s["ticker"]: s for s in res["symbols"]}
+        assert by_tk["VALE3"]["high_52"] == 70.00   # the 71.00 row is gone
+        assert by_tk["VALE3"]["low_52"] == 65.00     # not the 0.0, not the 50
+        assert by_tk["BOVA11"]["high_52"] == 130.00  # ETF in the universe
+        assert "ZZZZ99" not in by_tk                 # never-traded: absent
+
+    def test_empty_request_short_circuits(self, cotahist_db):
+        from data_sources.b3.cotahist.query_engine import range_52w
+        res = range_52w([])
+        assert res == {"status": "ok", "symbols": [],
+                       "window_from": "", "ref_date": ""}
+        # garbage shapes are dropped by the _SYMBOL_RE guard → same shape
+        assert range_52w(["not a ticker!"])["status"] == "ok"

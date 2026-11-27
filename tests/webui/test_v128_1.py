@@ -216,19 +216,34 @@ def _snap_fixture() -> dict:
             ]}
 
 
-def test_etfs_row_from_the_snapshot():
+def test_ticker_cards_default_trio(tmp_path, monkeypatch):
+    """[v1.28.1→v1.28.3] the ETF row became the TICKER CARDS — the
+    default home.ticker_kpis (BOVA11/SMAL11/IVVB11) still leads the
+    grid, now as ranking-card-sized quote cards with the ETF badge
+    ("kpi for the ETF are too large, make them the size of card of
+    ranking like IBOV · Top 10")."""
+    from core.config import cfg
+    monkeypatch.setattr(cfg, "memory_root", str(tmp_path), raising=False)
+    import webui.services.home as homemod
+    monkeypatch.setattr(homemod, "_quotes_for",
+                        lambda s: {"status": "not_synced"})
+    monkeypatch.setattr(homemod, "_range_52w",
+                        lambda s: {"status": "not_synced"})
     from webui.services.home import HomeService
     snap = _snap_fixture()
     quotes = HomeService._quotes(snap)
-    etfs = HomeService._etfs(quotes)
-    assert [e["ticker"] for e in etfs] == ["BOVA11", "SMAL11", "IVVB11"]
-    assert etfs[0]["value"] == "R$ 129,35"
-    assert etfs[0]["variation"].startswith("+")
-    assert etfs[1]["variation"].startswith("-")   # SMAL11 fell
-    assert all("COTAHIST" in e["tooltip"] for e in etfs)
-    # cotahist down → no row at all (the KPI note owns the message)
-    assert HomeService._etfs(None) == []
-    assert HomeService._etfs({}) == []
+    cards = HomeService()._ticker_cards(quotes)
+    assert [c["ticker"] for c in cards] == ["BOVA11", "SMAL11", "IVVB11"]
+    assert all(c["kind"] == "ETF" for c in cards)
+    assert cards[0]["value"] == "R$ 129,35"
+    assert cards[0]["variation"].startswith("+")
+    assert cards[1]["variation"].startswith("-")   # SMAL11 fell
+    assert all("COTAHIST" in c["tooltip"] for c in cards)
+    # cotahist fully down (no snapshot quotes, no fallback) → the cards
+    # still render, degraded per-card ("—" cells — the house rule)
+    degraded = HomeService()._ticker_cards(None)
+    assert [c["ticker"] for c in degraded] == ["BOVA11", "SMAL11", "IVVB11"]
+    assert all(c["value"] == "—" for c in degraded)
 
 
 def test_bdr_gainers_card_scopes_to_the_bdr_suffixes():
@@ -239,10 +254,12 @@ def test_bdr_gainers_card_scopes_to_the_bdr_suffixes():
     assert [i["ticker"] for i in bdr["items"]] == ["AAPL34", "MSBR34"]
     assert bdr["items"][0]["variation"].startswith("+")
     # [v1.28.2] the BDR card sits AFTER Maiores Baixas (the user's ask:
-    # native rankings first, the BDR slice last)
+    # native rankings first, the BDR slice last); [v1.28.3] Maiores
+    # Quedas BDR closes the row (the losers twin)
     keys = [c["key"] for c in cards]
     assert keys.index("altas_bdr") > keys.index("baixas")
-    assert keys == ["negocios", "volumes", "altas", "baixas", "altas_bdr"]
+    assert keys == ["negocios", "volumes", "altas", "baixas",
+                    "altas_bdr", "baixas_bdr"]
     # [v1.28.2] the four ranking cards stay NATIVES-ONLY (bdi 2): the
     # snapshot universe spans ETFs/FIIs/BDRs now, so the equities slice
     # is explicit — the cards' content is unchanged (a BDR can no longer
@@ -251,10 +268,10 @@ def test_bdr_gainers_card_scopes_to_the_bdr_suffixes():
     assert [i["ticker"] for i in altas["items"]] == ["PETR4"]
     negocios = next(c for c in cards if c["key"] == "negocios")
     assert [i["ticker"] for i in negocios["items"]] == ["PETR4"]
-    # the degraded branch carries the BDR card too (last, same as the ok path)
+    # the degraded branch carries the BDR cards too (last, same as the ok path)
     dead = HomeService()._ranking_cards({"status": "not_synced"})
     assert [c["key"] for c in dead] == [
-        "negocios", "volumes", "altas", "baixas", "altas_bdr"]
+        "negocios", "volumes", "altas", "baixas", "altas_bdr", "baixas_bdr"]
 
 
 def test_bdr_gainers_respect_the_liquidity_gate():

@@ -88,6 +88,8 @@ The self-review's feature suggestions — deliberately NOT in v1.28.2 (a fixes-o
 
 ### Watchlist
 - [x] ~~**Add-from-company-page** — a ⭐ button on the company page feeding the Carteira watchlist~~ **SHIPPED in v1.21 fix 1** (⭐ in the company tab bar, every tab; also ⭐ toggles on the account cards).
+- [x] ~~**Manage in the Painel + 52-week range** — the observados box's "Gerenciar" detoured through /webui/carteira and the table showed only price/day-%~~ **SHIPPED in v1.28.3** (the ⚙️ Gerenciar Painel box owns the watchlist IN the Painel — add/remove right there — and the table gained the Máx/Mín 52 sem columns via `range_52w()`).
+- [x] ~~**The price color scheme, everywhere** — the Ações 22-range palette pill (skills/_colors/price.py) shipped on the Painel's main prices in v1.28.3 ("lets start with the painel to see how it does"); the everywhere pass — company pages, carteira, the Ferramentas — waits on the user's verdict on the Painel~~ **SHIPPED in v1.28.3** ("the price color scheme, everywhere — but just to main price"): ONE shared payload builder (`contract.price_pill`) feeds the Ações table's Última (R$) column (the generic table cell's `{text, price}` shape), the ⭐ observados' Preço, the carteira positions' Valor Hoje, the comparison's Última Cotação row and the screener's peers table — always the MAIN price only (Máx/Mín 52s, PM, averages and multiples stay plain).
 
 ### Export
 - [ ] **Download report** — "Download as HTML" on each company page (reuse `build_dashboard()`).

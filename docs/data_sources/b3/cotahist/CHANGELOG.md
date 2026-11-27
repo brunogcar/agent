@@ -2,6 +2,54 @@
 
 # 🗺️ Changelog
 
+## v1.3 — 2026-11-27
+
+**The 52-week window trio + the session high/low (WebUI v1.28.3 — the
+Painel settings round).**
+
+### `range_52w()` — the trailing-52-week high/low per symbol
+
+- New `range_52w(symbols)` in query_engine.py: `MAX(high)`/`MIN(low)` per
+  requested symbol over the last 365 days — the WebUI Painel's "Máx/Mín 52
+  sem" columns (the ticker KPI cards and the Tickers Observados table).
+- The window anchors on the DB's OWN latest refdate (not the wall clock):
+  a stale sync still yields the honest 52-week window of the data we
+  have, and the query never depends on the machine's date.
+- Same universe as `quotes_for()` (lote padrão, `bdi_code IN
+  BDI_SHARE_LIKE`, close > 0) plus `high > 0 AND low > 0` — a spurious
+  zero print would own the MIN. Symbols with no rows in the window are
+  simply absent from the answer (the caller degrades per-ticker).
+- 3 new tests (TestRange52w) in tests/data_sources/b3/cotahist/test_cotahist.py.
+
+### `series_52w()` — the trailing-52-week close series per symbol
+
+- New `series_52w(symbols, max_points=40)`: the close SERIES (date-ASC)
+  of the same window `range_52w()` aggregates — the WebUI Painel ticker
+  KPI cards' chart band (and the observados' Var. (52): first-vs-last).
+- Stride-resampled to ≤ `max_points` (default 40; 12 cards ≈ 480 floats
+  vs ~3.000 for full dailies) with the FIRST and ALWAYS the LAST close
+  kept — the last point anchors the value's reference line.
+- Same universe and window anchor as `range_52w()`; symbols with no rows
+  in the window are simply absent (per-ticker degradation).
+- 3 new tests (TestSeries52w, via tests/webui/test_v128_3_scheme.py's
+  own fixture — the window anchor, the resample cap + last-kept, the
+  universe).
+
+### `quotes_for()` ships the session high/low
+
+- Each symbol row gains `day_high`/`day_low` — the OWN last session's
+  high/low, read from the same deduped latest row the close comes from
+  (no extra pass). The WebUI Painel's ⭐ Tickers Observados "Mín (dia) /
+  Máx (dia)" columns.
+- NULL high/low (a fixture/degraded shape) → `None` — the caller renders
+  "—", never a fake 0.0. The universe, the prev-close join and the
+  variation are untouched (regression-pinned).
+- 3 new tests (TestQuotesDayRange, tests/webui/test_v128_3_observados.py:
+  the day range + prev-close regression, the NULL degradation, the
+  share-like universe with the fractional market still out).
+
+---
+
 ## v1.2 — 2026-11-26
 
 **BDRs join the DB + the quotable universe widens (WebUI v1.28.2).**

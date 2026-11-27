@@ -51,6 +51,10 @@ from datetime import date, timedelta
 from typing import Any
 
 from webui.services.company import CompanyService
+# [v1.28.3] The SHARED price-pill payload builder — the Última
+# Cotação row's cells wear the Ações price-band palette (the "price
+# color scheme everywhere" rule; every other metric row stays plain).
+from webui.adapters.contract import price_pill as _pill
 
 # B3 ticker shape (same rule as api.py's Ticker path param).
 _TICKER_RE = re.compile(r"^[A-Z0-9]{4,6}$")
@@ -670,7 +674,14 @@ def _fmt(value: Any, spec: str) -> str:
 
 
 def _build_groups(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Assemble the row groups: raw + formatted values + best indices."""
+    """Assemble the row groups: raw + formatted values + best indices.
+
+    [v1.28.3] The "Última Cotação" row also carries ``pills`` —
+    one contract.price_pill() payload per cell (None where there's no
+    price), so the client renders the price-band chip on the row's
+    cells (the price color scheme everywhere — main price only, and
+    the cotação IS this row's metric).
+    """
     groups: dict[str, dict[str, Any]] = {
         key: {"key": key, "name": name, "rows": []}
         for key, name in _GROUP_ORDER
@@ -679,14 +690,17 @@ def _build_groups(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raw = [_row_value(e, candidates) for e in entries]
         if all(v is None for v in raw):
             continue  # row not applicable to ANY of the compared companies
-        groups[group_key]["rows"].append({
+        row: dict[str, Any] = {
             "label": label,
             "fmt": spec,
             "raw": raw,
             "values": [_fmt(v, spec) for v in raw],
             "best": _best_indices(raw, best, pos_only),
             "tip": tip,
-        })
+        }
+        if label == "Última Cotação":
+            row["pills"] = [_pill(v) for v in raw]
+        groups[group_key]["rows"].append(row)
     return [g for g in groups.values() if g["rows"]]
 
 

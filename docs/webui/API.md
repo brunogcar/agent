@@ -39,23 +39,32 @@ Return JSON. Used by Chart.js and programmatic clients.
 
 ### `GET /api/webui/home`
 
-[v1.19] **The Painel landing payload** — one call, one screen. Macro KPI row (BCB SGS: Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL ptax) + **[v1.28.1] the ETF row** (`etfs`: BOVA11/SMAL11/IVVB11 — last close + signed day % from the same cotahist snapshot) + 6 ranked ticker cards [v1.28.1: + Maiores Altas BDR] (Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Volumes; Maiores Altas; **Maiores Altas BDR** — the *34 universe, same 100-trade liquidity gate; Maiores Baixas — latest cotahist session). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync).
+[v1.19] **The Painel landing payload** — one call, one screen, THREE separate sets (v1.28.3, per the user's review): **(1) the macro KPI cards** (`kpis`: `home.kpis` selects which catalog entries show and in what order; the 23-key catalog [v1.28.3 — the families complete] — the SGS reads (Selic/CDI a.a., Meta Selic, TR), the **Juros "mercado" twins** (Selic/CDI/Meta Selic mercado mês/12m [ddm-juros] — "slightly different" from the SGS reads, exactly why both live in the catalog), the **ano acumulados** (IPCA/IGP-M/INPC — ano [ddm-inflation, `year_acumulado`] + Poupança — ano [ddm-poupanca, `acumulado_no_ano`]), the monthly/12m reads (IPCA/IGP-M mês/12m [sgs], INPC/Poupança mês/12m [ddm]); per-KPI degradation: a down source renders its cards `"-"` but never hides the others; the family engines are read ONLY when one of their KPIs is enabled — and the IPCA/IGP-M (mês)/(12m) cards still ride SGS, only their — ano cards read ddm-inflation) + **(2) the ticker KPI cards** (`ticker_cards`: one per `home.ticker_kpis` entry — ANY share-like instrument: ações, FIIs, ETFs, BDRs; close + signed day % + the 52-week range `high_52`/`low_52` + the 52-week position `pos_52` (0–100) + the day `volume` + **`spark`** — the trailing-52-week close series (≤40 points, `series_52w()`; the chart band's green line, its last point the value's dashed reference line; `null` when the window missed the symbol); the price wears the Ações 22-range palette pill `price: {pill, text, range}` — a symbol the snapshot window missed falls back to `quotes_for()`, a symbol absent everywhere renders degraded with `"—"`/`null`; the card reads in THREE horizontal bands — the header (identity left, price pill + day % right), the full-width 52-week chart with the position bar under it, the stats rows Mín 52 sem (FIRST), Máx 52 sem, Volume (dia) + **(3) the managed ranking cards** (`cards`: `home.cards` selects which boxes show and in what order — Top 10 IBOV/SMLL by weight, quote-enriched; Mais Negócios; Maiores Volumes; Maiores Altas; Maiores Baixas; **Maiores Altas BDR** and **Maiores Quedas BDR** — the *34/35/36 universe under the same 100-trade liquidity gate) + the two catalogs (`kpi_catalog`, 23 keys + `card_catalog`, 8 keys — the ⚙️ Gerenciar Painel box's checkbox lists). **[v1.28.3] The ranking rows are STANDARDIZED — "ticker · info · price · %"**: every row's `value` IS the price and always carries the `price` pill; `extra` carries the card's context (peso on the index cards, negócios, volume on Maiores Volumes) — the NAME rides the tooltip when an extra exists and fills the info slot on the altas/baixas/BDR cards (`extra: null`). Section-scoped degradation: each part fails alone with a PT-BR message naming its sync source. [v1.19] Memoized 60s under a lock (single-flight — concurrent callers coalesce into one `market_snapshot()`, which itself is windowed to the last 10 sessions; the payload only changes on sync — and, [v1.28.3], on a `home.kpis`/`home.ticker_kpis`/`home.cards` save: the memo keys on them).
 
 ```json
 {
   "status": "ok",
   "kpis": [{"label": "Selic (a.a.)", "value": "13,65%", "tooltip": "…"}],
-  "etfs": [{"ticker": "BOVA11", "value": "R$ 129,35", "variation": "+1,21%",
-            "tooltip": "ETF que replica o Ibovespa — …"}],
+  "kpi_catalog": [{"key": "selic_aa", "title": "Selic (a.a.)"}, …],
+  "ticker_cards": [{"ticker": "BOVA11", "name": "ISHARES BOVA", "kind": "ETF",
+                    "value": "R$ 129,35", "variation": "+1,21%",
+                    "price": {"pill": "#2563eb", "text": "#fff",
+                              "range": "125 ≤ X < 150"},
+                    "high_52": "R$ 140,10", "low_52": "R$ 118,30",
+                    "pos_52": 51, "spark": [118.30, 121.4, …, 129.35],
+                    "volume": "R$ 88,00 mi",
+                    "tooltip": "…"}],
   "cards": [
     {"key": "ibov", "title": "IBOV · Top 10", "subtitle": "Maiores pesos — carteira de 05/08/2026",
      "error": null,
      "items": [{"ticker": "VALE3", "name": "VALE", "value": "R$ 34,50",
+                "price": {"pill": "#c8e6c9", "text": "#000", "range": "30 ≤ X < 40"},
                 "variation": "+1,23%", "extra": {"label": "peso", "text": "10,886%"}}]}
-  ]
+  ],
+  "card_catalog": [{"key": "ibov", "title": "IBOV · Top 10"}, …]
 }
 ```
-`kpis_note` (optional) carries the SGS degradation message; `variation` is `null` without a previous-session close; `extra` is `null` on the altas/baixas cards; [v1.28.1] `etfs` is `[]` when cotahist is down (the row renders nothing). Card keys: `ibov`/`smll`/`negocios`/`volumes`/`altas`/`altas_bdr` [v1.28.1]/`baixas`. Rendered by `loadHomeData()` (app.js).
+`kpis_note` (optional) carries the SGS degradation message; `variation` is `null` without a previous-session close; `extra` is `null` on the altas/baixas/BDR cards (the client fills the info slot with the NAME); on Maiores Volumes the `value` is the COTAÇÃO (pill'd) and the `extra` carries `{label: "volume", text: "R$ …"}`; `ticker_cards` is `[]` when `home.ticker_kpis` is empty. KPI keys: `selic_aa`/`selic_mercado_mes`/`selic_mercado_12m`/`cdi_aa`/`cdi_mercado_mes`/`cdi_mercado_12m`/`meta_selic`/`meta_selic_mercado_mes`/`meta_selic_mercado_12m`/`tr`/`ipca_mes`/`ipca_ano`/`ipca_12m`/`igpm_mes`/`igpm_ano`/`igpm_12m`/`inpc_mes`/`inpc_ano`/`inpc_12m`/`poupanca_mes`/`poupanca_ano`/`poupanca_12m`/`usd_brl`. Card keys: `ibov`/`smll`/`negocios`/`volumes`/`altas`/`baixas`/`altas_bdr` [v1.28.1]/`baixas_bdr` [v1.28.3]. Rendered by `loadHomeData()` (app.js).
 
 ### `GET /api/webui/company/{ticker}/sections/{key}`
 
@@ -420,7 +429,7 @@ The settings schema + current values — the Configurações page renders its fo
 
 Persist a `{key: value}` patch (JSON body). Validation is all-or-nothing per the SCHEMA (types, min/max, select options) — any invalid key rejects the whole patch with `400` + `{"_error": …, "errors": {key: PT-BR message}}`. On success returns `{"ok": true, "applied": [keys], "values": {…}}`; `ui.theme`/`ui.locale` additionally get a `Set-Cookie` on the response.
 
-Storage: `memory_db/webui_settings.json` (atomic write). Every setting is wired: `sync.auto_on_startup` (sync stale sources at boot), `sync.stale_hours` (staleness threshold everywhere), `sync.schedule_hours` (periodic auto-sync, 0 = off), `home.card_rows`, `home.cache_seconds`, `logs.level`, `logs.buffer`.
+Storage: `memory_db/webui_settings.json` (atomic write). Every setting is wired: `sync.auto_on_startup` (sync stale sources at boot), `sync.stale_hours` (staleness threshold everywhere), `sync.schedule_hours` (periodic auto-sync, 0 = off), `home.card_rows`, `home.cache_seconds`, `home.ticker_kpis` [v1.28.3] (the Painel's quote cards, in order — ações, FIIs, ETFs, BDRs; the ⚙️ Gerenciar Painel box is the editor), `home.cards` [v1.28.3] (which ranking boxes show + their order), `logs.level`, `logs.buffer`.
 
 ---
 
@@ -483,7 +492,7 @@ The user's own money: users → accounts → transactions → PM (preço médio)
 | GET | `/api/webui/portfolio/state` | Users + accounts (+ `tx_count`, `user_name`) + watchlist + ticker metadata — the manage UI |
 | GET | `/api/webui/portfolio/directory` | — Users → accounts tree with live KPIs (patrimônio/custo/lucro per account AND per user — sums NEVER across users) — the Carteira landing/user pages |
 | GET | `/api/webui/portfolio/positions?scope=all\|user:{id}\|account:{id}` | PM positions + KPI cards + totals + the 200 most recent transactions (chronological ASC; `short`/`zero` row flags) for the scope |
-| GET | `/api/webui/portfolio/overview` | The Painel widget payload — watched accounts GROUPED BY USER (per-user subtotals) + watchlist tickers (price, var. dia) |
+| GET | `/api/webui/portfolio/overview` | The Painel widget payload — watched accounts GROUPED BY USER (per-user subtotals) + watchlist tickers [v1.28.3: `sector` (the cadastro's CVM cache) + `low_day`/`high_day` (the quote's own session high/low) before the `low_52`/`high_52` pair, closed by `var_52` (the 52-week series' first-vs-last variation); the band pill rides `price_pill`, the main price only] |
 | POST | `/api/webui/portfolio/users` | Create user `{name}` |
 | PUT | `/api/webui/portfolio/users/{id}` | Rename |
 | DELETE | `/api/webui/portfolio/users/{id}` | Delete (cascades accounts + transactions) |

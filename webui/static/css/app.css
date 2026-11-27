@@ -216,6 +216,16 @@ a:hover { text-decoration: underline; }
 .page-dashboard h1 { font-size: 24px; margin-bottom: var(--space-1); }
 .page-dashboard .subtitle { color: var(--color-text-sec); margin-bottom: var(--space-5); }
 
+/* [v1.28.3] The header row — title on the left, the ⚙️ Gerenciar Painel
+   icon on the top-right corner (the settings box opener). */
+.home-head-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-3);
+}
+.home-head-row .subtitle { margin-bottom: var(--space-5); }
+.home-manage-btn { font-size: 17px; padding: 7px 11px; line-height: 1; }
+.home-manage-btn:hover { border-color: var(--color-brand); }
+
 /* KPI row (BCB SGS — Selic/IPCA/IGP-M/USD) + degradation note */
 .home-kpis { margin-bottom: var(--space-5); }
 .home-kpis .kpi-grid { margin-bottom: 0; }
@@ -224,6 +234,147 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
   color: var(--color-warning);
 }
+
+/* [v1.28.3] The ticker KPI cards — the SECOND set, their OWN grid
+   between the macro KPIs and the rankings: ranking-card WIDTH (the
+   same minmax columns as .home-grid). The card body reads in THREE
+   HORIZONTAL BANDS (the user's mockup, top → bottom): the HEADER —
+   ticker + badge + name on the left, the price pill + the day %
+   right-aligned · the CHART — the green 52-week line across the FULL
+   card width with a soft fill under it and the value's DASHED
+   reference line, the 52-week position bar under it · the STATS — Mín
+   52 sem (first), Máx 52 sem, Volume (dia), label left / value right.
+   align-items: stretch keeps the row's cards equal height AMONG
+   THEMSELVES. */
+.home-tk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-4);
+  align-items: stretch;
+  margin-bottom: var(--space-6);
+}
+.home-tk-card { text-decoration: none; color: var(--color-text); }
+.home-tk-card:hover { border-color: var(--color-brand); text-decoration: none; }
+.home-tk-stack {
+  padding: var(--space-4);
+  display: flex; flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+/* The top band — identity left, quote right. */
+.home-tk-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: var(--space-3);
+}
+.home-tk-head-id { min-width: 0; }
+.home-tk-head-quote {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 4px; flex-shrink: 0; text-align: right;
+}
+.home-tk-tkline {
+  font-family: var(--font-mono); font-size: 15px; font-weight: 700;
+  letter-spacing: 0.01em; white-space: nowrap;
+}
+.home-tk-kind {
+  margin-left: 7px; padding: 1px 7px; vertical-align: 1px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--color-text-sec);
+  border: 1px solid var(--color-border); border-radius: 999px;
+  white-space: nowrap;
+}
+.home-tk-name {
+  font-size: 11px; color: var(--color-text-sec);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-height: 14px;
+}
+.home-tk-quote { display: flex; align-items: center; }
+.home-tk-price {
+  font-family: var(--font-mono); font-size: 17px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.home-tk-var {
+  font-weight: 700; font-size: 13.5px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+/* The middle band — the green 52-week line across the FULL card width
+   with a soft fill under it and the value's dashed reference line
+   (band-colored); the position bar closes it, under the chart. */
+.home-tk-chart {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+}
+.home-tk-spark {
+  position: relative; flex: 1; min-height: 64px;
+}
+.home-tk-spark svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; overflow: visible;
+}
+.home-tk-spark-area {
+  fill: var(--color-success); opacity: 0.10; stroke: none;
+}
+.home-tk-spark-line {
+  fill: none; stroke: var(--color-success); stroke-width: 1.6;
+  stroke-linejoin: round; stroke-linecap: round;
+}
+.home-tk-spark-ref {
+  stroke: var(--color-text-sec); stroke-width: 1;
+  stroke-dasharray: 4 3; opacity: 0.9;
+}
+.home-tk-spark.is-empty {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--color-border); border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+/* The 52-week position bar — min ── close ── max; the fill rides the
+   price band color so pill + reference line + bar read as one scheme.
+   Under the chart, closing the middle band. */
+.home-tk-bar {
+  height: 6px; border-radius: 999px;
+  background: var(--color-bg-sec);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.home-tk-bar-fill { height: 100%; border-radius: 999px; }
+.home-tk-bar.is-empty { opacity: 0.4; }
+/* The bottom band — Mín 52 sem (FIRST), Máx 52 sem, Volume (dia),
+   label left / value right across the full width; the dashed rule
+   divides it from the chart. */
+.home-tk-meta {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px dashed var(--color-border);
+  padding-top: var(--space-3);
+}
+.home-tk-meta-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: var(--space-3);
+  font-size: 10px; color: var(--color-text-sec);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.home-tk-rval {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 11.5px; font-weight: 600; color: var(--color-text);
+  letter-spacing: normal;
+}
+
+/* [v1.28.3] The price pill — the Ações family's 22-range palette
+   ("use color scheme from mercado - Ações for the range of prices") in
+   the Insiders cargo/tipo pill shape (rounded chip, bold, mono, the
+   range label in the tooltip). Solid band colors: the palette carries
+   its own per-band text contrast (#000/#fff) — a soft 8% tint would
+   wash the light bands (very light pink, pale yellow) into invisibility.
+   -lg: the ticker card's main price. -xs: the ranking extra (cotação). */
+.home-price-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 999px;
+  font-family: var(--font-mono); font-weight: 700; font-size: 11px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.home-price-pill-lg {
+  padding: 3px 10px; font-size: 14px; line-height: 1.25;
+}
+.home-price-pill-xs { padding: 1px 5px; font-size: 10px; }
 
 /* 5 ranked ticker cards — the landing page is a launcher: every row is a
    link into the company page (ticker · name · value · variação · extra). */
@@ -259,11 +410,20 @@ a:hover { text-decoration: underline; }
 }
 .home-card-empty { padding: var(--space-4); font-size: 12px; }
 
-/* One ticker row — grid keeps the value/variation columns aligned down
-   the card (mono figures read as a table without being one). */
+/* One ticker row — the [v1.28.3] STANDARD: ticker · info · price
+   · variação. The info slot carries the card's context (peso, negócios,
+   volume) or the NAME for the cards without one; the price always wears
+   the palette pill; grid keeps the columns aligned down the card (mono
+   figures read as a table without being one). */
 .ticker-row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 72px 62px;
+  /* [v1.28.3] The standardized row's grid — ticker · info · price · %,
+     with the row's proportions KEPT BALANCED (a widened info slot
+     read as an awkward gap between the info and the price): the
+     volume/peso/negócios slot takes what's left (minmax(0, 1fr)),
+     what doesn't fit ellipsizes, and the tooltip carries the full
+     value ("volume — R$ 1,87 bi"). */
+  grid-template-columns: 56px minmax(0, 1fr) 84px 64px;
   gap: var(--space-2);
   align-items: center;
   padding: 7px var(--space-4);
@@ -273,24 +433,25 @@ a:hover { text-decoration: underline; }
 }
 .ticker-row:last-child { border-bottom: none; }
 .ticker-row:hover { background: var(--color-bg-sec); text-decoration: none; }
-.ticker-row.has-extra { grid-template-columns: 56px minmax(0, 1fr) 64px 72px 62px; }
 .ticker-row .tk {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: 13px;
 }
-.ticker-row .tk-name {
-  font-size: 12px;
+.ticker-row .tk-info {
+  font-size: 11.5px;
   color: var(--color-text-sec);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ticker-row .tk-extra {
-  font-size: 11px;
+.ticker-row .tk-name {
+  font-size: 11.5px;
   color: var(--color-text-sec);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ticker-row .tk-val,
 .ticker-row .tk-var {
@@ -299,6 +460,8 @@ a:hover { text-decoration: underline; }
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Compact sync status box — the Painel's VERY BOTTOM slot (collapsed
@@ -334,13 +497,14 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
 }
 
-/* Phone — one card per row, tighter columns, the context extra hides
-   (ticker + name + value + variation carry the essentials). */
+/* Phone — one card per row, tighter columns (the info slot ellipsizes;
+   ticker + info + price + variation carry the essentials). The ticker
+   KPI card needs NOTHING extra here — its three bands are already a
+   vertical stack with a full-width chart, so it reads at any width. */
 @media (max-width: 520px) {
-  .home-grid { grid-template-columns: 1fr; }
-  .ticker-row,
-  .ticker-row.has-extra { grid-template-columns: 48px minmax(0, 1fr) 68px 54px; }
-  .ticker-row .tk-extra { display: none; }
+  .home-grid, .home-tk-grid { grid-template-columns: 1fr; }
+  .ticker-row { grid-template-columns: 48px minmax(0, 1fr) 78px 56px; }
+  .home-tk-stack { gap: var(--space-2); padding: var(--space-3); }
   /* [v1.23] the topbar's search box had the input's default min-width
      (~170px) — logo + search + the 3 icon buttons overflowed 390px
      screens by 13px (every page, since v1.20). Let it shrink. */
@@ -2605,25 +2769,30 @@ tr.gov-open { background: rgba(13,148,136,0.05); }
   .scr-heat-neg3 { background: color-mix(in srgb, var(--color-danger) 32%, transparent); }
 }
 
-/* ── the Painel's ETF row (BOVA11 · SMAL11 · IVVB11 + day %) ── */
-.home-etfs {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--space-3); margin-top: var(--space-4);
+/* ── [v1.28.3] the ⚙️ Gerenciar Painel box — the widget's "Gerenciar ⭐"
+   is a BUTTON now (it opens the modal, no navigation) and the manage
+   list's extra affordances (card checkboxes, the hidden-cards + row). ── */
+button.cart-widget-link {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font: inherit; color: var(--color-brand);
 }
-.home-etf-card {
-  display: flex; align-items: baseline; gap: var(--space-3);
-  background: var(--color-bg-card); border: 1px solid var(--color-border);
-  border-radius: var(--radius-md); padding: 10px 14px;
+button.cart-widget-link:hover { text-decoration: underline; }
+.hm-card-label {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex: 1; min-width: 0; cursor: pointer;
 }
-.home-etf-tk { font-weight: 700; font-family: var(--font-mono); font-size: 13px; }
-.home-etf-val {
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-  font-size: 13px; color: var(--color-text-sec);
+.hm-card-label input { accent-color: var(--color-brand); width: 15px; height: 15px; flex: none; }
+.hm-card-label .cart-mname { flex: 1; }
+.hm-hidden-row {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2); margin-top: var(--space-3);
 }
-.home-etf-var {
-  margin-left: auto; font-weight: 700; font-size: 13px;
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-}
+.hm-hidden-title { font-size: 12px; color: var(--color-text-sec); }
+.hm-enable { font-size: 12px; padding: 4px 10px; }
+
+/* ── [v1.28.1→v1.28.3] the ETF row is GONE — its three wide strips became
+   the ranking-card-sized .home-tk-card grid members (styles above, next
+   to .home-card). ── */
 
 /* ── the backtest tool's ticker context bar (Simulando PETR4 + the
    range + abrir empresa / trocar ticker) ── */

@@ -13,7 +13,9 @@
   "dashboard": {
     "subtitle": "Brazil at a glance — economy, indices and the B3 session",
     "loading_kpis": "Loading indicators…",
-    "loading_cards": "Loading market…"
+    "loading_cards": "Loading market…",
+    "loading_manage": "Loading settings…",
+    "manage": "Manage Dashboard"
   },
   "company": {
     "search_placeholder": "Search ticker (e.g. PETR4)...",

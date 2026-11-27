@@ -202,12 +202,32 @@ def _tr(request: Request):
 def home_overview():
     """[v1.19] Painel landing page — one payload, one screen.
 
-    Macro KPI row (Selic anualizada, IPCA/IGP-M acumulado 12m, USD/BRL
-    ptax — BCB SGS) + 5 ranked ticker cards (Top 10 IBOV / SMLL by weight
-    with quote enrichment; Mais Negócios / Maiores Altas / Maiores Baixas
-    from the latest cotahist session). Section-scoped degradation: each
-    part fails alone with a PT-BR message naming its sync source.
+    [v1.28.3] THREE separate sets: the macro KPI cards
+    (``kpis`` — home.kpis selects which catalog entries show and in
+    what order; the Mercado families' options ride the catalog: CDI
+    + Meta Selic [sgs], INPC [ddm-inflation], Poupança
+    [ddm-poupanca]; per-KPI degradation) + the ticker KPI cards
+    (``ticker_cards`` — one per home.ticker_kpis entry, ANY
+    share-like instrument: ações, FIIs, ETFs, BDRs; close + signed
+    day % + the 52-week range + the 52-week position + the day
+    volume; the price wears the Ações 22-range palette pill) + the
+    managed ranking cards (``cards`` — home.cards selects which
+    boxes show and in what order; every row price pill'd) + the two
+    catalogs (``kpi_catalog`` + ``card_catalog`` — the ⚙️ manage
+    box's checkbox lists). Section-scoped degradation: each part
+    fails alone with a PT-BR message naming its sync source.
     Rendered by loadHomeData() in app.js.
+
+    [v1.28.3] The review round: (a) the KPI catalog completes
+    the Mercado families — Selic/CDI/Meta Selic mercado (mês/12m)
+    [ddm-juros] + IPCA/IGP-M/INPC — ano [ddm-inflation's
+    year_acumulado] + Poupança — ano [ddm-poupanca's
+    acumulado_no_ano]; (b) each ticker card carries ``spark`` — the
+    trailing-52-week close series (≤40 points, series_52w) feeding
+    the middle-third green line with the band-colored price tag; (c)
+    the ranking rows STANDARDIZED — "ticker - extra info (peso/
+    negócios/volume/name) - price (pill) - %" (the volumes card's
+    cotação is the main value now, the volume rides the extra).
     """
     return JSONResponse(_home_service.overview())
 

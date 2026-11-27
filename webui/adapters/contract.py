@@ -39,7 +39,12 @@ SECTION TYPES
               are intentionally discarded (except y.beginAtZero, stacked).
   table       {type, title?, description?, columns: [str, …],
                rows: [[cell, …], …], note?}
-              cell = str | {text, tooltip}
+              cell = str | {text, tooltip} | {text, tooltip?, price}
+              [v1.28.3] a cell carrying ``price`` (the price_pill()
+              payload — {pill, text, range}) renders as the Ações
+              price-range palette chip: the MAIN price of the row, per
+              the user's rule ("just apply to main price") — min/max/
+              averages/PM stay plain cells.
   two_column  {type, left_title, left_rows: [KPI, …],
                right_title, right_rows: [KPI, …]}
   ratio_grid  {type, title?, description?,
@@ -84,9 +89,41 @@ def chart_section(title: str, chart_data: dict[str, Any],
     return out
 
 
+def price_pill(price: float | int | None) -> dict[str, str] | None:
+    """[v1.28.3] The Ações price-range palette entry for a price.
+
+    THE shared payload builder for the price color scheme everywhere
+    ("the price color scheme, everywhere — but just to main price"): the
+    22-range palette lives in skills/_colors/price.py (the acoes.py
+    import precedent — ONE definition, no forked colors) and every
+    surface that shows a MAIN price ships this dict for the client's
+    pill rendering — the Painel ticker/ranking cards (home.py), the
+    Ações table's Última column (generic table cells), the Tickers
+    Observados + carteira positions (portfolio.py), the comparison's
+    Última Cotação row and the screener's peers table.
+
+    Returns {pill, text, range} (background, per-band text contrast,
+    the human range label) or None when there is no price to color
+    (the client renders the plain text). Values are PRE-COMPUTED
+    server-side — the client only renders.
+    """
+    if price is None:
+        return None
+    try:
+        from skills._colors.price import price_range_color
+        c = price_range_color(float(price))
+    except Exception:
+        return None
+    if not c.get("bg"):
+        return None
+    return {"pill": c["bg"], "text": c["color"], "range": c["range"]}
+
+
 def table_section(title: str, columns: list[str], rows: list[list[Any]],
                   description: str = "", note: str = "") -> dict[str, Any]:
-    """Table section. Cells are strings or {text, tooltip} dicts."""
+    """Table section. Cells are strings or {text, tooltip} dicts —
+    [v1.28.3] or {text, tooltip?, price} for a MAIN-price cell
+    (the price-range palette pill; see price_pill())."""
     out: dict[str, Any] = {"type": "table", "title": title,
                            "columns": columns, "rows": rows}
     if description:

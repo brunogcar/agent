@@ -62,6 +62,10 @@ from webui.services.comparison import (
     _fmt,
     _row_value,
 )
+# [v1.28.3] The SHARED price-pill payload builder — the peers
+# table's Cotação column wears the Ações price-band palette (the
+# "price color scheme everywhere" rule; the multiples stay plain).
+from webui.adapters.contract import price_pill as _pill
 
 # B3 ticker shape (same rule as comparison.py / api.py).
 _TICKER_RE = re.compile(r"^[A-Z0-9]{4,6}$")
@@ -594,6 +598,10 @@ class ScreenerService:
                 "name": p["name"] or names.get(p["ticker"], ""),
                 "is_subject": p["is_subject"],
                 "price": _fmt(price, "brl_full"),
+                # [v1.28.3] the row's MAIN price ships the band
+                # pill (contract.price_pill — the same chip the Painel
+                # and the comparison's Última Cotação wear).
+                "price_pill": _pill(price),
                 "market_cap": _fmt(val.get("market_cap"), "brl"),
                 "p_l": _fmt(val.get("p_l"), "num"),
                 "p_l_raw": val.get("p_l"),

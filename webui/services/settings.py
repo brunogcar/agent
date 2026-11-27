@@ -16,6 +16,17 @@ Wiring (every setting below actually does something — no dead knobs):
                             sync while the server runs; 0 = off)
   - home.card_rows        → HomeService (rows per ranking card)
   - home.cache_seconds    → HomeService (the v1.19 fix 1 memoization TTL)
+  - home.kpis             → HomeService (the macro KPI cards — WHICH
+                            catalog entries show and in what ORDER;
+                            managed by the ⚙️ Gerenciar Painel box;
+                            [v1.28.3])
+  - home.ticker_kpis      → HomeService (the Painel's ticker KPI row —
+                            ORDERED tickers, any share-like instrument:
+                            ações, FIIs, ETFs, BDRs; managed by the ⚙️
+                            Gerenciar Painel box; [v1.28.3])
+  - home.cards            → HomeService (which ranking boxes show and in
+                            what ORDER — the enabled subset of the card
+                            catalog, managed by the same box; [v1.28.3])
   - ui.theme / ui.locale  → cookies (Set-Cookie on save + reload; the FOUC
                             script and negotiate_locale read them — the
                             cookie stays the single source of truth)
@@ -34,6 +45,7 @@ shell is bilingual, content is pt-BR — these are content).
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -55,7 +67,9 @@ def _settings_path() -> Path:
 
 # ── THE schema — adding a setting = one dict entry here ──────────────────────
 # type: "bool" (toggle) | "number" (int input, min/max/unit) | "select"
-#       (options: [{value, label}]) | "string" (text input)
+#       (options: [{value, label}]) | "string" (text input) | "list"
+#       (ordered list of short strings — managed by a dedicated UI;
+#       the settings page renders it as a comma-joined text input)
 SCHEMA: list[dict[str, Any]] = [
     # ── Sincronização ──
     {
@@ -87,7 +101,7 @@ SCHEMA: list[dict[str, Any]] = [
         "label": "Linhas por card",
         "type": "number", "default": 10, "min": 5, "max": 25, "unit": "linhas",
         "help": "Quantas ações aparecem em cada card de ranking do Painel "
-                "(IBOV, SMLL, Mais Negócios, Altas, Baixas).",
+                "(IBOV, SMLL, Mais Negócios, Volumes, Altas, Baixas, BDRs).",
     },
     {
         "key": "home.cache_seconds", "section": "Painel",
@@ -95,6 +109,41 @@ SCHEMA: list[dict[str, Any]] = [
         "type": "number", "default": 60, "min": 5, "max": 600, "unit": "s",
         "help": "Por quanto tempo o payload do Painel fica memoizado no "
                 "servidor (o conteúdo só muda quando uma sincronização roda).",
+    },
+    # [v1.28.3] The Painel's managed layout — the ⚙️ Gerenciar Painel box
+    # (top-right icon on the landing page) is the primary editor; the
+    # settings page renders a comma-joined text input as the fallback.
+    # [v1.28.3] home.kpis — the macro KPI cards (the FIRST set,
+    # the small boxes), organized/hidden/added like the ranking cards.
+    {
+        "key": "home.kpis", "section": "Painel",
+        "label": "KPIs macro",
+        "type": "list",
+        "default": ["selic_aa", "tr", "ipca_mes", "ipca_12m",
+                    "igpm_mes", "igpm_12m", "usd_brl"],
+        "help": "Os KPIs do topo do Painel, em ordem — as opções vêm das "
+                "famílias do Mercado: Selic/CDI/Meta Selic mercado e "
+                "CDI/Meta Selic (Juros), IPCA/IGP-M/INPC — ano (Inflação) "
+                "e Poupança. Gerencie pelo ⚙️ no canto superior direito "
+                "do Painel.",
+    },
+    {
+        "key": "home.ticker_kpis", "section": "Painel",
+        "label": "KPIs de tickers",
+        "type": "list", "default": ["BOVA11", "SMAL11", "IVVB11"],
+        "help": "Os cards de cotação do Painel, em ordem — aceita ações, "
+                "FIIs, ETFs e BDRs (ex.: PETR4, HGBS11, BOVA11, AAPL34). "
+                "Gerencie pelo ⚙️ no canto superior direito do Painel.",
+    },
+    {
+        "key": "home.cards", "section": "Painel",
+        "label": "Cards de ranking",
+        "type": "list",
+        "default": ["ibov", "smll", "negocios", "volumes", "altas",
+                    "baixas", "altas_bdr", "baixas_bdr"],
+        "help": "Quais caixas de ranking aparecem no Painel e em que "
+                "ordem (chaves do catálogo). Gerencie pelo ⚙️ no canto "
+                "superior direito do Painel.",
     },
     # ── Aparência (cookie-backed — o cookie continua a fonte da verdade) ──
     {
@@ -269,6 +318,26 @@ class SettingsService:
         if t == "string":
             s = str(value)[:200]
             return True, s
+        if t == "list":
+            # [v1.28.3] Ordered list of short strings. Accepts a real list
+            # (the dedicated manage UI) or a comma/space-separated string
+            # (the settings page's text input). Deduped, order preserved.
+            if isinstance(value, list):
+                raw = [str(x) for x in value]
+            elif isinstance(value, str):
+                raw = re.split(r"[,\s]+", value.strip()) if value.strip() else []
+            else:
+                return False, "Esperado uma lista de valores."
+            seen: set[str] = set()
+            out: list[str] = []
+            for x in raw:
+                x = x.strip()[:24]
+                if x and x not in seen:
+                    seen.add(x)
+                    out.append(x)
+            if len(out) > 40:
+                return False, "Máximo de 40 itens."
+            return True, out
         return False, "Tipo não suportado."
 
     # ── rendering ────────────────────────────────────────────────────────────

@@ -8,12 +8,17 @@ Read-only queries against cotahist.db:
   - quotes_for(symbols) — same quote shape for a GIVEN symbol list, each
     at its OWN last session (portfolio valuation: illiquid papers silent
     for 10+ sessions still get their last traded price) [v1.21]
+  - range_52w(symbols) — trailing-52-week high/low per symbol (the
+    Painel's Tickers Observados "Máx/Mín 52 sem" columns) [v1.28.3]
+  - series_52w(symbols) — trailing-52-week close series per symbol,
+    resampled to ≤40 points (the Painel ticker cards' sparklines) [v1.28.3]
   - DB stats (years synced, row counts, date range)
 """
 
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 
 from data_sources.b3.cotahist.catalog import connect, db_path, BDI_SHARE_LIKE
 
@@ -258,14 +263,21 @@ def quotes_for(symbols: list[str]) -> dict:
     can hold any of them, and the old ``bdi_code = 2`` scope left ETF/FII/
     BDR positions quote-less.
 
-    Returns the market_snapshot() symbols shape filtered to ``symbols``::
+    [v1.28.3] Each symbol ALSO carries its own last session's
+    HIGH/LOW (``day_high``/``day_low``) — the Painel's ⭐ Tickers
+    Observados "Mín (dia) / Máx (dia)" columns. NULL high/low (the
+    fixture shape) degrades to None → "—".
+
+    Returns the market_snapshot() symbols shape filtered to ``symbols``
+    plus the day range::
 
         {"status": "ok",
          "symbols": [{"ticker": "POMO4", "name": "MARCOPOLO",
                       "bdi_code": 2,
                       "close": 2.44, "prev_close": 2.40,
                       "variation_pct": 1.67,
-                      "volume": 1.2e5, "trade_count": 340}],
+                      "volume": 1.2e5, "trade_count": 340,
+                      "day_high": 2.50, "day_low": 2.38}],
          "session_date": "2026-11-20"}    # latest refdate among the returns
 
     "not_synced" when cotahist.db is missing. Symbols with no rows are
@@ -292,14 +304,16 @@ def quotes_for(symbols: list[str]) -> dict:
             rows = conn.execute(
                 f"""
                 WITH scoped AS (
-                  SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count
+                  SELECT symbol, corp_name, refdate, bdi_code, close, high, low,
+                         volume, trade_count
                   FROM cotahist
                   WHERE market_type = 10 AND bdi_code IN {_BDI_IN}
                     AND close IS NOT NULL AND close > 0
                     AND symbol IN ({marks})
                 ),
                 deduped AS (
-                  SELECT symbol, corp_name, refdate, bdi_code, close, volume, trade_count,
+                  SELECT symbol, corp_name, refdate, bdi_code, close, high, low,
+                         volume, trade_count,
                          ROW_NUMBER() OVER (
                            PARTITION BY symbol, refdate
                            ORDER BY volume DESC, trade_count DESC) AS d,
@@ -309,6 +323,7 @@ def quotes_for(symbols: list[str]) -> dict:
                 )
                 SELECT r1.symbol, r1.corp_name, r1.refdate, r1.bdi_code,
                        r1.close, r1.volume, r1.trade_count,
+                       r1.high AS day_high, r1.low AS day_low,
                        r2.close AS prev_close
                 FROM deduped r1
                 LEFT JOIN deduped r2
@@ -332,9 +347,196 @@ def quotes_for(symbols: list[str]) -> dict:
                     "variation_pct": variation,
                     "volume": float(r["volume"]) if r["volume"] else 0.0,
                     "trade_count": int(r["trade_count"]) if r["trade_count"] else 0,
+                    # [v1.28.3] The OWN session's high/low — the
+                    # Painel's ⭐ Tickers Observados "Mín/Máx (dia)"
+                    # columns. NULL (the fixture shape) degrades to None
+                    # → "—" on the row.
+                    "day_high": float(r["day_high"]) if r["day_high"] else None,
+                    "day_low": float(r["day_low"]) if r["day_low"] else None,
                 })
     finally:
         conn.close()
 
     return {"status": "ok", "session_date": session_date,
             "count": len(out), "symbols": out}
+
+
+# [v1.28.3] The Painel's Tickers Observados gained "Máx/Mín 52 sem"
+# columns — the trailing-52-week range per watched ticker. The window is
+# anchored on the DB's OWN latest refdate (not the wall clock): a stale
+# sync still yields the honest 52-week window of the data we have, and
+# the query never depends on the machine's date.
+_52W_DAYS = 365
+
+
+def range_52w(symbols: list[str]) -> dict:
+    """Trailing-52-week high + low for a GIVEN symbol list.
+
+    Same universe as quotes_for() (lote padrão, share-like BDIs, close >
+    0) plus ``high > 0 AND low > 0`` — a spurious zero print would own
+    the MIN. Rows with NULL high/low (the fixture shape) are simply not
+    aggregated by MAX/MIN.
+
+    Returns::
+
+        {"status": "ok",
+         "symbols": [{"ticker": "PETR4", "high_52": 40.10, "low_52": 30.15},
+                     ...],
+         "window_from": "2025-11-26",   # cutoff actually used
+         "ref_date": "2026-11-26"}      # the DB's latest refdate
+
+    "not_synced" when cotahist.db is missing; symbols with no rows in
+    the window are simply absent from ``symbols`` (the caller degrades
+    per-ticker). Invalid shapes are dropped (the _SYMBOL_RE guard).
+    """
+    wanted = sorted({(s or "").strip().upper() for s in symbols
+                     if _SYMBOL_RE.match((s or "").strip().upper())})
+    if not wanted:
+        return {"status": "ok", "symbols": [], "window_from": "",
+                "ref_date": ""}
+
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    try:
+        row = conn.execute(
+            "SELECT MAX(refdate) AS latest FROM cotahist "
+            "WHERE market_type = 10 AND bdi_code IN " + _BDI_IN
+        ).fetchone()
+        latest = (row["latest"] if row else None) or ""
+        if not latest:
+            return {"status": "not_found", "symbols": [],
+                    "window_from": "", "ref_date": ""}
+        # latest is YYYY-MM-DD — the arithmetic rides Python's date.
+        cutoff = (date.fromisoformat(latest) - timedelta(days=_52W_DAYS)
+                  ).isoformat()
+
+        out: list[dict] = []
+        # SQLite's default host-parameter limit is 999 — chunk defensively.
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"""
+                SELECT symbol, MAX(high) AS high_52, MIN(low) AS low_52
+                FROM cotahist
+                WHERE market_type = 10 AND bdi_code IN {_BDI_IN}
+                  AND close IS NOT NULL AND close > 0
+                  AND high IS NOT NULL AND high > 0
+                  AND low IS NOT NULL AND low > 0
+                  AND refdate >= ? AND symbol IN ({marks})
+                GROUP BY symbol
+                """,
+                [cutoff, *chunk],
+            ).fetchall()
+            for r in rows:
+                out.append({
+                    "ticker": (r["symbol"] or "").strip().upper(),
+                    "high_52": float(r["high_52"]) if r["high_52"] else None,
+                    "low_52": float(r["low_52"]) if r["low_52"] else None,
+                })
+    finally:
+        conn.close()
+
+    return {"status": "ok", "symbols": out,
+            "window_from": cutoff, "ref_date": latest}
+
+
+# [v1.28.3] The Painel's ticker KPI cards render a SPARKLINE of the
+# trailing 52 weeks — the same window range_52w() aggregates, as the close
+# SERIES instead of the high/low bounds. The resample cap keeps the payload
+# light (12 cards × 40 points ≈ 480 floats — a full daily series would be
+# ~3.000) while the line still reads as the year's shape: the stride
+# sampling keeps the first point, every Nth close and ALWAYS the last one
+# (the last close is the dot the price tag points at — it must be there).
+_SERIES_MAX_POINTS = 40
+
+
+def series_52w(symbols: list[str],
+               max_points: int = _SERIES_MAX_POINTS) -> dict:
+    """Trailing-52-week CLOSE series per symbol, resampled to max_points.
+
+    Same universe and window anchor as range_52w() (lote padrão,
+    share-like BDIs, close > 0, cutoff on the DB's OWN latest refdate —
+    a stale sync still yields the honest window of the data we have).
+    The series is ASCENDING by date and ends on the symbol's LAST close
+    in the window (the sparkline's right edge = the quoted price).
+
+    Returns::
+
+        {"status": "ok",
+         "symbols": [{"ticker": "PETR4",
+                      "points": [38.10, 37.95, ...],   # ≤ max_points
+                      "last": 38.10}, ...],            # points[-1]
+         "window_from": "2025-11-26",   # cutoff actually used
+         "ref_date": "2026-11-26"}      # the DB's latest refdate
+
+    "not_synced" when cotahist.db is missing; symbols with no rows in
+    the window are simply absent from ``symbols`` (the caller degrades
+    per-ticker). Invalid shapes are dropped (the _SYMBOL_RE guard).
+    """
+    wanted = sorted({(s or "").strip().upper() for s in symbols
+                     if _SYMBOL_RE.match((s or "").strip().upper())})
+    if not wanted:
+        return {"status": "ok", "symbols": [], "window_from": "",
+                "ref_date": ""}
+
+    try:
+        conn = connect(read_only=True)
+    except FileNotFoundError as e:
+        return {"status": "not_synced", "error": str(e)}
+
+    def _resample(closes: list[float]) -> list[float]:
+        """Stride-sample to ≤ max_points, ALWAYS keeping first + last."""
+        n = len(closes)
+        if n <= max_points:
+            return closes
+        step = n / float(max_points)
+        # max_points - 1 stride picks + the last close → ≤ max_points
+        idxs = {int(i * step) for i in range(max_points - 1)}
+        idxs.add(n - 1)          # the sparkline's dot = the last close
+        return [closes[i] for i in sorted(idxs)]
+
+    try:
+        row = conn.execute(
+            "SELECT MAX(refdate) AS latest FROM cotahist "
+            "WHERE market_type = 10 AND bdi_code IN " + _BDI_IN
+        ).fetchone()
+        latest = (row["latest"] if row else None) or ""
+        if not latest:
+            return {"status": "not_found", "symbols": [],
+                    "window_from": "", "ref_date": ""}
+        cutoff = (date.fromisoformat(latest) - timedelta(days=_52W_DAYS)
+                  ).isoformat()
+
+        out: list[dict] = []
+        # SQLite's default host-parameter limit is 999 — chunk defensively.
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i:i + 500]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"""
+                SELECT symbol, refdate, close
+                FROM cotahist
+                WHERE market_type = 10 AND bdi_code IN {_BDI_IN}
+                  AND close IS NOT NULL AND close > 0
+                  AND refdate >= ? AND symbol IN ({marks})
+                ORDER BY symbol, refdate
+                """,
+                [cutoff, *chunk],
+            ).fetchall()
+            by_sym: dict[str, list[float]] = {}
+            for r in rows:
+                by_sym.setdefault((r["symbol"] or "").strip().upper(),
+                                   []).append(float(r["close"]))
+            for sym, closes in by_sym.items():
+                points = _resample(closes)
+                out.append({"ticker": sym, "points": points,
+                            "last": points[-1]})
+    finally:
+        conn.close()
+
+    return {"status": "ok", "symbols": out,
+            "window_from": cutoff, "ref_date": latest}

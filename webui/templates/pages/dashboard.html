@@ -2,33 +2,63 @@
 {% block title %}{{ t("nav.dashboard") }} — Agent{% endblock %}
 {% block content %}
 <div class="page-dashboard">
-  <h1>{{ t("nav.dashboard") }}</h1>
-  <p class="subtitle">{{ t("dashboard.subtitle") }}</p>
+  {# [v1.28.3] The header row — the page title on the left, the ⚙️
+     Gerenciar Painel icon on the TOP-RIGHT corner ("make management box
+     with icon in the top right corner to settle painel settings"). The
+     modal manages the ticker KPI cards (home.ticker_kpis — arrange /
+     add / remove, any share-like instrument), the ranking boxes
+     (home.cards — which ones show and in what order) and the ⭐ Tickers
+     Observados (in the Painel now — no more detour through Carteira). #}
+  <div class="home-head-row">
+    <div>
+      <h1>{{ t("nav.dashboard") }}</h1>
+      <p class="subtitle">{{ t("dashboard.subtitle") }}</p>
+    </div>
+    <button type="button" class="icon-btn home-manage-btn" id="home-manage-btn"
+            title="{{ t('dashboard.manage') }}" aria-label="{{ t('dashboard.manage') }}">⚙️</button>
+  </div>
 
   {# [v1.19] THE LANDING REDESIGN — the sync table that used to open this
      page is GONE (the full panel lives on the Sincronização page; a
      compact collapsed box now sits at the VERY BOTTOM), and so are the
      three hardcoded company suggestions. The page answers "where does
-     Brazil stand?" instead: a BCB SGS KPI row + 5 ranked ticker cards,
-     every row a link into the company page.
-
-     KPI row — Selic (a.a.), IPCA/IGP-M (acumulado 12m), USD/BRL ptax,
-     painted by loadHomeData() from GET /api/webui/home. #}
+     Brazil stand?" instead — [v1.28.3] THREE separate sets, per
+     the user's review:
+       (1) KPIs macro — the small boxes (home.kpis order; the ⚙️ box
+           organizes/hides/adds; the catalog adds the Mercado families'
+           options: CDI, Meta Selic, INPC, Poupança), painted by
+           loadHomeData() from GET /api/webui/home.
+       (2) KPIs de tickers — #home-tickers below, its OWN medium grid.
+       (3) Cards de ranking — #home-cards, full size. #}
   <div id="home-kpis" class="home-kpis">
     <span class="loading">{{ t("dashboard.loading_kpis") }}</span>
   </div>
 
-  {# 5 ticker cards — Top 10 IBOV / SMLL (maiores pesos, quote-enriched),
-     Mais Negócios, Maiores Altas, Maiores Baixas (latest cotahist
-     session). Same payload, same loader. #}
+  {# [v1.28.3] The SECOND set — the ticker KPI cards (ETFs, BDRs,
+     ações, FIIs; home.ticker_kpis order) in their OWN grid: ranking-card
+     width, MEDIUM length ("in length a bit bigger to display more info,
+     bigger than before, smaller than now") — the price pill (the Ações
+     22-range palette), the 52-week position bar, Máx/Mín 52 sem and the
+     day's volume. Never stretched alongside the ranking boxes. #}
+  <div id="home-tickers" class="home-tk-grid">
+    <span class="loading">{{ t("dashboard.loading_cards") }}</span>
+  </div>
+
+  {# [v1.28.3] The THIRD set — the ranking boxes at FULL size
+     (home.cards order — Top 10 IBOV/SMLL by weight; Mais Negócios,
+     Maiores Volumes, Maiores Altas/Baixas, the BDR altas/QUEDAS slices
+     from the latest cotahist session). Every price wears the palette
+     pill. Same payload, same loader. #}
   <div id="home-cards" class="home-grid">
     <span class="loading">{{ t("dashboard.loading_cards") }}</span>
   </div>
 
   {# [v1.21] Carteira widget — watched accounts + watchlist tickers
      (GET /api/webui/portfolio/overview; loadPortfolioWidget() in app.js).
-     Renders NOTHING when no account is watched and the watchlist is
-     empty — the landing page stays exactly as v1.19 left it. #}
+     [v1.28.3] the ⭐ table gained the Máx/Mín 52 sem columns and its
+     "Gerenciar" opens the ⚙️ box above (data-hm-open="watch") instead of
+     navigating to /webui/carteira. Renders NOTHING when no account is
+     watched and the watchlist is empty. #}
   <div id="home-portfolio" class="home-portfolio-slot"></div>
 
   {# [v1.7] Pre-flight banner — one-line system diagnosis (DBs, schema,
@@ -58,4 +88,23 @@
     <span class="loading">{{ t("sync.checking") }}</span>
   </div>
 </div>
+
+{# ── [v1.28.3] ⚙️ Gerenciar Painel — the settings box. The carteira
+     manage-modal pattern (wide dialog, .cart-manage-body the ONE
+     scroller, pinned title + Fechar); initHomeManage() in app.js owns
+     the state, the delegated wiring and the immediate-save flow. ── #}
+<dialog id="home-manage-modal" class="cart-modal cart-modal-wide"
+        aria-labelledby="home-manage-title">
+  <div class="cart-modal-col">
+    <h3 id="home-manage-title">⚙️ {{ t("dashboard.manage") }}</h3>
+    <div id="home-manage-body" class="cart-manage-body">
+      <span class="loading">{{ t("dashboard.loading_manage") }}</span>
+    </div>
+    <div class="cart-modal-actions">
+      <span class="cart-modal-msg" id="home-manage-msg"></span>
+      <button type="button" value="close" class="cart-btn"
+              data-close>{{ t("common.close") }}</button>
+    </div>
+  </div>
+</dialog>
 {% endblock %}

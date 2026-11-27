@@ -3444,7 +3444,16 @@ function valSectionHtml(sec) {
     (sec.rows || []).forEach(function(row) {
       h += '<tr>';
       (row || []).forEach(function(cell, ci) {
-        if (cell && typeof cell === 'object' && cell.pill) {
+        if (cell && typeof cell === 'object' && cell.price) {
+          // [v1.28.3] PRICE-BAND cells — the Ações 22-range
+          // palette chip on a table's MAIN price (contract.price_pill's
+          // {pill, text, range} riding the cell; acoes.py's Última
+          // column). Same solid-chip rendering as the Painel's pills;
+          // the cell's own tooltip (the faixa) wins over the pill's
+          // default (both name the range).
+          h += '<td' + (ci > 0 ? ' class="val-val"' : '') + '>' +
+            homePricePill(cell.price, cell.text) + '</td>';
+        } else if (cell && typeof cell === 'object' && cell.pill) {
           // [v1.26.1] Colored pill cells — the Insiders cargo/tipo
           // vocabulary (each value its own color, stable across the
           // Movimentações / Por Cargo / Por Tipo subtabs). The color
@@ -5142,7 +5151,15 @@ function cmpGridHtml(data) {
         '</th>';
       row.values.forEach(function(v, i) {
         var isBest = row.best && row.best.indexOf(i) >= 0;
-        html += '<td class="cmp-cell' + (isBest ? ' cmp-best' : '') + '">' + esc(v) +
+        // [v1.28.3] The Última Cotação row's cells wear the
+        // price-band pills (server-computed row.pills — one per cell,
+        // None where there's no price); every other metric row stays
+        // plain (the scheme is for MAIN prices, and this row IS the
+        // price row).
+        var cellHtml = (row.pills && row.pills[i])
+          ? homePricePill(row.pills[i], v)
+          : esc(v);
+        html += '<td class="cmp-cell' + (isBest ? ' cmp-best' : '') + '">' + cellHtml +
           (isBest ? ' <span class="cmp-bestbadge" title="melhor da linha">✓</span>' : '') +
           '</td>';
       });
@@ -5886,8 +5903,13 @@ function _scrBestMap(rows) {
 
 function _scrCell(r, i, best, key, extraCls) {
   var isBest = !!(best[key] && best[key].indexOf(i) >= 0);
+  // [v1.28.3] The Preço column (the row's MAIN price) wears the
+  // band pill (server-computed price_pill); every multiple stays plain.
+  var inner = (key === 'price' && r.price_pill)
+    ? homePricePill(r.price_pill, r[key])
+    : esc(r[key]);
   return '<td class="' + (extraCls ? extraCls + ' ' : '') + 'scr-cell' +
-    (isBest ? ' scr-best' : '') + '">' + esc(r[key]) +
+    (isBest ? ' scr-best' : '') + '">' + inner +
     (isBest ? ' <span class="cmp-bestbadge" title="melhor da coluna">✓</span>' : '') +
     '</td>';
 }
@@ -6088,8 +6110,9 @@ function scrMountCharts(box, data) {
 var _homeReq = null;
 window.loadHomeData = function() {
   var kpiBox = document.getElementById('home-kpis');
+  var tickersBox = document.getElementById('home-tickers');
   var cardsBox = document.getElementById('home-cards');
-  if (!kpiBox && !cardsBox) return;
+  if (!kpiBox && !tickersBox && !cardsBox) return;
   if (_homeReq && _homeReq.box === kpiBox) return;   // this pane: in flight or done
   var req = { box: kpiBox, done: false };
   _homeReq = req;
@@ -6097,15 +6120,29 @@ window.loadHomeData = function() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       req.done = true;
-      renderHome(kpiBox, cardsBox, data);
+      renderHome(kpiBox, tickersBox, cardsBox, data);
     })
     .catch(function(err) {
       if (_homeReq === req) _homeReq = null;   // allow a later trigger to retry
       var msg = '<div class="error">Erro: ' + esc(err.message) + '</div>';
       if (kpiBox) kpiBox.innerHTML = msg;
+      if (tickersBox) tickersBox.innerHTML = msg;
       if (cardsBox) cardsBox.innerHTML = msg;
     });
 };
+
+// [v1.28.3] The price pill — the Ações family's 22-range palette
+// (server-computed {pill, text, range}; the palette lives in Python —
+// skills/_colors/price.py, the acoes.py precedent — the client only
+// renders). Solid band chip in the Insiders cargo/tipo pill shape:
+// rounded, bold, mono, the range label in the tooltip.
+function homePricePill(price, value, cls) {
+  if (!price) return valEsc(value);
+  return '<span class="home-price-pill' + (cls || '') + '" style="background:' +
+    safeColor(price.pill) + ';color:' + safeColor(price.text) +
+    '" title="Faixa de preço (Ações): ' + valEsc(price.range) + '">' +
+    valEsc(value) + '</span>';
+}
 
 function homeTickerRow(item) {
   var v = item.variation;
@@ -6117,18 +6154,37 @@ function homeTickerRow(item) {
             : (v.charAt(0) === '+' ? 'val-pos' : 'val-zero');
     vHtml = '<span class="' + cls + '">' + valEsc(v) + '</span>';
   }
-  var extra = item.extra
-    ? '<span class="tk-extra" title="' + valEsc(item.extra.label || '') + '">' +
-      valEsc(item.extra.text) + '</span>'
-    : '';
-  return '<a class="ticker-row' + (item.extra ? ' has-extra' : '') +
-         '" href="/webui/company/' +
-         encodeURIComponent(item.ticker) + '">' +
+  // [v1.28.3] The STANDARDIZED row — "ticker - that extra info -
+  // price - %" (the user's ask): the SECOND slot carries the card's
+  // context (peso / negócios / volume — the label in the tooltip) and
+  // falls back to the NAME for the cards with no extra (altas/baixas
+  // and the BDR twins — "volume or peso or negocios or name"). The
+  // PRICE is always the main value and always wears the palette pill
+  // (the volumes card included — its cotação IS the main price now,
+  // the volume rides the info slot).
+  var valHtml = homePricePill(item.price, item.value);
+  var infoHtml;
+  if (item.extra) {
+    infoHtml = item.extra.price
+      ? homePricePill(item.extra.price, item.extra.text, ' home-price-pill-xs')
+      : valEsc(item.extra.text);
+  } else {
+    infoHtml = '<span class="tk-name" title="' + valEsc(item.name) + '">' +
+      valEsc(item.name) + '</span>';
+  }
+  // [v1.28.3] The extra's tooltip carries the VALUE ("the tooltip
+  // should be Volume - Value") — exactly "volume — R$ 1,87 bi", no
+  // company name: the info slot ellipsizes, so the tooltip is the one
+  // place the whole volume reads.
+  var infoTip = item.extra
+    ? (valEsc(item.extra.label || '') + ' — ' + valEsc(item.extra.text || ''))
+    : valEsc(item.name);
+  return '<a class="ticker-row" href="/webui/company/' +
+         encodeURIComponent(item.ticker) + '" title="' + infoTip + '">' +
     '<span class="tk">' + valEsc(item.ticker) + '</span>' +
-    '<span class="tk-name" title="' + valEsc(item.name) + '">' + valEsc(item.name) + '</span>' +
-    '<span class="tk-val">' + valEsc(item.value) + '</span>' +
+    '<span class="tk-info" title="' + infoTip + '">' + infoHtml + '</span>' +
+    '<span class="tk-val">' + valHtml + '</span>' +
     '<span class="tk-var">' + vHtml + '</span>' +
-    extra +
     '</a>';
 }
 
@@ -6150,41 +6206,149 @@ function homeCard(card) {
   return h + '</div>';
 }
 
-function homeEtfHtml(etfs) {
-  // [v1.28.1] The ETF row — BOVA11 / SMAL11 / IVVB11 with the day %
-  // ("add kpi to BOVA11 SMAL11 IVVB11 with the % it rose or fell").
-  // Colorized by the leading sign — the ticker-row variation contract.
-  if (!etfs || !etfs.length) return '';
-  var h = '<div class="home-etfs">';
-  etfs.forEach(function(e) {
-    var v = e.variation;
-    var cls = v === null || v === undefined ? 'val-zero'
-      : (v.charAt(0) === '-' ? 'val-neg' : (v.charAt(0) === '+' ? 'val-pos' : 'val-zero'));
-    h += '<div class="home-etf-card" title="' + valEsc(e.tooltip || '') + '">' +
-      '<span class="home-etf-tk">' + valEsc(e.ticker) + '</span>' +
-      '<span class="home-etf-val">' + valEsc(e.value) + '</span>' +
-      '<span class="home-etf-var ' + cls + '">' +
-      (v === null || v === undefined ? '—' : valEsc(v)) + '</span>' +
-      '</div>';
-  });
-  return h + '</div>';
+// [v1.28.3] The ticker card's CHART — the middle band: an inline SVG
+// of the 52-week close series (server-shipped, ≤40 points), stretched
+// to the FULL card width (preserveAspectRatio="none" +
+// vector-effect keeps the stroke uniform), a soft green fill under
+// the line (the mockup's tinted chart) and a DASHED REFERENCE LINE
+// marking the last close ("the chart has a line in the value instead
+// of displaying the value over the chart") — the price itself lives
+// in the header band's pill; the line only shows WHERE it sits on the
+// series, painted with the price-band palette so pill + reference
+// line + the position bar under the chart read as one scheme.
+function homeSparkHtml(spark, price) {
+  if (!spark || spark.length < 2) {
+    // No series (unsynced window / degraded symbol) — the empty state
+    // keeps the middle band's height so the card doesn't collapse.
+    return '<div class="home-tk-spark is-empty" title="Série de 52 semanas indisponível">' +
+      '<span class="muted">—</span></div>';
+  }
+  var W = 100, H = 40, PAD = 3;
+  var lo = Math.min.apply(null, spark);
+  var hi = Math.max.apply(null, spark);
+  var span = (hi - lo) || 1;
+  var n = spark.length;
+  var pts = [];
+  for (var i = 0; i < n; i++) {
+    var x = n > 1 ? (i / (n - 1)) * W : 0;
+    var y = PAD + (1 - (spark[i] - lo) / span) * (H - 2 * PAD);
+    pts.push(x.toFixed(2) + ',' + y.toFixed(2));
+  }
+  var lastY = parseFloat(pts[n - 1].split(',')[1]);
+  // The soft area under the line (down to the chart's floor).
+  var area = '0,' + H + ' ' + pts.join(' ') + ' ' + W + ',' + H;
+  // The value's reference line — dashed, in the band color when the
+  // palette knows the price (plain neutral gray when it doesn't).
+  var refStyle = price
+    ? ' style="stroke:' + safeColor(price.pill) + '"'
+    : '';
+  return '<div class="home-tk-spark" title="Fechamentos das últimas 52 semanas — a linha tracejada marca o último fechamento">' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" ' +
+      'aria-hidden="true" focusable="false">' +
+      '<polygon class="home-tk-spark-area" points="' + area + '"/>' +
+      '<line class="home-tk-spark-ref" x1="0" x2="' + W + '" y1="' +
+        lastY.toFixed(2) + '" y2="' + lastY.toFixed(2) + '"' +
+        ' vector-effect="non-scaling-stroke"' + refStyle + '/>' +
+      '<polyline class="home-tk-spark-line" points="' + pts.join(' ') + '"' +
+        ' vector-effect="non-scaling-stroke"/>' +
+    '</svg></div>';
 }
 
-function renderHome(kpiBox, cardsBox, data) {
+function homeTickerCard(tc) {
+  // [v1.28.3] The ticker KPI card reads in THREE HORIZONTAL BANDS
+  // (the user's mockup, top → bottom): the HEADER — ticker + badge +
+  // name on the left, the price PILL and the day % right-aligned;
+  // the CHART — the green 52-week line across the FULL card width
+  // with the value's dashed reference line, the 52-week POSITION bar
+  // under it ("keep that progression bar under the chart with posição
+  // do range de 52 semanas"); the STATS — Mín 52 sem (first), Máx 52
+  // sem, Volume (dia), label left / value right. ANY share-like
+  // instrument (home.ticker_kpis: ações, FIIs, ETFs, BDRs). The whole
+  // card links to the company page — the landing page is a launcher.
+  var v = tc.variation;
+  var cls = v === null || v === undefined ? 'val-zero'
+    : (v.charAt(0) === '-' ? 'val-neg' : (v.charAt(0) === '+' ? 'val-pos' : 'val-zero'));
+  var priceHtml = tc.price
+    ? homePricePill(tc.price, tc.value, ' home-price-pill-lg')
+    : '<span class="home-tk-price">' + valEsc(tc.value) + '</span>';
+  // The 52-week position bar — fill width = pos_52%, the fill painted
+  // with the price band color (the scheme reads as one: pill + line +
+  // bar).
+  var barHtml = '';
+  if (tc.pos_52 !== null && tc.pos_52 !== undefined && tc.price) {
+    barHtml = '<div class="home-tk-bar" title="Posição no range de 52 semanas: ' +
+      tc.pos_52 + '%">' +
+      '<div class="home-tk-bar-fill" style="width:' + Math.max(2, Math.min(100, tc.pos_52)) +
+      '%;background:' + safeColor(tc.price.pill) + '"></div></div>';
+  } else {
+    barHtml = '<div class="home-tk-bar is-empty" title="Range de 52 semanas indisponível">' +
+      '</div>';
+  }
+  return '<a class="home-card home-tk-card" href="/webui/company/' +
+    encodeURIComponent(tc.ticker) + '" title="' + valEsc(tc.tooltip || '') + '">' +
+    '<div class="home-tk-stack">' +
+      '<div class="home-tk-head">' +
+        '<div class="home-tk-head-id">' +
+          '<div class="home-tk-tkline">' + valEsc(tc.ticker) +
+            (tc.kind ? '<span class="home-tk-kind">' + valEsc(tc.kind) + '</span>' : '') +
+          '</div>' +
+          (tc.name ? '<div class="home-tk-name" title="' + valEsc(tc.name) + '">' +
+            valEsc(tc.name) + '</div>' : '<div class="home-tk-name">&nbsp;</div>') +
+        '</div>' +
+        '<div class="home-tk-head-quote">' +
+          '<div class="home-tk-quote">' + priceHtml + '</div>' +
+          '<div class="home-tk-var ' + cls + '">' +
+            (v === null || v === undefined ? '—' : valEsc(v)) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="home-tk-chart">' +
+        homeSparkHtml(tc.spark, tc.price) +
+        barHtml +
+      '</div>' +
+      '<div class="home-tk-meta">' +
+        '<div class="home-tk-meta-row"><span>Mín 52 sem</span>' +
+          '<span class="home-tk-rval">' +
+          (tc.low_52 ? valEsc(tc.low_52) : '—') + '</span></div>' +
+        '<div class="home-tk-meta-row"><span>Máx 52 sem</span>' +
+          '<span class="home-tk-rval">' +
+          (tc.high_52 ? valEsc(tc.high_52) : '—') + '</span></div>' +
+        '<div class="home-tk-meta-row"><span>Volume (dia)</span>' +
+          '<span class="home-tk-rval">' +
+          (tc.volume ? valEsc(tc.volume) : '—') + '</span></div>' +
+      '</div>' +
+    '</div></a>';
+}
+
+function renderHome(kpiBox, tickersBox, cardsBox, data) {
   if (data._error) {
-    if (kpiBox) kpiBox.innerHTML = '<div class="error">' + esc(data._error) + '</div>';
+    var errMsg = '<div class="error">' + esc(data._error) + '</div>';
+    if (kpiBox) kpiBox.innerHTML = errMsg;
+    if (tickersBox) tickersBox.innerHTML = '';
     if (cardsBox) cardsBox.innerHTML = '';
     return;
   }
+  // [v1.28.3] The payload stays on the window — the ⚙️ Gerenciar Painel
+  // box reads card_catalog + kpi_catalog from it (no second fetch when
+  // it's warm).
+  window._homeData = data;
   if (kpiBox) {
+    // [v1.28.3] The FIRST set — the macro KPI cards (home.kpis
+    // order; small boxes, as they always were).
     kpiBox.innerHTML =
       (data.kpis && data.kpis.length ? valKpisHtml(data.kpis) : '') +
-      homeEtfHtml(data.etfs) +
       (data.kpis_note
         ? '<div class="home-note">' + valEsc(data.kpis_note) + '</div>'
         : '');
   }
+  if (tickersBox) {
+    // [v1.28.3] The SECOND set — the ticker KPI cards in their
+    // OWN grid (home.ticker_kpis order): ranking-card width, medium
+    // length, richer than the v1.28.1 strips.
+    tickersBox.innerHTML = (data.ticker_cards || []).map(homeTickerCard).join('');
+  }
   if (cardsBox) {
+    // [v1.28.3] The THIRD set — the ranking boxes at FULL size
+    // (home.cards order), never stretched alongside the ticker cards.
     cardsBox.innerHTML = (data.cards || []).map(homeCard).join('');
   }
 }
@@ -6947,6 +7111,12 @@ function initCarteiraPage() {
       var staleFlag = r.stale_quote && r.quote_date
         ? ' ' + flagHtml('🕰️', 'Cotação de ' + esc(fmtDate(r.quote_date)) +
                          ' — o papel não negociou na última sessão.') : '';
+      // [v1.28.3] The Valor Hoje (the row's MAIN price) wears
+      // the band pill; PM (a cost basis, not a market price) stays
+      // plain — "just apply to main price".
+      var priceCell = r.price_pill
+        ? homePricePill(r.price_pill, r.price) + staleFlag
+        : valNumHtml(r.price) + staleFlag;
       var sellTitle = r.short
         ? '❌ Vender mais ' + esc(r.ticker) + ' (aumentar o short)'
         : '❌ Vender ' + esc(r.ticker) + ' — fecha a posição (ajuste a quantidade para vender menos)';
@@ -6961,7 +7131,7 @@ function initCarteiraPage() {
         '<td class="cart-name">' + esc(r.name) + '</td>' +
         '<td class="cart-sector" title="' + esc(r.sector) + '">' + esc(r.sector) + '</td>' +
         '<td class="val-val">' + pmCell + '</td>' +
-        '<td class="val-val">' + valNumHtml(r.price) + staleFlag + '</td>' +
+        '<td class="val-val">' + priceCell + '</td>' +
         '<td class="val-val">' + qtyCell + '</td>' +
         '<td class="val-val">' + valNumHtml(r.cost) + '</td>' +
         '<td class="val-val">' + valNumHtml(r.value) + '</td>' +
@@ -9101,9 +9271,9 @@ function initCarteiraPage() {
 // first — it is NOT part of Minhas Carteiras) then 💼 Minhas Carteiras
 // (contas observadas grouped by user, per-user subtotals — never across
 // users). The old single "Minhas Carteiras" box mixed both. ─────────────
-function loadPortfolioWidget() {
+function loadPortfolioWidget(force) {
   var box = document.getElementById('home-portfolio');
-  if (!box || box._booted) return;
+  if (!box || (box._booted && !force)) return;
   box._booted = true;
   fetch('/api/webui/portfolio/overview?_t=' + Date.now())
     .then(function(r) { return r.json(); })
@@ -9112,23 +9282,59 @@ function loadPortfolioWidget() {
       var html = '';
 
       // ⭐ Tickers observados — own box, FIRST.
+      // [v1.28.3] the ⭐ Máx/Mín 52 sem columns join the table ("add
+      // more info like max and min 52 weeks") and "Gerenciar" opens
+      // the ⚙️ box IN the Painel (data-hm-open="watch" → the modal's ⭐
+      // section) — the old link detoured through /webui/carteira
+      // ("clicking from painel Gerenciar goes to …/carteira / it should
+      // open a management box to do it in painel, not in carteira").
+      // The row read: SETOR after the name; each pair closed by its
+      // variation — Mín (dia) · Máx (dia) · Var. (dia), then Mín (52) ·
+      // Máx (52) · Var. (52) (the 52s Mín-first, wearing parentheses).
+      // Every min/max stays PLAIN (the main-price-only rule — only the
+      // Preço wears the band pill).
       if (d.tickers && d.tickers.length) {
         html += '<div class="cart-widget"><div class="cart-widget-head"><h2>⭐ Tickers Observados' +
           (d.session_date ? ' <span class="cart-widget-sub">· pregão ' + esc(d.session_date) + '</span>' : '') +
-          '</h2><a class="cart-widget-link" href="/webui/carteira">Gerenciar ⭐ →</a></div>';
+          '</h2><button type="button" class="cart-widget-link hm-open-btn" data-hm-open="watch">⚙️ Gerenciar ⭐</button></div>';
         if (d.quotes_note) html += '<div class="home-note">' + esc(d.quotes_note) + '</div>';
-        html += '<table class="val-table"><thead><tr><th>Ticker</th><th>Nome</th>' +
-          '<th class="th-num">Preço</th><th class="th-num">Var. dia</th></tr></thead><tbody>' +
+        html += '<div class="cart-table-wrap"><table class="val-table"><thead><tr><th>Ticker</th><th>Nome</th><th>Setor</th>' +
+          '<th class="th-num">Preço</th>' +
+          '<th class="th-num">Mín (dia)</th><th class="th-num">Máx (dia)</th><th class="th-num">Var. (dia)</th>' +
+          '<th class="th-num">Mín (52)</th><th class="th-num">Máx (52)</th><th class="th-num">Var. (52)</th></tr></thead><tbody>' +
           d.tickers.map(function(t) {
             var v = t.variation;
             var cls = v && v.charAt(0) === '-' ? 'val-neg'
                     : (v && v.charAt(0) === '+' ? 'val-pos' : 'val-zero');
+            // The Preço (the row's MAIN price) wears the band pill —
+            // Máx/Mín (dia/52) stay plain ("if it has multiple prices
+            // like min, max… just apply to main price").
+            var priceCell = t.price_pill
+              ? homePricePill(t.price_pill, t.price)
+              : valNumHtml(t.price);
+            // Setor — the CVM/FCA sector cached in the cadastro
+            // (ellipsized at 170px, the full text on hover); the day's
+            // Mín/Máx ride the quote's OWN session high/low.
+            var setorCell = t.sector
+              ? '<td class="cart-sector" title="' + esc(t.sector) + '">' + esc(t.sector) + '</td>'
+              : '<td class="cart-sector"><span class="muted">—</span></td>';
+            // Var. (52) — the 52-week variation (the window's first
+            // close vs the last), colored like the day one.
+            var v52 = t.var_52;
+            var cls52 = v52 && v52.charAt(0) === '-' ? 'val-neg'
+                      : (v52 && v52.charAt(0) === '+' ? 'val-pos' : 'val-zero');
             return '<tr><td class="cart-tk"><a href="/webui/company/' +
               encodeURIComponent(t.ticker) + '">' + esc(t.ticker) + '</a></td>' +
               '<td class="cart-name" title="' + esc(t.name) + '">' + esc(t.name) + '</td>' +
-              '<td class="val-val">' + valNumHtml(t.price) + '</td>' +
-              '<td class="val-val"><span class="' + cls + '">' + esc(v || '—') + '</span></td></tr>';
-          }).join('') + '</tbody></table></div>';
+              setorCell +
+              '<td class="val-val">' + priceCell + '</td>' +
+              '<td class="val-val">' + (t.low_day ? valNumHtml(t.low_day) : '<span class="muted">—</span>') + '</td>' +
+              '<td class="val-val">' + (t.high_day ? valNumHtml(t.high_day) : '<span class="muted">—</span>') + '</td>' +
+              '<td class="val-val"><span class="' + cls + '">' + esc(v || '—') + '</span></td>' +
+              '<td class="val-val">' + (t.low_52 ? valNumHtml(t.low_52) : '<span class="muted">—</span>') + '</td>' +
+              '<td class="val-val">' + (t.high_52 ? valNumHtml(t.high_52) : '<span class="muted">—</span>') + '</td>' +
+              '<td class="val-val">' + (v52 ? '<span class="' + cls52 + '">' + esc(v52) + '</span>' : '<span class="muted">—</span>') + '</td></tr>';
+          }).join('') + '</tbody></table></div></div>';
       }
 
       // 💼 Minhas Carteiras — contas observadas, grouped by user.
@@ -9184,6 +9390,431 @@ function loadPortfolioWidget() {
       });
     })
     .catch(function() { box.innerHTML = ''; });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ── [v1.28.3] ⚙️ Gerenciar Painel — the settings box ─────────────────────
+// The icon in the Painel's TOP-RIGHT corner ("make management box with
+// icon in the top right corner to settle painel settings") opens a modal
+// with the three managed things:
+//   📊 KPIs de tickers   home.ticker_kpis — arrange (▲▼) / add / remove,
+//                        ANY share-like instrument (ações, FIIs, ETFs,
+//                        BDRs) — the quote cards render in their OWN
+//                        medium-sized grid between the macro KPIs and
+//                        the rankings.
+//   📈 KPIs macro       [v1.28.3] home.kpis — the FIRST set (the
+//                        small boxes): which catalog entries show and in
+//                        what ORDER, with the hidden options below (+
+//                        to add) — the Mercado families' new KPIs live
+//                        there (CDI, Meta Selic, INPC, Poupança).
+//   🃏 Cards de ranking  home.cards — which boxes show (☑) and in what
+//                        ORDER (▲▼); the hidden ones wait below with a
+//                        + to come back (at the end of the row).
+//   ⭐ Tickers Observados the watchlist — managed IN the Painel now (the
+//                        old "Gerenciar" link detoured through Carteira).
+// Every mutation saves IMMEDIATELY (the carteira manage-modal precedent
+// — no dirty-state concept) and the Painel reloads behind the modal:
+// _homeReq is reset so loadHomeData() refetches, and the memo key on
+// the server (kpis + ticker_kpis + cards) busts the 60s payload cache.
+// ═════════════════════════════════════════════════════════════════════════
+var _HM_TICKER_RE = /^[A-Z]{4,6}\d{1,2}[A-Z]?$/;   // validators.TICKER_RE
+
+function initHomeManage() {
+  var btn = document.getElementById('home-manage-btn');
+  var dlg = document.getElementById('home-manage-modal');
+  if (!btn || !dlg || dlg._booted) return;
+  dlg._booted = true;
+
+  var st = { kpiKeys: [], kpiCatalog: [], kpis: [], cards: [], catalog: [],
+             watch: [], loaded: false, loadError: false };
+
+  function msg(text) {
+    var el = document.getElementById('home-manage-msg');
+    if (el) el.textContent = text || '';
+  }
+
+  function refreshPainel() {
+    // settings changed → the memo key changed → force the refetch
+    _homeReq = null;
+    loadHomeData();
+    loadPortfolioWidget(true);
+  }
+
+  function saveLayout() {
+    fetch('/api/webui/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        'home.kpis': st.kpiKeys,
+        'home.ticker_kpis': st.kpis,
+        'home.cards': st.cards,
+      }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(j) {
+        if (!j || !j.ok) {
+          msg((j && j.errors &&
+               (j.errors['home.kpis'] || j.errors['home.ticker_kpis'] ||
+                j.errors['home.cards'])) ||
+              'Erro ao salvar.');
+          return;
+        }
+        msg('✅ Salvo');
+        refreshPainel();
+      })
+      .catch(function() { msg('Erro ao salvar.'); });
+  }
+
+  function title(key) {
+    for (var i = 0; i < st.catalog.length; i++) {
+      if (st.catalog[i].key === key) return st.catalog[i].title;
+    }
+    return key;
+  }
+
+  // [v1.28.3] the macro-KPI catalog lookup (📈)
+  function kpiTitle(key) {
+    for (var i = 0; i < st.kpiCatalog.length; i++) {
+      if (st.kpiCatalog[i].key === key) return st.kpiCatalog[i].title;
+    }
+    return key;
+  }
+
+  function moveBtns(list, i, attr) {
+    return '<button class="cart-icon-btn" data-hm-up="' + attr + i + '"' +
+        (i === 0 ? ' disabled' : '') + ' title="▲ Mover para cima">▲</button>' +
+      '<button class="cart-icon-btn" data-hm-down="' + attr + i + '"' +
+        (i === list.length - 1 ? ' disabled' : '') +
+        ' title="▼ Mover para baixo">▼</button>';
+  }
+
+  function render() {
+    var body = document.getElementById('home-manage-body');
+    if (!body) return;
+    // A failed settings load must NOT render empty lists — the next
+    // mutation would save them and wipe the user's layout.
+    if (st.loadError) {
+      body.innerHTML = '<p class="cart-muted">⚠️ Não foi possível carregar ' +
+        'as configurações — feche e abra de novo.</p>';
+      return;
+    }
+    var h = '';
+
+    // 📈 KPIs macro — [v1.28.3] the FIRST set: which macro cards
+    // show and in what order; the hidden catalog options below (+ to
+    // add — the Mercado families' new KPIs live there).
+    var hiddenKpis = st.kpiCatalog
+      .map(function(c) { return c.key; })
+      .filter(function(k) { return st.kpiKeys.indexOf(k) < 0; });
+    h += '<section class="cart-manage-sec" data-hm-sec="macro"><h4>📈 KPIs macro</h4>' +
+      '<p class="cart-muted">💡 Os KPIs do topo do Painel, em ordem — as ' +
+      'opções novas vêm das famílias do Mercado: CDI e Meta Selic ' +
+      '(Juros), INPC (Inflação) e Poupança.</p>';
+    h += st.kpiKeys.length
+      ? '<ul class="cart-manage-list">' + st.kpiKeys.map(function(k, i) {
+          return '<li><label class="hm-card-label">' +
+            '<input type="checkbox" checked data-hm-macro="' + esc(k) + '">' +
+            '<span class="cart-mname">' + esc(kpiTitle(k)) + '</span></label>' +
+            '<span class="cart-actions">' + moveBtns(st.kpiKeys, i, 'm') +
+            '<button class="cart-icon-btn" data-hm-del-m="' + i +
+            '" title="🗑️ Ocultar KPI">🗑️</button></span></li>';
+        }).join('') + '</ul>'
+      : '<p class="cart-muted">Nenhum KPI — o Painel abre direto nos cards ' +
+        'de tickers.</p>';
+    if (hiddenKpis.length) {
+      h += '<div class="hm-hidden-row"><span class="hm-hidden-title">Ocultos:</span>' +
+        hiddenKpis.map(function(k) {
+          return '<button class="cart-btn hm-enable" data-hm-showm="' + esc(k) +
+            '" title="Mostrar no Painel">+ ' + esc(kpiTitle(k)) + '</button>';
+        }).join('') + '</div>';
+    }
+    h += '</section>';
+
+    // 📊 KPIs de tickers
+    h += '<section class="cart-manage-sec" data-hm-sec="kpis"><h4>📊 KPIs de tickers</h4>' +
+      '<p class="cart-muted">💡 Cards de cotação (tamanho médio, na própria ' +
+      'faixa entre os KPIs macro e os rankings) — ações, FIIs, ETFs e ' +
+      'BDRs (ex.: PETR4, HGBS11, BOVA11, AAPL34).</p>' +
+      '<div class="cart-watch-add">' +
+      '<input type="text" id="hm-kpi-input" maxlength="8" placeholder="PETR4" ' +
+      'style="text-transform: uppercase;" aria-label="Ticker do KPI">' +
+      '<button class="cart-btn" id="hm-kpi-add">➕ Adicionar</button></div>';
+    h += st.kpis.length
+      ? '<ul class="cart-manage-list">' + st.kpis.map(function(tk, i) {
+          return '<li><span class="cart-mname cart-tk">' + esc(tk) + '</span>' +
+            '<span class="cart-actions">' + moveBtns(st.kpis, i, 'k') +
+            '<button class="cart-icon-btn" data-hm-del-k="' + i +
+            '" title="🗑️ Remover KPI">🗑️</button></span></li>';
+        }).join('') + '</ul>'
+      : '<p class="cart-muted">💡 Nenhum KPI — adicione um ticker acima.</p>';
+    h += '</section>';
+
+    // 🃏 Cards de ranking — the visible ones (order + uncheck) then the
+    // hidden ones (a + re-enables, at the end of the row).
+    var hidden = st.catalog
+      .map(function(c) { return c.key; })
+      .filter(function(k) { return st.cards.indexOf(k) < 0; });
+    h += '<section class="cart-manage-sec" data-hm-sec="cards"><h4>🃏 Cards de ranking</h4>' +
+      '<p class="cart-muted">💡 Marque as caixas que aparecem no Painel e ' +
+      'ordene com ▲▼ — cada mudança salva na hora.</p>';
+    h += st.cards.length
+      ? '<ul class="cart-manage-list">' + st.cards.map(function(k, i) {
+          return '<li><label class="hm-card-label">' +
+            '<input type="checkbox" checked data-hm-card="' + esc(k) + '">' +
+            '<span class="cart-mname">' + esc(title(k)) + '</span></label>' +
+            '<span class="cart-actions">' + moveBtns(st.cards, i, 'c') +
+            '<button class="cart-icon-btn" data-hm-del-c="' + i +
+            '" title="🗑️ Ocultar card">🗑️</button></span></li>';
+        }).join('') + '</ul>'
+      : '<p class="cart-muted">Nenhuma caixa visível — o Painel mostra só ' +
+        'os KPIs de tickers.</p>';
+    if (hidden.length) {
+      h += '<div class="hm-hidden-row"><span class="hm-hidden-title">Ocultas:</span>' +
+        hidden.map(function(k) {
+          return '<button class="cart-btn hm-enable" data-hm-show="' + esc(k) +
+            '" title="Mostrar no Painel">+ ' + esc(title(k)) + '</button>';
+        }).join('') + '</div>';
+    }
+    h += '</section>';
+
+    // ⭐ Tickers Observados — the watchlist, IN the Painel
+    h += '<section class="cart-manage-sec" data-hm-sec="watch"><h4>⭐ Tickers Observados</h4>' +
+      '<p class="cart-muted">💡 Os tickers acompanhados no Painel — com ' +
+      'cotação, variação do dia e máx/mín de 52 semanas.</p>' +
+      '<div class="cart-watch-add">' +
+      '<input type="text" id="hm-watch-input" maxlength="8" placeholder="PETR4" ' +
+      'style="text-transform: uppercase;" aria-label="Ticker observado">' +
+      '<button class="cart-btn" id="hm-watch-add">➕ Adicionar</button></div>';
+    h += st.watch.length
+      ? '<ul class="cart-manage-list">' + st.watch.map(function(tk) {
+          return '<li><span class="cart-mname cart-tk">' + esc(tk) + '</span>' +
+            '<span class="cart-actions">' +
+            '<button class="cart-icon-btn" data-hm-del-w="' + esc(tk) +
+            '" title="🗑️ Remover dos observados">🗑️</button></span></li>';
+        }).join('') + '</ul>'
+      : '<p class="cart-muted">💡 Nenhum ticker observado — adicione acima ' +
+        'ou pela ⭐ na página da empresa.</p>';
+    h += '</section>';
+
+    body.innerHTML = h;
+  }
+
+  // ── state loaders ─────────────────────────────────────────────────────
+  function loadState(cb) {
+    var jobs = 3;
+    st.loadError = false;
+    function done() { if (--jobs === 0) { st.loaded = true; if (cb) cb(); } }
+    fetch('/api/webui/settings?_t=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(j) {
+        var vals = {};
+        (j && j.sections || []).forEach(function(s) {
+          (s.settings || []).forEach(function(x) { vals[x.key] = x.value; });
+        });
+        // [v1.28.3] home.kpis joined (the 📈 macro list)
+        st.kpiKeys = (vals['home.kpis'] || []).map(String);
+        st.kpis = (vals['home.ticker_kpis'] || []).map(String);
+        st.cards = (vals['home.cards'] || []).map(String);
+        done();
+      })
+      .catch(function() { st.loadError = true; done(); });
+    // [v1.28.3] BOTH catalogs (cards + macro KPIs) ride the same
+    // home payload — warm from the pane's own load, one fetch cold.
+    var cat = (window._homeData && window._homeData.card_catalog) || null;
+    var kcat = (window._homeData && window._homeData.kpi_catalog) || null;
+    if (cat && cat.length) {
+      st.catalog = cat;
+      st.kpiCatalog = kcat && kcat.length ? kcat : [];
+      done();
+    } else {
+      fetch('/api/webui/home?_t=' + Date.now())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          st.catalog = d.card_catalog || [];
+          st.kpiCatalog = d.kpi_catalog || [];
+          done();
+        })
+        .catch(function() { st.catalog = []; st.kpiCatalog = []; done(); });
+    }
+    fetch('/api/webui/portfolio/state?_t=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        st.watch = (s.watchlist || []).map(function(w) { return w.ticker; });
+        done();
+      })
+      .catch(function() { st.watch = []; done(); });
+  }
+
+  function reloadWatch(cb) {
+    fetch('/api/webui/portfolio/state?_t=' + Date.now())
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        st.watch = (s.watchlist || []).map(function(w) { return w.ticker; });
+        if (cb) cb();
+      })
+      .catch(function() { if (cb) cb(); });
+  }
+
+  function addTicker(list, value) {
+    var v = (value || '').trim().toUpperCase();
+    if (!v) return null;
+    if (!_HM_TICKER_RE.test(v)) return 'Ticker inválido — use o padrão B3 (ex: PETR4, BOVA11).';
+    if (list.indexOf(v) >= 0) return v + ' já está na lista.';
+    list.push(v);
+    return null;
+  }
+
+  // ── one delegated listener for the whole body (re-rendered per change) ──
+  var body = document.getElementById('home-manage-body');
+  body.addEventListener('click', function(e) {
+    var t = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!t) return;
+    var i, k, touched = false;
+    if (t.id === 'hm-kpi-add') {
+      var err = addTicker(st.kpis, (document.getElementById('hm-kpi-input') || {}).value);
+      if (err) { msg(err); return; }
+      touched = true;
+    } else if (t.id === 'hm-watch-add') {
+      var wv = ((document.getElementById('hm-watch-input') || {}).value || '').trim().toUpperCase();
+      if (!wv) return;
+      if (!_HM_TICKER_RE.test(wv)) { msg('Ticker inválido — use o padrão B3 (ex: PETR4, BOVA11).'); return; }
+      if (st.watch.indexOf(wv) >= 0) { msg(wv + ' já está na lista.'); return; }
+      fetch('/api/webui/portfolio/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: wv }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+          if (!j || !j.ok) {
+            msg((j && j.errors && j.errors.ticker) || 'Ticker inválido.');
+            return;
+          }
+          msg('✅ ' + wv + ' adicionado aos observados');
+          reloadWatch(function() { render(); loadPortfolioWidget(true); });
+        })
+        .catch(function() { msg('Erro ao adicionar.'); });
+      return;
+    } else if (t.hasAttribute('data-hm-up') || t.hasAttribute('data-hm-down')) {
+      // attr value: 'k<idx>' (kpis), 'c<idx>' (cards) or 'm<idx>' (macro)
+      var down = t.hasAttribute('data-hm-down');
+      var attr = t.getAttribute('data-hm-up') !== null ? 'data-hm-up' : 'data-hm-down';
+      var prefix = t.getAttribute(attr).charAt(0);
+      var list = prefix === 'k' ? st.kpis : (prefix === 'm' ? st.kpiKeys : st.cards);
+      var idx = parseInt(t.getAttribute(attr).slice(1), 10);
+      var to = down ? idx + 1 : idx - 1;
+      if (to < 0 || to >= list.length) return;
+      var tmp = list[idx]; list[idx] = list[to]; list[to] = tmp;
+      touched = true;
+    } else if (t.hasAttribute('data-hm-del-k')) {
+      i = parseInt(t.getAttribute('data-hm-del-k'), 10);
+      st.kpis.splice(i, 1);
+      touched = true;
+    } else if (t.hasAttribute('data-hm-del-m')) {
+      // [v1.28.3] hide a macro KPI (the 📈 list)
+      i = parseInt(t.getAttribute('data-hm-del-m'), 10);
+      st.kpiKeys.splice(i, 1);
+      touched = true;
+    } else if (t.hasAttribute('data-hm-showm')) {
+      // [v1.28.3] re-enable a hidden macro KPI (at the end)
+      k = t.getAttribute('data-hm-showm');
+      if (st.kpiKeys.indexOf(k) < 0) { st.kpiKeys.push(k); touched = true; }
+    } else if (t.hasAttribute('data-hm-del-c')) {
+      i = parseInt(t.getAttribute('data-hm-del-c'), 10);
+      st.cards.splice(i, 1);
+      touched = true;
+    } else if (t.hasAttribute('data-hm-show')) {
+      k = t.getAttribute('data-hm-show');
+      if (st.cards.indexOf(k) < 0) { st.cards.push(k); touched = true; }
+    } else if (t.hasAttribute('data-hm-del-w')) {
+      var wt = t.getAttribute('data-hm-del-w');
+      fetch('/api/webui/portfolio/watchlist/' + encodeURIComponent(wt),
+            { method: 'DELETE' })
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+          if (!j || !j.ok) { msg((j && j._error) || 'Erro.'); return; }
+          msg('✅ ' + wt + ' removido dos observados');
+          reloadWatch(function() { render(); loadPortfolioWidget(true); });
+        })
+        .catch(function() { msg('Erro ao remover.'); });
+      return;
+    }
+    if (touched) { msg(''); render(); saveLayout(); }
+  });
+
+  body.addEventListener('change', function(e) {
+    var cb = e.target;
+    if (!cb || !cb.hasAttribute) return;
+    // [v1.28.3] the macro-KPI checkboxes (📈) share the flow
+    if (cb.hasAttribute('data-hm-macro')) {
+      var mk = cb.getAttribute('data-hm-macro');
+      if (!cb.checked) {
+        var mi = st.kpiKeys.indexOf(mk);
+        if (mi >= 0) st.kpiKeys.splice(mi, 1);
+      } else if (st.kpiKeys.indexOf(mk) < 0) {
+        st.kpiKeys.push(mk);
+      }
+      msg(''); render(); saveLayout();
+      return;
+    }
+    if (!cb.hasAttribute('data-hm-card')) return;
+    var k = cb.getAttribute('data-hm-card');
+    if (!cb.checked) {
+      var i = st.cards.indexOf(k);
+      if (i >= 0) st.cards.splice(i, 1);
+    } else if (st.cards.indexOf(k) < 0) {
+      st.cards.push(k);
+    }
+    msg(''); render(); saveLayout();
+  });
+
+  // Enter in the add inputs = the ➕ button
+  body.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    if (e.target && e.target.id === 'hm-kpi-input') {
+      e.preventDefault();
+      var b = document.getElementById('hm-kpi-add');
+      if (b) b.click();
+    } else if (e.target && e.target.id === 'hm-watch-input') {
+      e.preventDefault();
+      var wb = document.getElementById('hm-watch-add');
+      if (wb) wb.click();
+    }
+  });
+
+  function open(sec) {
+    if (typeof dlg.showModal !== 'function') return;
+    dlg.showModal();
+    msg('');
+    loadState(function() {
+      render();
+      if (sec) {
+        var el = dlg.querySelector('[data-hm-sec="' + sec + '"]');
+        if (el) el.scrollIntoView({ block: 'start' });
+      }
+    });
+  }
+
+  btn.addEventListener('click', function() { open(); });
+
+  // The widget's "⚙️ Gerenciar ⭐" button (rendered async by
+  // loadPortfolioWidget) — delegation, the same pattern as the syslog.
+  document.body.addEventListener('click', function(e) {
+    var b = e.target && e.target.closest
+      ? e.target.closest('[data-hm-open]') : null;
+    if (!b) return;
+    open(b.getAttribute('data-hm-open') || undefined);
+  });
+
+  // Fechar + the classic backdrop cancel (the carteira modal pattern)
+  dlg.querySelectorAll('[data-close]').forEach(function(b) {
+    b.addEventListener('click', function() { dlg.close(); });
+  });
+  var downOnDialog = false;
+  dlg.addEventListener('mousedown', function(e) { downOnDialog = (e.target === dlg); });
+  dlg.addEventListener('click', function(e) {
+    if (e.target === dlg && downOnDialog) dlg.close();
+  });
 }
 
 // ── [v1.21 fix 1] Company page — the ⭐ watch button (tab bar, every tab
@@ -9323,6 +9954,9 @@ function initApp() {
     // [v1.19] Painel — the landing page's KPI row + ticker cards (no-op
     // everywhere else: only /webui carries the panes).
     loadHomeData();
+    // [v1.28.3] Painel — the ⚙️ Gerenciar Painel box (ticker KPIs +
+    // ranking cards + ⭐ observados; no-op everywhere else).
+    initHomeManage();
     // [v1.27] Ferramentas — the Comparação picker + deep-linked comparison
     // (no-op elsewhere: only /webui/tools carries #tools-root).
     initToolsPage();
@@ -9374,6 +10008,9 @@ function initApp() {
   // [v1.19] Painel — direct full-page load (the /webui landing is
   // server-rendered; the loader no-ops on every other page).
   loadHomeData();
+  // [v1.28.3] Painel — the ⚙️ manage box (direct full-page load; the
+  // _booted guard no-ops on every other page).
+  initHomeManage();
   // [v1.27] Ferramentas — direct full-page load (the /webui/tools page
   // is server-rendered; the boot guard no-ops on every other page).
   initToolsPage();

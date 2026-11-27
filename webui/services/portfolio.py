@@ -103,6 +103,11 @@ from typing import Any
 
 from core.atomic_write import atomic_write
 from webui.adapters.contract import kpi
+# [v1.28.3] The SHARED price-pill payload builder — the price
+# color scheme everywhere (contract.price_pill, one palette, no forked
+# colors): the observados' Preço and the positions' Valor Hoje ship it;
+# Máx/Mín 52s and PM stay plain ("just apply to main price").
+from webui.adapters.contract import price_pill as _pill
 # [v1.22] ONE ticker definition for every layer (webui/validators.py) —
 # the old letters-only stem rejected B3's own ticker (B3SA3) and BDRs.
 from webui.validators import TICKER_RE as _TICKER_RE
@@ -112,12 +117,18 @@ from webui.services.macro import _brl2, _fmt_date, _pct
 
 from tools.report_ops.formats import fmt_num
 
-# The skill's data layer (single source of truth — same DB the Painel
+# ── the skill's data layer (single source of truth — same DB the Painel
 # cards read; no SQL duplication in the WebUI). [v1.21] quotes_for(): the
 # per-symbol variant of market_snapshot() — illiquid papers silent for
 # 10+ sessions still get their LAST TRADED price (portfolio valuation
 # needs the honest "Valor Hoje", not the landing-page actives window).
-from data_sources.b3.cotahist.query_engine import quotes_for as _quotes_for
+# [v1.28.3] range_52w(): the trailing-52-week high/low — the Painel's
+# Tickers Observados "Máx/Mín 52 sem" columns.
+from data_sources.b3.cotahist.query_engine import (  # noqa: E401
+    quotes_for as _quotes_for,
+    range_52w as _range_52w,
+    series_52w as _series_52w,
+)
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _QUOTE_TTL = 30.0            # seconds the filtered quote map stays memoized
@@ -2083,6 +2094,11 @@ class PortfolioService:
                 "pm": None if mixed else
                       (_px(m["cost"] / m["qty"]) if m["qty"] else None),
                 "price": _px(price),
+                # [v1.28.3] the Valor Hoje (the row's MAIN price)
+                # ships the price-band pill — PM stays plain text (the
+                # "just apply to main price" rule; PM is a cost basis,
+                # not a market price).
+                "price_pill": _pill(price),
                 "quote_date": qdate or None,
                 "stale_quote": bool(qdate and self._session_date
                                     and qdate != self._session_date),
@@ -2453,17 +2469,66 @@ class PortfolioService:
             }
 
         # ── watchlist tickers (live KPIs) ──
+        # [v1.28.3] the 52-week range joins the row ("add more info like
+        # max and min 52 weeks") — ONE range_52w() call for the whole
+        # watchlist; a symbol absent from the window degrades per-ticker
+        # ("—" cells), and a down cotahist leaves the columns empty
+        # without touching the rest of the box.
+        # The row completes its read: SETOR (the cadastro's cached CVM
+        # sector) + the day's Mín/Máx (the quote's own session high/low)
+        # + the 52-week pair closed by Var. (52) — the table reads
+        # Ticker · Nome · Setor · Preço · Mín (dia) · Máx (dia) ·
+        # Var. (dia) · Mín (52) · Máx (52) · Var. (52).
+        r52: dict[str, dict[str, Any]] = {}
+        s52: dict[str, list[float]] = {}
+        if watch_tickers:
+            res = _range_52w(sorted(set(watch_tickers)))
+            if res.get("status") == "ok":
+                r52 = {r["ticker"]: r for r in res.get("symbols", [])}
+            # [v1.28.3] the 52-week CLOSE series — the SAME window the
+            # range reads (first point kept = the ~52-weeks-ago close,
+            # last = the quoted price), ONE call for the whole list; it
+            # feeds Var. (52) and degrades per-ticker like the range.
+            res = _series_52w(sorted(set(watch_tickers)))
+            if res.get("status") == "ok":
+                s52 = {s["ticker"]: s["points"]
+                       for s in res.get("symbols", []) if s.get("points")}
         tk_rows: list[dict[str, Any]] = []
         for tk in sorted(set(watch_tickers)):
             meta = snap["tickers"].get(tk) or {}
             q = self._quote(tk)
+            rng = r52.get(tk) or {}
+            pts52 = s52.get(tk) or []
+            # Var. (52) — the 52-week variation: the window's first
+            # close vs the last (None when the series is too short).
+            var_52 = (pts52[-1] / pts52[0] - 1.0
+                      if len(pts52) >= 2 and pts52[0] else None)
             tk_rows.append({
                 "ticker": tk,
                 "name": meta.get("name") or (q.get("name") if q else "") or tk,
+                # SETOR after the name — the CVM/FCA sector cached in
+                # the cadastro ("" until the background meta refresh
+                # lands → the client renders "—").
+                "sector": (meta.get("sector") or "").strip() or None,
                 "price": _px(q.get("close")) if q else None,
+                # the MAIN price's band pill — Máx/Mín (dia/52) stay
+                # plain (the user's main-price-only rule).
+                "price_pill": (_pill(q.get("close"))
+                               if q and q.get("close") is not None else None),
                 "variation": _signed_pct(
                     q.get("variation_pct") / 100.0
                     if q and q.get("variation_pct") is not None else None),
+                # the day's Mín/Máx (the quote's OWN session high/low)
+                # BEFORE the 52-week pair, which reads Mín-first.
+                "low_day": _brl2(q.get("day_low"))
+                    if q and q.get("day_low") is not None else None,
+                "high_day": _brl2(q.get("day_high"))
+                    if q and q.get("day_high") is not None else None,
+                "low_52": _brl2(rng["low_52"])
+                    if rng.get("low_52") is not None else None,
+                "high_52": _brl2(rng["high_52"])
+                    if rng.get("high_52") is not None else None,
+                "var_52": _signed_pct(var_52) if var_52 is not None else None,
             })
         tk_rows = [r for r in tk_rows if r["ticker"]]
 

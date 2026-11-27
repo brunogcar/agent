@@ -91,6 +91,27 @@
   34/35/36) reach the DB + the share-like quote universe — the BDR
   card after Maiores Baixas, the vs Setor heat; see
   docs/webui/CHANGELOG.md)
+[WebUI v1.28.3] ?v=89 (the Painel settings round, complete:
+  the ⚙️ Gerenciar Painel box — top-right icon; THREE separate sets —
+  (1) the macro KPI cards MANAGED (home.kpis) with the Mercado
+  families' options (CDI, Meta Selic, Selic/CDI mercado, IPCA/IGP-M/
+  INPC mês·12m·ano, Poupança mês·12m·ano), (2) the ticker KPI cards
+  (home.ticker_kpis — arrange/add/remove, any share-like instrument)
+  reading in THREE HORIZONTAL BANDS — the header (ticker + badge +
+  name left, price pill + day % right), the FULL-WIDTH 52-week chart
+  (green line, soft fill, the value's dashed reference line) with the
+  52-week position bar under it, then Mín 52 sem · Máx 52 sem ·
+  Volume (dia) label-left/value-right, (3) the ranking boxes
+  (home.cards, with the NEW Maiores Quedas BDR) at full size; the
+  ranking rows STANDARDIZED — ticker · info (peso/negócios/volume/
+  name, tooltip "volume — R$ 1,87 bi") · price pill · %; the MAIN
+  PRICES wear the Ações 22-range palette pill EVERYWHERE (always the
+  main price only — Máx/Mín, PM and multiples stay plain); the ⭐
+  Tickers Observados managed IN the Painel, the table reading Ticker
+  · Nome · Setor · Preço · Mín (dia) · Máx (dia) · Var. (dia) ·
+  Mín (52) · Máx (52) · Var. (52) (quotes_for() ships the session
+  high/low; the 52-week series feeds Var. (52)); see
+  docs/webui/CHANGELOG.md)
 #}<!DOCTYPE html>
 <html lang="{{ locale }}" data-theme="{{ theme }}">
 <head>
@@ -119,7 +140,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=84">
+  <link rel="stylesheet" href="/static/css/app.css?v=89">
 </head>
 <body>
   <div class="app-shell">
@@ -273,6 +294,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=84"></script>
+  <script src="/static/js/app.js?v=89"></script>
 </body>
 </html>

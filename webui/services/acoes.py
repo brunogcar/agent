@@ -107,6 +107,10 @@ from data_sources.ddm.acoes.query_engine import (
 
 # ── the skill's display + numerics helpers (no forked numerics) ─────────────
 from skills._colors.price import price_range_color
+# [v1.28.3] The SHARED price-pill payload builder — the same
+# {pill, text, range} shape every surface ships (contract.price_pill;
+# no forked colors, one definition).
+from webui.adapters.contract import price_pill as _pill
 from skills.ddm.acoes.helpers import (
     format_brl as _brl,             # "R$ 44,30" / "-" for None
     format_int as _int,             # "52.792.400"
@@ -384,15 +388,29 @@ class AcoesService:
             ))
 
         # Full sortable table (the static's, dates in PT-BR).
+        # [v1.28.3] The Última (R$) cell wears the PRICE-BAND PILL
+        # (the user's everywhere rule: the main price of the row — the
+        # contract's {text, price} cell shape, one shared palette via
+        # contract.price_pill). The faixa tooltip rides the price cell
+        # now (the pill's own tooltip carries the range label).
         rows: list[list[Any]] = []
         for s in stocks:
             ticker = s.get("ticker", "")
             faixa = price_range_color(s.get("last_price"))["range"]
+            price_cell: dict[str, Any] = {
+                "text": _brl(s.get("last_price")),
+                "tooltip": f"Faixa de preço (Ações): {faixa} — a paleta "
+                           "de 22 faixas do Mercado → Ações (o mesmo "
+                           "esquema do Painel).",
+            }
+            pill = _pill(s.get("last_price"))
+            if pill:
+                price_cell["price"] = pill
             rows.append([
                 {"text": ticker, "tooltip": f"Faixa de preço: {faixa}."},
                 s.get("name", "") or "—",
                 _int(s.get("negocios")),
-                _brl(s.get("last_price")),
+                price_cell,
                 _pct(s.get("variation")),
             ])
         tbl = table_section(

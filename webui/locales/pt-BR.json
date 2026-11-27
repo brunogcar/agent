@@ -13,7 +13,9 @@
   "dashboard": {
     "subtitle": "O Brasil em uma tela — economia, índices e o pregão da B3",
     "loading_kpis": "Carregando indicadores…",
-    "loading_cards": "Carregando o mercado…"
+    "loading_cards": "Carregando o mercado…",
+    "loading_manage": "Carregando configurações…",
+    "manage": "Gerenciar Painel"
   },
   "company": {
     "search_placeholder": "Buscar ticker (ex: PETR4)...",
