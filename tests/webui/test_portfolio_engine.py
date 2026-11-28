@@ -303,11 +303,25 @@ def test_sell_zero_rejected_buy_zero_ok(svc):
     _, aid = _seed(svc)
     r = _tx(svc, aid, quantity=500, price=0.0)
     assert r["ok"], r                                  # bonificação: a BUY at 0
+    # [v1.28.5] A SELL at R$ 0,00 is now legal on a zero-cost position
+    # (the worthless-rights expiry — PM 0, covered qty → zero realized,
+    # the position just leaves). The pre-v1.28.5 hard refusal is gone
+    # for THIS case only.
     r = _tx(svc, aid, type="sell", quantity=1, price=0.0)
+    assert r["ok"], r
+    # …but the guard lives on where it always mattered: a zero sell
+    # beyond the position (would open a short at R$ 0,00)…
+    r = _tx(svc, aid, type="sell", quantity=99999, price=0.0)
     assert r["ok"] is False and "price" in r["errors"]
-    # [v1.22.3] The explanation now points to the CORPORATE ACTION (the
-    # roadmap-5 path) — with the buy-at-0 legacy still named.
-    assert "evento corporativo" in r["errors"]["price"].lower()
+    assert "posição" in r["errors"]["price"].lower()
+    # …and a zero sell on a COSTFUL position (the whole cost would
+    # book as a phantom realized loss — [v1.22] rule, unchanged).
+    r = _tx(svc, aid, quantity=100, price=10.0, date="2026-02-01")
+    assert r["ok"], r
+    r = _tx(svc, aid, type="sell", quantity=1, price=0.0, date="2026-02-02")
+    assert r["ok"] is False and "price" in r["errors"]
+    # [v1.22.3] The explanation still points to the price rule.
+    assert "r$ 0,00" in r["errors"]["price"].lower()
 
 
 # ── 9. cross-user move blocked (B125) ────────────────────────────────────────

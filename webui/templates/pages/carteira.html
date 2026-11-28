@@ -137,7 +137,7 @@
           <em class="cart-err" data-err="date" hidden></em>
         </label>
         <label class="cart-field">
-          <span>{{ t("carteira.quantity") }}</span>
+          <span id="cart-tx-qty-label">{{ t("carteira.quantity") }}</span>
           <input type="text" id="cart-tx-qty" inputmode="decimal"
                  placeholder="0" autocomplete="off">
           <em class="cart-err" data-err="quantity" hidden></em>
@@ -159,38 +159,66 @@
         bonificação: the factor re-bases quantity and PM (nothing is
         traded; the custo total stays). Shown only when type=corp.
         [v1.22.4] NOTHING pre-selected: pick the event first, then the
-        factor — and the qty/price/fees fields stay visible, LOCKED at
-        0 (nothing was traded). #}
-      <div id="cart-tx-corp" class="cart-grid-2" hidden>
-        <label class="cart-field">
-          <span>{{ t("carteira.corp_action") }}</span>
-          <select id="cart-tx-action" class="cart-select">
-            <option value="">— selecione o evento —</option>
-            <option value="split">✂️ {{ t("carteira.corp_split") }}</option>
-            <option value="group">🧲 {{ t("carteira.corp_group") }}</option>
-            <option value="bonus">🎁 {{ t("carteira.corp_bonus") }}</option>
-          </select>
-          <em class="cart-err" data-err="action" hidden></em>
-        </label>
-        <label class="cart-field">
-          <span>{{ t("carteira.corp_factor") }}</span>
-          <input type="text" id="cart-tx-factor" inputmode="decimal"
-                 placeholder="2" autocomplete="off">
-          <em class="cart-err" data-err="factor" hidden></em>
-        </label>
+        factor.
+        [v1.28.5] The money/qty fields are HIDDEN in corp mode (only
+        the event fields matter — "quantidade e preço ficam ocultos"),
+        the family grows by INPLIT (grupamento com troca de ticker —
+        RAIZ4 → RAIZ55) and DIREITOS DE SUBSCRIÇÃO (the one action
+        that DOES carry a quantity — the rights received, at zero
+        cost). #}
+      <div id="cart-tx-corp" hidden>
+        <div class="cart-grid-2">
+          <label class="cart-field">
+            <span>{{ t("carteira.corp_action") }}</span>
+            <select id="cart-tx-action" class="cart-select">
+              <option value="">— selecione o evento —</option>
+              <option value="split">✂️ {{ t("carteira.corp_split") }}</option>
+              <option value="group">🧲 {{ t("carteira.corp_group") }}</option>
+              <option value="bonus">🎁 {{ t("carteira.corp_bonus") }}</option>
+              <option value="inplit">🔀 {{ t("carteira.corp_inplit") }}</option>
+              <option value="rights">🔔 {{ t("carteira.corp_rights") }}</option>
+            </select>
+            <em class="cart-err" data-err="action" hidden></em>
+          </label>
+          <label class="cart-field" id="cart-tx-factor-field">
+            <span>{{ t("carteira.corp_factor") }}</span>
+            <input type="text" id="cart-tx-factor" inputmode="decimal"
+                   placeholder="2" autocomplete="off">
+            <em class="cart-err" data-err="factor" hidden></em>
+          </label>
+          <label class="cart-field" id="cart-tx-newticker-field" hidden>
+            <span>{{ t("carteira.corp_new_ticker") }}</span>
+            <input type="text" id="cart-tx-newticker" maxlength="8"
+                   autocomplete="off" placeholder="RAIZ55"
+                   style="text-transform: uppercase;">
+            <em class="cart-err" data-err="new_ticker" hidden></em>
+          </label>
+        </div>
         <div class="cart-corp-help">
-          <b>Como funciona:</b> escolha o evento, informe o fator e salve —
-          a quantidade multiplica pelo fator e o preço médio divide pelo
-          mesmo número (o custo total não muda; nada é comprado ou vendido,
-          por isso quantidade e preço ficam travados em 0).
+          <b>Como funciona:</b> escolha o evento e salve — nada é
+          comprado ou vendido (por isso quantidade, preço e taxas ficam
+          <b>ocultos</b>; o único número é o fator — ou a quantidade, nos
+          direitos).
           <ul>
             <li>✂️ <b>Desdobramento</b> — mais ações: fator 2 = cada ação vira 2 (1.000 → 2.000).</li>
             <li>🧲 <b>Grupamento</b> — menos ações: fator 0,5 = cada 2 viram 1 (1.000 → 500).</li>
             <li>🎁 <b>Bonificação</b> — ações grátis: fator 1,1 = +10% de ações (1.000 → 1.100).</li>
+            <li>🔀 <b>Inplit</b> — grupamento com <b>troca de ticker</b>
+              (ex.: RAIZ4 → RAIZ55): informe o fator (0,01 = cada 100
+              viram 1) e o novo código — a quantidade multiplica, o PM
+              divide e a posição migra com o <b>custo total intacto</b>.
+              Fator 1 = só troca o código (renomeação).</li>
+            <li>🔔 <b>Direitos de subscrição</b> — direitos recebidos
+              <b>de graça</b> (ex.: RAIZ1/RAIZ14/RAIZ16): informe o
+              ticker do direito e a quantidade — entram a PM R$ 0,00.
+              Venda ao preço de mercado para realizar; se vencerem sem
+              valor, registre a <b>venda a R$ 0,00</b> (zerada, sem
+              lucro/perda); para exercer, venda os direitos a R$ 0,00 e
+              compre as ações novas pelo preço de emissão.</li>
           </ul>
-          Registre na <b>data ex</b> (o dia em que a posição já vale o novo
-          número de ações). Frações a B3 liquida em dinheiro — se você
-          recebeu, registre uma venda da fração.
+          Registre na <b>data ex</b> (o dia em que a posição já vale o
+          novo número de ações). Frações a B3 liquida em dinheiro — se
+          você recebeu, registre uma venda da fração.
         </div>
       </div>
       <label class="cart-field">

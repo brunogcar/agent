@@ -62,6 +62,15 @@ def _walk_account(txs: list[dict]) -> dict[str, dict[str, float]]:
     """One account's txs → month buckets (the day-trade carve-out walk).
 
     bucket = {buy_vol, swing_vol, swing_res, day_vol, day_res}.
+
+    [v1.28.5] The walk became GLOBAL-chronological (date-first, two
+    passes per date) instead of per-ticker: an INPLIT moves the origin
+    position into the NEW ticker, so a same-date sell of the new code
+    must replay AFTER the migration (the per-ticker walk never saw the
+    other ticker's event); RIGHTS land their zero-cost qty before the
+    day's sells of the rights. Pass 1 applies every corp event of the
+    date (engine-mirrored: re-base · migrate · grant); pass 2 replays
+    the trades per ticker with the day-trade carve-out unchanged.
     """
     out: dict[str, dict[str, float]] = {}
 
@@ -70,28 +79,54 @@ def _walk_account(txs: list[dict]) -> dict[str, dict[str, float]]:
                                       "swing_res": 0.0, "day_vol": 0.0,
                                       "day_res": 0.0})
 
-    by_tk: dict[str, list[dict]] = {}
-    for t in txs:
-        by_tk.setdefault(t.get("ticker") or "", []).append(t)
+    pos_by_tk: dict[str, dict[str, float]] = {}
 
-    for _tk, tlist in by_tk.items():
-        pos = {"qty": 0.0, "pm": 0.0}
-        by_date: dict[str, list[dict]] = {}
-        for t in sorted(tlist, key=_order_key):
-            by_date.setdefault(t.get("date") or "", []).append(t)
-        for d, day in sorted(by_date.items()):
-            b = bucket(d[:7])
-            # [v1.22.3] Corporate actions apply BEFORE the day's trades
-            # (the engine's corp-first semantics). No buy/sell volume,
-            # no realized result — but the QUANTITY and the PM re-base,
-            # so the day's sells realize against the post-action PM.
-            for t in day:
-                if t.get("type") == "corp":
-                    f = float(t.get("factor") or 1.0)
-                    if abs(pos["qty"]) > 1e-9 and f > 0:
-                        pos["qty"] *= f
-                        pos["pm"] = pos["pm"] / f
-            day = [t for t in day if t.get("type") != "corp"]
+    def _pos(tk: str) -> dict[str, float]:
+        return pos_by_tk.setdefault(tk, {"qty": 0.0, "pm": 0.0})
+
+    by_date: dict[str, list[dict]] = {}
+    for t in txs:
+        by_date.setdefault(t.get("date") or "", []).append(t)
+
+    for d, day_all in sorted(by_date.items()):
+        b = bucket(d[:7])
+        # ── pass 1 — corp events of the date, all tickers (the
+        # engine's corp-first semantics; nothing realized, no volume).
+        for t in sorted(day_all, key=_order_key):
+            if t.get("type") != "corp":
+                continue
+            pos = _pos(t.get("ticker") or "")
+            action = t.get("action") or ""
+            f = float(t.get("factor") or 1.0)
+            if action == "inplit":
+                nt = (t.get("new_ticker") or "").strip().upper()
+                if nt and nt != (t.get("ticker") or "") \
+                        and abs(pos["qty"]) > 1e-9 and f > 0:
+                    tgt = _pos(nt)
+                    tc = tgt["qty"] * tgt["pm"] + pos["qty"] * pos["pm"]
+                    tgt["qty"] += pos["qty"] * f
+                    tgt["pm"] = tc / tgt["qty"] \
+                        if abs(tgt["qty"]) > 1e-9 else 0.0
+                    pos["qty"] = 0.0
+                    pos["pm"] = 0.0
+            elif action == "rights":
+                q = float(t.get("quantity") or 0.0)
+                if q > 0 and pos["qty"] >= -1e-9:
+                    tc = pos["qty"] * pos["pm"]
+                    pos["qty"] += q
+                    pos["pm"] = tc / pos["qty"] if pos["qty"] > 0 else 0.0
+            else:
+                if abs(pos["qty"]) > 1e-9 and f > 0:
+                    pos["qty"] *= f
+                    pos["pm"] = pos["pm"] / f
+        # ── pass 2 — the day's trades, per ticker ──
+        by_tk_day: dict[str, list[dict]] = {}
+        for t in day_all:
+            if t.get("type") == "corp":
+                continue
+            by_tk_day.setdefault(t.get("ticker") or "", []).append(t)
+        for tk, day in by_tk_day.items():
+            pos = _pos(tk)
             buys = [t for t in day if t.get("type") == "buy"]
             sells = [t for t in day if t.get("type") == "sell"]
             b_qty = sum(float(t.get("quantity") or 0) for t in buys)

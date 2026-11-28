@@ -111,6 +111,9 @@
     "corp_split": "Desdobramento (1 ação vira N)",
     "corp_group": "Grupamento (N ações viram 1)",
     "corp_bonus": "Bonificação (ações novas de graça)",
+    "corp_inplit": "Inplit — grupamento com troca de ticker",
+    "corp_rights": "Direitos de subscrição (grátis)",
+    "corp_new_ticker": "Novo ticker (pós-evento)",
     "corp_factor": "Fator (×2 = cada ação vira 2)",
     "sim_title": "Simular operações",
     "drawer": "Detalhes da posição"

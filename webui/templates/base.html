@@ -112,6 +112,20 @@
   Mín (52) · Máx (52) · Var. (52) (quotes_for() ships the session
   high/low; the 52-week series feeds Var. (52)); see
   docs/webui/CHANGELOG.md)
+[WebUI v1.28.5] ?v=91 (the Backtest exit-rules fix: the "Saída por
+  sinal" thresholds now render BELOW the "Sair quando o sinal reverter"
+  checkbox and obey it — checked shows the fields, unchecked hides
+  them (they sat ABOVE the toggle, inert, and "abaixo" pointed at
+  nothing); the Trade Log's pairing audit line — every entrada has its
+  saída, a leftover position is closed at the last close ("fim do
+  período")); the Carteira corp round: the corp form shows ONLY the
+  event fields (qty/preço/taxas hidden), two new corporate actions —
+  🔀 INPLIT (grupamento com troca de ticker, RAIZ4 → RAIZ55: qty×=f,
+  PM÷=f, custo total and patrimônio intact; fator 1 = renomeação) and
+  🔔 DIREITOS DE SUBSCRIÇÃO (rights received free at PM R$ 0,00; sell
+  at market to realize, venda a R$ 0,00 when they expire — now legal
+  on zero-cost positions, refused on costful ones); see
+  docs/webui/CHANGELOG.md)
 [WebUI v1.28.4] ?v=90 (the cross-tool round: the 🎯/⏪/⚖ links
   between the Ferramentas — every comparison column and the screener
   head carry "abrir no Screener" / "simular no Backtest" / "comparar";
@@ -151,7 +165,7 @@
   <script src="/static/vendor/chartjs-plugin-zoom.min.js?v=47"></script>
 
   {# ── App CSS ── #}
-  <link rel="stylesheet" href="/static/css/app.css?v=90">
+  <link rel="stylesheet" href="/static/css/app.css?v=91">
 </head>
 <body>
   <div class="app-shell">
@@ -305,6 +319,6 @@
   </aside>
 
   {# ── App JS — at end of body so DOM exists when it runs ── #}
-  <script src="/static/js/app.js?v=90"></script>
+  <script src="/static/js/app.js?v=91"></script>
 </body>
 </html>

@@ -111,6 +111,9 @@
     "corp_split": "Stock split (1 share becomes N)",
     "corp_group": "Reverse split (N shares become 1)",
     "corp_bonus": "Bonus shares (free shares)",
+    "corp_inplit": "Reverse split with ticker change",
+    "corp_rights": "Subscription rights (free)",
+    "corp_new_ticker": "New ticker (post-event)",
     "corp_factor": "Factor (×2 = each share becomes 2)",
     "sim_title": "Simulate trades",
     "drawer": "Position details"

@@ -239,8 +239,40 @@ def _reconcile_tx(t: dict) -> None:
     if ttype not in ("buy", "sell", "corp"):
         raise ValueError(f"tipo de transação inválido: {ttype!r}")
     if ttype == "corp":
-        if t.get("action") not in ("split", "group", "bonus"):
+        # [v1.28.5] The corp family grows by two: INPLIT (grupamento
+        # COM TROCA DE TICKER — RAIZ4 → RAIZ55, the position migrates
+        # old→new with qty×=f and PM÷=f, custo total intact; fator 1
+        # allowed = pure ticker rename) and RIGHTS (direitos de
+        # subscrição recebidos de graça — the RIGHTS ticker is the
+        # tx's own ticker and the qty is the absolute quantity; no
+        # factor, price locked at 0).
+        if t.get("action") not in ("split", "group", "bonus",
+                                   "inplit", "rights"):
             raise ValueError(f"evento corporativo inválido: {t.get('action')!r}")
+        if t.get("action") == "rights":
+            q = _reconcile_num(t.get("quantity"), _QTY_MAX, "quantity")
+            if q <= 0:
+                raise ValueError(f"quantidade de direitos inválida: {q!r}")
+            t["quantity"] = q
+            t["price"] = 0.0
+            t["fees"] = 0.0
+            t.pop("factor", None)
+            t.pop("new_ticker", None)
+            return
+        if t.get("action") == "inplit":
+            f = _reconcile_num(t.get("factor"), _FACTOR_MAX, "factor")
+            nt = str(t.get("new_ticker") or "").strip().upper()
+            if f < _FACTOR_MIN or f > _FACTOR_MAX:
+                raise ValueError(f"fator de inplit inválido: {f!r}")
+            if not _TICKER_RE.match(nt) or \
+                    nt == (t.get("ticker") or "").strip().upper():
+                raise ValueError(f"novo ticker de inplit inválido: {nt!r}")
+            t["factor"] = f
+            t["new_ticker"] = nt
+            t["quantity"] = 0.0
+            t["price"] = 0.0
+            t["fees"] = 0.0
+            return
         f = _reconcile_num(t.get("factor"), _FACTOR_MAX, "factor")
         if f < _FACTOR_MIN or f == 1.0:
             raise ValueError(f"fator de evento corporativo inválido: {f!r}")
@@ -982,35 +1014,78 @@ class PortfolioService:
             if not action:
                 errs["action"] = ("Selecione o tipo de evento — "
                                   "desdobramento, grupamento ou bonificação.")
-            elif action not in ("split", "group", "bonus"):
+            elif action not in ("split", "group", "bonus", "inplit", "rights"):
                 errs["action"] = ("Evento inválido — desdobramento, "
                                   "grupamento ou bonificação.")
             else:
                 out["action"] = action
-            factor = _num(body.get("factor"))
-            if factor is None or not math.isfinite(factor):
-                errs["factor"] = "Fator deve ser um número (ex: 2 para 1→2)."
-            elif factor < _FACTOR_MIN or factor > _FACTOR_MAX:
-                errs["factor"] = ("Fator deve estar entre 0,001 e 1.000.")
-            elif abs(factor - 1.0) < 1e-9:
-                errs["factor"] = "Fator 1 não altera nada — informe a proporção real."
-            elif action == "split" and factor <= 1.0:
-                errs["factor"] = ("Desdobramento aumenta a quantidade — "
-                                  "fator maior que 1 (ex: 2 = cada ação vira 2).")
-            elif action == "group" and factor >= 1.0:
-                errs["factor"] = ("Grupamento reduz a quantidade — fator "
-                                  "menor que 1 (ex: 0,5 = 2 ações viram 1).")
-            elif action == "bonus" and factor <= 1.0:
-                errs["factor"] = ("Bonificação entrega ações novas — fator "
-                                  "maior que 1 (10% → 1,1).")
+            if action == "rights":
+                # [v1.28.5] DIREITOS DE SUBSCRIÇÃO — the rights ticker
+                # IS the tx ticker and the qty is the absolute quantity
+                # received (de graça, PM 0 — sell at market or let them
+                # expire: a venda a R$ 0,00 on a PM-0 position is the
+                # expiry, now allowed).
+                q = _num(body.get("quantity"))
+                if q is None or q <= 0 or q > 1e12:
+                    errs["quantity"] = ("Informe a quantidade de direitos "
+                                        "recebida (maior que zero).")
+                else:
+                    out["quantity"] = q
+                out["price"] = 0.0
+                out["fees"] = 0.0
+            elif action == "inplit":
+                # [v1.28.5] INPLIT — grupamento COM TROCA DE TICKER
+                # (RAIZ4 → RAIZ55): the position migrates to the new
+                # ticker with qty×=f and PM÷=f — the custo total and
+                # the patrimônio stay intact (registering a fake venda
+                # + compra would book phantom P&L and break both).
+                # Fator 1 = pure ticker rename (no qty change).
+                nt = str(body.get("new_ticker") or "").strip().upper()
+                if not _TICKER_RE.match(nt):
+                    errs["new_ticker"] = ("Informe o novo ticker (o código "
+                                          "pós-evento, ex: RAIZ55).")
+                elif nt == ticker:
+                    errs["new_ticker"] = ("O novo ticker deve ser diferente "
+                                          "do atual.")
+                else:
+                    out["new_ticker"] = nt
+                factor = _num(body.get("factor"))
+                if factor is None or not math.isfinite(factor):
+                    errs["factor"] = ("Fator deve ser um número (ex: 0,01 = "
+                                      "cada 100 ações viram 1; 1 = só troca "
+                                      "o código).")
+                elif factor < _FACTOR_MIN or factor > _FACTOR_MAX:
+                    errs["factor"] = ("Fator deve estar entre 0,001 e 1.000.")
+                else:
+                    out["factor"] = factor
+                out["quantity"] = 0.0
+                out["price"] = 0.0
+                out["fees"] = 0.0
             else:
-                out["factor"] = factor
-            # [v1.22.4] Corp rows carry quantity/price/fees = 0 —
-            # nothing was traded; the numbers make the row
-            # self-describing (the form shows them locked at 0).
-            out["quantity"] = 0.0
-            out["price"] = 0.0
-            out["fees"] = 0.0
+                factor = _num(body.get("factor"))
+                if factor is None or not math.isfinite(factor):
+                    errs["factor"] = "Fator deve ser um número (ex: 2 para 1→2)."
+                elif factor < _FACTOR_MIN or factor > _FACTOR_MAX:
+                    errs["factor"] = ("Fator deve estar entre 0,001 e 1.000.")
+                elif abs(factor - 1.0) < 1e-9:
+                    errs["factor"] = "Fator 1 não altera nada — informe a proporção real."
+                elif action == "split" and factor <= 1.0:
+                    errs["factor"] = ("Desdobramento aumenta a quantidade — "
+                                      "fator maior que 1 (ex: 2 = cada ação vira 2).")
+                elif action == "group" and factor >= 1.0:
+                    errs["factor"] = ("Grupamento reduz a quantidade — fator "
+                                      "menor que 1 (ex: 0,5 = 2 ações viram 1).")
+                elif action == "bonus" and factor <= 1.0:
+                    errs["factor"] = ("Bonificação entrega ações novas — fator "
+                                      "maior que 1 (10% → 1,1).")
+                else:
+                    out["factor"] = factor
+                # [v1.22.4] Corp rows carry quantity/price/fees = 0 —
+                # nothing was traded; the numbers make the row
+                # self-describing (the form shows them locked at 0).
+                out["quantity"] = 0.0
+                out["price"] = 0.0
+                out["fees"] = 0.0
             # date/note shared below — corp rows carry no money fields.
         else:
             q = _num(body.get("quantity"))
@@ -1024,13 +1099,42 @@ class PortfolioService:
             # negative (or absurd) prices are rejected.
             # [v1.22] …but a SELL at R$ 0,00 books the whole position cost
             # as a phantom realized loss (one blank price field away).
+            # [v1.28.5] …EXCEPT the worthless-rights expiry: when the
+            # position's PM at that point is R$ 0,00 (direitos de
+            # subscrição recebidos de graça), a venda a R$ 0,00 books
+            # exactly zero and removes the position — the honest way to
+            # register "venceu sem valor". The replay probe below checks
+            # the position state at the tx's own point in the timeline.
             if p is None or p < 0 or p > 1e9:
                 errs["price"] = ("Preço não pode ser negativo — use 0 para "
                                  "bonificação (sem custo).")
             elif p == 0 and ttype == "sell":
-                errs["price"] = ("Preço de venda não pode ser R$ 0,00 — "
-                                 "bonificação se registra como evento "
-                                 "corporativo (ou compra a R$ 0,00).")
+                # The probe must slot into the timeline EXACTLY where
+                # the real tx would land: update carries the original
+                # created_at/seq (the merged body has them); create
+                # takes the next seq + now (the same stamp create_tx
+                # would write — without them the probe sorted before
+                # the same-date txs and read a stale position).
+                _seq = body.get("seq") if isinstance(body.get("seq"), int) \
+                    else self._next_seq(store)
+                probe = {
+                    "id": str(body.get("id") or "__cand__"),
+                    "type": "sell", "ticker": ticker, "price": 0.0,
+                    "account_id": out.get("account_id")
+                        or str(body.get("account_id") or ""),
+                    "date": str(body.get("date") or ""),
+                    "quantity": _num(body.get("quantity")) or 0.0,
+                    "fees": _num(body.get("fees")) or 0.0,
+                    "created_at": str(body.get("created_at") or "")
+                        or (date.today().isoformat() + "T"
+                            + time.strftime("%H:%M:%S")),
+                    "seq": _seq,
+                }
+                why = self._zero_sell_error(store, probe)
+                if why:
+                    errs["price"] = why
+                else:
+                    out["price"] = 0.0
             else:
                 out["price"] = p
 
@@ -1065,6 +1169,44 @@ class PortfolioService:
 
         out["note"] = str(body.get("note") or "").strip()[:200]
         return out, errs
+
+    def _zero_sell_error(self, store: dict, cand: dict) -> str | None:
+        """[v1.28.5] Replay-probe for a SELL at R$ 0,00.
+
+        Valid ONLY as the worthless-rights expiry: the position at the
+        candidate's own point in the timeline must cover the quantity
+        (no short) with a R$ 0,00 PM (no cost basis → zero realized,
+        the position just vanishes). Anything else is the v1.22 guard
+        again: a zero sell on a costful position books the whole cost
+        as a phantom loss. The probe rides _ticker_ladder (the engine's
+        own per-tx walk — never a forked numeric): the candidate gets a
+        sentinel id, slots into the account's timeline by the standard
+        order key, and its row's post-state tells the verdict.
+        """
+        acc = str(cand.get("account_id") or "")
+        tk = str(cand.get("ticker") or "")
+        txs = [t for t in store.get("txs") or []
+               if t.get("account_id") == acc and t.get("id") != cand.get("id")]
+        txs.append(cand)
+        try:
+            for row in self._ticker_ladder(txs, tk):
+                if row.get("id") == cand.get("id"):
+                    if (row.get("run_qty") or 0.0) < -1e-9:
+                        return ("Venda a R$ 0,00 não pode abrir posição "
+                                "negativa — a quantidade excede a posição "
+                                "do ticker na data.")
+                    if (row.get("run_pm") or 0.0) > 1e-9:
+                        return ("Venda a R$ 0,00 só é válida quando o "
+                                "preço médio é R$ 0,00 (direitos de "
+                                "subscrição vencidos sem valor) — nesta "
+                                "data a posição tem custo, e a venda "
+                                "zerada registraria todo ele como perda "
+                                "fantasma. Use o preço real de venda.")
+                    return None
+        except Exception:  # noqa: BLE001 — probe must never 500 the save
+            pass
+        return ("Venda a R$ 0,00: não foi possível validar a posição do "
+                "ticker nesta data — informe o preço real de venda.")
 
     def _push_undo(self, kind: str, label: str, restore: dict) -> str:
         """[v1.22.3] Register a restorable mutation (caller holds the
@@ -1166,6 +1308,12 @@ class PortfolioService:
                    "T" + time.strftime("%H:%M:%S"), **fields}
             self._store["txs"].append(tx)
             self._ensure_ticker_meta(self._store, tx["ticker"])
+            # [v1.28.5] An inplit also introduces the NEW ticker to
+            # the metadata map (name/sector fetch) — the position lands
+            # there the moment this tx exists.
+            if tx.get("type") == "corp" and tx.get("action") == "inplit" \
+                    and tx.get("new_ticker"):
+                self._ensure_ticker_meta(self._store, tx["new_ticker"])
             self._save()
             # [v1.22.3] Undo toast — removing what was just created.
             label = self._tx_label(tx)
@@ -1179,7 +1327,16 @@ class PortfolioService:
         """[v1.22.3] Short PT-BR label for the undo toast."""
         if tx.get("type") == "corp":
             names = {"split": "desdobramento", "group": "grupamento",
-                     "bonus": "bonificação"}
+                     "bonus": "bonificação",
+                     # [v1.28.5] the two new corp actions
+                     "inplit": "inplit", "rights": "direitos"}
+            if tx.get("action") == "rights":
+                return (f"direitos de subscrição: {_qty(tx['quantity'])} "
+                        f"{tx['ticker']} ({_fmt_date(tx.get('date'))})")
+            if tx.get("action") == "inplit":
+                return (f"inplit {_factor_br(tx.get('factor') or 0.0)} "
+                        f"{tx['ticker']} → {tx.get('new_ticker')} "
+                        f"({_fmt_date(tx.get('date'))})")
             return (f"{names.get(tx.get('action'), 'evento')} "
                     f"{_factor_br(tx.get('factor') or 0.0)} {tx['ticker']} "
                     f"({_fmt_date(tx.get('date'))})")
@@ -1191,6 +1348,15 @@ class PortfolioService:
     def _tx_log(tx: dict, verb: str) -> str:
         """[v1.22.3] syslog line for any tx type."""
         if tx.get("type") == "corp":
+            if tx.get("action") == "rights":
+                return (f"direitos de subscrição {verb}: "
+                        f"{_qty(tx['quantity'])} {tx['ticker']} "
+                        f"({_fmt_date(tx.get('date'))})")
+            if tx.get("action") == "inplit":
+                return (f"inplit {verb}: {tx['ticker']} → "
+                        f"{tx.get('new_ticker')} "
+                        f"{_factor_br(tx.get('factor') or 0.0)} "
+                        f"({_fmt_date(tx.get('date'))})")
             return f"evento corporativo {verb}: {tx['ticker']} " \
                    f"{_factor_br(tx.get('factor') or 0.0)} " \
                    f"({_fmt_date(tx.get('date'))})"
@@ -1217,7 +1383,8 @@ class PortfolioService:
             merged.update({k: v for k, v in body.items()
                            if k in ("account_id", "ticker", "type",
                                     "quantity", "price", "fees", "date",
-                                    "note", "action", "factor")})
+                                    "note", "action", "factor",
+                                    "new_ticker")})
             # [v1.22] A tx may move between accounts of the SAME user
             # only — a cross-user move silently changes every per-user
             # sum (the tx vanishes from one user's series and appears
@@ -1238,8 +1405,28 @@ class PortfolioService:
             if errs:
                 return {"ok": False, "errors": errs}
             merged.update(fields)
+            # [v1.28.5] Corp-key sanitation: each action owns its own
+            # key set (rights → quantity; inplit → factor + new_ticker;
+            # the rest → factor). Editing one action into another must
+            # DROP the stale keys from the STORED tx too — tx.update
+            # only overwrites what merged still carries, so the pops
+            # happen on BOTH dicts (a rights tx with a lingering
+            # new_ticker would confuse the replay reconcile). A corp
+            # edited into a buy/sell drops them all.
+            stale = (("factor", "new_ticker")
+                     if merged.get("type") == "corp"
+                     else ("action", "factor", "new_ticker"))
             tx.update(merged)
+            for _k in stale:
+                # absent OR blank ("") — the form posts "" for the
+                # fields the current action does not use
+                if _k not in merged or merged[_k] in (None, ""):
+                    tx.pop(_k, None)
+                    merged.pop(_k, None)
             self._ensure_ticker_meta(self._store, tx["ticker"])
+            if tx.get("type") == "corp" and tx.get("action") == "inplit" \
+                    and tx.get("new_ticker"):
+                self._ensure_ticker_meta(self._store, tx["new_ticker"])
             self._save()
             label = self._tx_label(tx)
             token = self._push_undo(
@@ -1805,9 +1992,50 @@ class PortfolioService:
             # tx stays in the ledger for the record).
             # Same-day semantics: _tx_order_key replays corp BEFORE the
             # day's trades (the session already quotes post-action).
+            # [v1.28.5] Two new actions:
+            #   INPLIT — grupamento COM TROCA DE TICKER (RAIZ4 → RAIZ55):
+            #     the position MIGRATES to the new ticker, qty×=f and
+            #     PM÷=f (custo total and patrimônio intact — the very
+            #     case a fake venda+compra would break). The realized
+            #     P&L STAYS on the origin ticker's row (it is history
+            #     that happened under the old code; the ladder and the
+            #     IR walk mirror this). Factor 1 = pure ticker rename.
+            #   RIGHTS — direitos de subscrição recebidos de graça: the
+            #     tx's OWN ticker is the rights ticker; qty lands at
+            #     PM R$ 0,00 (buy-at-zero math — cost only dilutes).
             if t.get("type") == "corp":
+                action = t.get("action")
                 f = float(t.get("factor") or 1.0)
-                if abs(pos["qty"]) > 1e-9 and f > 0:
+                if action == "inplit":
+                    nt = (t.get("new_ticker") or "").strip().upper()
+                    if (nt and nt != tk and abs(pos["qty"]) > 1e-9
+                            and f > 0):
+                        tgt = out.setdefault(
+                            nt, {"qty": 0.0, "pm": 0.0, "realized": 0.0})
+                        moved_qty = pos["qty"] * f
+                        moved_cost = pos["qty"] * pos["pm"]  # invariant
+                        total_cost = tgt["qty"] * tgt["pm"] + moved_cost
+                        tgt["qty"] += moved_qty
+                        tgt["pm"] = (total_cost / tgt["qty"]
+                                     if abs(tgt["qty"]) > 1e-9 else 0.0)
+                        pos["qty"] = 0.0
+                        pos["pm"] = 0.0
+                elif action == "rights":
+                    q = float(t.get("quantity") or 0.0)
+                    if q > 0:
+                        if pos["qty"] >= -1e-9:
+                            total_cost = pos["qty"] * pos["pm"]
+                            pos["qty"] += q
+                            pos["pm"] = (total_cost / pos["qty"]
+                                         if pos["qty"] > 0 else 0.0)
+                        else:
+                            # free shares against a short: cover at 0
+                            covered = min(q, -pos["qty"])
+                            pos["realized"] += covered * pos["pm"]
+                            pos["qty"] += q
+                            if pos["qty"] > 1e-9:
+                                pos["pm"] = 0.0   # excess arrived free
+                elif abs(pos["qty"]) > 1e-9 and f > 0:
                     pos["qty"] *= f
                     pos["pm"] = pos["pm"] / f
                 continue
@@ -1874,15 +2102,71 @@ class PortfolioService:
         the regression suite (ladder final == engine final).
         """
         tk = (ticker or "").strip().upper()
-        steps = [t for t in txs if (t.get("ticker") or "").upper() == tk]
+        # [v1.28.5] INPLIT rows concern BOTH tickers: the origin (the
+        # position leaves) and the TARGET (the position arrives — the
+        # drawer of the new ticker must show where it came from; the
+        # ladder's final state stays pinned to the engine's, which does
+        # the same move). The ARRIVAL (qty, pm) only the origin's own
+        # timeline knows — so it is replayed by the ENGINE ITSELF on
+        # the txs strictly before the event (prefix walks; k events →
+        # k replays, and no forked numeric ever exists).
+        ordered = sorted(txs, key=self._tx_order_key)
+        arrivals: dict[str, dict[str, float]] = {}
+        for _i, _t in enumerate(ordered):
+            if (_t.get("type") == "corp" and _t.get("action") == "inplit"
+                    and (_t.get("new_ticker") or "").strip().upper() == tk
+                    and (_t.get("ticker") or "").strip().upper() != tk):
+                pre = self._positions_raw(ordered[:_i])
+                og = pre.get((_t.get("ticker") or "").strip().upper()) or {}
+                oq, op = float(og.get("qty") or 0.0), float(og.get("pm") or 0.0)
+                f = float(_t.get("factor") or 1.0)
+                if abs(oq) > 1e-9 and f > 0:
+                    arrivals[_t.get("id") or ""] = {"qty": oq * f,
+                                                    "pm": op / f}
+        steps = [t for t in ordered
+                 if (t.get("ticker") or "").upper() == tk
+                 or (t.get("type") == "corp" and t.get("action") == "inplit"
+                     and (t.get("new_ticker") or "").strip().upper() == tk)]
         pos = {"qty": 0.0, "pm": 0.0, "realized": 0.0}
         rows: list[dict[str, Any]] = []
-        for t in sorted(steps, key=self._tx_order_key):
+        for t in steps:
             delta = 0.0
             row_note = t.get("note") or ""
             if t.get("type") == "corp":
+                action = t.get("action") or ""
                 f = float(t.get("factor") or 1.0)
-                if abs(pos["qty"]) > 1e-9 and f > 0:
+                if action == "inplit":
+                    nt = (t.get("new_ticker") or "").strip().upper()
+                    if nt == tk:
+                        # rendering the TARGET: the migrated position
+                        # arrives (blended with anything already here)
+                        arr = arrivals.get(t.get("id") or "")
+                        if arr:
+                            total_cost = (pos["qty"] * pos["pm"]
+                                          + arr["qty"] * arr["pm"])
+                            pos["qty"] += arr["qty"]
+                            pos["pm"] = (total_cost / pos["qty"]
+                                         if abs(pos["qty"]) > 1e-9 else 0.0)
+                    elif abs(pos["qty"]) > 1e-9:
+                        # rendering the ORIGIN: the position left
+                        pos["qty"] = 0.0
+                        pos["pm"] = 0.0
+                elif action == "rights":
+                    q = float(t.get("quantity") or 0.0)
+                    if q > 0:
+                        if pos["qty"] >= -1e-9:
+                            total_cost = pos["qty"] * pos["pm"]
+                            pos["qty"] += q
+                            pos["pm"] = (total_cost / pos["qty"]
+                                         if pos["qty"] > 0 else 0.0)
+                        else:
+                            covered = min(q, -pos["qty"])
+                            delta = covered * pos["pm"]
+                            pos["realized"] += delta
+                            pos["qty"] += q
+                            if pos["qty"] > 1e-9:
+                                pos["pm"] = 0.0
+                elif abs(pos["qty"]) > 1e-9 and f > 0:
                     pos["qty"] *= f
                     pos["pm"] = pos["pm"] / f
             else:
@@ -1926,8 +2210,14 @@ class PortfolioService:
                 "type": t.get("type") or "",
                 "action": t.get("action") or "",
                 "factor": t.get("factor"),
-                "factor_br": _factor_br(t["factor"])
-                if t.get("type") == "corp" else None,
+                # [v1.28.5] rights rows carry NO factor (the qty is the
+                # story); inplit rows carry the destination ticker.
+                "factor_br": _factor_br(t.get("factor") or 0.0)
+                if t.get("type") == "corp"
+                and t.get("action") != "rights" else None,
+                "new_ticker": t.get("new_ticker")
+                if t.get("type") == "corp" and t.get("action") == "inplit"
+                else None,
                 "qty": t.get("quantity"),
                 "price": t.get("price"),
                 "fees": t.get("fees") or 0.0,
@@ -2291,6 +2581,21 @@ class PortfolioService:
             if t.get("type") == "corp":
                 # [v1.22.3] Corporate action row: the factor IS the cell
                 # (×2,00 · ×0,50 · ×1,10) — no money columns exist.
+                # [v1.28.5] rights: the qty of rights received is the
+                # cell; inplit: the cell reads OLD → NEW with the factor.
+                _act = t.get("action") or ""
+                if _act == "rights":
+                    _qty_cell = _qty(t.get("quantity") or 0.0)
+                    _factor_cell = _qty_cell
+                elif _act == "inplit":
+                    _factor_cell = (
+                        f"{(t.get('ticker') or '')} → "
+                        f"{(t.get('new_ticker') or '')} "
+                        f"{_factor_br(t.get('factor') or 0.0)}")
+                    _qty_cell = _factor_cell
+                else:
+                    _factor_cell = _factor_br(t.get("factor") or 0.0)
+                    _qty_cell = _factor_cell
                 out.append({
                     "id": t["id"],
                     "date": _fmt_date(t.get("date")),
@@ -2301,11 +2606,13 @@ class PortfolioService:
                         acc.get("name") if acc else None) if x) or "—",
                     "account_id": t.get("account_id") or "",
                     "type": "corp",
-                    "action": t.get("action") or "",
+                    "action": _act,
                     "factor": t.get("factor") or 0.0,
-                    "factor_br": _factor_br(t.get("factor") or 0.0),
-                    "qty": _factor_br(t.get("factor") or 0.0),
-                    "quantity": 0.0,
+                    "factor_br": _factor_cell,
+                    "new_ticker": t.get("new_ticker") if _act == "inplit"
+                        else None,
+                    "qty": _qty_cell,
+                    "quantity": float(t.get("quantity") or 0.0),
                     "price": None,
                     "raw_price": None,
                     "zero": False,

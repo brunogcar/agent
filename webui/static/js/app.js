@@ -2660,10 +2660,17 @@ function _btRenderShell() {
     '<input type="number" id="bt-fee" min="0" step="1" value="0"></div>';
   html += '</div>'; // bt-params-grid
   // dynamic thresholds + exit toggle
+  // [v1.28.5] The ENTRY group sits above the toggle; the "Saída por
+  // sinal" group renders BELOW the checkbox and only exists on
+  // screen while the toggle is ON (the old form drew the exit
+  // thresholds ABOVE the unchecked box — "usa os limiares de saída
+  // abaixo" pointed at nothing, and the fields sat there inert).
   html += '<div id="bt-thresholds"></div>';
   html += '<div class="bt-exit-row" id="bt-exit-row">' +
-    '<label class="bt-check"><input type="checkbox" id="bt-exitsignal">' +
+    '<label class="bt-check"><input type="checkbox" id="bt-exitsignal"' +
+    ' onchange="btExitToggle()">' +
     ' Sair quando o sinal reverter (usa os limiares de saída abaixo)</label></div>';
+  html += '<div id="bt-exit-thresholds"></div>';
   // run button + notes
   html += '<div class="bt-actions"><button type="button" class="bt-run-btn" id="bt-run-btn" onclick="btRun()">▶ Executar backtest</button></div>';
   html += '<div class="bt-note">Decisões no fechamento do pregão (sem look-ahead intradiário); ' +
@@ -2700,8 +2707,12 @@ window.btStrategyChange = function() {
   var es = document.getElementById('bt-exitsignal');
   if (es) es.checked = !!d.exit_on_signal;
 
-  // thresholds (entry + exit conditions, labeled groups)
+  // [v1.28.5] thresholds split in two groups: ENTRADA above the
+  // toggle, SAÍDA POR SINAL below it — the exit fields obey the
+  // checkbox (nothing below it while unchecked; the run ignores
+  // them too, exit_on_signal=false gates the engine).
   var box = document.getElementById('bt-thresholds');
+  var xbox = document.getElementById('bt-exit-thresholds');
   var html = '';
   function condField(c) {
     return '<div class="bt-field"><span>' + esc(c.label) + '</span>' +
@@ -2713,11 +2724,13 @@ window.btStrategyChange = function() {
     html += '<div class="bt-th-group"><div class="bt-th-title">Entrada</div>' +
       '<div class="bt-params-grid">' + spec.entry.map(condField).join('') + '</div></div>';
   }
+  if (box) box.innerHTML = html;
+  var xhtml = '';
   if ((spec.exit || []).length) {
-    html += '<div class="bt-th-group"><div class="bt-th-title">Saída por sinal</div>' +
+    xhtml += '<div class="bt-th-group"><div class="bt-th-title">Saída por sinal</div>' +
       '<div class="bt-params-grid">' + spec.exit.map(condField).join('') + '</div></div>';
   }
-  if (box) box.innerHTML = html;
+  if (xbox) xbox.innerHTML = xhtml;
 
   // kind-specific visibility: buy_hold ignores stops/holding/exit-signal;
   // ma_cross exits by the cross itself (no exit thresholds)
@@ -2727,7 +2740,20 @@ window.btStrategyChange = function() {
     if (el) el.style.display = isBh ? 'none' : '';
   });
   var xr = document.getElementById('bt-exit-row');
-  if (xr) xr.style.display = (spec.kind === 'fundamental') ? '' : 'none';
+  var hasExitConds = spec.kind === 'fundamental' && (spec.exit || []).length > 0;
+  if (xr) xr.style.display = hasExitConds ? '' : 'none';
+  btExitToggle();
+};
+
+// [v1.28.5] The exit-threshold group obeys its toggle: checked → the
+// "Saída por sinal" fields appear right below the checkbox; unchecked
+// → hidden (they carry no effect — the engine only reads the exit
+// conditions when exit_on_signal is on).
+window.btExitToggle = function() {
+  var es = document.getElementById('bt-exitsignal');
+  var xbox = document.getElementById('bt-exit-thresholds');
+  if (!xbox) return;
+  xbox.style.display = (es && es.checked) ? '' : 'none';
 };
 
 window.btPreset = function(btn) {
@@ -2944,9 +2970,22 @@ function _btRenderResult(r) {
   // (th-num over the right-aligned .val-val cells, th-ctr over the
   // centered reason badges — the old all-left headers over right
   // data read diagonally: "headers and data are not aligned").
+  // [v1.28.5] The pairing audit: every entrada has its saída — the
+  // engine only books a trade when a position CLOSES (a leftover at
+  // the period's end is force-closed at the last close, motivo "fim
+  // do período"), so the counts must match and the line says so.
   var trades = r.trades || [];
+  var forceClosed = trades.filter(function(t) {
+    return t.exit_reason === 'end_of_period';
+  }).length;
   html += '<div class="bt-table-wrap"><div class="reg-title">Trade Log — ' +
     trades.length + ' operação(ões)</div>' +
+    '<div class="bt-pair-audit">✔ Cada entrada tem sua saída: ' +
+    trades.length + ' compra(s) · ' + trades.length + ' venda(s)' +
+    (forceClosed
+      ? ' · ' + forceClosed + ' encerrada(s) ao fechamento do último pregão (posição ainda aberta no fim do período)'
+      : ' · nenhuma posição aberta no fim do período') +
+    '.</div>' +
     '<table class="val-table bt-tradelog"><thead><tr><th>Entrada</th>' +
     '<th class="th-num">Preço</th><th>Saída</th>' +
     '<th class="th-num">Preço</th><th class="th-num">Ações</th>' +
@@ -3115,6 +3154,7 @@ window.btLoadScenario = function(id) {
   set('bt-fee', p.fee_brl);
   var es = document.getElementById('bt-exitsignal');
   if (es) es.checked = !!p.exit_on_signal;
+  btExitToggle();
   Object.keys(p.thresholds || {}).forEach(function(k) {
     set('bt-th-' + k, p.thresholds[k]);
   });
@@ -7666,7 +7706,8 @@ function initCarteiraPage() {
   // Page-1 comes seeded from the positions payload; any filter change
   // re-fetches. Rows render buy/sell AND the corp-event rows (×2 etc).
   var CORP_NAMES = { split: 'Desdobramento', group: 'Grupamento',
-                     bonus: 'Bonificação' };
+                     bonus: 'Bonificação', inplit: 'Inplit',
+                     rights: 'Direitos de subscrição' };
 
   function txFilter_qs() {
     var f = st.txFilters;
@@ -7777,8 +7818,16 @@ function initCarteiraPage() {
         : esc(t.date);
       var typeCell = corp
         ? '<span class="cart-type is-corp" title="' +
-          esc(CORP_NAMES[t.action] || 'Evento corporativo') +
-          ' — quantidade e PM re-basados; o custo total não muda.">🔀 ' +
+          // [v1.28.5] per-action tooltip: the re-base story, the
+          // inplit migration or the free rights grant.
+          esc(t.action === 'rights'
+            ? 'Direitos de subscrição — entraram de graça (PM R$ 0,00).'
+            : (t.action === 'inplit'
+              ? 'Inplit — a posição migrou para ' +
+                (t.new_ticker || 'o novo ticker') +
+                ' com o custo total intacto.'
+              : 'quantidade e PM re-basados; o custo total não muda.')) +
+          '">🔀 ' +
           esc(CORP_NAMES[t.action] || 'Evento') + '</span>'
         : '<span class="cart-type ' + (buy ? 'is-buy' : 'is-sell') + '">' +
           (buy ? '✅ Compra' : '❌ Venda') + '</span>';
@@ -8211,7 +8260,10 @@ function initCarteiraPage() {
                 esc(CORP_NAMES[r.action] || 'Evento') + '</span>'
               : '<span class="cart-type ' + (r.type === 'buy' ? 'is-buy' : 'is-sell') + '">' +
                 (r.type === 'buy' ? '✅' : '❌') + '</span>') + '</td>' +
-            '<td class="val-val">' + esc(corp ? (r.factor_br || '—')
+            '<td class="val-val">' + esc(corp
+              ? (r.action === 'rights'
+                  ? String(r.qty).replace('.', ',')
+                  : (r.factor_br || '—'))
               : String(r.qty).replace('.', ',')) + '</td>' +
             '<td class="val-val">' + (corp || r.price === null ? '—' : esc(String(r.price).replace('.', ','))) + '</td>' +
             '<td class="val-val">' + (corp || !r.fees ? '—' : esc(String(r.fees).replace('.', ','))) + '</td>' +
@@ -8596,15 +8648,67 @@ function initCarteiraPage() {
       // the fraction warning (B3 pays fractions in cash).
       // [v1.22.4] with no event selected yet, the only hint is the
       // nudge (the instructions block below carries the detail).
+      // [v1.28.5] inplit/rights carry their own hints — the two new
+      // events have a different story than the plain re-base.
       var action = $('cart-tx-action').value;
       if (!action) {
         hints.push('🔀 <b>Selecione o tipo de evento</b> acima ' +
-          '(desdobramento, grupamento ou bonificação) e informe o fator.');
+          '(desdobramento, grupamento, bonificação, inplit ou direitos ' +
+          'de subscrição).');
+        box.innerHTML = hints.join('<br>');
+        box.hidden = !hints.length;
+        return;
+      }
+      if (action === 'rights') {
+        var rq = parseBr($('cart-tx-qty').value);
+        if (tk && rq !== null && rq > 0) {
+          hints.push('🔔 <b>Direitos de subscrição:</b> ' + esc(String(rq).replace('.', ',')) +
+            ' ' + esc(tk) + ' entram <b>de graça</b> (PM R$ 0,00).');
+          hints.push('💡 Vender ao preço de mercado realiza 100% do valor ' +
+            '(o custo é zero). Se <b>vencerem sem valor</b>, registre a ' +
+            'venda a <b>R$ 0,00</b> — zerada, sem lucro ou perda. Para ' +
+            '<b>exercer</b>: venda os direitos a R$ 0,00 e registre a ' +
+            'compra das ações novas pelo preço de emissão.');
+        } else {
+          hints.push('🔔 <b>Direitos de subscrição:</b> informe o ticker ' +
+            'do direito (ex.: RAIZ1) e a quantidade recebida.');
+        }
         box.innerHTML = hints.join('<br>');
         box.hidden = !hints.length;
         return;
       }
       var f = parseBr($('cart-tx-factor').value);
+      if (action === 'inplit') {
+        var nt = ($('cart-tx-newticker').value || '').trim().toUpperCase();
+        if (tk && f !== null && Math.abs(f - 1) > 1e-9 && nt) {
+          hints.push('🔀 <b>Inplit ' + esc(tk) + ' → ' + esc(nt) + ':</b> a ' +
+            'quantidade multiplica por <b>' + esc(String(f).replace('.', ',')) +
+            '</b>, o PM divide pelo mesmo fator e a posição <b>migra</b> ' +
+            'para o novo ticker — o custo total e o patrimônio não mudam.');
+          var posI = findPos(tk);
+          if (posI && posI.raw_qty) {
+            var afterI = posI.raw_qty * f;
+            var pmRaw = parseBr(posI.pm || '');
+            hints.push('ℹ️ Posição de ' + esc(posI.qty) + ' ' + esc(tk) +
+              ' → <b>' + esc(String(Math.round(afterI * 10000) / 10000).replace('.', ',')) +
+              '</b> ' + esc(nt) +
+              (pmRaw !== null
+                ? ' · PM ' + esc(posI.pm) + ' → <b>' +
+                  esc(String(Math.round((pmRaw / f) * 10000) / 10000).replace('.', ',')) + '</b>'
+                : '') + '.');
+            if (!Number.isInteger(Math.round(afterI * 1e6) / 1e6)) {
+              hints.push('⚠️ <b>Frações:</b> a B3 liquida frações em dinheiro — ' +
+                'se você recebeu o dinheiro, registre uma venda da fração.');
+            }
+          }
+        } else if (tk && f !== null && Math.abs(f - 1) <= 1e-9 && nt) {
+          hints.push('🔀 <b>Renomeação ' + esc(tk) + ' → ' + esc(nt) +
+            ':</b> fator 1 — a posição migra com a mesma quantidade e PM.');
+        }
+        box.innerHTML = hints.join('<br>');
+        box.hidden = !hints.length;
+        return;
+      }
       if (tk && f !== null && Math.abs(f - 1) > 1e-9) {
         hints.push('🔀 <b>' + esc(CORP_NAMES[action] || 'Evento') +
           ':</b> a quantidade multiplica por <b>' + esc(String(f).replace('.', ',')) +
@@ -8636,11 +8740,16 @@ function initCarteiraPage() {
       }
     }
     if (price === 0) {
-      // [v1.22] Sell at R$ 0,00 is refused by the server — say it here
-      // too (bonificação is a BUY at 0).
+      // [v1.22] Sell at R$ 0,00 was refused by the server — say it
+      // here too (bonificação is a BUY at 0).
+      // [v1.28.5] …except on a zero-cost position: the worthless-rights
+      // expiry is now legal (PM 0 → zero realized, the position just
+      // leaves). The hint says when it applies.
       hints.push(type === 'sell'
-        ? '🚫 <b>Venda a R$ 0,00 não é válida</b> — bonificações se ' +
-          'registram como COMPRA a R$ 0,00.'
+        ? '💡 <b>Venda a R$ 0,00</b> — só é válida quando o preço médio ' +
+          'é R$ 0,00 (direitos de subscrição vencidos sem valor); em ' +
+          'posição com custo o servidor recusa (evita a perda fantasma). ' +
+          'Bonificações se registram como COMPRA a R$ 0,00.'
         : '⚠️ <b>Preço R$ 0,00 — bonificação?</b> Os ativos entram ' +
           'sem custo no preço médio.');
     }
@@ -8710,10 +8819,19 @@ function initCarteiraPage() {
     // placeholder option) and an empty factor — the flow is: pick the
     // event, then the factor (the instructions block under the fields
     // spells out each one).
+    // [v1.28.5] rights edits prefill the QUANTITY (its own story);
+    // inplit edits prefill factor + NOVO TICKER.
     var isCorp = (tx ? tx.type : $('cart-tx-type').value) === 'corp';
-    $('cart-tx-action').value = tx && tx.type === 'corp' ? (tx.action || '') : '';
-    $('cart-tx-factor').value = tx && tx.type === 'corp'
+    var isCorpTx = !!(tx && tx.type === 'corp');
+    $('cart-tx-action').value = isCorpTx ? (tx.action || '') : '';
+    $('cart-tx-factor').value = isCorpTx && tx.action !== 'rights'
       ? String(tx.factor || '').replace('.', ',') : '';
+    var ntEl = $('cart-tx-newticker');
+    if (ntEl) ntEl.value = isCorpTx && tx.action === 'inplit'
+      ? (tx.new_ticker || '') : '';
+    if (isCorpTx && tx.action === 'rights') {
+      $('cart-tx-qty').value = String(tx.quantity || '').replace('.', ',');
+    }
     // [fix 2] setMoney also primes the mask mode (a 4-decimal PM edit
     // opens in explicit mode; a fresh form starts in cents-fill).
     setMoney($('cart-tx-price'), tx && tx.type !== 'corp' ? tx.raw_price : null);
@@ -8730,24 +8848,33 @@ function initCarteiraPage() {
 
   // [v1.22.3] corp mode: the action select + factor (with quick
   // presets) show. Nothing is traded — only the quantity/PM re-base.
-  // [v1.22.4] The money/qty fields STAY VISIBLE but lock at 0 (the
-  // user reads "nothing was traded here" right on the form); leaving
-  // corp mode unlocks them empty again.
+  // [v1.22.4] The money/qty fields stayed visible, LOCKED at 0.
+  // [v1.28.5] …now they're HIDDEN (with five corp actions the money
+  // fields carry no meaning in corp mode — "só o tipo de evento e o
+  // fator"). The one exception: DIREITOS DE SUBSCRIÇÃO, whose story
+  // IS a quantity — the qty field shows for it, labelled "Quantidade
+  // de direitos" and EDITABLE. INPLIT adds the NOVO TICKER field.
+  // Leaving corp mode restores the fields (empty, unlocked).
+  var _qtyLabelOrig = null;
   function toggleCorpFields(isCorp) {
+    var action = $('cart-tx-action').value;
+    var rightsQty = isCorp && action === 'rights';
     ['cart-tx-qty', 'cart-tx-price', 'cart-tx-fees'].forEach(function(id) {
       var el = $(id);
       if (!el) return;
+      var fld = el.closest('.cart-field');
+      var show = !isCorp || (id === 'cart-tx-qty' && rightsQty);
+      if (fld) fld.style.display = show ? '' : 'none';
       if (isCorp) {
-        el.disabled = true;
-        el.value = id === 'cart-tx-qty' ? '0' : '0,00';
-        el.setAttribute('aria-readonly', 'true');
-        var fld = el.closest('.cart-field');
-        if (fld) fld.classList.add('cart-field-locked');
+        var locked = !(id === 'cart-tx-qty' && rightsQty);
+        el.disabled = locked;
+        if (locked) el.setAttribute('aria-readonly', 'true');
+        else el.removeAttribute('aria-readonly');
+        if (fld) fld.classList.toggle('cart-field-locked', locked);
       } else {
         el.disabled = false;
         el.removeAttribute('aria-readonly');
-        var fld2 = el.closest('.cart-field');
-        if (fld2) fld2.classList.remove('cart-field-locked');
+        if (fld) fld.classList.remove('cart-field-locked');
         // Only reset when they still carry the locked zeros — a fresh
         // buy form opened straight away keeps its empty cents-fill.
         if (el.value === '0' || el.value === '0,00') {
@@ -8756,8 +8883,26 @@ function initCarteiraPage() {
         }
       }
     });
+    // the qty label reads "Quantidade de direitos" in rights mode
+    var ql = $('cart-tx-qty-label');
+    if (ql) {
+      if (_qtyLabelOrig === null) _qtyLabelOrig = ql.textContent;
+      ql.textContent = rightsQty ? '🔔 Quantidade de direitos' : _qtyLabelOrig;
+    }
     var corp = $('cart-tx-corp');
     if (corp) corp.hidden = !isCorp;
+    corpActionFields();
+  }
+
+  // [v1.28.5] Per-action corp visibility: the FATOR lives for
+  // split/group/bonus/inplit; the NOVO TICKER only for inplit (rights
+  // carries the quantity instead — see toggleCorpFields).
+  function corpActionFields() {
+    var action = $('cart-tx-action').value || '';
+    var ff = $('cart-tx-factor-field');
+    var nf = $('cart-tx-newticker-field');
+    if (ff) ff.style.display = action === 'rights' ? 'none' : '';
+    if (nf) nf.style.display = action === 'inplit' ? '' : 'none';
   }
 
   function corpFactorFor(action, raw) {
@@ -8874,14 +9019,37 @@ function initCarteiraPage() {
       // [v1.22.3] Corporate action: no money fields — action + factor.
       // [v1.22.4] The event must be chosen (the placeholder option is
       // not one) — caught here AND on the server.
-      if (!$('cart-tx-action').value) {
+      // [v1.28.5] rights carries the QUANTITY (the rights received);
+      // inplit carries factor + NOVO TICKER.
+      var action = $('cart-tx-action').value;
+      if (!action) {
         fieldErrs(m, { action: 'Selecione o tipo de evento — desdobramento, ' +
-                             'grupamento ou bonificação.' });
+                             'grupamento, bonificação, inplit ou direitos.' });
         $('cart-tx-msg').textContent = 'Selecione o tipo de evento.';
         return;
       }
-      body.action = $('cart-tx-action').value;
-      body.factor = parseBr($('cart-tx-factor').value);
+      body.action = action;
+      if (action === 'rights') {
+        var rqv = parseBr($('cart-tx-qty').value);
+        if (rqv === null || rqv <= 0) {
+          fieldErrs(m, { quantity: 'Informe a quantidade de direitos recebida.' });
+          $('cart-tx-msg').textContent = 'Informe a quantidade de direitos.';
+          return;
+        }
+        body.quantity = rqv;
+      } else {
+        body.factor = parseBr($('cart-tx-factor').value);
+        if (action === 'inplit') {
+          var ntv = ($('cart-tx-newticker').value || '').trim().toUpperCase();
+          if (!ntv) {
+            fieldErrs(m, { new_ticker: 'Informe o novo ticker (o código ' +
+                                      'pós-evento, ex: RAIZ55).' });
+            $('cart-tx-msg').textContent = 'Informe o novo ticker.';
+            return;
+          }
+          body.new_ticker = ntv;
+        }
+      }
     } else {
       var qv = parseBr($('cart-tx-qty').value);
       var pv = parseBr($('cart-tx-price').value);
@@ -9726,10 +9894,18 @@ function initCarteiraPage() {
   $('cart-tx-action').addEventListener('change', function() {
     var a = $('cart-tx-action').value;
     $('cart-tx-factor').value = a === 'group' ? '0,5'
-      : (a === 'bonus' ? '1,1' : (a === 'split' ? '2' : ''));
+      : (a === 'bonus' ? '1,1' : (a === 'split' ? '2'
+        : (a === 'inplit' ? '0,01' : '')));
+    var ntEl = $('cart-tx-newticker');
+    if (ntEl && a !== 'inplit') ntEl.value = '';
+    // [v1.28.5] per-action visibility (qty for rights, novo ticker
+    // for inplit) — reuses the corp toggle with the current type.
+    toggleCorpFields($('cart-tx-type').value === 'corp');
     updateHints();
   });
   $('cart-tx-factor').addEventListener('input', updateHints);
+  var ntHint = $('cart-tx-newticker');
+  if (ntHint) ntHint.addEventListener('input', updateHints);
   $('cart-tx-ticker').addEventListener('input', function() {
     updatePosCtx();
     updateHints();

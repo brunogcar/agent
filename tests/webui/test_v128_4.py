@@ -416,8 +416,8 @@ def test_css_and_asset_versions():
                 ".scr-head-tools", ".scr-copy-btn"):
         assert cls in _CSS, f"{cls} missing from app.css"
     # the cache-busting bump
-    assert "app.js?v=90" in _BASE
-    assert "app.css?v=90" in _BASE
+    assert "app.js?v=91" in _BASE
+    assert "app.css?v=91" in _BASE
     assert "v1.28.4" in _BASE
 
 
